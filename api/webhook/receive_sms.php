@@ -1,7 +1,7 @@
 <?php
 
 $config = require __DIR__ . '/config.php';
-$firebaseUrl = $config['FIREBASE_DB_URL'];
+require __DIR__ . '/firestore_client.php';
 
 $raw = file_get_contents('php://input');
 $data = json_decode($raw, true);
@@ -12,20 +12,16 @@ $senderNumber = $data['sender'] ?? '';
 $message      = $data['message'] ?? '';
 $message_id   = $data['message_id'] ?? uniqid();
 
-$firebaseData = [
-    "message_id"   => $message_id,
-    "from"         => $senderNumber,
-    "message"      => $message,
-    "type"         => "inbound",
-    "date_received"=> date("Y-m-d H:i:s")
-];
+$db = get_firestore();
 
-$url = $firebaseUrl . "inbound_messages/$message_id.json";
+$db->collection('inbound_messages')
+    ->document($message_id)
+    ->set([
+        'message_id'    => $message_id,
+        'from'          => $senderNumber,
+        'message'       => $message,
+        'type'          => 'inbound',
+        'date_received' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+    ], ['merge' => true]);
 
-$ch = curl_init($url);
-curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "PUT");
-curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($firebaseData));
-curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-curl_exec($ch);
-
-echo json_encode(["status"=>"received"]);
+echo json_encode(["status" => "received"]);

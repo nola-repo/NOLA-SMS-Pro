@@ -1,6 +1,8 @@
-# Ignore logs
+# Ignore logs and runtime files (SMS)
 logs/
 *.log
+api/webhook/sms_log.txt
+api/webhook/last_payload.json
 
 # Ignore VSCode config
 .vscode/
@@ -8,3 +10,4 @@ logs/
 # Ignore sensitive files
 .env
 config.local.php
+api/webhook/nola-sms-pro-*.json

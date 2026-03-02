@@ -1,0 +1,15 @@
+# Dependencies installed in container
+vendor/
+
+# Git and IDE
+.git
+.gitignore
+.vscode
+
+# Local / sensitive (never in image)
+.env
+config.local.php
+api/webhook/nola-sms-pro-*.json
+*.log
+api/webhook/sms_log.txt
+api/webhook/last_payload.json

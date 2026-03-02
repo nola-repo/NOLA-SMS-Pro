@@ -1,9 +1,5 @@
 RewriteEngine On
 
-#Allow Laundroworks folder to handle its own rewrites
-RewriteRule ^webhook/Laundroworks/ - [L]
-
-
 RewriteRule ^webhook/send_sms$ /api/webhook/send_sms.php [L]
 RewriteRule ^webhook/receive_sms$ /api/webhook/receive_sms.php [L]
 RewriteRule ^webhook/retrieve_status$ /api/webhook/retrieve_status.php [L]

@@ -1,7 +1,0 @@
-RewriteEngine On
-RewriteBase /webhook/Laundroworks/
-
-# Route all three webhooks to handler.php
-RewriteRule ^Laundroworks-1$ handler.php [L,QSA]
-RewriteRule ^Laundroworks-2$ handler.php [L,QSA]
-RewriteRule ^Laundroworks-3$ handler.php [L,QSA]
