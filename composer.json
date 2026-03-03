@@ -1,5 +1,8 @@
 {
+    "name": "nola/sms-pro",
+    "description": "NOLA SMS Pro - SMS platform with GHL integration",
+    "license": "proprietary",
     "require": {
-      "google/cloud-firestore": "^1.40"
+        "google/cloud-firestore": "^1.40"
     }
-  }
+}

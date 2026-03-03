@@ -4,6 +4,12 @@ RewriteRule ^webhook/send_sms$ /api/webhook/send_sms.php [L]
 RewriteRule ^webhook/receive_sms$ /api/webhook/receive_sms.php [L]
 RewriteRule ^webhook/retrieve_status$ /api/webhook/retrieve_status.php [L]
 
+# Message history API (for Web UI)
+RewriteRule ^api/messages$ /api/messages.php [L]
+
+# OAuth callback (GHL / marketplace integrations)
+RewriteRule ^oauth/callback$ /ghl_callback.php [L]
+
 
 
 

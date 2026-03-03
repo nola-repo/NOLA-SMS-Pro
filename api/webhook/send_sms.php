@@ -8,23 +8,13 @@ header('Content-Type: application/json');
 
 $config = require __DIR__ . '/config.php';
 require __DIR__ . '/firestore_client.php';
+require __DIR__ . '/../auth_helpers.php';
 
 $SEMAPHORE_API_KEY = $config['SEMAPHORE_API_KEY'];
 $SEMAPHORE_URL     = $config['SEMAPHORE_URL'];
 $SENDER_IDS        = $config['SENDER_IDS'];
 
-// Simple shared-secret check for webhook calls
-$expectedSecret = getenv('WEBHOOK_SECRET') ?: ($config['WEBHOOK_SECRET'] ?? null);
-$receivedSecret = $_SERVER['HTTP_X_WEBHOOK_SECRET'] ?? '';
-
-if ($expectedSecret && !hash_equals($expectedSecret, $receivedSecret)) {
-    http_response_code(401);
-    echo json_encode([
-        'status'  => 'error',
-        'message' => 'Unauthorized',
-    ]);
-    exit;
-}
+validate_api_request();
 
 function log_sms($label, $data)
 {
