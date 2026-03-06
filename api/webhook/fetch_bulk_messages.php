@@ -3,37 +3,46 @@ ini_set('display_errors', 0);
 ini_set('display_startup_errors', 0);
 error_reporting(E_ALL);
 
-// CORS + preflight
+// fetch_bulk_messages.php
+// CORS Headers
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '*';
-header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: ' . $origin);
-header('Access-Control-Allow-Methods: GET, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type, X-Webhook-Secret');
+header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+header('Access-Control-Allow-Headers: X-Webhook-Secret, Content-Type');
 header('Access-Control-Max-Age: 86400');
 
+// Handle OPTIONS preflight request
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
     http_response_code(204);
     exit;
 }
 
-require __DIR__ . '/firestore_client.php';
-require __DIR__ . '/../auth_helpers.php';
+header('Content-Type: application/json');
 
-validate_api_request();
+require _DIR_ . '/firestore_client.php';
+
+// Authenticate
+$headers = getallheaders();
+$receivedSecret = $headers['X-Webhook-Secret'] ?? $headers['x-webhook-secret'] ?? '';
+
+if ($receivedSecret !== 'f7RkQ2pL9zV3tX8cB1nS4yW6') {
+    http_response_code(401);
+    die(json_encode(["status" => "error", "message" => "Unauthorized"]));
+}
 
 try {
     $db = get_firestore();
+    // Search in 'messages' collection which is the new standard
     $collection = $db->collection('messages');
 
-    // Campaigns = outbound messages with a batch_id
-    // Use where('batch_id', '>', '') as a reliable non-empty filter
-    $query = $collection
-        ->where('direction', '==', 'outbound')
-        ->where('batch_id', '>', '')
+    // Get all outbound messages with batch_id.
+    // Ensure direction is outbound and batch_id exists and is not empty.
+    $query = $collection->where('direction', '=', 'outbound')
+        ->where('batch_id', '!=', '')
         ->orderBy('batch_id')
         ->orderBy('date_created', 'DESC');
 
-    $logs = $query->limit(1000)->documents();
+    $logs = $query->limit(500)->documents();
 
     // Group by batch_id
     $batches = [];
@@ -43,35 +52,36 @@ try {
             $batchId = $data['batch_id'] ?? '';
 
             if ($batchId) {
-                $ts = null;
+                // Format timestamp
                 if (isset($data['date_created']) && $data['date_created'] instanceof \Google\Cloud\Core\Timestamp) {
-                    $ts = $data['date_created']->get()->format('c');
-                } elseif (isset($data['created_at']) && $data['created_at'] instanceof \Google\Cloud\Core\Timestamp) {
-                    $ts = $data['created_at']->get()->format('c');
+                    $data['date_created'] = $data['date_created']->get()->format('c');
                 }
 
                 if (!isset($batches[$batchId])) {
                     $batches[$batchId] = [
                         'batch_id' => $batchId,
+                        'messages' => [],
                         'recipients' => [],
                         'first_message' => $data['message'] ?? '',
-                        'date_created' => $ts,
+                        'date_created' => $data['date_created'],
                         'sender_id' => $data['sender_id'] ?? 'NOLACRM',
                     ];
                 }
 
+                $batches[$batchId]['messages'][] = array_merge(['id' => $doc->id()], $data);
+
                 // Add unique recipients
                 $number = $data['number'] ?? '';
-                if ($number && !in_array($number, $batches[$batchId]['recipients'], true)) {
+                if ($number && !in_array($number, $batches[$batchId]['recipients'])) {
                     $batches[$batchId]['recipients'][] = $number;
                 }
 
                 // Update first message if this is older
-                $thisDate = strtotime($ts ?? 0);
+                $thisDate = strtotime($data['date_created'] ?? 0);
                 $firstDate = strtotime($batches[$batchId]['date_created'] ?? 0);
                 if ($thisDate < $firstDate) {
                     $batches[$batchId]['first_message'] = $data['message'] ?? '';
-                    $batches[$batchId]['date_created'] = $ts;
+                    $batches[$batchId]['date_created'] = $data['date_created'];
                 }
             }
         }
@@ -86,11 +96,11 @@ try {
         'recipientNumbers' => $batch['recipients'],
         'timestamp' => $batch['date_created'],
         'sender_id' => $batch['sender_id'],
-        'messageCount' => count($batch['recipients']),
+        'messageCount' => count($batch['messages']),
         ];
     }, $batches));
 
-    // Sort by most recent first (Firestore now returns results ordered by batch_id)
+    // Sort by most recent first
     usort($results, function ($a, $b) {
         return strtotime($b['timestamp'] ?? 0) - strtotime($a['timestamp'] ?? 0);
     });

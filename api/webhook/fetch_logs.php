@@ -1,11 +1,24 @@
+// fetch_logs.php
 <?php
+// CORS Headers
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+header('Access-Control-Allow-Headers: X-Webhook-Secret, Content-Type');
+header('Access-Control-Max-Age: 86400');
+
+// Handle OPTIONS preflight request
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(204);
+    exit;
+}
+
 header('Content-Type: application/json');
 
 // Enable error reporting for debugging (disable in production)
 // ini_set('display_errors', 1);
 // error_reporting(E_ALL);
 
-require __DIR__ . '/firestore_client.php';
+require __DIR__ . '/../webhook/firestore_client.php';
 
 // 1. Authenticate with standardized header
 $headers = getallheaders();
