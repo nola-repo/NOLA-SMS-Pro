@@ -7,8 +7,8 @@ return [
 
     // Multiple Sender IDs (first = default when none sent)
     'SENDER_IDS' => [
-        'NOLASMS',
         'NOLACRM',
+        'NOLASMS',
         'BRANCH2'
     ],
 ];
