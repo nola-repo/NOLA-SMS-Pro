@@ -29,16 +29,8 @@ if (!isset($_GET['code'])) {
 }
 
 $code  = $_GET['code'];
-$state = $_GET['state'] ?? null; // Expected to be NOLA accountId
-
-if (!$state) {
-    ghl_send_json([
-        'success' => false,
-        'error'   => 'Missing state parameter (expected accountId).',
-    ], 400);
-}
-
-$accountId = $state;
+// state = subaccount/location id from install link (e.g. &state=location123)
+$state = $_GET['state'] ?? null;
 
 $tokenUrl = 'https://services.leadconnectorhq.com/oauth/token';
 $postData = [
@@ -88,24 +80,28 @@ $now      = new DateTimeImmutable();
 $expires  = (int)($data['expires_in'] ?? 0);
 $expiresAt = (clone $now)->modify('+' . $expires . ' seconds');
 
-$db->collection('accounts')
-    ->document($accountId)
-    ->collection('integrations')
-    ->document('ghl')
+// Per-subaccount: doc id = ghl_{locationId} when state or GHL locationId prsent, else ghl
+$locationId = $state ?? $data['locationId'] ?? $data['location_id'] ?? null;
+$docId      = $locationId ? 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string) $locationId) : 'ghl';
+
+$db->collection('integrations')
+    ->document($docId)
     ->set([
         'access_token'  => $data['access_token'] ?? null,
         'refresh_token' => $data['refresh_token'] ?? null,
         'scope'         => $data['scope'] ?? null,
-        'location_id'   => $data['locationId'] ?? null,
+        'location_id'   => $data['locationId'] ?? $data['location_id'] ?? $locationId,
         'expires_at'    => new \Google\Cloud\Core\Timestamp($expiresAt),
         'raw'           => $data,
         'created_at'    => new \Google\Cloud\Core\Timestamp($now),
         'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
+        'state'         => $state,
     ], ['merge' => true]);
 
 ghl_send_json([
     'success'     => true,
     'message'     => 'GHL tokens stored successfully.',
-    'account_id'  => $accountId,
+    'document_id' => $docId,
+    'location_id' => $locationId,
 ]);
 

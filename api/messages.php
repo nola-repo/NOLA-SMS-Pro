@@ -13,10 +13,11 @@ validate_api_request();
 
 $db = get_firestore();
 
-$direction = $_GET['direction'] ?? 'outbound'; // outbound | inbound | all
-$limit     = min((int)($_GET['limit'] ?? 50), 100);
-$offset    = max((int)($_GET['offset'] ?? 0), 0);
-$status    = $_GET['status'] ?? null; // optional filter: Queued, Pending, Sent, Failed, etc.
+$direction       = $_GET['direction'] ?? 'outbound'; // outbound | inbound | all
+$conversationId  = $_GET['conversation_id'] ?? null; // when set, load messages for one chat (fixes bulk mixing)
+$limit           = min((int)($_GET['limit'] ?? 50), 100);
+$offset          = max((int)($_GET['offset'] ?? 0), 0);
+$status          = $_GET['status'] ?? null;
 
 $out = [
     'success' => true,
@@ -27,6 +28,34 @@ $out = [
 ];
 
 try {
+    // Load by conversation (sidebar chat): messages where conversation_id == selectedChat, orderBy created_at
+    if ($conversationId !== null && $conversationId !== '') {
+        $query = $db->collection('messages')
+            ->where('conversation_id', '==', $conversationId)
+            ->orderBy('created_at', 'DESC')
+            ->limit($limit)
+            ->offset($offset);
+        foreach ($query->documents() as $doc) {
+            if (!$doc->exists()) continue;
+            $d = $doc->data();
+            $out['data'][] = [
+                'id'               => $doc->id(),
+                'conversation_id'  => $d['conversation_id'] ?? null,
+                'number'           => $d['number'] ?? null,
+                'message'          => $d['message'] ?? null,
+                'direction'        => $d['direction'] ?? 'outbound',
+                'sender_id'        => $d['sender_id'] ?? null,
+                'status'           => $d['status'] ?? null,
+                'batch_id'         => $d['batch_id'] ?? null,
+                'created_at'       => isset($d['created_at']) ? $d['created_at']->formatAsString() : null,
+                'name'             => $d['name'] ?? null,
+            ];
+        }
+        $out['total'] = count($out['data']);
+        echo json_encode($out, JSON_PRETTY_PRINT);
+        exit;
+    }
+
     if ($direction === 'inbound' || $direction === 'all') {
         $inboundQuery = $db->collection('inbound_messages')
             ->orderBy('date_received', 'DESC')

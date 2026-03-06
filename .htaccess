@@ -7,6 +7,12 @@ RewriteRule ^webhook/retrieve_status$ /api/webhook/retrieve_status.php [L]
 # Message history API (for Web UI)
 RewriteRule ^api/messages$ /api/messages.php [L]
 
+# Contacts API (for Web UI)
+RewriteRule ^api/contacts$ /api/contacts.php [L]
+
+# Credit balance API (for Web UI)
+RewriteRule ^api/credits$ /api/credits.php [L]
+
 # OAuth callback (GHL / marketplace integrations)
 RewriteRule ^oauth/callback$ /ghl_callback.php [L]
 
