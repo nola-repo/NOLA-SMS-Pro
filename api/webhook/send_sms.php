@@ -4,6 +4,19 @@ ini_set('display_errors', 0);
 ini_set('display_startup_errors', 0);
 error_reporting(E_ALL);
 
+// CORS (for Web UI direct calls) + preflight support
+$origin = $_SERVER['HTTP_ORIGIN'] ?? '*';
+header('Content-Type: application/json');
+header('Access-Control-Allow-Origin: ' . $origin);
+header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, X-Webhook-Secret');
+header('Access-Control-Max-Age: 86400');
+
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
+    http_response_code(204);
+    exit;
+}
+
 $config = require __DIR__ . '/config.php';
 require __DIR__ . '/firestore_client.php';
 require __DIR__ . '/../auth_helpers.php';
@@ -149,6 +162,9 @@ log_full_payload($raw, $payload);
 $customData = $payload['customData'] ?? [];
 $data       = $payload['data'] ?? [];
 
+$batch_id = $customData['batch_id'] ?? $data['batch_id'] ?? null;
+$recipient_key = $customData['recipient_key'] ?? $data['recipient_key'] ?? null;
+
 $message =
     $customData['message']
     ?? $payload['message']
@@ -265,6 +281,11 @@ if (!$message) {
     exit;
 }
 
+// Auto batch id for bulk sends if not provided
+if (!$batch_id && count($validNumbers) > 1) {
+    $batch_id = 'batch_' . bin2hex(random_bytes(8));
+}
+
 
 /*
 |--------------------------------------------------------------------------
@@ -324,21 +345,49 @@ if ($status == 200 && is_array($result)) {
     $now = new \DateTime();
     $ts  = new \Google\Cloud\Core\Timestamp($now);
 
-    foreach ($result as $msg) {
+    $messages = isset($result[0]) ? $result : [$result];
+
+    $isBulk = count($validNumbers) > 1;
+    $conversation_id = $isBulk
+        ? ('group_' . ($batch_id ?? 'bulk'))
+        : ('conv_' . $validNumbers[0]);
+
+    foreach ($messages as $msg) {
 
         if (!isset($msg['message_id'])) continue;
+
+        $recipientRaw = $msg['number'] ?? $msg['recipient'] ?? $msg['to'] ?? null;
+        $recipientArr = $recipientRaw ? clean_numbers($recipientRaw) : [];
+        $recipient = $recipientArr[0] ?? $validNumbers[0];
 
         $db->collection('messages')
             ->document($msg['message_id'])
             ->set([
-                'number'=>$validNumbers[0],
-                'message'=>$message,
-                'sender_id'=>$sender,
-                'direction'=>'outbound',
-                'status'=>$msg['status'] ?? 'sent',
-                'created_at'=>$ts
+                'conversation_id' => $conversation_id,
+                'number'          => $recipient,
+                'message'         => $message,
+                'sender_id'       => $sender,
+                'direction'       => 'outbound',
+                'status'          => $msg['status'] ?? 'sent',
+                'batch_id'        => $batch_id,
+                'recipient_key'   => $recipient_key ?? $recipient,
+                // for API queries + index
+                'created_at'      => $ts,
+                'date_created'    => $ts,
             ], ['merge'=>true]);
     }
+
+    // Conversation doc for UI sidebar
+    $db->collection('conversations')
+        ->document($conversation_id)
+        ->set([
+            'type'            => $isBulk ? 'bulk' : 'direct',
+            'members'         => $validNumbers,
+            'last_message'    => $message,
+            'last_message_at' => $ts,
+            'name'            => $isBulk ? ($customData['campaign_name'] ?? $batch_id ?? 'Bulk') : $validNumbers[0],
+            'updated_at'      => $ts,
+        ], ['merge' => true]);
 }
 
 
@@ -353,5 +402,6 @@ echo json_encode([
     "numbers"=>$validNumbers,
     "message"=>$message,
     "sender"=>$sender,
+    "batch_id"=>$batch_id,
     "response"=>$result
 ]);

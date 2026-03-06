@@ -13,6 +13,12 @@ RewriteRule ^api/contacts$ /api/contacts.php [L]
 # Credit balance API (for Web UI)
 RewriteRule ^api/credits$ /api/credits.php [L]
 
+# Bulk campaigns API (for Web UI)
+RewriteRule ^api/bulk-campaigns$ /api/webhook/fetch_bulk_messages.php [L]
+
+# Conversations API (for Web UI sidebar)
+RewriteRule ^api/conversations$ /api/conversations.php [L]
+
 # OAuth callback (GHL / marketplace integrations)
 RewriteRule ^oauth/callback$ /ghl_callback.php [L]
 

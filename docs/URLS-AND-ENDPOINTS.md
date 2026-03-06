@@ -19,6 +19,7 @@ Use this base for all endpoints below (no trailing slash).
 | GET  | `/webhook/retrieve_status` | None | Cron: update delivery status of queued messages in `sms_logs` (call via Cloud Scheduler). |
 | GET  | `/webhook/send_sms` | `X-Webhook-Secret` | Returns last sent payload (debug). |
 | GET  | `/api/messages` | `X-Webhook-Secret` | Fetch message history. Query: `direction` (outbound\|inbound\|all), `limit`, `offset`, `status`. Use `conversation_id` to load one chat (e.g. `conv_09761761036` or `group_batch_xxx`) and fix bulk mixing. |
+| GET  | `/api/conversations` | `X-Webhook-Secret` | Fetch conversation list for sidebar. Query: `limit`, `offset`, optional `type` (direct\|bulk). |
 | GET  | `/api/contacts` | `X-Webhook-Secret` | List contacts. Query: `limit`, `offset`, `phone`. |
 | POST | `/api/contacts` | `X-Webhook-Secret` | Create contact. Body: `{ "name", "phone", "email" }`. |
 | GET  | `/api/credits`  | `X-Webhook-Secret` | Get current credit balance for the default account. |
@@ -39,6 +40,9 @@ Use this base for all endpoints below (no trailing slash).
 
 - **Message history (Web UI):**  
   `https://smspro-api.nolacrm.io/api/messages`
+
+- **Conversations (Web UI sidebar):**  
+  `https://smspro-api.nolacrm.io/api/conversations`
 
 - **Contacts list:**  
   `https://smspro-api.nolacrm.io/api/contacts`

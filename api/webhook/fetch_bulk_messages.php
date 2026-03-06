@@ -1,30 +1,39 @@
 <?php
+ini_set('display_errors', 0);
+ini_set('display_startup_errors', 0);
+error_reporting(E_ALL);
+
+// CORS + preflight
+$origin = $_SERVER['HTTP_ORIGIN'] ?? '*';
 header('Content-Type: application/json');
+header('Access-Control-Allow-Origin: ' . $origin);
+header('Access-Control-Allow-Methods: GET, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, X-Webhook-Secret');
+header('Access-Control-Max-Age: 86400');
+
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
+    http_response_code(204);
+    exit;
+}
 
 require __DIR__ . '/firestore_client.php';
+require __DIR__ . '/../auth_helpers.php';
 
-// Authenticate
-$headers = getallheaders();
-$receivedSecret = $headers['X-Webhook-Secret'] ?? $headers['x-webhook-secret'] ?? '';
-
-if ($receivedSecret !== 'f7RkQ2pL9zV3tX8cB1nS4yW6') {
-    http_response_code(401);
-    die(json_encode(["status" => "error", "message" => "Unauthorized"]));
-}
+validate_api_request();
 
 try {
     $db = get_firestore();
-    $collection = $db->collection('sms_logs');
+    $collection = $db->collection('messages');
 
-    // Get all outbound messages with batch_id.
-    // Firestore rule: when using '!=' on a field, that field must be the first orderBy.
-    // We orderBy('batch_id') first, then sort by date in PHP after fetching.
-    $query = $collection->where('direction', '=', 'outbound')
-        ->where('batch_id', '!=', '')
+    // Campaigns = outbound messages with a batch_id
+    // Use where('batch_id', '>', '') as a reliable non-empty filter
+    $query = $collection
+        ->where('direction', '==', 'outbound')
+        ->where('batch_id', '>', '')
         ->orderBy('batch_id')
         ->orderBy('date_created', 'DESC');
 
-    $logs = $query->limit(500)->documents();
+    $logs = $query->limit(1000)->documents();
 
     // Group by batch_id
     $batches = [];
@@ -34,36 +43,35 @@ try {
             $batchId = $data['batch_id'] ?? '';
 
             if ($batchId) {
-                // Format timestamp
+                $ts = null;
                 if (isset($data['date_created']) && $data['date_created'] instanceof \Google\Cloud\Core\Timestamp) {
-                    $data['date_created'] = $data['date_created']->get()->format('c');
+                    $ts = $data['date_created']->get()->format('c');
+                } elseif (isset($data['created_at']) && $data['created_at'] instanceof \Google\Cloud\Core\Timestamp) {
+                    $ts = $data['created_at']->get()->format('c');
                 }
 
                 if (!isset($batches[$batchId])) {
                     $batches[$batchId] = [
                         'batch_id' => $batchId,
-                        'messages' => [],
                         'recipients' => [],
                         'first_message' => $data['message'] ?? '',
-                        'date_created' => $data['date_created'],
+                        'date_created' => $ts,
                         'sender_id' => $data['sender_id'] ?? 'NOLACRM',
                     ];
                 }
 
-                $batches[$batchId]['messages'][] = array_merge(['id' => $doc->id()], $data);
-
                 // Add unique recipients
                 $number = $data['number'] ?? '';
-                if ($number && !in_array($number, $batches[$batchId]['recipients'])) {
+                if ($number && !in_array($number, $batches[$batchId]['recipients'], true)) {
                     $batches[$batchId]['recipients'][] = $number;
                 }
 
                 // Update first message if this is older
-                $thisDate = strtotime($data['date_created'] ?? 0);
+                $thisDate = strtotime($ts ?? 0);
                 $firstDate = strtotime($batches[$batchId]['date_created'] ?? 0);
                 if ($thisDate < $firstDate) {
                     $batches[$batchId]['first_message'] = $data['message'] ?? '';
-                    $batches[$batchId]['date_created'] = $data['date_created'];
+                    $batches[$batchId]['date_created'] = $ts;
                 }
             }
         }
@@ -78,7 +86,7 @@ try {
         'recipientNumbers' => $batch['recipients'],
         'timestamp' => $batch['date_created'],
         'sender_id' => $batch['sender_id'],
-        'messageCount' => count($batch['messages']),
+        'messageCount' => count($batch['recipients']),
         ];
     }, $batches));
 
