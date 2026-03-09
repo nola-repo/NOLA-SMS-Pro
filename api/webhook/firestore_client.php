@@ -11,6 +11,7 @@ function get_firestore()
     if ($db === null) {
         $db = new FirestoreClient([
             'projectId' => 'nola-sms-pro',
+            'transport' => 'rest'
         ]);
     }
 

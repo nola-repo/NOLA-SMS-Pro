@@ -3,7 +3,6 @@ ini_set('display_errors', 0);
 ini_set('display_startup_errors', 0);
 error_reporting(E_ALL);
 
-// fetch_bulk_messages.php
 // CORS Headers
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '*';
 header('Access-Control-Allow-Origin: ' . $origin);
@@ -11,7 +10,6 @@ header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
 header('Access-Control-Allow-Headers: X-Webhook-Secret, Content-Type');
 header('Access-Control-Max-Age: 86400');
 
-// Handle OPTIONS preflight request
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
     http_response_code(204);
     exit;
@@ -19,7 +17,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
 
 header('Content-Type: application/json');
 
-require _DIR_ . '/firestore_client.php';
+require __DIR__ . '/../webhook/firestore_client.php';
 
 // Authenticate
 $headers = getallheaders();

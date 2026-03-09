@@ -26,6 +26,8 @@ $db = get_firestore();
 
 $direction       = $_GET['direction'] ?? 'outbound'; // outbound | inbound | all
 $conversationId  = $_GET['conversation_id'] ?? null; // when set, load messages for one chat (fixes bulk mixing)
+$batchId         = $_GET['batch_id'] ?? null;        // bulk campaign fetch (frontend)
+$recipientKey    = $_GET['recipient_key'] ?? null;   // per-recipient bulk thread fetch (frontend)
 $limit           = min((int)($_GET['limit'] ?? 50), 100);
 $offset          = max((int)($_GET['offset'] ?? 0), 0);
 $status          = $_GET['status'] ?? null;
@@ -39,6 +41,91 @@ $out = [
 ];
 
 try {
+    // Bulk fetch by batch_id (frontend: /api/messages?batch_id=...).
+    // Uses same index pattern as bulk campaigns: direction + batch_id + date_created.
+    if ($batchId !== null && $batchId !== '') {
+        $query = $db->collection('messages')
+            ->where('direction', '==', 'outbound')
+            ->where('batch_id', '==', $batchId)
+            ->orderBy('batch_id', 'ASC')
+            ->orderBy('date_created', 'DESC')
+            ->limit($limit)
+            ->offset($offset);
+
+        foreach ($query->documents() as $doc) {
+            if (!$doc->exists()) continue;
+            $d = $doc->data();
+            $out['data'][] = [
+                'id'               => $doc->id(),
+                'conversation_id'  => $d['conversation_id'] ?? null,
+                'number'           => $d['number'] ?? null,
+                'message'          => $d['message'] ?? null,
+                'direction'        => $d['direction'] ?? 'outbound',
+                'sender_id'        => $d['sender_id'] ?? null,
+                'status'           => $d['status'] ?? null,
+                'batch_id'         => $d['batch_id'] ?? null,
+                'recipient_key'    => $d['recipient_key'] ?? null,
+                'date_created'     => isset($d['date_created']) ? $d['date_created']->formatAsString() : null,
+                'created_at'       => isset($d['created_at']) ? $d['created_at']->formatAsString() : null,
+                'name'             => $d['name'] ?? null,
+            ];
+        }
+        $out['total'] = count($out['data']);
+        echo json_encode($out, JSON_PRETTY_PRINT);
+        exit;
+    }
+
+    // Bulk fetch by recipient_key (frontend: /api/messages?recipient_key=...).
+    // We map recipient_key -> conversation_id to avoid requiring new composite indexes.
+    if ($recipientKey !== null && $recipientKey !== '') {
+        $rk = (string)$recipientKey;
+        $conv = null;
+
+        if (str_starts_with($rk, 'conv_') || str_starts_with($rk, 'group_')) {
+            $conv = $rk;
+        } elseif (str_starts_with($rk, 'batch-') || str_starts_with($rk, 'batch_')) {
+            $conv = 'group_' . $rk;
+        } else {
+            // If it's a phone number-ish key, normalize to digits and build conv_09XXXXXXXXX
+            $digits = preg_replace('/\D+/', '', $rk);
+            if (strlen($digits) === 10 && str_starts_with($digits, '9')) $digits = '0' . $digits;
+            if (strlen($digits) === 12 && str_starts_with($digits, '639')) $digits = '0' . substr($digits, 2);
+            if (strlen($digits) === 11 && str_starts_with($digits, '09')) {
+                $conv = 'conv_' . $digits;
+            } else {
+                // fallback: treat as group key
+                $conv = 'group_' . $rk;
+            }
+        }
+
+        $query = $db->collection('messages')
+            ->where('conversation_id', '==', $conv)
+            ->orderBy('created_at', 'DESC')
+            ->limit($limit)
+            ->offset($offset);
+
+        foreach ($query->documents() as $doc) {
+            if (!$doc->exists()) continue;
+            $d = $doc->data();
+            $out['data'][] = [
+                'id'               => $doc->id(),
+                'conversation_id'  => $d['conversation_id'] ?? null,
+                'number'           => $d['number'] ?? null,
+                'message'          => $d['message'] ?? null,
+                'direction'        => $d['direction'] ?? 'outbound',
+                'sender_id'        => $d['sender_id'] ?? null,
+                'status'           => $d['status'] ?? null,
+                'batch_id'         => $d['batch_id'] ?? null,
+                'recipient_key'    => $d['recipient_key'] ?? null,
+                'created_at'       => isset($d['created_at']) ? $d['created_at']->formatAsString() : null,
+                'name'             => $d['name'] ?? null,
+            ];
+        }
+        $out['total'] = count($out['data']);
+        echo json_encode($out, JSON_PRETTY_PRINT);
+        exit;
+    }
+
     // Load by conversation (sidebar chat): messages where conversation_id == selectedChat, orderBy created_at
     if ($conversationId !== null && $conversationId !== '') {
         $query = $db->collection('messages')
@@ -58,6 +145,7 @@ try {
                 'sender_id'        => $d['sender_id'] ?? null,
                 'status'           => $d['status'] ?? null,
                 'batch_id'         => $d['batch_id'] ?? null,
+                'recipient_key'    => $d['recipient_key'] ?? null,
                 'created_at'       => isset($d['created_at']) ? $d['created_at']->formatAsString() : null,
                 'name'             => $d['name'] ?? null,
             ];

@@ -51,6 +51,14 @@ foreach ($documents as $doc) {
             $doc->reference()->update([
                 ['path' => 'status', 'value' => $newStatus],
             ]);
+
+            // Also update the main UI 'messages' collection
+            $messageRef = $db->collection('messages')->document($messageId);
+            if ($messageRef->snapshot()->exists()) {
+                $messageRef->update([
+                    ['path' => 'status', 'value' => $newStatus],
+                ]);
+            }
         }
     }
 }

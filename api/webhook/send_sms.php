@@ -11,7 +11,7 @@ header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
 header('Access-Control-Allow-Headers: X-Webhook-Secret, Content-Type');
 header('Access-Control-Max-Age: 86400');
 
-// Handle OPTIONS preflight request
+
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
     http_response_code(204);
     exit;
@@ -22,6 +22,7 @@ header('Content-Type: application/json');
 $config = require __DIR__ . '/config.php';
 require __DIR__ . '/firestore_client.php';
 require __DIR__ . '/../auth_helpers.php';
+require __DIR__ . '/../services/CreditManager.php';
 
 $SEMAPHORE_API_KEY = $config['SEMAPHORE_API_KEY'];
 $SEMAPHORE_URL = $config['SEMAPHORE_URL'];
@@ -29,14 +30,11 @@ $SENDER_IDS = $config['SENDER_IDS'];
 
 validate_api_request();
 
-/* |-------------------------------------------------------------------------- | BASIC LOGGER |-------------------------------------------------------------------------- */
 function log_sms($label, $data)
 {
     error_log("[" . date('Y-m-d H:i:s') . "] $label: " . json_encode($data));
 }
 
-/* |-------------------------------------------------------------------------- | FULL PAYLOAD LOGGER |-------------------------------------------------------------------------- */
-function log_full_payload($raw, $payload)
 {
     $headers = function_exists('getallheaders') ? getallheaders() : [];
     $debug = [
@@ -87,6 +85,14 @@ function clean_numbers($numberString): array
     return array_keys($valid);
 }
 
+/* |-------------------------------------------------------------------------- | CREDIT CALCULATION |-------------------------------------------------------------------------- */
+function calculate_credits($message, $num_recipients)
+{
+    $length = function_exists('mb_strlen') ? mb_strlen($message, 'UTF-8') : strlen($message);
+    $segments = max(1, ceil($length / 160));
+    return (int)($segments * $num_recipients);
+}
+
 /* |-------------------------------------------------------------------------- | DEBUG VIEW |-------------------------------------------------------------------------- */
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $file = sys_get_temp_dir() . '/last_payload_debug.json';
@@ -134,7 +140,7 @@ $validNumbers = clean_numbers($number_input);
 log_sms("NUMBER_AFTER_CLEAN", $validNumbers);
 
 if (empty($validNumbers)) {
-    echo json_encode(["status" => "error", "message" => "No valid PH numbers", "received" => $number_input]);
+    echo json_encode(["status" => "error", "message" => "No valid Philippine numbers found", "received" => $number_input]);
     exit;
 }
 if (!$message) {
@@ -151,48 +157,87 @@ if (!in_array($sender, $SENDER_IDS)) {
     $sender = $SENDER_IDS[0];
 }
 
-/* |-------------------------------------------------------------------------- | SEND SMS |-------------------------------------------------------------------------- */
-$sms_data = [
-    "apikey" => $SEMAPHORE_API_KEY,
-    "number" => implode(',', $validNumbers),
-    "message" => $message,
-    "sendername" => $sender
-];
-log_sms("SEMAPHORE_REQUEST", $sms_data);
+/* |-------------------------------------------------------------------------- | CREDIT CHECK & DEDUCTION |-------------------------------------------------------------------------- */
+$num_recipients = count($validNumbers);
+$required_credits = calculate_credits($message, $num_recipients);
+$creditManager = new CreditManager();
+$account_id = 'default';
 
-$ch = curl_init($SEMAPHORE_URL);
-curl_setopt($ch, CURLOPT_POST, true);
-curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-curl_setopt($ch, CURLOPT_HTTPHEADER, ["Content-Type: application/json"]);
-curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($sms_data));
+try {
+    $creditManager->deduct_credits(
+        $account_id, 
+        $required_credits, 
+        $batch_id ?? ('single_' . bin2hex(random_bytes(4))), 
+        "SMS sent to $num_recipients recipients"
+    );
+} catch (\Exception $e) {
+    if ($e->getMessage() === "Insufficient credits.") {
+        echo json_encode(["status" => "error", "message" => "Insufficient credits"]);
+    } else {
+        echo json_encode(["status" => "error", "message" => "Credit deduction failed: " . $e->getMessage()]);
+    }
+    exit;
+}
 
-$response = curl_exec($ch);
-$status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-$result = json_decode($response, true);
-log_sms("SEMAPHORE_RESPONSE", $result);
+/* |-------------------------------------------------------------------------- | SEND SMS (BATCHED) |-------------------------------------------------------------------------- */
+$chunks = array_chunk($validNumbers, 500);
+$all_results = [];
+$total_status = 200;
+
+foreach ($chunks as $chunk) {
+    $sms_data = [
+        "apikey" => $SEMAPHORE_API_KEY,
+        "number" => implode(',', $chunk),
+        "message" => $message,
+        "sendername" => $sender
+    ];
+    log_sms("SEMAPHORE_REQUEST_CHUNK", ["chunk_size" => count($chunk)]);
+
+    $ch = curl_init($SEMAPHORE_URL);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ["Content-Type: application/json"]);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($sms_data));
+
+    $response = curl_exec($ch);
+    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    if ($status != 200) {
+        $total_status = $status;
+    }
+    $result = json_decode($response, true);
+    log_sms("SEMAPHORE_RESPONSE_CHUNK", $result);
+    
+    if (is_array($result)) {
+        $all_results = array_merge($all_results, $result);
+    }
+}
 
 /* |-------------------------------------------------------------------------- | SAVE FIRESTORE |-------------------------------------------------------------------------- */
-if ($status == 200 && is_array($result)) {
+if (!empty($all_results)) {
     $db = get_firestore();
     $now = new \DateTime();
     $ts = new \Google\Cloud\Core\Timestamp($now);
-    $messages = isset($result[0]) ? $result : [$result];
 
     $isBulk = count($validNumbers) > 1 || !empty($batch_id);
     $conversation_id = $isBulk
         ? ('group_' . ($batch_id ?? 'bulk'))
         : ('conv_' . $validNumbers[0]);
 
-    foreach ($messages as $msg) {
+    // Calculate credits per message for logging
+    $credits_per_message = calculate_credits($message, 1);
+
+    foreach ($all_results as $msg) {
         if (!isset($msg['message_id']))
             continue;
+
+        $messageId = (string)$msg['message_id'];
 
         $recipientRaw = $msg['number'] ?? $msg['recipient'] ?? $msg['to'] ?? null;
         $recipientArr = $recipientRaw ? clean_numbers($recipientRaw) : [];
         $recipient = $recipientArr[0] ?? $validNumbers[0];
 
         $db->collection('messages')
-            ->document($msg['message_id'])
+            ->document($messageId)
             ->set([
             'conversation_id' => $conversation_id,
             'number' => $recipient,
@@ -202,8 +247,27 @@ if ($status == 200 && is_array($result)) {
             'status' => $msg['status'] ?? 'sent',
             'batch_id' => $batch_id,
             'recipient_key' => $recipient_key ?? $recipient,
+            'credits_used' => $credits_per_message,
             'created_at' => $ts,
             'date_created' => $ts,
+        ], ['merge' => true]);
+
+        // Legacy/History log (Web UI currently reads outbound history from sms_logs)
+        // Also keeps retrieve_status.php working (it polls sms_logs where status is Pending/Queued).
+        $db->collection('sms_logs')
+            ->document($messageId)
+            ->set([
+            'message_id'   => $messageId,
+            'numbers'      => [$recipient],
+            'message'      => $message,
+            'sender_id'    => $sender,
+            'status'       => $msg['status'] ?? 'sent',
+            'date_created' => $ts,
+            'source'       => 'semaphore',
+            'batch_id'     => $batch_id,
+            'recipient_key'=> $recipient_key ?? $recipient,
+            'credits_used' => $credits_per_message,
+            'conversation_id' => $conversation_id,
         ], ['merge' => true]);
     }
 
@@ -222,10 +286,11 @@ if ($status == 200 && is_array($result)) {
 }
 
 echo json_encode([
-    "status" => $status == 200 ? "success" : "failed",
+    "status" => $total_status == 200 ? "success" : "partial_or_failed",
     "numbers" => $validNumbers,
     "message" => $message,
     "sender" => $sender,
     "batch_id" => $batch_id,
-    "response" => $result
+    "credits_deducted" => $required_credits,
+    "response" => $all_results
 ]);
