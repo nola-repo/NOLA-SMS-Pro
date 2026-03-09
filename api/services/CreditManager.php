@@ -37,8 +37,16 @@ class CreditManager {
             
             if ($snapshot->exists()) {
                 $current_balance = (int)($snapshot->data()['credit_balance'] ?? 0);
+                $currency = $snapshot->data()['currency'] ?? 'PHP';
             } else {
-                throw new \Exception("Account not found.");
+                $current_balance = 0;
+                $currency = 'PHP';
+                $transaction->set($accountRef, [
+                    'credit_balance' => 0,
+                    'currency' => $currency,
+                    'created_at' => $ts,
+                    'updated_at' => $ts
+                ]);
             }
             
             if ($current_balance < $amount) {

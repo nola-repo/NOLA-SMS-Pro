@@ -35,6 +35,7 @@ function log_sms($label, $data)
     error_log("[" . date('Y-m-d H:i:s') . "] $label: " . json_encode($data));
 }
 
+function log_full_payload($raw, $payload)
 {
     $headers = function_exists('getallheaders') ? getallheaders() : [];
     $debug = [

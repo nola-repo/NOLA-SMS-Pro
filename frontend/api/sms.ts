@@ -13,7 +13,7 @@ export default async function handler(
 
   try {
     // Parse the form data from request body
-    const { number, message, sendername } = request.body || {};
+    const { number, message, sendername, batch_id, name, recipient_key } = request.body || {};
 
     let formattedNumber = number || '';
 
@@ -35,6 +35,9 @@ export default async function handler(
         number: formattedNumber,
         message: message || '',
         sendername: sendername || 'NOLACRM',
+        batch_id,
+        name,
+        recipient_key
       }
     };
 
@@ -47,6 +50,16 @@ export default async function handler(
       body: JSON.stringify(payload),
     });
 
+    if (!webhookResponse.ok) {
+      const errorText = await webhookResponse.text();
+      console.error(`External SMS API Error (${webhookResponse.status}):`, errorText);
+      return response.status(webhookResponse.status).json({
+        status: 'error',
+        message: 'Backend rejected SMS',
+        details: errorText || 'No error details provided by backend'
+      });
+    }
+
     const data = await webhookResponse.json();
 
     return response.status(200).json(data);
@@ -54,7 +67,8 @@ export default async function handler(
     console.error('SMS Proxy Error:', error);
     return response.status(500).json({
       status: 'error',
-      message: 'Failed to send SMS'
+      message: 'Failed to send SMS',
+      details: error instanceof Error ? error.message : String(error)
     });
   }
 }

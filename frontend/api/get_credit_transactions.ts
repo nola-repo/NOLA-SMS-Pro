@@ -18,8 +18,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     try {
-        const urlParams = new URL(`https://dummy.com${req0.url}`).search;
-        const cloudRunUrl = `${CLOUD_RUN_URL}/api/get_credit_transactions.php${urlParams}`;
+        const urlParams = new URL(`https://dummy.com${req.url}`).search;
+        const cloudRunUrl = `${CLOUD_RUN_URL}/api/get_credit_transactions${urlParams}`;
         console.log('Proxying get_credit_transactions to:', cloudRunUrl);
 
         const response = await fetch(cloudRunUrl, {

@@ -25,7 +25,8 @@ $receivedSecret = $headers['X-Webhook-Secret'] ?? $headers['x-webhook-secret'] ?
 
 if ($receivedSecret !== 'f7RkQ2pL9zV3tX8cB1nS4yW6') {
     http_response_code(401);
-    die(json_encode(["status" => "error", "message" => "Unauthorized"]));
+    echo json_encode(["status" => "error", "message" => "Unauthorized"]);
+    exit;
 }
 
 try {

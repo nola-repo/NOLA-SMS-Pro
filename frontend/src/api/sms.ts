@@ -116,18 +116,16 @@ export const sendSms = async (
   }
 
   const payload = {
-    customData: {
-      number: formattedNumber,
-      message: message,
-      sendername: senderName,
-      batch_id: batchId,
-      name: contactName,
-      recipient_key: recipientKey,
-    },
+    number: formattedNumber,
+    message: message,
+    sendername: senderName,
+    batch_id: batchId,
+    name: contactName,
+    recipient_key: recipientKey,
   };
 
-  const SEND_SMS_URL = "https://smspro-api.nolacrm.io/webhook/send_sms.php";
-  console.log("Sending SMS payload directly to production:", payload);
+  const SEND_SMS_URL = "/api/sms";
+  console.log("Sending SMS payload via proxy:", payload);
   console.log("Sending to:", SEND_SMS_URL);
 
   try {
@@ -135,14 +133,20 @@ export const sendSms = async (
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Webhook-Secret": WEBHOOK_SECRET,
       },
       body: JSON.stringify(payload),
     });
 
     if (!res.ok) {
       const errorText = await res.text();
-      throw new Error(`HTTP ${res.status}: ${errorText}`);
+      let detailsText = '';
+      try {
+        const errJson = JSON.parse(errorText);
+        detailsText = errJson.details || errJson.message || errorText;
+      } catch (e) {
+        detailsText = errorText;
+      }
+      throw new Error(`HTTP ${res.status}: ${detailsText}`);
     }
 
     const data = await res.json();
@@ -220,10 +224,8 @@ export const fetchMessagesByConversationId = async (
   if (!conversationId) return [];
 
   try {
-    const DIRECT_MESSAGES_URL = `https://smspro-api.nolacrm.io/api/messages?conversation_id=${encodeURIComponent(conversationId)}&limit=${limit}`;
-    const res = await fetch(DIRECT_MESSAGES_URL, {
-      headers: { 'X-Webhook-Secret': WEBHOOK_SECRET }
-    });
+    const DIRECT_MESSAGES_URL = `/api/messages?conversation_id=${encodeURIComponent(conversationId)}&limit=${limit}`;
+    const res = await fetch(DIRECT_MESSAGES_URL);
     if (!res.ok) throw new Error(`Failed to fetch conversation messages: ${res.status}`);
     const data = await res.json();
     return (data.data || data || []) as FirestoreMessage[];
@@ -239,10 +241,8 @@ export const fetchMessagesByConversationId = async (
  */
 export const fetchConversations = async (): Promise<Conversation[]> => {
   try {
-    const CONVERSATIONS_URL = "https://smspro-api.nolacrm.io/api/conversations";
-    const res = await fetch(CONVERSATIONS_URL, {
-      headers: { 'X-Webhook-Secret': WEBHOOK_SECRET },
-    });
+    const CONVERSATIONS_URL = "/api/messages?action=fetch_conversations";
+    const res = await fetch(CONVERSATIONS_URL);
     if (!res.ok) throw new Error(`Failed to fetch conversations: ${res.status}`);
     const data = await res.json();
     // Data may be { data: [...] } or a plain array or { conversations: [...] }
@@ -276,10 +276,8 @@ export const fetchMessagesByRecipientKey = async (recipientKey: string): Promise
 // Fetch all bulk messages from Firestore (grouped by batch)
 export const fetchAllBulkMessages = async (): Promise<BulkMessageHistoryItem[]> => {
   try {
-    const BULK_CAMPAIGNS_URL = "https://smspro-api.nolacrm.io/api/bulk-campaigns";
-    const res = await fetch(BULK_CAMPAIGNS_URL, {
-      headers: { 'X-Webhook-Secret': WEBHOOK_SECRET }
-    });
+    const BULK_CAMPAIGNS_URL = "/api/messages?action=fetch_bulk_messages";
+    const res = await fetch(BULK_CAMPAIGNS_URL);
     console.log('[fetchAllBulkMessages] Response status:', res.status);
     if (!res.ok) {
       const errorText = await res.text();
