@@ -11,3 +11,4 @@ api/webhook/last_payload.json
 .env
 config.local.php
 api/webhook/nola-sms-pro-*.json
+ frontend/

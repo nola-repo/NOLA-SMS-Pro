@@ -1,6 +1,9 @@
 # Dependencies installed in container
 vendor/
 
+# Frontend lives in its own folder; backend image is PHP only
+frontend/
+
 # Git and IDE
 .git
 .gitignore

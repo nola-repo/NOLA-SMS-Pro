@@ -1,6 +1,24 @@
 RewriteEngine On
 
+# Hide .php by redirecting direct access to clean URLs
+# (Only triggers for real browser/client requests; internal rewrites are not redirected.)
+RewriteCond %{THE_REQUEST} \s/+api/webhook/send_sms\.php[\s?] [NC]
+RewriteRule ^api/webhook/send_sms\.php$ /webhook/send_sms [R=301,L]
+RewriteCond %{THE_REQUEST} \s/+api/webhook/receive_sms\.php[\s?] [NC]
+RewriteRule ^api/webhook/receive_sms\.php$ /webhook/receive_sms [R=301,L]
+RewriteCond %{THE_REQUEST} \s/+api/webhook/retrieve_status\.php[\s?] [NC]
+RewriteRule ^api/webhook/retrieve_status\.php$ /webhook/retrieve_status [R=301,L]
+RewriteCond %{THE_REQUEST} \s/+api/messages\.php[\s?] [NC]
+RewriteRule ^api/messages\.php$ /api/messages [R=301,L]
+RewriteCond %{THE_REQUEST} \s/+api/contacts\.php[\s?] [NC]
+RewriteRule ^api/contacts\.php$ /api/contacts [R=301,L]
+RewriteCond %{THE_REQUEST} \s/+api/credits\.php[\s?] [NC]
+RewriteRule ^api/credits\.php$ /api/credits [R=301,L]
+RewriteCond %{THE_REQUEST} \s/+ghl_callback\.php[\s?] [NC]
+RewriteRule ^ghl_callback\.php$ /oauth/callback [R=301,L]
+
 RewriteRule ^webhook/send_sms$ /api/webhook/send_sms.php [L]
+RewriteRule ^webhook/send_sms\.php$ /api/webhook/send_sms.php [L]
 RewriteRule ^webhook/receive_sms$ /api/webhook/receive_sms.php [L]
 RewriteRule ^webhook/retrieve_status$ /api/webhook/retrieve_status.php [L]
 
