@@ -32,13 +32,18 @@ $out = [
 
 try {
     // Bulk fetch by batch_id (frontend: /api/messages?batch_id=...).
-    // Uses same index pattern as bulk campaigns: direction + batch_id + date_created.
     if ($batchId !== null && $batchId !== '') {
-        $query = $db->collection('messages')
-            ->where('direction', '==', 'outbound')
-            ->where('batch_id', '==', $batchId)
-            ->orderBy('batch_id', 'ASC')
-            ->orderBy('date_created', 'DESC')
+        $q = $db->collection('messages')
+            ->where('batch_id', '==', $batchId);
+
+        // Allow combined filtering for a specific contact in a bulk batch
+        if ($recipientKey) {
+            $q = $q->where('recipient_key', '==', (string)$recipientKey);
+        } elseif ($conversationId) {
+            $q = $q->where('conversation_id', '==', (string)$conversationId);
+        }
+
+        $query = $q->orderBy('date_created', 'DESC')
             ->limit($limit)
             ->offset($offset);
 
@@ -56,7 +61,6 @@ try {
                 'batch_id'         => $d['batch_id'] ?? null,
                 'recipient_key'    => $d['recipient_key'] ?? null,
                 'date_created'     => isset($d['date_created']) ? $d['date_created']->formatAsString() : null,
-                'created_at'       => isset($d['created_at']) ? $d['created_at']->formatAsString() : null,
                 'name'             => $d['name'] ?? null,
             ];
         }
