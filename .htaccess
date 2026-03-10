@@ -1,12 +1,13 @@
 RewriteEngine On
 Options +FollowSymLinks
 
-# ── CORS preflight: Apache handles OPTIONS directly so headers are always present ──
+# ── CORS preflight: Apache handles OPTIONS directly ──
+SetEnvIf Request_Method OPTIONS IS_OPTIONS
 <IfModule mod_headers.c>
-    Header always set Access-Control-Allow-Origin "*"
-    Header always set Access-Control-Allow-Methods "GET, POST, PUT, DELETE, PATCH, OPTIONS"
-    Header always set Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Webhook-Secret"
-    Header always set Access-Control-Max-Age "86400"
+    Header always set Access-Control-Allow-Origin "*" env=IS_OPTIONS
+    Header always set Access-Control-Allow-Methods "GET, POST, PUT, DELETE, PATCH, OPTIONS" env=IS_OPTIONS
+    Header always set Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Webhook-Secret" env=IS_OPTIONS
+    Header always set Access-Control-Max-Age "86400" env=IS_OPTIONS
 </IfModule>
 
 RewriteCond %{REQUEST_METHOD} OPTIONS

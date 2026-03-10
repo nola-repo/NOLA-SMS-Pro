@@ -12,8 +12,8 @@ RUN apt-get update && apt-get install -y \
 # Install extensions for Composer and Firestore (bcmath is required by brick/math)
 RUN docker-php-ext-install zip bcmath
 
-# Enable mod_rewrite for .htaccess
-RUN a2enmod rewrite
+# Enable mod_rewrite and mod_headers for .htaccess and CORS
+RUN a2enmod rewrite headers
 
 # Apache: listen on 8080 (Cloud Run default PORT)
 RUN sed -i 's/Listen 80/Listen 8080/' /etc/apache2/ports.conf \

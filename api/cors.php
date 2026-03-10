@@ -2,10 +2,14 @@
 
 /**
  * Handles CORS headers and OPTIONS preflight requests.
- * Apache (.htaccess) now sets Access-Control-Allow-* headers globally via
- * "Header always set", so we only need to handle the OPTIONS early-exit here
- * as a safety net for environments where .htaccess rewrite isn't active.
  */
+
+$origin = $_SERVER['HTTP_ORIGIN'] ?? '*';
+header('Access-Control-Allow-Origin: ' . $origin);
+header('Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE, PATCH');
+header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Webhook-Secret');
+header('Access-Control-Allow-Credentials: true');
+header('Access-Control-Max-Age: 86400');
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
     http_response_code(204);
