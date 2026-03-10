@@ -4,18 +4,8 @@ ini_set('display_errors', 0);
 ini_set('display_startup_errors', 0);
 error_reporting(E_ALL);
 
-// CORS + preflight (Web UI)
-$origin = $_SERVER['HTTP_ORIGIN'] ?? '*';
+require_once __DIR__ . '/cors.php';
 header('Content-Type: application/json');
-header('Access-Control-Allow-Origin: ' . $origin);
-header('Access-Control-Allow-Methods: GET, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type, X-Webhook-Secret');
-header('Access-Control-Max-Age: 86400');
-
-if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
-    http_response_code(204);
-    exit;
-}
 
 require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
@@ -176,17 +166,22 @@ try {
     }
 
     if ($direction === 'outbound' || $direction === 'all') {
-        $fetchLimit = $status ? min($limit * 3, 150) : ($direction === 'outbound' ? $limit : (int)($limit / 2));
-        $outboundQuery = $db->collection('sms_logs')
-            ->orderBy('date_created', 'DESC')
-            ->limit($fetchLimit)
+        $q = $db->collection('sms_logs')
+            ->orderBy('date_created', 'DESC');
+
+        if ($status) {
+            $q = $q->where('status', '==', $status);
+        }
+
+        $fetchLimit = ($direction === 'outbound' ? $limit : (int)($limit / 2));
+        $outboundQuery = $q->limit($fetchLimit)
             ->offset($direction === 'outbound' ? $offset : 0);
 
         $rows = [];
         foreach ($outboundQuery->documents() as $doc) {
             if (!$doc->exists()) continue;
             $d = $doc->data();
-            $row = [
+            $rows[] = [
                 'id'           => $doc->id(),
                 'direction'    => 'outbound',
                 'message_id'   => $d['message_id'] ?? null,
@@ -197,10 +192,8 @@ try {
                 'date_created' => isset($d['date_created']) ? $d['date_created']->formatAsString() : null,
                 'source'       => $d['source'] ?? null,
             ];
-            if ($status && ($row['status'] ?? '') !== $status) continue;
-            $rows[] = $row;
         }
-        $out['data'] = array_merge($out['data'], array_slice($rows, 0, $direction === 'outbound' ? $limit : (int)($limit / 2)));
+        $out['data'] = array_merge($out['data'], $rows);
     }
 
     if ($direction === 'all') {

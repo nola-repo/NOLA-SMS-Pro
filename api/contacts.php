@@ -4,6 +4,7 @@ ini_set('display_errors', 0);
 ini_set('display_startup_errors', 0);
 error_reporting(E_ALL);
 
+require_once __DIR__ . '/cors.php';
 header('Content-Type: application/json');
 
 require __DIR__ . '/webhook/firestore_client.php';
@@ -30,9 +31,14 @@ try {
         $offset = max((int)($_GET['offset'] ?? 0), 0);
         $phone  = $_GET['phone'] ?? null;
 
-        $query = $db->collection('contacts')
-            ->orderBy('created_at', 'DESC')
-            ->limit($limit)
+        $q = $db->collection('contacts')
+            ->orderBy('created_at', 'DESC');
+
+        if ($phone) {
+            $q = $q->where('phone', '==', $phone);
+        }
+
+        $query = $q->limit($limit)
             ->offset($offset);
 
         $results = [];
@@ -41,7 +47,7 @@ try {
                 continue;
             }
             $d = $doc->data();
-            $row = [
+            $results[] = [
                 'id'         => $doc->id(),
                 'name'       => $d['name'] ?? null,
                 'phone'      => $d['phone'] ?? null,
@@ -49,10 +55,6 @@ try {
                 'created_at' => isset($d['created_at']) ? $d['created_at']->formatAsString() : null,
                 'updated_at' => isset($d['updated_at']) ? $d['updated_at']->formatAsString() : null,
             ];
-            if ($phone && $row['phone'] !== $phone) {
-                continue;
-            }
-            $results[] = $row;
         }
 
         echo json_encode([

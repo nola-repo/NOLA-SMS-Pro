@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/../cors.php';
 date_default_timezone_set('UTC');
 
 $logFile = __DIR__ . '/logs/cron_execution.log';
@@ -48,16 +49,21 @@ foreach ($documents as $doc) {
         if (isset($decoded[0]['status'])) {
             $newStatus = $decoded[0]['status'];
 
+            // Update in sms_logs
             $doc->reference()->update([
                 ['path' => 'status', 'value' => $newStatus],
             ]);
 
             // Also update the main UI 'messages' collection
+            // In our system, the document ID in 'messages' collection is the Semaphore messageId (string)
             $messageRef = $db->collection('messages')->document($messageId);
-            if ($messageRef->snapshot()->exists()) {
+            try {
                 $messageRef->update([
                     ['path' => 'status', 'value' => $newStatus],
                 ]);
+            } catch (\Exception $e) {
+                // If the document doesn't exist in 'messages', we can ignore it or log it
+                error_log("Failed to update status in 'messages' for ID $messageId: " . $e->getMessage());
             }
         }
     }

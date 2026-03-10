@@ -3,18 +3,7 @@ ini_set('display_errors', 0);
 ini_set('display_startup_errors', 0);
 error_reporting(E_ALL);
 
-// CORS Headers
-$origin = $_SERVER['HTTP_ORIGIN'] ?? '*';
-header('Access-Control-Allow-Origin: ' . $origin);
-header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-header('Access-Control-Allow-Headers: X-Webhook-Secret, Content-Type');
-header('Access-Control-Max-Age: 86400');
-
-if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
-    http_response_code(204);
-    exit;
-}
-
+require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 
 require __DIR__ . '/../webhook/firestore_client.php';
@@ -34,14 +23,13 @@ try {
     // Search in 'messages' collection which is the new standard
     $collection = $db->collection('messages');
 
-    // Get all outbound messages with batch_id.
-    // Ensure direction is outbound and batch_id exists and is not empty.
-    $query = $collection->where('direction', '=', 'outbound')
-        ->where('batch_id', '!=', '')
+    // Get all messages with batch_id.
+    // Focusing on batch_id existence as the primary identifier for bulk messages.
+    $query = $collection->where('batch_id', '!=', '')
         ->orderBy('batch_id')
         ->orderBy('date_created', 'DESC');
 
-    $logs = $query->limit(500)->documents();
+    $logs = $query->limit(1000)->documents();
 
     // Group by batch_id
     $batches = [];
