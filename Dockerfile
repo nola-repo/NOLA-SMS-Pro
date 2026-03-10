@@ -9,8 +9,8 @@ RUN apt-get update && apt-get install -y \
     libcurl4-openssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install zip extension for Composer (grpc already in base image)
-RUN docker-php-ext-install zip
+# Install extensions for Composer and Firestore (bcmath is required by brick/math)
+RUN docker-php-ext-install zip bcmath
 
 # Enable mod_rewrite for .htaccess
 RUN a2enmod rewrite
