@@ -1,4 +1,16 @@
 RewriteEngine On
+Options +FollowSymLinks
+
+# ── CORS preflight: Apache handles OPTIONS directly so headers are always present ──
+<IfModule mod_headers.c>
+    Header always set Access-Control-Allow-Origin "*"
+    Header always set Access-Control-Allow-Methods "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+    Header always set Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Webhook-Secret"
+    Header always set Access-Control-Max-Age "86400"
+</IfModule>
+
+RewriteCond %{REQUEST_METHOD} OPTIONS
+RewriteRule ^ - [R=204,L]
 
 # Hide .php by redirecting direct access to clean URLs
 # (Only triggers for real browser/client requests; internal rewrites are not redirected.)
@@ -38,6 +50,9 @@ RewriteRule ^api/get_credit_transactions$ /api/get_credit_transactions.php [L]
 
 # Bulk campaigns API (for Web UI)
 RewriteRule ^api/bulk-campaigns$ /api/webhook/fetch_bulk_messages.php [L]
+
+# GHL Contacts proxy (for Web UI — proxies to GoHighLevel API)
+RewriteRule ^api/ghl-contacts$ /api/ghl_contacts.php [L]
 
 # Conversations API (for Web UI sidebar)
 RewriteRule ^api/conversations$ /api/conversations.php [L]
