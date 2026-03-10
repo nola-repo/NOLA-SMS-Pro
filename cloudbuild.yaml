@@ -1,4 +1,4 @@
-# Google Cloud Build: build and push the SMS API image for Cloud Run
+# Google Cloud Build: build, push and deploy the SMS API image to Cloud Run
 # Run from project root: gcloud builds submit --config=cloudbuild.yaml .
 
 steps:
@@ -7,8 +7,6 @@ steps:
     args:
       - 'build'
       - '-t'
-      - 'gcr.io/$PROJECT_ID/sms-api:$COMMIT_SHA'
-      - '-t'
       - 'gcr.io/$PROJECT_ID/sms-api:latest'
       - '.'
 
@@ -16,15 +14,23 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
-      - 'gcr.io/$PROJECT_ID/sms-api:$COMMIT_SHA'
-
-  - name: 'gcr.io/cloud-builders/docker'
-    args:
-      - 'push'
       - 'gcr.io/$PROJECT_ID/sms-api:latest'
 
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'sms-api'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/sms-api:latest'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+
 images:
-  - 'gcr.io/$PROJECT_ID/sms-api:$COMMIT_SHA'
   - 'gcr.io/$PROJECT_ID/sms-api:latest'
 
 options:
