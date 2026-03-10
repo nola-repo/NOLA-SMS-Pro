@@ -14,6 +14,8 @@ RewriteCond %{THE_REQUEST} \s/+api/contacts\.php[\s?] [NC]
 RewriteRule ^api/contacts\.php$ /api/contacts [R=301,L]
 RewriteCond %{THE_REQUEST} \s/+api/credits\.php[\s?] [NC]
 RewriteRule ^api/credits\.php$ /api/credits [R=301,L]
+RewriteCond %{THE_REQUEST} \s/+api/get_credit_transactions\.php[\s?] [NC]
+RewriteRule ^api/get_credit_transactions\.php$ /api/get_credit_transactions [R=301,L]
 RewriteCond %{THE_REQUEST} \s/+ghl_callback\.php[\s?] [NC]
 RewriteRule ^ghl_callback\.php$ /oauth/callback [R=301,L]
 
@@ -30,6 +32,9 @@ RewriteRule ^api/contacts$ /api/contacts.php [L]
 
 # Credit balance API (for Web UI)
 RewriteRule ^api/credits$ /api/credits.php [L]
+
+# Credit transactions ledger API
+RewriteRule ^api/get_credit_transactions$ /api/get_credit_transactions.php [L]
 
 # Bulk campaigns API (for Web UI)
 RewriteRule ^api/bulk-campaigns$ /api/webhook/fetch_bulk_messages.php [L]
