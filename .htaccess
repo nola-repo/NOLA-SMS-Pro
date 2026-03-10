@@ -37,6 +37,9 @@ RewriteRule ^webhook/send_sms\.php$ /api/webhook/send_sms.php [L]
 RewriteRule ^webhook/receive_sms$ /api/webhook/receive_sms.php [L]
 RewriteRule ^webhook/retrieve_status$ /api/webhook/retrieve_status.php [L]
 
+# SMS sending API
+RewriteRule ^api/sms$ /api/webhook/send_sms.php [L]
+
 # Message history API (for Web UI)
 RewriteRule ^api/messages$ /api/messages.php [L]
 
