@@ -123,7 +123,7 @@ Your PHP code reads from `config.php`. For production you can move secrets to Cl
 ```bash
 gcloud run services update sms-api ^
   --region asia-southeast1 ^
-  --set-env-vars "SEMAPHORE_API_KEY=your_key_here"
+  --set-env-vars "SEMAPHORE_API_KEY=your_key_here,GHL_CLIENT_ID=your_id,GHL_CLIENT_SECRET=your_secret"
 ```
 
 To use a **custom service account** (from Step 3):

@@ -24,7 +24,7 @@ Use this base for all endpoints below (no trailing slash).
 | POST | `/api/contacts` | `X-Webhook-Secret` | Create contact. Body: `{ "name", "phone", "email" }`. |
 | GET  | `/api/credits`  | `X-Webhook-Secret` | Get current credit balance for the default account. |
 | GET  | `/api/get_credit_transactions` | `X-Webhook-Secret` | Fetch credit ledger array. Query: `account_id` (defaults to 'default'), `limit`. |
-| GET  | `/oauth/callback` | None | GHL OAuth callback. GHL redirects here with `?code=...` (optional `&state=locationId`). Writes tokens to Firestore `integrations/ghl` or `integrations/ghl_{locationId}` per subaccount. |
+| GET  | `/oauth/callback` | None | GHL OAuth callback. GHL redirects here with `?code=...` (optional `&state=locationId`). Writes tokens to Firestore `ghl_tokens/{locationId}`. Each subaccount/location gets its own doc. |
 
 ---
 
@@ -78,7 +78,7 @@ Example: `X-Webhook-Secret: f7RkQ2pL9zV3tX8cB1nS4yW6`
 
 | Collection | Document(s) | Created by |
 |------------|-------------|------------|
-| **integrations** | `ghl` or `ghl_{locationId}` | `ghl_callback.php` — GHL OAuth tokens per subaccount. If install link includes `&state=locationId` or GHL returns a location id, tokens are stored in `integrations/ghl_{locationId}`; otherwise in `integrations/ghl`. Each subaccount/location gets its own doc. |
+| **ghl_tokens** | `{locationId}` | `ghl_callback.php` — GHL OAuth tokens per subaccount. Each subaccount/location gets its own doc named after its raw `locationId`. |
 | **messages** | `{message_id}` | `send_sms.php` — Every SMS for UI: `conversation_id`, `number`, `message`, `direction`, `sender_id`, `status`, `batch_id`, `created_at`. Frontend loads with `?conversation_id=conv_XXX` or `group_batch_XXX`. |
 | **conversations** | `conv_{number}` or `group_{batch_id}` | `send_sms.php` — Chat sidebar: `type` (direct\|bulk), `members`, `last_message`, `last_message_at`, `name`. |
 | **sms_logs** | `{message_id}` | `send_sms.php` — Low-level outbound logs (same data, for debugging/analytics). Fields include `credits_used`. |

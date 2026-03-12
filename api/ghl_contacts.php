@@ -8,39 +8,213 @@ require_once __DIR__ . '/cors.php';
 header('Content-Type: application/json');
 
 require __DIR__ . '/webhook/firestore_client.php';
+require __DIR__ . '/auth_helpers.php';
 
 $db = get_firestore();
+
+$locationHeader = get_ghl_location_id();
 
 /**
  * Get the latest GHL credentials from Firestore.
  */
-function getGHLIntegration($db)
+function getGHLIntegration($db, $locationId = null)
 {
-    // We try to get the 'ghl' document or any document starting with 'ghl_'
-    $integrations = $db->collection('integrations')->limit(1)->documents();
+    if ($locationId) {
+        // Primary: doc ID = raw locationId (canonical format written by ghl_oauth.php / ghl_callback.php)
+        $doc = $db->collection('ghl_tokens')->document((string)$locationId)->snapshot();
+        if ($doc->exists()) {
+            $data = $doc->data();
+            $data['firestore_doc_id'] = (string)$locationId;
+            return $data;
+        }
+
+        // Fallback: search by location_id field (handles any legacy docs in ghl_tokens)
+        $query = $db->collection('ghl_tokens')->where('location_id', '==', $locationId)->limit(1)->documents();
+        foreach ($query as $doc) {
+            if ($doc->exists()) {
+                $data = $doc->data();
+                $data['firestore_doc_id'] = $doc->id();
+                return $data;
+            }
+        }
+
+        // If locationId was requested but not found, return null to avoid using a different location's token
+        return null;
+    }
+
+    // No locationId provided: return first available token (single-tenant fallback only)
+    $integrations = $db->collection('ghl_tokens')->limit(1)->documents();
     foreach ($integrations as $doc) {
         if ($doc->exists()) {
-            return $doc->data();
+            $data = $doc->data();
+            $data['firestore_doc_id'] = $doc->id();
+            return $data;
         }
     }
     return null;
 }
 
-$integration = getGHLIntegration($db);
+/**
+ * Refresh GHL OAuth token and update Firestore.
+ */
+function refreshGHLToken($db, $integration)
+{
+    $clientId = getenv('GHL_CLIENT_ID');
+    $clientSecret = getenv('GHL_CLIENT_SECRET');
+    $refreshToken = $integration['refresh_token'] ?? null;
+    $docId = $integration['firestore_doc_id'] ?? 'ghl';
+
+    if (!$clientId || !$clientSecret || !$refreshToken) {
+        $missing = [];
+        if (!$clientId) $missing[] = 'GHL_CLIENT_ID';
+        if (!$clientSecret) $missing[] = 'GHL_CLIENT_SECRET';
+        if (!$refreshToken) $missing[] = 'refresh_token (in Firestore)';
+        
+        throw new Exception("GHL Refresh Error: Missing " . implode(', ', $missing) . ". Ensure environment variables are set in Cloud Run.");
+    }
+
+    $tokenUrl = 'https://services.leadconnectorhq.com/oauth/token';
+    $postData = [
+        'client_id' => $clientId,
+        'client_secret' => $clientSecret,
+        'grant_type' => 'refresh_token',
+        'refresh_token' => $refreshToken,
+        'user_type' => 'Location',
+    ];
+
+    $ch = curl_init($tokenUrl);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => http_build_query($postData),
+        CURLOPT_HTTPHEADER => [
+            'Accept: application/json',
+            'Content-Type: application/x-www-form-urlencoded',
+            'Version: 2021-07-28',
+        ],
+    ]);
+
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    $data = json_decode($response, true);
+
+    if ($httpCode !== 200 || !is_array($data)) {
+        throw new Exception("GHL token refresh failed with code $httpCode: " . ($data['error_description'] ?? $response));
+    }
+
+    $now = new DateTimeImmutable();
+    $expires = (int)($data['expires_in'] ?? 0);
+    $expiresAtUnix = time() + $expires; // Unix int — consistent with ghl_oauth.php
+
+    $updateData = [
+        'access_token'  => $data['access_token'] ?? null,
+        'refresh_token' => $data['refresh_token'] ?? null,
+        'expires_at'    => $expiresAtUnix,
+        'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
+        'raw_refresh'   => $data,
+    ];
+
+    // Write back to ghl_tokens using the raw locationId as the doc ID
+    $db->collection('ghl_tokens')->document($docId)->set($updateData, ['merge' => true]);
+
+    return $data['access_token'];
+}
+
+$integration = getGHLIntegration($db, $locationHeader);
 if (!$integration) {
-    http_response_code(500);
-    echo json_encode(['error' => 'GHL integration not configured in Firestore.']);
+    http_response_code(404);
+    echo json_encode([
+        'error' => 'GHL integration not found.',
+        'requested_location' => $locationHeader ?: 'default',
+        'suggestion' => 'Ensure the location ID is correctly passed in the X-GHL-Location-ID header and configured in Firestore.'
+    ]);
     exit;
 }
 
 $GHL_API_URL = 'https://services.leadconnectorhq.com';
-$GHL_LOCATION_ID = $integration['location_id'] ?? null;
+$GHL_LOCATION_ID = $locationHeader ?? $integration['location_id'] ?? null;
 $GHL_API_TOKEN = $integration['access_token'] ?? null;
+
+// PROACTIVE REFRESH: If token expires within 5 minutes, refresh it now
+$isExpired = false;
+if (isset($integration['expires_at'])) {
+    $expiresAt = $integration['expires_at']; 
+    $now = time();
+    // Google Cloud Timestamp to Unix seconds if needed, or check format
+    $expiresSeconds = $expiresAt instanceof \Google\Cloud\Core\Timestamp ? $expiresAt->get()->getTimestamp() : (int)$expiresAt;
+    if ($expiresSeconds - $now < 300) { $isExpired = true; }
+}
+
+if ($isExpired) {
+    try {
+        $GHL_API_TOKEN = refreshGHLToken($db, $integration);
+        header('X-GHL-Token-Refreshed: proactive');
+    } catch (Exception $e) {
+        // Log refresh failure but try with old token anyway (may still work if clock skew)
+        error_log("Proactive refresh failed: " . $e->getMessage());
+    }
+}
 
 if (!$GHL_LOCATION_ID || !$GHL_API_TOKEN) {
     http_response_code(500);
-    echo json_encode(['error' => 'GHL location_id or access_token missing in Firestore.']);
+    echo json_encode([
+        'error' => 'GHL configuration incomplete.',
+        'details' => 'location_id or access_token missing in Firestore document: ' . ($integration['firestore_doc_id'] ?? 'unknown')
+    ]);
     exit;
+}
+
+/**
+ * Execute a cURL request with automatic retry on 401.
+ */
+function executeGHLRequest($url, $method, $headers, $payload = null, $db, &$integration)
+{
+    $attempt = 1;
+    while ($attempt <= 2) {
+        $ch = curl_init($url);
+        $options = [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HTTPHEADER => $headers,
+        ];
+
+        if ($method === 'POST') {
+            $options[CURLOPT_POST] = true;
+            $options[CURLOPT_POSTFIELDS] = $payload;
+        } elseif ($method === 'PUT') {
+            $options[CURLOPT_CUSTOMREQUEST] = 'PUT';
+            $options[CURLOPT_POSTFIELDS] = $payload;
+        } elseif ($method === 'DELETE') {
+            $options[CURLOPT_CUSTOMREQUEST] = 'DELETE';
+        }
+
+        curl_setopt_array($ch, $options);
+        $body = curl_exec($ch);
+        $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($status === 401 && $attempt === 1) {
+            try {
+                $newToken = refreshGHLToken($db, $integration);
+                // Update local token for retry
+                $integration['access_token'] = $newToken;
+                // Update header for retry
+                foreach ($headers as &$h) {
+                    if (str_starts_with($h, 'Authorization: Bearer')) {
+                        $h = "Authorization: Bearer {$newToken}";
+                        break;
+                    }
+                }
+                $attempt++;
+                continue;
+            } catch (Exception $e) {
+                return ['status' => 401, 'body' => json_encode(['error' => 'Token refresh failed', 'details' => $e->getMessage()])];
+            }
+        }
+
+        return ['status' => $status, 'body' => $body];
+    }
 }
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -66,19 +240,15 @@ try {
     // ── GET — fetch contacts ────────────────────────────────────────────
     if ($method === 'GET') {
         $url = "{$GHL_API_URL}/contacts?locationId={$GHL_LOCATION_ID}&limit=100";
+        $headers = [
+            "Authorization: Bearer {$GHL_API_TOKEN}",
+            'Content-Type: application/json',
+            'Version: 2021-07-28',
+        ];
 
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_HTTPHEADER => [
-                "Authorization: Bearer {$GHL_API_TOKEN}",
-                'Content-Type: application/json',
-                'Version: 2021-07-28',
-            ],
-        ]);
-        $body = curl_exec($ch);
-        $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
+        $resp = executeGHLRequest($url, 'GET', $headers, null, $db, $integration);
+        $status = $resp['status'];
+        $body = $resp['body'];
 
         if ($status >= 400) {
             http_response_code($status);
@@ -95,7 +265,7 @@ try {
 
         $transformed = array_values(array_filter(
             array_map('transformGHLContact', $contacts),
-        fn($c) => !empty($c['phone'])
+            fn($c) => !empty($c['phone'])
         ));
 
         echo json_encode($transformed, JSON_PRETTY_PRINT);
@@ -138,20 +308,15 @@ try {
         ]));
 
         $url = "{$GHL_API_URL}/contacts?locationId={$GHL_LOCATION_ID}";
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => $payload,
-            CURLOPT_HTTPHEADER => [
-                "Authorization: Bearer {$GHL_API_TOKEN}",
-                'Content-Type: application/json',
-                'Version: 2021-07-28',
-            ],
-        ]);
-        $body = curl_exec($ch);
-        $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
+        $headers = [
+            "Authorization: Bearer {$integration['access_token']}",
+            'Content-Type: application/json',
+            'Version: 2021-07-28',
+        ];
+
+        $resp = executeGHLRequest($url, 'POST', $headers, $payload, $db, $integration);
+        $status = $resp['status'];
+        $body = $resp['body'];
 
         if ($status >= 400) {
             http_response_code($status);
@@ -204,20 +369,15 @@ try {
         ]));
 
         $url = "{$GHL_API_URL}/contacts/{$id}?locationId={$GHL_LOCATION_ID}";
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CUSTOMREQUEST => 'PUT',
-            CURLOPT_POSTFIELDS => $payload,
-            CURLOPT_HTTPHEADER => [
-                "Authorization: Bearer {$GHL_API_TOKEN}",
-                'Content-Type: application/json',
-                'Version: 2021-07-28',
-            ],
-        ]);
-        $body = curl_exec($ch);
-        $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
+        $headers = [
+            "Authorization: Bearer {$integration['access_token']}",
+            'Content-Type: application/json',
+            'Version: 2021-07-28',
+        ];
+
+        $resp = executeGHLRequest($url, 'PUT', $headers, $payload, $db, $integration);
+        $status = $resp['status'];
+        $body = $resp['body'];
 
         if ($status >= 400) {
             http_response_code($status);
@@ -246,19 +406,15 @@ try {
         }
 
         $url = "{$GHL_API_URL}/contacts/{$id}?locationId={$GHL_LOCATION_ID}";
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CUSTOMREQUEST => 'DELETE',
-            CURLOPT_HTTPHEADER => [
-                "Authorization: Bearer {$GHL_API_TOKEN}",
-                'Content-Type: application/json',
-                'Version: 2021-07-28',
-            ],
-        ]);
-        $body = curl_exec($ch);
-        $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
+        $headers = [
+            "Authorization: Bearer {$integration['access_token']}",
+            'Content-Type: application/json',
+            'Version: 2021-07-28',
+        ];
+
+        $resp = executeGHLRequest($url, 'DELETE', $headers, null, $db, $integration);
+        $status = $resp['status'];
+        $body = $resp['body'];
 
         if ($status >= 400) {
             http_response_code($status);

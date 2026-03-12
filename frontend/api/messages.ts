@@ -105,6 +105,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const data = await response.json();
       console.log('Cloud Run SMS response:', data);
       return res.status(response.status).json(data);
+    } else if (req.method === 'PUT') {
+      // PUT /api/messages - rename conversation
+      const cloudRunUrl = `${CLOUD_RUN_URL}/api/conversations`;
+      console.log('Proxying PUT to:', cloudRunUrl);
+
+      const response = await fetch(cloudRunUrl, {
+        method: 'PUT',
+        headers: {
+          'X-Webhook-Secret': WEBHOOK_SECRET,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(req.body),
+      });
+
+      const data = await response.json();
+      return res.status(response.status).json(data);
+    } else if (req.method === 'DELETE') {
+      // DELETE /api/messages?conversation_id=xxx
+      const conversationId = req.query.conversation_id;
+      const cloudRunUrl = `${CLOUD_RUN_URL}/api/conversations?id=${conversationId}`;
+      console.log('Proxying DELETE to:', cloudRunUrl);
+
+      const response = await fetch(cloudRunUrl, {
+        method: 'DELETE',
+        headers: {
+          'X-Webhook-Secret': WEBHOOK_SECRET,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const data = await response.json();
+      return res.status(response.status).json(data);
     } else {
       return res.status(405).json({ error: 'Method not allowed' });
     }

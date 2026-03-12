@@ -4,19 +4,7 @@ ini_set('display_errors', 0);
 ini_set('display_startup_errors', 0);
 error_reporting(E_ALL);
 
-// CORS Headers + Preflight
-$origin = $_SERVER['HTTP_ORIGIN'] ?? '*';
-header('Access-Control-Allow-Origin: ' . $origin);
-header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-header('Access-Control-Allow-Headers: X-Webhook-Secret, Content-Type');
-header('Access-Control-Max-Age: 86400');
-
-
-if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
-    http_response_code(204);
-    exit;
-}
-
+require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 
 $config = require __DIR__ . '/config.php';
@@ -118,8 +106,8 @@ log_full_payload($raw, $payload);
 $customData = $payload['customData'] ?? [];
 $data = $payload['data'] ?? [];
 
-$batch_id = $customData['batch_id'] ?? $data['batch_id'] ?? null;
-$recipient_key = $customData['recipient_key'] ?? $data['recipient_key'] ?? null;
+$batch_id = $customData['batch_id'] ?? $data['batch_id'] ?? $payload['batch_id'] ?? $_POST['batch_id'] ?? null;
+$recipient_key = $customData['recipient_key'] ?? $data['recipient_key'] ?? $payload['recipient_key'] ?? $_POST['recipient_key'] ?? null;
 
 $message = $customData['message'] ?? $payload['message'] ?? $data['message'] ?? '';
 
@@ -162,7 +150,8 @@ if (!in_array($sender, $SENDER_IDS)) {
 $num_recipients = count($validNumbers);
 $required_credits = calculate_credits($message, $num_recipients);
 $creditManager = new CreditManager();
-$account_id = 'default';
+$locId = get_ghl_location_id();
+$account_id = $locId ?: 'default';
 
 try {
     $creditManager->deduct_credits(
@@ -237,9 +226,7 @@ if (!empty($all_results)) {
         $recipientArr = $recipientRaw ? clean_numbers($recipientRaw) : [];
         $recipient = $recipientArr[0] ?? $validNumbers[0];
 
-        $db->collection('messages')
-            ->document($messageId)
-            ->set([
+        $msgData = [
             'conversation_id' => $conversation_id,
             'number' => $recipient,
             'message' => $message,
@@ -251,13 +238,19 @@ if (!empty($all_results)) {
             'credits_used' => $credits_per_message,
             'created_at' => $ts,
             'date_created' => $ts,
-        ], ['merge' => true]);
+        ];
+
+        if ($locId) {
+            $msgData['location_id'] = $locId;
+        }
+
+        $db->collection('messages')
+            ->document($messageId)
+            ->set($msgData, ['merge' => true]);
 
         // Legacy/History log (Web UI currently reads outbound history from sms_logs)
         // Also keeps retrieve_status.php working (it polls sms_logs where status is Pending/Queued).
-        $db->collection('sms_logs')
-            ->document($messageId)
-            ->set([
+        $logData = [
             'message_id'   => $messageId,
             'numbers'      => [$recipient],
             'message'      => $message,
@@ -269,13 +262,18 @@ if (!empty($all_results)) {
             'recipient_key'=> $recipient_key ?? $recipient,
             'credits_used' => $credits_per_message,
             'conversation_id' => $conversation_id,
-        ], ['merge' => true]);
+        ];
+
+        if ($locId) {
+            $logData['location_id'] = $locId;
+        }
+
+        $db->collection('sms_logs')
+            ->document($messageId)
+            ->set($logData, ['merge' => true]);
     }
 
-    // Conversation doc for UI sidebar
-    $db->collection('conversations')
-        ->document($conversation_id)
-        ->set([
+    $convData = [
         'id' => $conversation_id,
         'type' => $isBulk ? 'bulk' : 'direct',
         'members' => $validNumbers,
@@ -283,7 +281,16 @@ if (!empty($all_results)) {
         'last_message_at' => $ts,
         'name' => $isBulk ? ($customData['campaign_name'] ?? $batch_id ?? 'Bulk') : ($customData['name'] ?? $validNumbers[0]),
         'updated_at' => $ts,
-    ], ['merge' => true]);
+    ];
+
+    if ($locId) {
+        $convData['location_id'] = $locId;
+    }
+
+    // Conversation doc for UI sidebar
+    $db->collection('conversations')
+        ->document($conversation_id)
+        ->set($convData, ['merge' => true]);
 }
 
 echo json_encode([

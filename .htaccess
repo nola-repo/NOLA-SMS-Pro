@@ -56,7 +56,7 @@ RewriteRule ^api/get_credit_transactions$ /api/get_credit_transactions.php [L]
 RewriteRule ^api/bulk-campaigns$ /api/webhook/fetch_bulk_messages.php [L]
 
 # GHL Contacts proxy (for Web UI — proxies to GoHighLevel API)
-RewriteRule ^api/ghl-contacts$ /api/ghl_contacts.php [L]
+RewriteRule ^api/ghl-contacts$ /api/ghl-contacts.php [L]
 
 # Conversations API (for Web UI sidebar)
 RewriteRule ^api/conversations$ /api/conversations.php [L]

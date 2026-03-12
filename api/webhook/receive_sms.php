@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/../cors.php';
 
 $config = require __DIR__ . '/config.php';
 require __DIR__ . '/firestore_client.php';

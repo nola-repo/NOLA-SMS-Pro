@@ -4,18 +4,7 @@ ini_set('display_errors', 0);
 ini_set('display_startup_errors', 0);
 error_reporting(E_ALL);
 
-// CORS Headers + Preflight
-$origin = $_SERVER['HTTP_ORIGIN'] ?? '*';
-header('Access-Control-Allow-Origin: ' . $origin);
-header('Access-Control-Allow-Methods: GET, OPTIONS');
-header('Access-Control-Allow-Headers: Authorization, Content-Type');
-header('Access-Control-Max-Age: 86400');
-
-if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
-    http_response_code(204);
-    exit;
-}
-
+require_once __DIR__ . '/cors.php';
 header('Content-Type: application/json');
 
 require __DIR__ . '/webhook/firestore_client.php';
@@ -36,7 +25,8 @@ try {
         exit;
     }
 
-    $accountId = $_GET['account_id'] ?? 'default';
+    $locId = get_ghl_location_id();
+    $accountId = $locId ?: 'default';
     $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 50;
     
     // Query credit_transactions for this account, sorted by newest first

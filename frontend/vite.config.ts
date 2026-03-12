@@ -52,25 +52,43 @@ const smsProxyPlugin = () => ({
         // Forward query params to the real backend
         const url = new URL(req.url || '', 'http://localhost');
         const queryString = url.search || '';
-        const cloudRunUrl = `https://smspro-api.nolacrm.io/api/messages${queryString}`;
+        
+        let cloudRunUrl = `https://smspro-api.nolacrm.io/api/messages${queryString}`;
+        
+        // If PUT or DELETE, potentially route to /api/conversations
+        if (req.method === 'PUT') {
+          cloudRunUrl = `https://smspro-api.nolacrm.io/api/conversations`;
+        } else if (req.method === 'DELETE') {
+          const convId = url.searchParams.get('conversation_id');
+          cloudRunUrl = `https://smspro-api.nolacrm.io/api/conversations?id=${convId}`;
+        }
 
-        console.log('Dev proxy GET:', cloudRunUrl);
+        console.log(`Dev proxy ${req.method}:`, cloudRunUrl);
+
+        let body = '';
+        if (req.method === 'POST' || req.method === 'PUT') {
+          await new Promise((resolve) => {
+            req.on('data', chunk => body += chunk.toString());
+            req.on('end', resolve);
+          });
+        }
 
         const response = await fetch(cloudRunUrl, {
-          method: 'GET',
+          method: req.method,
           headers: {
             'X-Webhook-Secret': 'f7RkQ2pL9zV3tX8cB1nS4yW6',
             'Content-Type': 'application/json',
           },
+          body: (req.method === 'POST' || req.method === 'PUT') ? body : undefined,
         });
 
         const data = await response.json();
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify(data));
       } catch (error) {
-        console.error('Dev proxy error for /api/messages:', error);
+        console.error(`Dev proxy error for /api/messages [${req.method}]:`, error);
         res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ status: 'error', message: 'Failed to fetch messages from backend' }));
+        res.end(JSON.stringify({ status: 'error', message: 'Failed to proxy request to backend' }));
       }
     });
 
@@ -95,16 +113,40 @@ const smsProxyPlugin = () => ({
       }
     });
 
-    server.middlewares.use('/api/contacts', (_req, res) => {
-      const mockContacts = [
-        { id: '1', name: 'Raely Ivan Reyes', phone: '0976 173 1036' },
-        { id: '2', name: 'David Monzon', phone: '0970 812 9927' },
-        { id: '3', name: 'Nola Support', phone: '09987654321' },
-        { id: '4', name: 'John Doe', phone: '09223334445' },
-        { id: '5', name: 'Jane Smith', phone: '09556667778' },
-      ];
-      res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify(mockContacts));
+    server.middlewares.use('/api/contacts', async (req, res) => {
+      try {
+        const url = new URL(req.url || '', 'http://localhost');
+        const queryString = url.search || '';
+        const cloudRunUrl = `https://smspro-api.nolacrm.io/api/ghl-contacts${queryString}`;
+
+        console.log(`Dev proxy contacts ${req.method}:`, cloudRunUrl);
+
+        let body = '';
+        if (req.method === 'POST' || req.method === 'PUT') {
+          await new Promise((resolve) => {
+            req.on('data', chunk => body += chunk.toString());
+            req.on('end', resolve);
+          });
+        }
+
+        const response = await fetch(cloudRunUrl, {
+          method: req.method,
+          headers: {
+            'X-Webhook-Secret': 'f7RkQ2pL9zV3tX8cB1nS4yW6',
+            'Content-Type': 'application/json',
+            'X-GHL-Location-ID': req.headers['x-ghl-location-id'] as string || '',
+          },
+          body: (req.method === 'POST' || req.method === 'PUT') ? body : undefined,
+        });
+
+        const data = await response.json();
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(data));
+      } catch (error) {
+        console.error('Dev proxy error for /api/contacts:', error);
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ status: 'error', message: 'Failed to proxy contact request' }));
+      }
     });
   },
 });

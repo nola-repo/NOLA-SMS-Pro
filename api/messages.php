@@ -20,6 +20,7 @@ $batchId         = $_GET['batch_id'] ?? null;        // bulk campaign fetch (fro
 $recipientKey    = $_GET['recipient_key'] ?? null;   // per-recipient bulk thread fetch (frontend)
 $limit           = min((int)($_GET['limit'] ?? 50), 100);
 $offset          = max((int)($_GET['offset'] ?? 0), 0);
+$locId           = get_ghl_location_id();
 $status          = $_GET['status'] ?? null;
 
 $out = [
@@ -35,6 +36,10 @@ try {
     if ($batchId !== null && $batchId !== '') {
         $q = $db->collection('messages')
             ->where('batch_id', '==', $batchId);
+            
+        if ($locId) {
+            $q = $q->where('location_id', '==', $locId);
+        }
 
         // Allow combined filtering for a specific contact in a bulk batch
         if ($recipientKey) {
@@ -92,9 +97,14 @@ try {
             }
         }
 
-        $query = $db->collection('messages')
-            ->where('conversation_id', '==', $conv)
-            ->orderBy('created_at', 'DESC')
+        $q = $db->collection('messages')
+            ->where('conversation_id', '==', $conv);
+
+        if ($locId) {
+            $q = $q->where('location_id', '==', $locId);
+        }
+
+        $query = $q->orderBy('created_at', 'DESC')
             ->limit($limit)
             ->offset($offset);
 
@@ -120,11 +130,15 @@ try {
         exit;
     }
 
-    // Load by conversation (sidebar chat): messages where conversation_id == selectedChat, orderBy created_at
     if ($conversationId !== null && $conversationId !== '') {
-        $query = $db->collection('messages')
-            ->where('conversation_id', '==', $conversationId)
-            ->orderBy('created_at', 'DESC')
+        $q = $db->collection('messages')
+            ->where('conversation_id', '==', $conversationId);
+            
+        if ($locId) {
+            $q = $q->where('location_id', '==', $locId);
+        }
+
+        $query = $q->orderBy('created_at', 'DESC')
             ->limit($limit)
             ->offset($offset);
         foreach ($query->documents() as $doc) {
@@ -150,8 +164,13 @@ try {
     }
 
     if ($direction === 'inbound' || $direction === 'all') {
-        $inboundQuery = $db->collection('inbound_messages')
-            ->orderBy('date_received', 'DESC')
+        $q = $db->collection('inbound_messages');
+        
+        if ($locId) {
+            $q = $q->where('location_id', '==', $locId);
+        }
+
+        $inboundQuery = $q->orderBy('date_received', 'DESC')
             ->limit($direction === 'all' ? (int)($limit / 2) : $limit)
             ->offset($direction === 'all' ? 0 : $offset);
 
@@ -170,12 +189,17 @@ try {
     }
 
     if ($direction === 'outbound' || $direction === 'all') {
-        $q = $db->collection('sms_logs')
-            ->orderBy('date_created', 'DESC');
+        $q = $db->collection('sms_logs');
+
+        if ($locId) {
+            $q = $q->where('location_id', '==', $locId);
+        }
 
         if ($status) {
             $q = $q->where('status', '==', $status);
         }
+
+        $q = $q->orderBy('date_created', 'DESC');
 
         $fetchLimit = ($direction === 'outbound' ? $limit : (int)($limit / 2));
         $outboundQuery = $q->limit($fetchLimit)

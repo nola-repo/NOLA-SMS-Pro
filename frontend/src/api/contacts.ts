@@ -1,6 +1,7 @@
 import type { Contact } from "../types/Contact";
+import { API_BASE_URL } from "./config";
 
-const CONTACTS_API_URL = "/api/contacts";
+const CONTACTS_API_URL = `${API_BASE_URL}/api/ghl-contacts`;
 
 export const fetchContacts = async (): Promise<Contact[]> => {
   try {

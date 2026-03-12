@@ -1,62 +1,68 @@
-# SMS Bulk Group Chat Backend Implementation Guide
+# SMS Pro Backend Implementation & Handoff Guide
 
-To enable the group chat view for bulk campaigns on the frontend, the backend `send_sms.php` must be modified to accept and store a `batch_id` for each message.
+This guide documents critical backend requirements for the synchronization of the frontend with the Cloud Run API.
 
-## 1. Requirement: Store `batch_id` in Firestore
+## 1. Messaging: Store `batch_id` in Firestore
 
-When sending bulk messages, the frontend generates a unique `batch_id` and passes it to the backend for each recipient. 
+When sending bulk messages, the frontend generates a unique `batch_id`. The backend `send_sms.php` must capture and store this.
 
-### Changes in `send_sms.php`
-- Capture the `batch_id` from the POST request.
-- Include `batch_id` in the data object saved to Firestore.
+- **Required**: Capture `batch_id` from POST/JSON body.
+- **Required**: Save `batch_id` as a top-level field in both `messages` and `sms_logs` collections.
 
-#### Recommended Code Snippet:
-```php
-// Existing code capturing inputs
-$number  = $_POST['number'] ?? '';
-$message = $_POST['message'] ?? '';
-$sender  = $_POST['sender']  ?? '';
-$batch_id = $_POST['batch_id'] ?? null; // [NEW] Capture batch_id
+---
 
-// ... existing sending logic ...
+## 2. Messaging: Filter by `batch_id` and `conversation_id`
 
-// Update Firestore logging
-$firestore_logger = [
-    'timestamp'  => time(),
-    'numbers'    => [$number],
-    'message'    => $message,
-    'sender'     => $sender,
-    'status'     => $result['success'] ? 'sent' : 'error',
-    'message_id' => $result['message_id'] ?? 'N/A',
-    'batch_id'   => $batch_id // [NEW] Save batch_id
-];
-// ... rest of firestore save logic ...
-```
+The API must support filtering messages to enable the group chat and direct chat views.
 
-## 2. Requirement: Filter by `batch_id` in `fetch_logs.php`
+- **Endpoint**: `GET /api/messages`
+- **Supported Params**: `?batch_id={id}`, `?conversation_id={id}`, `?recipient_key={key}`.
+- **Logic**: If `batch_id` is present, return only messages matching that batch.
 
-The frontend now calls the messages API with a `batch_id` query parameter to retrieve all messages in a campaign.
+---
 
-### Changes in `fetch_logs.php` (or equivalent)
-- Check for `batch_id` in GET parameters.
-- If present, filter the Firestore query to only return documents matching that `batch_id`.
+## 3. GHL Authentication & Token Refresh
 
-#### Recommended Logic:
-```php
-$batch_id = $_GET['batch_id'] ?? null;
+The GHL API returns **401 Invalid JWT** when the `access_token` expires (typically every 24 hours).
 
-if ($batch_id) {
-    // Return only messages for this campaign
-    $query = $db->collection('sms_logs')
-               ->where('batch_id', '==', $batch_id)
-               ->orderBy('timestamp', 'DESC');
-} else {
-    // Existing logic (filter by phone number or return recent)
-    // ...
-}
-```
+- **Issue**: The current backend implementation does not automatically refresh tokens.
+- **Requirement**: Backend must implement a refresh loop:
+    1. If a 401 error is received from GHL, retrieve the `refresh_token` from the `integrations` collection.
+    2. POST to `https://services.leadconnectorhq.com/oauth/token` using your client secret and relevant params.
+    3. Update the `integrations` document in Firestore with the new `access_token` and `refresh_token`.
+    4. Retry the original request.
 
-## 3. Implementation Checklist
-- [ ] Update `send_sms.php` to accept `batch_id` (already being sent by frontend).
-- [ ] Ensure `batch_id` is a top-level field in the Firestore document for efficient querying.
-- [ ] Verify that the GET `/api/messages?batch_id=xyz` correctly filters and returns historical data.
+---
+
+## 5. Multi-Tenancy: `location_id` Scoping
+
+All data endpoints must filter results by the `X-GHL-Location-ID` header (or `location_id` query param) to ensure data isolation between subaccounts.
+
+- **Endpoints**: `/api/conversations`, `/api/contacts`, `/api/messages`.
+- **Logic**: Add `.where('location_id', '==', $locId)` to all Firestore queries.
+- **Creation**: Ensure newly created records (contacts, conversations) store the `location_id`.
+
+---
+
+## 6. Required Firestore Composite Indices
+
+To prevent "Missing index" errors in production, the following composite indices must be created in the Firebase/GCP Console:
+
+| Collection | Field 1 | Field 2 | Sort Order |
+| :--- | :--- | :--- | :--- |
+| `messages` | `location_id` | `created_at` | Descending |
+| `messages` | `batch_id` | `date_created` | Descending |
+| `messages` | `conversation_id` | `created_at` | Descending |
+| `conversations` | `location_id` | `last_message_at` | Descending |
+| `contacts` | `location_id` | `created_at` | Descending |
+
+---
+
+## 7. Implementation Checklist
+
+- [x] Update `auth_helpers.php` with `get_ghl_location_id()`.
+- [x] Implement `location_id` scoping in `conversations.php`, `contacts.php`, and `messages.php`.
+- [x] Implement `location_id` scoping in `credits.php` and `get_credit_transactions.php`.
+- [x] Implement GHL `access_token` refresh logic in `ghl_contacts.php`.
+- [ ] Create missing composite indexes in Firestore Console (Manual Step).
+- [x] Verify `X-GHL-Location-ID` header awareness.

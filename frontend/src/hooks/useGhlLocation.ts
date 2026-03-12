@@ -6,7 +6,7 @@ export function useGhlLocation() {
 
     useEffect(() => {
         let urlLocation: string | null = null;
-        const possibleKeys = ['location', 'locationId', 'location_id', 'id'];
+        const possibleKeys = ['location', 'locationId', 'location_id', 'locationid', 'id'];
 
         // 1. Parse standard URL search parameters
         const searchParams = new URLSearchParams(window.location.search);

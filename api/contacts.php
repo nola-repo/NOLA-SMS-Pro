@@ -31,8 +31,13 @@ try {
         $offset = max((int)($_GET['offset'] ?? 0), 0);
         $phone  = $_GET['phone'] ?? null;
 
+        $locId = get_ghl_location_id();
         $q = $db->collection('contacts')
             ->orderBy('created_at', 'DESC');
+
+        if ($locId) {
+            $q = $q->where('location_id', '==', $locId);
+        }
 
         if ($phone) {
             $q = $q->where('phone', '==', $phone);
@@ -78,14 +83,21 @@ try {
             exit;
         }
 
+        $locId = get_ghl_location_id();
         $now    = new DateTimeImmutable();
-        $docRef = $db->collection('contacts')->add([
+        $data = [
             'name'       => $name ?: null,
             'phone'      => $phone,
             'email'      => $email ?: null,
             'created_at' => new \Google\Cloud\Core\Timestamp($now),
             'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-        ]);
+        ];
+
+        if ($locId) {
+            $data['location_id'] = $locId;
+        }
+
+        $docRef = $db->collection('contacts')->add($data);
 
         echo json_encode([
             'success' => true,

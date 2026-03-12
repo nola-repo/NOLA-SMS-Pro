@@ -1,7 +1,7 @@
 import type { SmsLog, BulkMessageHistoryItem, FirestoreMessage, Conversation } from "../types/Sms";
+import { API_BASE_URL, WEBHOOK_SECRET } from "./config";
 
-const WEBHOOK_URL = "/api/messages";
-const WEBHOOK_SECRET = "f7RkQ2pL9zV3tX8cB1nS4yW6";
+const WEBHOOK_URL = `${API_BASE_URL}/api/messages`;
 
 export type SenderId = string;
 
@@ -115,17 +115,20 @@ export const sendSms = async (
     };
   }
 
+  // Wrap in customData for the backend webhook (replaces Vercel serverless proxy)
   const payload = {
-    number: formattedNumber,
-    message: message,
-    sendername: senderName,
-    batch_id: batchId,
-    name: contactName,
-    recipient_key: recipientKey,
+    customData: {
+      number: formattedNumber,
+      message: message,
+      sendername: senderName,
+      batch_id: batchId,
+      name: contactName,
+      recipient_key: recipientKey,
+    },
   };
 
-  const SEND_SMS_URL = "/api/sms";
-  console.log("Sending SMS payload via proxy:", payload);
+  const SEND_SMS_URL = `${API_BASE_URL}/webhook/send_sms`;
+  console.log("Sending SMS payload directly:", payload);
   console.log("Sending to:", SEND_SMS_URL);
 
   try {
@@ -133,6 +136,7 @@ export const sendSms = async (
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "X-Webhook-Secret": WEBHOOK_SECRET,
       },
       body: JSON.stringify(payload),
     });
@@ -224,7 +228,7 @@ export const fetchMessagesByConversationId = async (
   if (!conversationId) return [];
 
   try {
-    const DIRECT_MESSAGES_URL = `/api/messages?conversation_id=${encodeURIComponent(conversationId)}&limit=${limit}`;
+    const DIRECT_MESSAGES_URL = `${API_BASE_URL}/api/messages?conversation_id=${encodeURIComponent(conversationId)}&limit=${limit}`;
     const res = await fetch(DIRECT_MESSAGES_URL);
     if (!res.ok) throw new Error(`Failed to fetch conversation messages: ${res.status}`);
     const data = await res.json();
@@ -241,7 +245,7 @@ export const fetchMessagesByConversationId = async (
  */
 export const fetchConversations = async (): Promise<Conversation[]> => {
   try {
-    const CONVERSATIONS_URL = "/api/messages?action=fetch_conversations";
+    const CONVERSATIONS_URL = `${API_BASE_URL}/api/messages?action=fetch_conversations`;
     const res = await fetch(CONVERSATIONS_URL);
     if (!res.ok) throw new Error(`Failed to fetch conversations: ${res.status}`);
     const data = await res.json();
@@ -276,7 +280,7 @@ export const fetchMessagesByRecipientKey = async (recipientKey: string): Promise
 // Fetch all bulk messages from Firestore (grouped by batch)
 export const fetchAllBulkMessages = async (): Promise<BulkMessageHistoryItem[]> => {
   try {
-    const BULK_CAMPAIGNS_URL = "/api/messages?action=fetch_bulk_messages";
+    const BULK_CAMPAIGNS_URL = `${API_BASE_URL}/api/messages?action=fetch_bulk_messages`;
     const res = await fetch(BULK_CAMPAIGNS_URL);
     console.log('[fetchAllBulkMessages] Response status:', res.status);
     if (!res.ok) {

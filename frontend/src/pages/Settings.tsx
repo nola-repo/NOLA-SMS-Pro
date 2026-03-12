@@ -210,15 +210,49 @@ const AccountSection: React.FC = () => {
                     ) : null}
                 </div>
 
-                {form.ghlLocationId && form.ghlOAuthConnected ? (
-                    <div className="flex items-center gap-3 p-3 rounded-xl bg-[#f7f7f7] dark:bg-[#0d0e10] border border-[#e0e0e0] dark:border-[#ffffff0a]">
-                        <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-500">
-                            <FiCheckCircle className="w-5 h-5" />
+                {/* Warning Banner if Location ID is missing */}
+                {!form.ghlLocationId && (
+                    <div className="mb-6 flex items-start gap-3 p-4 bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/30 rounded-xl">
+                        <div className="w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center text-amber-600 dark:text-amber-400 flex-shrink-0">
+                            <FiAlertCircle className="w-6 h-6" />
                         </div>
                         <div>
-                            <p className="text-[13px] font-semibold text-[#111111] dark:text-[#ececf1]">Successfully Connected to GoHighLevel</p>
-                            <p className="text-[12px] font-mono text-[#9aa0a6] mt-0.5">Location: {form.ghlLocationId}</p>
+                            <p className="text-[15px] font-bold text-amber-900 dark:text-amber-300">Location ID Required</p>
+                            <p className="text-[13px] text-amber-800 dark:text-amber-400 mt-1">
+                                Please enter your GHL Location ID manually if it was not auto-detected.
+                            </p>
                         </div>
+                    </div>
+                )}
+
+                <div className="mb-6">
+                    <InputField
+                        label="GHL Location ID"
+                        id="ghlLocationId"
+                        placeholder="Paste your Location ID here"
+                        hint="Your unique GoHighLevel subaccount ID."
+                        {...field("ghlLocationId")}
+                    />
+                </div>
+
+                {form.ghlLocationId && form.ghlOAuthConnected ? (
+                    <div className="space-y-3">
+                        <div className="flex items-center gap-3 p-3 rounded-xl bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800/30">
+                            <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-500 flex-shrink-0">
+                                <FiCheckCircle className="w-5 h-5" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <p className="text-[13px] font-semibold text-emerald-800 dark:text-emerald-300">Connected to GoHighLevel</p>
+                                <p className="text-[11px] text-emerald-700 dark:text-emerald-500 mt-0.5">Token active. Re-authorize if contacts stop loading.</p>
+                            </div>
+                        </div>
+                        <button
+                            onClick={handleConnectGhl}
+                            type="button"
+                            className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#f7f7f7] dark:bg-[#0d0e10] border border-[#e0e0e0] dark:border-[#ffffff0a] hover:border-[#2b83fa]/50 hover:text-[#2b83fa] text-[#6e6e73] dark:text-[#9aa0a6] rounded-xl font-semibold text-[13px] transition-all"
+                        >
+                            <FiRefreshCw className="w-4 h-4" /> Re-authorize GoHighLevel Connection
+                        </button>
                     </div>
                 ) : form.ghlLocationId && !form.ghlOAuthConnected ? (
                     <div className="space-y-4">
@@ -226,7 +260,7 @@ const AccountSection: React.FC = () => {
                             <FiAlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0" />
                             <div>
                                 <p className="text-[13px] font-semibold text-amber-800 dark:text-amber-300">API Authorization Required</p>
-                                <p className="text-[12px] text-amber-700 dark:text-amber-400 mt-0.5">The app is installed (Location: {form.ghlLocationId}), but it needs API access to read contacts and conversations.</p>
+                                <p className="text-[12px] text-amber-700 dark:text-amber-400 mt-0.5">The ID is set, but it needs API access to read contacts and conversations.</p>
                             </div>
                         </div>
                         <button
@@ -237,15 +271,7 @@ const AccountSection: React.FC = () => {
                             <FiGlobe className="w-4 h-4" /> Connect API with GoHighLevel
                         </button>
                     </div>
-                ) : (
-                    <div className="flex items-center gap-3 p-3 rounded-xl bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/30">
-                        <FiAlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0" />
-                        <div>
-                            <p className="text-[13px] font-semibold text-amber-800 dark:text-amber-300">Not Installed</p>
-                            <p className="text-[12px] text-amber-700 dark:text-amber-400 mt-0.5">Please open this app from within GoHighLevel initially to detect your Location ID.</p>
-                        </div>
-                    </div>
-                )}
+                ) : null}
             </Card>
 
             <div className="flex justify-end">

@@ -4,18 +4,8 @@ ini_set('display_errors', 0);
 ini_set('display_startup_errors', 0);
 error_reporting(E_ALL);
 
-// CORS + preflight (Web UI direct calls)
-$origin = $_SERVER['HTTP_ORIGIN'] ?? '*';
+require_once __DIR__ . '/cors.php';
 header('Content-Type: application/json');
-header('Access-Control-Allow-Origin: ' . $origin);
-header('Access-Control-Allow-Methods: GET, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type, X-Webhook-Secret');
-header('Access-Control-Max-Age: 86400');
-
-if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
-    http_response_code(204);
-    exit;
-}
 
 require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
@@ -31,9 +21,16 @@ try {
         $offset = max((int)($_GET['offset'] ?? 0), 0);
         $type   = $_GET['type'] ?? null; // optional: direct | bulk
 
-        $query = $db->collection('conversations')
-            ->orderBy('last_message_at', 'DESC')
-            ->limit($limit)
+        $locId = get_ghl_location_id();
+        
+        $q = $db->collection('conversations')
+            ->orderBy('last_message_at', 'DESC');
+
+        if ($locId) {
+            $q = $q->where('location_id', '==', $locId);
+        }
+
+        $query = $q->limit($limit)
             ->offset($offset);
 
         $rows = [];
@@ -65,14 +62,14 @@ try {
             'offset'  => $offset,
         ], JSON_PRETTY_PRINT);
     } 
-    elseif ($method === 'POST') {
+    elseif ($method === 'POST' || $method === 'PUT') {
         // Update conversation name
         $raw = file_get_contents('php://input');
         $payload = json_decode($raw, true);
         if (!$payload) $payload = $_POST;
 
-        $id = $payload['id'] ?? null;
-        $name = $payload['name'] ?? null;
+        $id = $payload['id'] ?? $_GET['id'] ?? null;
+        $name = $payload['name'] ?? $_GET['name'] ?? null;
 
         if (!$id || !$name) {
             http_response_code(400);
@@ -89,10 +86,17 @@ try {
             exit;
         }
 
-        $docRef->update([
+        $locId = get_ghl_location_id();
+        $updateData = [
             ['path' => 'name', 'value' => $name],
             ['path' => 'updated_at', 'value' => new \Google\Cloud\Core\Timestamp(new \DateTime())]
-        ]);
+        ];
+
+        if ($locId) {
+            $updateData[] = ['path' => 'location_id', 'value' => $locId];
+        }
+
+        $docRef->update($updateData);
 
         echo json_encode(['success' => true, 'message' => 'Conversation updated']);
     }
