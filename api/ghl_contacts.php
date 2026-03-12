@@ -57,7 +57,7 @@ function getGHLIntegration($db, $locationId = null)
 /**
  * Refresh GHL OAuth token and update Firestore.
  */
-function refreshGHLToken($db, $integration)
+function refreshGHLToken($db, &$integration)
 {
     $clientId = getenv('GHL_CLIENT_ID');
     $clientSecret = getenv('GHL_CLIENT_SECRET');
@@ -118,6 +118,11 @@ function refreshGHLToken($db, $integration)
 
     // Write back to ghl_tokens using the raw locationId as the doc ID
     $db->collection('ghl_tokens')->document($docId)->set($updateData, ['merge' => true]);
+
+    // Update the local integration array so the caller has the new token immediately
+    $integration['access_token'] = $data['access_token'] ?? null;
+    $integration['refresh_token'] = $data['refresh_token'] ?? null;
+    $integration['expires_at'] = $expiresAtUnix;
 
     return $data['access_token'];
 }
@@ -241,12 +246,13 @@ try {
     if ($method === 'GET') {
         $url = "{$GHL_API_URL}/contacts?locationId={$GHL_LOCATION_ID}&limit=100";
         $headers = [
-            "Authorization: Bearer {$GHL_API_TOKEN}",
+            "Authorization: Bearer {$integration['access_token']}",
             'Content-Type: application/json',
             'Version: 2021-07-28',
         ];
 
-        $resp = executeGHLRequest($url, 'GET', $headers, null, $db, $integration);
+        $getPayload = null;
+        $resp = executeGHLRequest($url, 'GET', $headers, $getPayload, $db, $integration);
         $status = $resp['status'];
         $body = $resp['body'];
 
@@ -412,7 +418,8 @@ try {
             'Version: 2021-07-28',
         ];
 
-        $resp = executeGHLRequest($url, 'DELETE', $headers, null, $db, $integration);
+        $delPayload = null;
+        $resp = executeGHLRequest($url, 'DELETE', $headers, $delPayload, $db, $integration);
         $status = $resp['status'];
         $body = $resp['body'];
 

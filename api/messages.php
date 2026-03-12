@@ -14,21 +14,21 @@ validate_api_request();
 
 $db = get_firestore();
 
-$direction       = $_GET['direction'] ?? 'outbound'; // outbound | inbound | all
-$conversationId  = $_GET['conversation_id'] ?? null; // when set, load messages for one chat (fixes bulk mixing)
-$batchId         = $_GET['batch_id'] ?? null;        // bulk campaign fetch (frontend)
-$recipientKey    = $_GET['recipient_key'] ?? null;   // per-recipient bulk thread fetch (frontend)
-$limit           = min((int)($_GET['limit'] ?? 50), 100);
-$offset          = max((int)($_GET['offset'] ?? 0), 0);
-$locId           = get_ghl_location_id();
-$status          = $_GET['status'] ?? null;
+$direction = $_GET['direction'] ?? 'outbound'; // outbound | inbound | all
+$conversationId = $_GET['conversation_id'] ?? null; // when set, load messages for one chat (fixes bulk mixing)
+$batchId = $_GET['batch_id'] ?? null; // bulk campaign fetch (frontend)
+$recipientKey = $_GET['recipient_key'] ?? null; // per-recipient bulk thread fetch (frontend)
+$limit = min((int)($_GET['limit'] ?? 50), 100);
+$offset = max((int)($_GET['offset'] ?? 0), 0);
+$locId = get_ghl_location_id();
+$status = $_GET['status'] ?? null;
 
 $out = [
     'success' => true,
-    'data'    => [],
-    'total'   => 0,
-    'limit'   => $limit,
-    'offset'  => $offset,
+    'data' => [],
+    'total' => 0,
+    'limit' => $limit,
+    'offset' => $offset,
 ];
 
 try {
@@ -36,7 +36,7 @@ try {
     if ($batchId !== null && $batchId !== '') {
         $q = $db->collection('messages')
             ->where('batch_id', '==', $batchId);
-            
+
         if ($locId) {
             $q = $q->where('location_id', '==', $locId);
         }
@@ -44,7 +44,8 @@ try {
         // Allow combined filtering for a specific contact in a bulk batch
         if ($recipientKey) {
             $q = $q->where('recipient_key', '==', (string)$recipientKey);
-        } elseif ($conversationId) {
+        }
+        elseif ($conversationId) {
             $q = $q->where('conversation_id', '==', (string)$conversationId);
         }
 
@@ -53,20 +54,21 @@ try {
             ->offset($offset);
 
         foreach ($query->documents() as $doc) {
-            if (!$doc->exists()) continue;
+            if (!$doc->exists())
+                continue;
             $d = $doc->data();
             $out['data'][] = [
-                'id'               => $doc->id(),
-                'conversation_id'  => $d['conversation_id'] ?? null,
-                'number'           => $d['number'] ?? null,
-                'message'          => $d['message'] ?? null,
-                'direction'        => $d['direction'] ?? 'outbound',
-                'sender_id'        => $d['sender_id'] ?? null,
-                'status'           => $d['status'] ?? null,
-                'batch_id'         => $d['batch_id'] ?? null,
-                'recipient_key'    => $d['recipient_key'] ?? null,
-                'date_created'     => isset($d['date_created']) ? $d['date_created']->formatAsString() : null,
-                'name'             => $d['name'] ?? null,
+                'id' => $doc->id(),
+                'conversation_id' => $d['conversation_id'] ?? null,
+                'number' => $d['number'] ?? null,
+                'message' => $d['message'] ?? null,
+                'direction' => $d['direction'] ?? 'outbound',
+                'sender_id' => $d['sender_id'] ?? null,
+                'status' => $d['status'] ?? null,
+                'batch_id' => $d['batch_id'] ?? null,
+                'recipient_key' => $d['recipient_key'] ?? null,
+                'date_created' => isset($d['date_created']) ? $d['date_created']->formatAsString() : null,
+                'name' => $d['name'] ?? null,
             ];
         }
         $out['total'] = count($out['data']);
@@ -82,16 +84,21 @@ try {
 
         if (str_starts_with($rk, 'conv_') || str_starts_with($rk, 'group_')) {
             $conv = $rk;
-        } elseif (str_starts_with($rk, 'batch-') || str_starts_with($rk, 'batch_')) {
+        }
+        elseif (str_starts_with($rk, 'batch-') || str_starts_with($rk, 'batch_')) {
             $conv = 'group_' . $rk;
-        } else {
+        }
+        else {
             // If it's a phone number-ish key, normalize to digits and build conv_09XXXXXXXXX
             $digits = preg_replace('/\D+/', '', $rk);
-            if (strlen($digits) === 10 && str_starts_with($digits, '9')) $digits = '0' . $digits;
-            if (strlen($digits) === 12 && str_starts_with($digits, '639')) $digits = '0' . substr($digits, 2);
+            if (strlen($digits) === 10 && str_starts_with($digits, '9'))
+                $digits = '0' . $digits;
+            if (strlen($digits) === 12 && str_starts_with($digits, '639'))
+                $digits = '0' . substr($digits, 2);
             if (strlen($digits) === 11 && str_starts_with($digits, '09')) {
                 $conv = 'conv_' . $digits;
-            } else {
+            }
+            else {
                 // fallback: treat as group key
                 $conv = 'group_' . $rk;
             }
@@ -109,20 +116,21 @@ try {
             ->offset($offset);
 
         foreach ($query->documents() as $doc) {
-            if (!$doc->exists()) continue;
+            if (!$doc->exists())
+                continue;
             $d = $doc->data();
             $out['data'][] = [
-                'id'               => $doc->id(),
-                'conversation_id'  => $d['conversation_id'] ?? null,
-                'number'           => $d['number'] ?? null,
-                'message'          => $d['message'] ?? null,
-                'direction'        => $d['direction'] ?? 'outbound',
-                'sender_id'        => $d['sender_id'] ?? null,
-                'status'           => $d['status'] ?? null,
-                'batch_id'         => $d['batch_id'] ?? null,
-                'recipient_key'    => $d['recipient_key'] ?? null,
-                'created_at'       => isset($d['created_at']) ? $d['created_at']->formatAsString() : null,
-                'name'             => $d['name'] ?? null,
+                'id' => $doc->id(),
+                'conversation_id' => $d['conversation_id'] ?? null,
+                'number' => $d['number'] ?? null,
+                'message' => $d['message'] ?? null,
+                'direction' => $d['direction'] ?? 'outbound',
+                'sender_id' => $d['sender_id'] ?? null,
+                'status' => $d['status'] ?? null,
+                'batch_id' => $d['batch_id'] ?? null,
+                'recipient_key' => $d['recipient_key'] ?? null,
+                'created_at' => isset($d['created_at']) ? $d['created_at']->formatAsString() : null,
+                'name' => $d['name'] ?? null,
             ];
         }
         $out['total'] = count($out['data']);
@@ -133,7 +141,7 @@ try {
     if ($conversationId !== null && $conversationId !== '') {
         $q = $db->collection('messages')
             ->where('conversation_id', '==', $conversationId);
-            
+
         if ($locId) {
             $q = $q->where('location_id', '==', $locId);
         }
@@ -142,20 +150,21 @@ try {
             ->limit($limit)
             ->offset($offset);
         foreach ($query->documents() as $doc) {
-            if (!$doc->exists()) continue;
+            if (!$doc->exists())
+                continue;
             $d = $doc->data();
             $out['data'][] = [
-                'id'               => $doc->id(),
-                'conversation_id'  => $d['conversation_id'] ?? null,
-                'number'           => $d['number'] ?? null,
-                'message'          => $d['message'] ?? null,
-                'direction'        => $d['direction'] ?? 'outbound',
-                'sender_id'        => $d['sender_id'] ?? null,
-                'status'           => $d['status'] ?? null,
-                'batch_id'         => $d['batch_id'] ?? null,
-                'recipient_key'    => $d['recipient_key'] ?? null,
-                'created_at'       => isset($d['created_at']) ? $d['created_at']->formatAsString() : null,
-                'name'             => $d['name'] ?? null,
+                'id' => $doc->id(),
+                'conversation_id' => $d['conversation_id'] ?? null,
+                'number' => $d['number'] ?? null,
+                'message' => $d['message'] ?? null,
+                'direction' => $d['direction'] ?? 'outbound',
+                'sender_id' => $d['sender_id'] ?? null,
+                'status' => $d['status'] ?? null,
+                'batch_id' => $d['batch_id'] ?? null,
+                'recipient_key' => $d['recipient_key'] ?? null,
+                'created_at' => isset($d['created_at']) ? $d['created_at']->formatAsString() : null,
+                'name' => $d['name'] ?? null,
             ];
         }
         $out['total'] = count($out['data']);
@@ -165,7 +174,7 @@ try {
 
     if ($direction === 'inbound' || $direction === 'all') {
         $q = $db->collection('inbound_messages');
-        
+
         if ($locId) {
             $q = $q->where('location_id', '==', $locId);
         }
@@ -175,15 +184,16 @@ try {
             ->offset($direction === 'all' ? 0 : $offset);
 
         foreach ($inboundQuery->documents() as $doc) {
-            if (!$doc->exists()) continue;
+            if (!$doc->exists())
+                continue;
             $d = $doc->data();
             $out['data'][] = [
-                'id'            => $doc->id(),
-                'direction'     => 'inbound',
-                'from'          => $d['from'] ?? null,
-                'message'       => $d['message'] ?? null,
+                'id' => $doc->id(),
+                'direction' => 'inbound',
+                'from' => $d['from'] ?? null,
+                'message' => $d['message'] ?? null,
                 'date_received' => isset($d['date_received']) ? $d['date_received']->formatAsString() : null,
-                'message_id'    => $d['message_id'] ?? null,
+                'message_id' => $d['message_id'] ?? null,
             ];
         }
     }
@@ -207,18 +217,19 @@ try {
 
         $rows = [];
         foreach ($outboundQuery->documents() as $doc) {
-            if (!$doc->exists()) continue;
+            if (!$doc->exists())
+                continue;
             $d = $doc->data();
             $rows[] = [
-                'id'           => $doc->id(),
-                'direction'    => 'outbound',
-                'message_id'   => $d['message_id'] ?? null,
-                'numbers'      => $d['numbers'] ?? [],
-                'message'      => $d['message'] ?? null,
-                'sender_id'    => $d['sender_id'] ?? null,
-                'status'       => $d['status'] ?? null,
+                'id' => $doc->id(),
+                'direction' => 'outbound',
+                'message_id' => $d['message_id'] ?? null,
+                'numbers' => $d['numbers'] ?? [],
+                'message' => $d['message'] ?? null,
+                'sender_id' => $d['sender_id'] ?? null,
+                'status' => $d['status'] ?? null,
                 'date_created' => isset($d['date_created']) ? $d['date_created']->formatAsString() : null,
-                'source'       => $d['source'] ?? null,
+                'source' => $d['source'] ?? null,
             ];
         }
         $out['data'] = array_merge($out['data'], $rows);
@@ -235,11 +246,12 @@ try {
 
     $out['total'] = count($out['data']);
 
-} catch (\Throwable $e) {
+}
+catch (\Throwable $e) {
     http_response_code(500);
     $out = [
         'success' => false,
-        'error'   => 'Failed to fetch messages',
+        'error' => 'Failed to fetch messages',
         'message' => $e->getMessage(),
     ];
 }
