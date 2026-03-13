@@ -139,7 +139,7 @@ if (!$message) {
 
 // Auto batch id for bulk sends if not provided
 if (!$batch_id && count($validNumbers) > 1) {
-    $batch_id = 'batch_' . bin2hex(random_bytes(8));
+    $batch_id = 'batch-' . bin2hex(random_bytes(8));
 }
 
 if (!in_array($sender, $SENDER_IDS)) {
