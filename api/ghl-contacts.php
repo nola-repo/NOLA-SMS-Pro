@@ -177,7 +177,8 @@ function executeGHLRequest(string $url, array $headers, $db, array &$integration
                 }
                 $attempt++;
                 continue;
-            } catch (Exception $e) {
+            }
+            catch (Exception $e) {
                 error_log("[ghl-contacts] Refresh failed: " . $e->getMessage());
                 return ['status' => 401, 'body' => json_encode(['error' => 'Token refresh failed', 'details' => $e->getMessage()])];
             }
@@ -208,7 +209,8 @@ if ($expiresSeconds > 0 && ($expiresSeconds - $now < 300)) {
     try {
         error_log("[ghl-contacts] Proactive refresh for locationId: {$locationId}");
         $integration['access_token'] = refreshGHLToken($db, $integration);
-    } catch (Exception $e) {
+    }
+    catch (Exception $e) {
         error_log("[ghl-contacts] Proactive refresh failed (will try with current token): " . $e->getMessage());
     }
 }
@@ -259,11 +261,14 @@ if ($method === 'POST') {
     $parts = explode(' ', $body['name'] ?? '', 2);
     $ghlBody = [
         'locationId' => $locationId,
-        'firstName'  => $parts[0] ?? '',
-        'lastName'   => $parts[1] ?? '',
-        'phone'      => $body['phone'] ?? '',
-        'email'      => $body['email'] ?? '',
+        'firstName' => $parts[0] ?? '',
+        'lastName' => $parts[1] ?? '',
+        'phone' => $body['phone'] ?? '',
     ];
+
+    if (!empty($body['email'])) {
+        $ghlBody['email'] = $body['email'];
+    }
 
     $ghlUrl = 'https://services.leadconnectorhq.com/contacts/';
     $resp = executeGHLRequest($ghlUrl, $headers, $db, $integration, 'POST', $ghlBody);
@@ -278,8 +283,8 @@ if ($method === 'POST') {
     $contact = $data['contact'] ?? $data;
 
     echo json_encode([
-        'id'    => $contact['id'] ?? null,
-        'name'  => ($contact['firstName'] ?? '') . ' ' . ($contact['lastName'] ?? ''),
+        'id' => $contact['id'] ?? null,
+        'name' => ($contact['firstName'] ?? '') . ' ' . ($contact['lastName'] ?? ''),
         'phone' => $contact['phone'] ?? '',
         'email' => $contact['email'] ?? '',
     ]);
@@ -299,10 +304,13 @@ if ($method === 'PUT') {
     $parts = explode(' ', $body['name'] ?? '', 2);
     $ghlBody = [
         'firstName' => $parts[0] ?? '',
-        'lastName'  => $parts[1] ?? '',
-        'phone'     => $body['phone'] ?? '',
-        'email'     => $body['email'] ?? '',
+        'lastName' => $parts[1] ?? '',
+        'phone' => $body['phone'] ?? '',
     ];
+
+    if (!empty($body['email'])) {
+        $ghlBody['email'] = $body['email'];
+    }
 
     $ghlUrl = "https://services.leadconnectorhq.com/contacts/{$contactId}";
     $resp = executeGHLRequest($ghlUrl, $headers, $db, $integration, 'PUT', $ghlBody);
@@ -317,8 +325,8 @@ if ($method === 'PUT') {
     $contact = $data['contact'] ?? $data;
 
     echo json_encode([
-        'id'    => $contact['id'] ?? $contactId,
-        'name'  => ($contact['firstName'] ?? '') . ' ' . ($contact['lastName'] ?? ''),
+        'id' => $contact['id'] ?? $contactId,
+        'name' => ($contact['firstName'] ?? '') . ' ' . ($contact['lastName'] ?? ''),
         'phone' => $contact['phone'] ?? '',
         'email' => $contact['email'] ?? '',
     ]);
@@ -349,5 +357,3 @@ if ($method === 'DELETE') {
 
 http_response_code(405);
 echo json_encode(['error' => 'Method not allowed']);
-
-
