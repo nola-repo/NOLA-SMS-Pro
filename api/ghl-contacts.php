@@ -136,15 +136,22 @@ function refreshGHLToken($db, array $integration): string
 /**
  * Execute a GHL request with one automatic retry on 401.
  */
-function executeGHLRequest(string $url, array $headers, $db, array &$integration): array
+function executeGHLRequest(string $url, array $headers, $db, array &$integration, string $method = 'GET', $postFields = null): array
 {
     $attempt = 1;
     while ($attempt <= 2) {
         $ch = curl_init($url);
-        curl_setopt_array($ch, [
+        $opts = [
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_HTTPHEADER => $headers,
-        ]);
+            CURLOPT_CUSTOMREQUEST => $method,
+        ];
+
+        if ($postFields !== null) {
+            $opts[CURLOPT_POSTFIELDS] = is_array($postFields) ? json_encode($postFields) : $postFields;
+        }
+
+        curl_setopt_array($ch, $opts);
 
         $body = curl_exec($ch);
         $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -214,31 +221,133 @@ if (empty($accessToken)) {
     exit;
 }
 
-// ── 4. Call GoHighLevel contacts API ──────────────────────────────────────────
+// ── 4. Handle CRUD Requests ───────────────────────────────────────────────────
 
-$ghlUrl = 'https://services.leadconnectorhq.com/contacts/?locationId=' . urlencode($locationId) . '&limit=100';
+$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 $headers = [
     "Authorization: Bearer {$accessToken}",
     'Version: 2021-07-28',
     'Accept: application/json',
+    'Content-Type: application/json',
 ];
 
-$resp = executeGHLRequest($ghlUrl, $headers, $db, $integration);
-$httpStatus = $resp['status'];
-$responseBody = $resp['body'];
+if ($method === 'GET') {
+    $ghlUrl = 'https://services.leadconnectorhq.com/contacts/?locationId=' . urlencode($locationId) . '&limit=100';
+    $resp = executeGHLRequest($ghlUrl, $headers, $db, $integration);
 
-if ($httpStatus >= 400) {
-    http_response_code($httpStatus);
-    echo $responseBody;
+    if ($resp['status'] >= 400) {
+        http_response_code($resp['status']);
+        echo $resp['body'];
+        exit;
+    }
+
+    $data = json_decode($resp['body'], true);
+    $contacts = $data['contacts'] ?? $data['data'] ?? (is_array($data) ? $data : []);
+    error_log("[ghl-contacts] Successfully fetched " . count($contacts) . " contacts for locationId: {$locationId}");
+    echo json_encode(['contacts' => $contacts]);
     exit;
 }
 
-// ── 5. Return contacts ────────────────────────────────────────────────────────
+if ($method === 'POST') {
+    $body = json_decode(file_get_contents('php://input'), true);
+    if (!$body) {
+        http_response_code(400);
+        echo json_encode(['error' => 'Invalid JSON body']);
+        exit;
+    }
 
-$data = json_decode($responseBody, true);
-$contacts = $data['contacts'] ?? $data['data'] ?? (is_array($data) ? $data : []);
+    $parts = explode(' ', $body['name'] ?? '', 2);
+    $ghlBody = [
+        'locationId' => $locationId,
+        'firstName'  => $parts[0] ?? '',
+        'lastName'   => $parts[1] ?? '',
+        'phone'      => $body['phone'] ?? '',
+        'email'      => $body['email'] ?? '',
+    ];
 
-error_log("[ghl-contacts] Successfully fetched " . count($contacts) . " contacts for locationId: {$locationId}");
+    $ghlUrl = 'https://services.leadconnectorhq.com/contacts/';
+    $resp = executeGHLRequest($ghlUrl, $headers, $db, $integration, 'POST', $ghlBody);
 
-echo json_encode(['contacts' => $contacts]);
+    if ($resp['status'] >= 400) {
+        http_response_code($resp['status']);
+        echo $resp['body'];
+        exit;
+    }
+
+    $data = json_decode($resp['body'], true);
+    $contact = $data['contact'] ?? $data;
+
+    echo json_encode([
+        'id'    => $contact['id'] ?? null,
+        'name'  => ($contact['firstName'] ?? '') . ' ' . ($contact['lastName'] ?? ''),
+        'phone' => $contact['phone'] ?? '',
+        'email' => $contact['email'] ?? '',
+    ]);
+    exit;
+}
+
+if ($method === 'PUT') {
+    $body = json_decode(file_get_contents('php://input'), true);
+    $contactId = $body['id'] ?? $_GET['id'] ?? null;
+
+    if (!$contactId) {
+        http_response_code(400);
+        echo json_encode(['error' => 'Missing contact id']);
+        exit;
+    }
+
+    $parts = explode(' ', $body['name'] ?? '', 2);
+    $ghlBody = [
+        'firstName' => $parts[0] ?? '',
+        'lastName'  => $parts[1] ?? '',
+        'phone'     => $body['phone'] ?? '',
+        'email'     => $body['email'] ?? '',
+    ];
+
+    $ghlUrl = "https://services.leadconnectorhq.com/contacts/{$contactId}";
+    $resp = executeGHLRequest($ghlUrl, $headers, $db, $integration, 'PUT', $ghlBody);
+
+    if ($resp['status'] >= 400) {
+        http_response_code($resp['status']);
+        echo $resp['body'];
+        exit;
+    }
+
+    $data = json_decode($resp['body'], true);
+    $contact = $data['contact'] ?? $data;
+
+    echo json_encode([
+        'id'    => $contact['id'] ?? $contactId,
+        'name'  => ($contact['firstName'] ?? '') . ' ' . ($contact['lastName'] ?? ''),
+        'phone' => $contact['phone'] ?? '',
+        'email' => $contact['email'] ?? '',
+    ]);
+    exit;
+}
+
+if ($method === 'DELETE') {
+    $contactId = $_GET['id'] ?? null;
+
+    if (!$contactId) {
+        http_response_code(400);
+        echo json_encode(['error' => 'Missing contact id']);
+        exit;
+    }
+
+    $ghlUrl = "https://services.leadconnectorhq.com/contacts/{$contactId}";
+    $resp = executeGHLRequest($ghlUrl, $headers, $db, $integration, 'DELETE');
+
+    if ($resp['status'] >= 400) {
+        http_response_code($resp['status']);
+        echo $resp['body'];
+        exit;
+    }
+
+    echo json_encode(['success' => $resp['status'] === 200 || $resp['status'] === 204]);
+    exit;
+}
+
+http_response_code(405);
+echo json_encode(['error' => 'Method not allowed']);
+
 

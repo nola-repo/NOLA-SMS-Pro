@@ -22,6 +22,59 @@ $limit = min((int)($_GET['limit'] ?? 50), 100);
 $offset = max((int)($_GET['offset'] ?? 0), 0);
 $locId = get_ghl_location_id();
 $status = $_GET['status'] ?? null;
+$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+
+if ($method === 'PUT') {
+    // Rename conversation
+    $body = json_decode(file_get_contents('php://input'), true);
+    if (!$body) $body = $_POST;
+    $id   = $body['id'] ?? null;
+    $name = $body['name'] ?? null;
+
+    if (!$id || !$name) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'Missing id or name']);
+        exit;
+    }
+
+    $docRef = $db->collection('conversations')->document($id);
+    if (!$docRef->snapshot()->exists()) {
+        http_response_code(404);
+        echo json_encode(['success' => false, 'error' => 'Conversation not found']);
+        exit;
+    }
+
+    $updateData = [
+        ['path' => 'name',       'value' => $name],
+        ['path' => 'updated_at', 'value' => new \Google\Cloud\Core\Timestamp(new \DateTime())]
+    ];
+    if ($locId) {
+        $updateData[] = ['path' => 'location_id', 'value' => $locId];
+    }
+
+    $docRef->update($updateData);
+
+    echo json_encode(['success' => true]);
+    exit;
+}
+
+if ($method === 'DELETE') {
+    $conversationId = $_GET['id'] ?? $_GET['conversation_id'] ?? null;
+
+    if (!$conversationId) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'Missing conversation_id']);
+        exit;
+    }
+
+    $docRef = $db->collection('conversations')->document($conversationId);
+    if ($docRef->snapshot()->exists()) {
+        $docRef->delete();
+    }
+
+    echo json_encode(['success' => true]);
+    exit;
+}
 
 $out = [
     'success' => true,
