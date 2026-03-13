@@ -208,7 +208,7 @@ if (!empty($all_results)) {
     $now = new \DateTime();
     $ts = new \Google\Cloud\Core\Timestamp($now);
 
-    $isBulk = count($validNumbers) > 1 || !empty($batch_id);
+    $isBulk = count($validNumbers) > 1;
     $conversation_id = $isBulk
         ? ('group_' . ($batch_id ?? 'bulk'))
         : ('conv_' . $validNumbers[0]);
