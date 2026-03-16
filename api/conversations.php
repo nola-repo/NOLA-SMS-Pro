@@ -72,11 +72,20 @@ try {
 
         $id = $payload['id'] ?? $_GET['id'] ?? null;
         $name = $payload['name'] ?? $_GET['name'] ?? null;
+        $locId = get_ghl_location_id();
 
-        if (!$id || !$name) {
+        if (!$id || !$name || !$locId) {
             http_response_code(400);
-            echo json_encode(['success' => false, 'error' => 'Missing id or name']);
+            echo json_encode(['success' => false, 'error' => 'Missing id, name or location_id']);
             exit;
+        }
+
+        // Enforce scoping: prefix conv_ IDs with location_id if not already present
+        if (str_starts_with($id, 'conv_')) {
+            $prefix = $locId . '_';
+            if (!str_starts_with($id, $prefix)) {
+                $id = $prefix . $id;
+            }
         }
 
         $docRef = $db->collection('conversations')->document($id);
@@ -88,20 +97,14 @@ try {
             exit;
         }
 
-        $locId = get_ghl_location_id();
-        if (!$locId) {
-            http_response_code(400);
-            echo json_encode(['success' => false, 'error' => 'Missing location_id']);
-            exit;
-        }
-
         $updateData = [
             ['path' => 'name', 'value' => $name],
             ['path' => 'location_id', 'value' => $locId],
-            ['path' => 'updated_at', 'value' => new \Google\Cloud\Core\Timestamp(new \DateTime())]
+            ['path' => 'updated_at', 'value' => new \Google\Cloud\Core\Timestamp(new \DateTime())],
+            ['path' => 'id', 'value' => $id] // Ensure internal ID matches document ID
         ];
-
-        $docRef->update($updateData);
+ 
+        $docRef->set(array_column($updateData, 'value', 'path'), ['merge' => true]);
 
         echo json_encode(['success' => true, 'message' => 'Conversation updated']);
     }

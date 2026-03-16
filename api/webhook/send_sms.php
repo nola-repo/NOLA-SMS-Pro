@@ -213,7 +213,7 @@ if (!empty($all_results)) {
     $prefix = $locId ? ($locId . '_') : '';
     
     $conversation_id = $isBulk
-        ? ($prefix . 'group_' . ($batch_id ?? 'bulk'))
+        ? ('group_' . ($batch_id ?? 'bulk'))
         : ($prefix . 'conv_' . $validNumbers[0]);
 
     // Calculate credits per message for logging

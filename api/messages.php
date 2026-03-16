@@ -141,11 +141,15 @@ try {
         $conv = null;
 
         $prefix = $locId . '_';
-        if (str_starts_with($rk, 'conv_') || str_starts_with($rk, 'group_')) {
+        if (str_starts_with($rk, 'conv_')) {
             $conv = str_starts_with($rk, $prefix) ? $rk : ($prefix . $rk);
         }
+        elseif (str_starts_with($rk, 'group_')) {
+            // Bulk IDs are already unique and usually not prefixed with location_id for group_
+            $conv = $rk;
+        }
         elseif (str_starts_with($rk, 'batch-') || str_starts_with($rk, 'batch_')) {
-            $conv = $prefix . 'group_' . $rk;
+            $conv = 'group_' . $rk;
         }
         else {
             // If it's a phone number-ish key, normalize to digits and build conv_09XXXXXXXXX

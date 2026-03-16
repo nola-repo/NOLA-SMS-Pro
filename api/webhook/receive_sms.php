@@ -42,19 +42,44 @@ if (!$locId) {
 }
 
 $saveData = [
-    'message_id'    => $message_id,
-    'from'          => $senderNumber,
-    'message'       => $message,
-    'type'          => 'inbound',
-    'date_received' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+    'conversation_id' => $convId,
+    'message_id'      => $message_id,
+    'from'            => $senderNumber,
+    'message'         => $message,
+    'direction'       => 'inbound',
+    'status'          => 'Received',
+    'date_received'   => new \Google\Cloud\Core\Timestamp(new \DateTime()),
 ];
 
 if ($locId) {
     $saveData['location_id'] = $locId;
 }
 
+// Store in inbound_messages for backwards compatibility
 $db->collection('inbound_messages')
     ->document($message_id)
     ->set($saveData, ['merge' => true]);
+
+// Also store in messages for unified threads
+$db->collection('messages')
+    ->document($message_id)
+    ->set($saveData, ['merge' => true]);
+
+// UPDATE CONVERSATION to sync with sidebar
+if ($convId) {
+    $now = new \Google\Cloud\Core\Timestamp(new \DateTime());
+    $convData = [
+        'last_message'    => $message,
+        'last_message_at' => $now,
+        'updated_at'      => $now
+    ];
+    if ($locId) {
+        $convData['location_id'] = $locId;
+    }
+    
+    $db->collection('conversations')
+        ->document($convId)
+        ->set($convData, ['merge' => true]);
+}
 
 echo json_encode(["status" => "received"]);
