@@ -158,11 +158,11 @@ try {
         if (str_starts_with($rk, 'conv_')) {
             $conv = str_starts_with($rk, $prefix) ? $rk : ($prefix . $rk);
         }
-        elseif (str_starts_with($rk, 'group_')) {
-            $conv = $rk;
+        elseif (str_starts_with($rk, 'group-') || str_starts_with($rk, 'group_')) {
+            $conv = str_starts_with($rk, $prefix) ? $rk : ($prefix . $rk);
         }
         elseif (str_starts_with($rk, 'batch-') || str_starts_with($rk, 'batch_')) {
-            $conv = 'group_' . $rk;
+            $conv = $prefix . 'group_' . $rk;
         }
         else {
             $digits = preg_replace('/\D+/', '', $rk);

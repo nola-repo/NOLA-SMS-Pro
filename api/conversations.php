@@ -127,9 +127,15 @@ try {
         }
 
         $docRef = $db->collection('conversations')->document($id);
-        
-        if ($docRef->snapshot()->exists()) {
-            $docRef->delete();
+        $snap = $docRef->snapshot();
+        if ($snap->exists()) {
+            if (($snap->data()['location_id'] ?? '') === $locId) {
+                $docRef->delete();
+            } else {
+                http_response_code(403);
+                echo json_encode(['success' => false, 'error' => 'Permission denied']);
+                exit;
+            }
         }
 
         echo json_encode(['success' => true, 'message' => 'Conversation deleted']);
