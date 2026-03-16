@@ -39,8 +39,9 @@ export interface BulkMessageHistoryItem {
   recipientKey: string;
   customName?: string;
   timestamp: string;
-  status: 'sent' | 'partial' | 'failed';
+  status: string;
   batchId?: string;
+  locationId?: string;
   fromDatabase?: boolean;
 }
 

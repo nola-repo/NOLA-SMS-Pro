@@ -41,6 +41,10 @@ try {
             $batchId = $data['batch_id'] ?? '';
 
             if ($batchId) {
+                if (!isset($data['date_created']) && isset($data['created_at'])) {
+                    $data['date_created'] = $data['created_at'];
+                }
+
                 if (isset($data['date_created']) && $data['date_created'] instanceof \Google\Cloud\Core\Timestamp) {
                     $data['date_created'] = $data['date_created']->get()->format('c');
                 }
@@ -53,6 +57,8 @@ try {
                         'first_message' => $data['message'] ?? '',
                         'date_created'  => $data['date_created'],
                         'sender_id'     => $data['sender_id'] ?? 'NOLACRM',
+                        'status'        => $data['status'] ?? 'sent',
+                        'location_id'   => $data['location_id'] ?? $locationId,
                     ];
                 }
 
@@ -82,6 +88,8 @@ try {
             'recipientNumbers'=> $batch['recipients'],
             'timestamp'       => $batch['date_created'],
             'sender_id'       => $batch['sender_id'],
+            'status'          => $batch['status'],
+            'location_id'     => $batch['location_id'],
             'messageCount'    => count($batch['messages']),
         ];
     }, $batches));

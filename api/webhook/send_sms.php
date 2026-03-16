@@ -243,18 +243,19 @@ if (!empty($all_results)) {
 
         $saveData = [
             'conversation_id' => $conversation_id,
-            'location_id'     => $locId,
-            'number'          => $recipient,
-            'message'         => $message,
-            'direction'       => 'outbound',
-            'sender_id'       => $sender_id,
-            'status'          => 'Queued',
-            'batch_id'        => $batch_id,
-            'recipient_key'   => $recipientKey,
-            'created_at'      => $ts,
-            'name'            => $recipientName,
-            'message_id'      => $messageId,
-            'segments'        => $credits_per_message
+            'location_id' => $locId,
+            'number' => $recipient,
+            'message' => $message,
+            'direction' => 'outbound',
+            'sender_id' => $sender_id,
+            'status' => $msg['status'] ?? 'Queued',
+            'batch_id' => $batch_id,
+            'recipient_key' => $recipientKey,
+            'created_at' => $ts,
+            'date_created' => $ts,
+            'name' => $recipientName,
+            'message_id' => $messageId,
+            'segments' => $credits_per_message
         ];
 
         $db->collection('messages')
@@ -287,14 +288,14 @@ if (!empty($all_results)) {
     }
 
     $convData = [
-        'id'               => $conversation_id,
-        'location_id'      => $locId,
-        'last_message'     => $message,
-        'last_message_at'  => $ts,
-        'updated_at'       => $ts,
-        'members'          => $validNumbers,
-        'name'             => $isBulk ? 'Bulk Campaign' : ($recipientName ?: $validNumbers[0]),
-        'type'             => $isBulk ? 'group' : 'direct'
+        'id' => $conversation_id,
+        'location_id' => $locId,
+        'last_message' => $message,
+        'last_message_at' => $ts,
+        'updated_at' => $ts,
+        'members' => $validNumbers,
+        'name' => $isBulk ? 'Bulk Campaign' : ($recipientName ?: $validNumbers[0]),
+        'type' => $isBulk ? 'group' : 'direct'
     ];
 
     // Conversation doc for UI sidebar

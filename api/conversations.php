@@ -53,6 +53,7 @@ try {
 
             $row = [
                 'id'              => $doc->id(),
+                'location_id'     => $d['location_id'] ?? null,
                 'type'            => $d['type'] ?? null,
                 'members'         => $d['members'] ?? [],
                 'name'            => $d['name'] ?? null,

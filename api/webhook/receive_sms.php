@@ -7,11 +7,12 @@ require __DIR__ . '/firestore_client.php';
 $raw = file_get_contents('php://input');
 $data = json_decode($raw, true);
 
-if (!$data) exit;
+if (!$data)
+    exit;
 
 $senderNumber = $data['sender'] ?? '';
-$message      = $data['message'] ?? '';
-$message_id   = $data['message_id'] ?? uniqid();
+$message = $data['message'] ?? '';
+$message_id = $data['message_id'] ?? uniqid();
 
 $db = get_firestore();
 
@@ -46,17 +47,18 @@ foreach ($matchingConvs as $matching) {
     $locId = $matching['locId'];
     $convId = $matching['convId'];
 
-    if (!$locId || !$convId) continue;
+    if (!$locId || !$convId)
+        continue;
 
     $saveData = [
         'conversation_id' => $convId,
-        'location_id'     => $locId,
-        'message_id'      => $message_id . '_' . $locId, // Unique per location to avoid collisions
-        'from'            => $senderNumber,
-        'message'         => $message,
-        'direction'       => 'inbound',
-        'status'          => 'Received',
-        'date_received'   => $now,
+        'location_id' => $locId,
+        'message_id' => $message_id . '_' . $locId, // Unique per location to avoid collisions
+        'from' => $senderNumber,
+        'message' => $message,
+        'direction' => 'inbound',
+        'status' => 'Received',
+        'date_received' => $now,
     ];
 
     // 1. Store in messages (unified thread)
@@ -64,13 +66,13 @@ foreach ($matchingConvs as $matching) {
 
     // 2. Update Sidebar (conversations)
     $db->collection('conversations')->document($convId)->set([
-        'id'              => $convId,
-        'location_id'     => $locId,
-        'last_message'    => $message,
+        'id' => $convId,
+        'location_id' => $locId,
+        'last_message' => $message,
         'last_message_at' => $now,
-        'updated_at'      => $now,
-        'type'            => 'direct',
-        'members'         => [$senderNumber]
+        'updated_at' => $now,
+        'type' => 'direct',
+        'members' => [$senderNumber]
     ], ['merge' => true]);
 
     $processed[] = $locId;

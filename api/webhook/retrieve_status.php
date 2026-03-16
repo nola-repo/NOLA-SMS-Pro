@@ -15,7 +15,7 @@ $config = require __DIR__ . '/config.php';
 require __DIR__ . '/firestore_client.php';
 
 $apiKey = $config['SEMAPHORE_API_KEY'];
-$db     = get_firestore();
+$db = get_firestore();
 
 // Find all SMS logs with status Queued or Pending
 $query = $db->collection('sms_logs')
@@ -28,8 +28,8 @@ foreach ($documents as $doc) {
         continue;
     }
 
-    $data       = $doc->data();
-    $messageId  = $data['message_id'] ?? null;
+    $data = $doc->data();
+    $messageId = $data['message_id'] ?? null;
 
     if (!$messageId) {
         continue;
@@ -61,7 +61,8 @@ foreach ($documents as $doc) {
                 $messageRef->update([
                     ['path' => 'status', 'value' => $newStatus],
                 ]);
-            } catch (\Exception $e) {
+            }
+            catch (\Exception $e) {
                 // If the document doesn't exist in 'messages', we can ignore it or log it
                 error_log("Failed to update status in 'messages' for ID $messageId: " . $e->getMessage());
             }

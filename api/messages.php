@@ -132,6 +132,7 @@ try {
             $out['data'][] = [
                 'id' => $doc->id(),
                 'conversation_id' => $d['conversation_id'] ?? null,
+                'location_id' => $d['location_id'] ?? null,
                 'number' => $d['number'] ?? null,
                 'message' => $d['message'] ?? null,
                 'direction' => $d['direction'] ?? 'outbound',
@@ -191,6 +192,7 @@ try {
             $out['data'][] = [
                 'id' => $doc->id(),
                 'conversation_id' => $d['conversation_id'] ?? null,
+                'location_id' => $d['location_id'] ?? null,
                 'number' => $d['number'] ?? null,
                 'message' => $d['message'] ?? null,
                 'direction' => $d['direction'] ?? 'outbound',
@@ -222,6 +224,7 @@ try {
             $out['data'][] = [
                 'id' => $doc->id(),
                 'conversation_id' => $d['conversation_id'] ?? null,
+                'location_id' => $d['location_id'] ?? null,
                 'number' => $d['number'] ?? null,
                 'message' => $d['message'] ?? null,
                 'direction' => $d['direction'] ?? 'outbound',
