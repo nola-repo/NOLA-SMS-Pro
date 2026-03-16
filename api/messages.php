@@ -46,19 +46,25 @@ if ($method === 'PUT') {
     }
 
     $docRef = $db->collection('conversations')->document($id);
-    if (!$docRef->snapshot()->exists()) {
+    $snap = $docRef->snapshot();
+    if (!$snap->exists()) {
         http_response_code(404);
         echo json_encode(['success' => false, 'error' => 'Conversation not found']);
         exit;
     }
 
+    // Security: Check ownership
+    if (($snap->data()['location_id'] ?? '') !== $locId) {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'error' => 'Permission denied']);
+        exit;
+    }
+
     $updateData = [
         ['path' => 'name',       'value' => $name],
+        ['path' => 'location_id', 'value' => $locId],
         ['path' => 'updated_at', 'value' => new \Google\Cloud\Core\Timestamp(new \DateTime())]
     ];
-    if ($locId) {
-        $updateData[] = ['path' => 'location_id', 'value' => $locId];
-    }
 
     $docRef->update($updateData);
 
@@ -76,8 +82,16 @@ if ($method === 'DELETE') {
     }
 
     $docRef = $db->collection('conversations')->document($conversationId);
-    if ($docRef->snapshot()->exists()) {
-        $docRef->delete();
+    $snap = $docRef->snapshot();
+    if ($snap->exists()) {
+        // Security: Check ownership
+        if (($snap->data()['location_id'] ?? '') === $locId) {
+            $docRef->delete();
+        } else {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'error' => 'Permission denied']);
+            exit;
+        }
     }
 
     echo json_encode(['success' => true]);
@@ -145,25 +159,20 @@ try {
             $conv = str_starts_with($rk, $prefix) ? $rk : ($prefix . $rk);
         }
         elseif (str_starts_with($rk, 'group_')) {
-            // Bulk IDs are already unique and usually not prefixed with location_id for group_
             $conv = $rk;
         }
         elseif (str_starts_with($rk, 'batch-') || str_starts_with($rk, 'batch_')) {
             $conv = 'group_' . $rk;
         }
         else {
-            // If it's a phone number-ish key, normalize to digits and build conv_09XXXXXXXXX
             $digits = preg_replace('/\D+/', '', $rk);
-            if (strlen($digits) === 10 && str_starts_with($digits, '9'))
-                $digits = '0' . $digits;
-            if (strlen($digits) === 12 && str_starts_with($digits, '639'))
-                $digits = '0' . substr($digits, 2);
-            if (strlen($digits) === 11 && str_starts_with($digits, '09')) {
+            if (strlen($digits) >= 10) {
+                // Normalize and scope
+                if (strlen($digits) === 10 && str_starts_with($digits, '9')) $digits = '0' . $digits;
+                if (strlen($digits) === 12 && str_starts_with($digits, '639')) $digits = '0' . substr($digits, 2);
                 $conv = $prefix . 'conv_' . $digits;
-            }
-            else {
-                // fallback: treat as group key
-                $conv = $prefix . 'group_' . $rk;
+            } else {
+                $conv = 'group_' . $rk;
             }
         }
  

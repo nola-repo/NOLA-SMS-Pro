@@ -24,13 +24,24 @@ try {
         $locId = get_ghl_location_id();
         if (!$locId) {
             http_response_code(400);
-            echo json_encode(['success' => false, 'error' => 'Missing location_id']);
+            echo json_encode(['success' => false, 'error' => 'Missing location_id (X-GHL-Location-ID header required)']);
             exit;
         }
-        
+
+        $conversationId = $_GET['id'] ?? $_GET['conversation_id'] ?? null;
         $q = $db->collection('conversations')
-            ->where('location_id', '==', $locId)
-            ->orderBy('last_message_at', 'DESC');
+                ->where('location_id', '==', $locId);
+
+        if ($conversationId) {
+            // Enforce prefixing for lookup if needed
+            $prefix = $locId . '_';
+            if (str_starts_with($conversationId, 'conv_') && !str_starts_with($conversationId, $prefix)) {
+                $conversationId = $prefix . $conversationId;
+            }
+            $q = $q->where('id', '==', $conversationId);
+        }
+        
+        $q = $q->orderBy('last_message_at', 'DESC');
 
         $query = $q->limit($limit)
             ->offset($offset);
@@ -72,7 +83,6 @@ try {
 
         $id = $payload['id'] ?? $_GET['id'] ?? null;
         $name = $payload['name'] ?? $_GET['name'] ?? null;
-        $locId = get_ghl_location_id();
 
         if (!$id || !$name || !$locId) {
             http_response_code(400);
@@ -80,7 +90,7 @@ try {
             exit;
         }
 
-        // Enforce scoping: prefix conv_ IDs with location_id if not already present
+        // AUTO-SCOPE: Ensure ID is location-prefixed if it's a direct conv
         if (str_starts_with($id, 'conv_')) {
             $prefix = $locId . '_';
             if (!str_starts_with($id, $prefix)) {
@@ -97,13 +107,11 @@ try {
             exit;
         }
 
-        $updateData = [
-            ['path' => 'name', 'value' => $name],
-            ['path' => 'location_id', 'value' => $locId],
-            ['path' => 'updated_at', 'value' => new \Google\Cloud\Core\Timestamp(new \DateTime())],
-            ['path' => 'id', 'value' => $id] // Ensure internal ID matches document ID
-        ];
- 
+        if ($locId) {
+            $updateData[] = ['path' => 'location_id', 'value' => $locId];
+        }
+        $updateData[] = ['path' => 'id', 'value' => $id];
+
         $docRef->set(array_column($updateData, 'value', 'path'), ['merge' => true]);
 
         echo json_encode(['success' => true, 'message' => 'Conversation updated']);

@@ -148,9 +148,17 @@ if (!in_array($sender, $SENDER_IDS)) {
 /* |-------------------------------------------------------------------------- | CREDIT CHECK & DEDUCTION |-------------------------------------------------------------------------- */
 $num_recipients = count($validNumbers);
 $required_credits = CreditManager::calculateRequiredCredits($message, $num_recipients);
-$creditManager = new CreditManager();
+
+// ── Multi-Tenancy: Get and Validate locationId ──────────────────────────────────
 $locId = get_ghl_location_id();
+if (!$locId) {
+    http_response_code(400);
+    echo json_encode(['error' => 'Missing location_id (X-GHL-Location-ID header or query param required)']);
+    exit;
+}
 $account_id = $locId ?: 'default';
+
+$creditManager = new CreditManager();
 
 try {
     $creditManager->deduct_credits(
@@ -210,8 +218,8 @@ if (!empty($all_results)) {
     $ts = new \Google\Cloud\Core\Timestamp($now);
 
     $isBulk = count($validNumbers) > 1;
-    $prefix = $locId ? ($locId . '_') : '';
-    
+    $prefix = $locId . '_';
+
     $conversation_id = $isBulk
         ? ('group_' . ($batch_id ?? 'bulk'))
         : ($prefix . 'conv_' . $validNumbers[0]);
@@ -229,27 +237,29 @@ if (!empty($all_results)) {
         $recipientArr = $recipientRaw ? clean_numbers($recipientRaw) : [];
         $recipient = $recipientArr[0] ?? $validNumbers[0];
 
-        $msgData = [
-            'conversation_id' => $conversation_id,
-            'number' => $recipient,
-            'message' => $message,
-            'sender_id' => $sender,
-            'direction' => 'outbound',
-            'status' => $msg['status'] ?? 'Queued',
-            'batch_id' => $batch_id,
-            'recipient_key' => $recipient_key ?? $recipient,
-            'credits_used' => $credits_per_message,
-            'created_at' => $ts,
-            'date_created' => $ts,
-        ];
+        $sender_id = $sender; // Assuming $sender is already defined
+        $recipientKey = $recipient_key ?? $recipient; // Assuming $recipient_key is already defined
+        $recipientName = $customData['name'] ?? $recipient; // Assuming $customData is defined
 
-        if ($locId) {
-            $msgData['location_id'] = $locId;
-        }
+        $saveData = [
+            'conversation_id' => $conversation_id,
+            'location_id'     => $locId,
+            'number'          => $recipient,
+            'message'         => $message,
+            'direction'       => 'outbound',
+            'sender_id'       => $sender_id,
+            'status'          => 'Queued',
+            'batch_id'        => $batch_id,
+            'recipient_key'   => $recipientKey,
+            'created_at'      => $ts,
+            'name'            => $recipientName,
+            'message_id'      => $messageId,
+            'segments'        => $credits_per_message
+        ];
 
         $db->collection('messages')
             ->document($messageId)
-            ->set($msgData, ['merge' => true]);
+            ->set($saveData, ['merge' => true]);
 
         // Legacy/History log (Web UI currently reads outbound history from sms_logs)
         // Also keeps retrieve_status.php working (it polls sms_logs where status is Pending/Queued).
@@ -277,18 +287,15 @@ if (!empty($all_results)) {
     }
 
     $convData = [
-        'id' => $conversation_id,
-        'type' => $isBulk ? 'bulk' : 'direct',
-        'members' => $validNumbers,
-        'last_message' => $message,
-        'last_message_at' => $ts,
-        'name' => $isBulk ? ($customData['campaign_name'] ?? $batch_id ?? 'Bulk') : ($customData['name'] ?? $validNumbers[0]),
-        'updated_at' => $ts,
+        'id'               => $conversation_id,
+        'location_id'      => $locId,
+        'last_message'     => $message,
+        'last_message_at'  => $ts,
+        'updated_at'       => $ts,
+        'members'          => $validNumbers,
+        'name'             => $isBulk ? 'Bulk Campaign' : ($recipientName ?: $validNumbers[0]),
+        'type'             => $isBulk ? 'group' : 'direct'
     ];
-
-    if ($locId) {
-        $convData['location_id'] = $locId;
-    }
 
     // Conversation doc for UI sidebar
     $db->collection('conversations')

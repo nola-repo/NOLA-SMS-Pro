@@ -36,13 +36,13 @@ foreach ($convQuery as $doc) {
 }
 
 if (!$locId) {
-    error_log("[receive_sms] No recent conversation found for {$senderNumber}. Inbound message will be unscoped.");
-    // Fallback to unscoped conversation ID if no location identified
-    $convId = 'conv_' . $senderNumber;
+    error_log("[receive_sms] FAILED: No recent conversation or GHL association found for {$senderNumber}. Dropping inbound message to prevent cross-account bleeding.");
+    exit(json_encode(["status" => "ignored", "reason" => "unmapped_sender"]));
 }
 
 $saveData = [
     'conversation_id' => $convId,
+    'location_id'     => $locId,
     'message_id'      => $message_id,
     'from'            => $senderNumber,
     'message'         => $message,
@@ -51,35 +51,23 @@ $saveData = [
     'date_received'   => new \Google\Cloud\Core\Timestamp(new \DateTime()),
 ];
 
-if ($locId) {
-    $saveData['location_id'] = $locId;
-}
+// 1. Store in inbound_messages (compatibility)
+$db->collection('inbound_messages')->document($message_id)->set($saveData, ['merge' => true]);
 
-// Store in inbound_messages for backwards compatibility
-$db->collection('inbound_messages')
-    ->document($message_id)
-    ->set($saveData, ['merge' => true]);
+// 2. Store in messages (unified thread)
+$db->collection('messages')->document($message_id)->set($saveData, ['merge' => true]);
 
-// Also store in messages for unified threads
-$db->collection('messages')
-    ->document($message_id)
-    ->set($saveData, ['merge' => true]);
+// 3. Update Sidebar (conversations)
+$now = new \Google\Cloud\Core\Timestamp(new \DateTime());
+$convDocRef = $db->collection('conversations')->document($convId);
+$convDocRef->set([
+    'id'              => $convId,
+    'location_id'     => $locId,
+    'last_message'    => $message,
+    'last_message_at' => $now,
+    'updated_at'      => $now,
+    'type'            => 'direct',
+    'members'         => [$senderNumber]
+], ['merge' => true]);
 
-// UPDATE CONVERSATION to sync with sidebar
-if ($convId) {
-    $now = new \Google\Cloud\Core\Timestamp(new \DateTime());
-    $convData = [
-        'last_message'    => $message,
-        'last_message_at' => $now,
-        'updated_at'      => $now
-    ];
-    if ($locId) {
-        $convData['location_id'] = $locId;
-    }
-    
-    $db->collection('conversations')
-        ->document($convId)
-        ->set($convData, ['merge' => true]);
-}
-
-echo json_encode(["status" => "received"]);
+echo json_encode(["status" => "received", "location_id" => $locId, "conversation_id" => $convId]);
