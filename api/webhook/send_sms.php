@@ -210,9 +210,11 @@ if (!empty($all_results)) {
     $ts = new \Google\Cloud\Core\Timestamp($now);
 
     $isBulk = count($validNumbers) > 1;
+    $prefix = $locId ? ($locId . '_') : '';
+    
     $conversation_id = $isBulk
-        ? ('group_' . ($batch_id ?? 'bulk'))
-        : ('conv_' . $validNumbers[0]);
+        ? ($prefix . 'group_' . ($batch_id ?? 'bulk'))
+        : ($prefix . 'conv_' . $validNumbers[0]);
 
     // Calculate credits per message for logging
     $credits_per_message = CreditManager::calculateRequiredCredits($message, 1);

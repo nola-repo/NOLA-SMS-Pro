@@ -32,12 +32,15 @@ try {
         $phone  = $_GET['phone'] ?? null;
 
         $locId = get_ghl_location_id();
-        $q = $db->collection('contacts')
-            ->orderBy('created_at', 'DESC');
-
-        if ($locId) {
-            $q = $q->where('location_id', '==', $locId);
+        if (!$locId) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'Missing location_id']);
+            exit;
         }
+
+        $q = $db->collection('contacts')
+            ->where('location_id', '==', $locId)
+            ->orderBy('created_at', 'DESC');
 
         if ($phone) {
             $q = $q->where('phone', '==', $phone);
@@ -84,18 +87,21 @@ try {
         }
 
         $locId = get_ghl_location_id();
+        if (!$locId) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'Missing location_id']);
+            exit;
+        }
+
         $now    = new DateTimeImmutable();
         $data = [
-            'name'       => $name ?: null,
-            'phone'      => $phone,
-            'email'      => $email ?: null,
-            'created_at' => new \Google\Cloud\Core\Timestamp($now),
-            'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+            'name'        => $name ?: null,
+            'phone'       => $phone,
+            'email'       => $email ?: null,
+            'location_id' => $locId,
+            'created_at'  => new \Google\Cloud\Core\Timestamp($now),
+            'updated_at'  => new \Google\Cloud\Core\Timestamp($now),
         ];
-
-        if ($locId) {
-            $data['location_id'] = $locId;
-        }
 
         $docRef = $db->collection('contacts')->add($data);
 

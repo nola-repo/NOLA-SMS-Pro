@@ -24,6 +24,14 @@ $locId = get_ghl_location_id();
 $status = $_GET['status'] ?? null;
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
+if ($method === 'GET') {
+    if (!$locId) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'Missing location_id']);
+        exit;
+    }
+}
+
 if ($method === 'PUT') {
     // Rename conversation
     $body = json_decode(file_get_contents('php://input'), true);
@@ -88,11 +96,8 @@ try {
     // Bulk fetch by batch_id (frontend: /api/messages?batch_id=...).
     if ($batchId !== null && $batchId !== '') {
         $q = $db->collection('messages')
+            ->where('location_id', '==', $locId)
             ->where('batch_id', '==', $batchId);
-
-        if ($locId) {
-            $q = $q->where('location_id', '==', $locId);
-        }
 
         // Allow combined filtering for a specific contact in a bulk batch
         if ($recipientKey) {
@@ -135,11 +140,12 @@ try {
         $rk = (string)$recipientKey;
         $conv = null;
 
+        $prefix = $locId . '_';
         if (str_starts_with($rk, 'conv_') || str_starts_with($rk, 'group_')) {
-            $conv = $rk;
+            $conv = str_starts_with($rk, $prefix) ? $rk : ($prefix . $rk);
         }
         elseif (str_starts_with($rk, 'batch-') || str_starts_with($rk, 'batch_')) {
-            $conv = 'group_' . $rk;
+            $conv = $prefix . 'group_' . $rk;
         }
         else {
             // If it's a phone number-ish key, normalize to digits and build conv_09XXXXXXXXX
@@ -149,20 +155,17 @@ try {
             if (strlen($digits) === 12 && str_starts_with($digits, '639'))
                 $digits = '0' . substr($digits, 2);
             if (strlen($digits) === 11 && str_starts_with($digits, '09')) {
-                $conv = 'conv_' . $digits;
+                $conv = $prefix . 'conv_' . $digits;
             }
             else {
                 // fallback: treat as group key
-                $conv = 'group_' . $rk;
+                $conv = $prefix . 'group_' . $rk;
             }
         }
-
+ 
         $q = $db->collection('messages')
+            ->where('location_id', '==', $locId)
             ->where('conversation_id', '==', $conv);
-
-        if ($locId) {
-            $q = $q->where('location_id', '==', $locId);
-        }
 
         $query = $q->orderBy('created_at', 'DESC')
             ->limit($limit)
@@ -193,11 +196,8 @@ try {
 
     if ($conversationId !== null && $conversationId !== '') {
         $q = $db->collection('messages')
+            ->where('location_id', '==', $locId)
             ->where('conversation_id', '==', $conversationId);
-
-        if ($locId) {
-            $q = $q->where('location_id', '==', $locId);
-        }
 
         $query = $q->orderBy('created_at', 'DESC')
             ->limit($limit)
@@ -226,11 +226,8 @@ try {
     }
 
     if ($direction === 'inbound' || $direction === 'all') {
-        $q = $db->collection('inbound_messages');
-
-        if ($locId) {
-            $q = $q->where('location_id', '==', $locId);
-        }
+        $q = $db->collection('inbound_messages')
+            ->where('location_id', '==', $locId);
 
         $inboundQuery = $q->orderBy('date_received', 'DESC')
             ->limit($direction === 'all' ? (int)($limit / 2) : $limit)
@@ -252,11 +249,8 @@ try {
     }
 
     if ($direction === 'outbound' || $direction === 'all') {
-        $q = $db->collection('sms_logs');
-
-        if ($locId) {
-            $q = $q->where('location_id', '==', $locId);
-        }
+        $q = $db->collection('sms_logs')
+            ->where('location_id', '==', $locId);
 
         if ($status) {
             $q = $q->where('status', '==', $status);

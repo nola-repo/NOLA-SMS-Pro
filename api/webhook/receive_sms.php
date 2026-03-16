@@ -15,16 +15,30 @@ $message_id   = $data['message_id'] ?? uniqid();
 
 $db = get_firestore();
 
-// ── Multi-Tenancy: Attempt to find locationId from existing conversation ────
+// ── Multi-Tenancy: Identify locationId by finding the last sub-account that messaged this contact ────
 $locId = null;
-$convId = 'conv_' . $senderNumber;
-$convDoc = $db->collection('conversations')->document($convId)->snapshot();
+$convId = null;
 
-if ($convDoc->exists()) {
-    $locId = $convDoc->data()['location_id'] ?? null;
-    error_log("[receive_sms] Found locationId {$locId} for conversation {$convId}");
-} else {
-    error_log("[receive_sms] No existing conversation found for {$senderNumber}. Inbound message will be unscoped.");
+// Search for the most recent conversation where this number is a member
+$convQuery = $db->collection('conversations')
+    ->where('members', 'array-contains', $senderNumber)
+    ->orderBy('last_message_at', 'DESC')
+    ->limit(1)
+    ->documents();
+
+foreach ($convQuery as $doc) {
+    if ($doc->exists()) {
+        $convData = $doc->data();
+        $locId = $convData['location_id'] ?? null;
+        $convId = $doc->id();
+        error_log("[receive_sms] Found locationId {$locId} for conversation {$convId} via membership search");
+    }
+}
+
+if (!$locId) {
+    error_log("[receive_sms] No recent conversation found for {$senderNumber}. Inbound message will be unscoped.");
+    // Fallback to unscoped conversation ID if no location identified
+    $convId = 'conv_' . $senderNumber;
 }
 
 $saveData = [

@@ -22,13 +22,15 @@ try {
         $type   = $_GET['type'] ?? null; // optional: direct | bulk
 
         $locId = get_ghl_location_id();
+        if (!$locId) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'Missing location_id']);
+            exit;
+        }
         
         $q = $db->collection('conversations')
+            ->where('location_id', '==', $locId)
             ->orderBy('last_message_at', 'DESC');
-
-        if ($locId) {
-            $q = $q->where('location_id', '==', $locId);
-        }
 
         $query = $q->limit($limit)
             ->offset($offset);
@@ -87,14 +89,17 @@ try {
         }
 
         $locId = get_ghl_location_id();
+        if (!$locId) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'Missing location_id']);
+            exit;
+        }
+
         $updateData = [
             ['path' => 'name', 'value' => $name],
+            ['path' => 'location_id', 'value' => $locId],
             ['path' => 'updated_at', 'value' => new \Google\Cloud\Core\Timestamp(new \DateTime())]
         ];
-
-        if ($locId) {
-            $updateData[] = ['path' => 'location_id', 'value' => $locId];
-        }
 
         $docRef->update($updateData);
 
