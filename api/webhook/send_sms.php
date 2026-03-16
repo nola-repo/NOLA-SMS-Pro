@@ -75,11 +75,10 @@ function clean_numbers($numberString): array
 }
 
 /* |-------------------------------------------------------------------------- | CREDIT CALCULATION |-------------------------------------------------------------------------- */
+/** @deprecated Use CreditManager::calculateRequiredCredits() */
 function calculate_credits($message, $num_recipients)
 {
-    $length = function_exists('mb_strlen') ? mb_strlen($message, 'UTF-8') : strlen($message);
-    $segments = max(1, ceil($length / 160));
-    return (int)($segments * $num_recipients);
+    return CreditManager::calculateRequiredCredits($message, $num_recipients);
 }
 
 /* |-------------------------------------------------------------------------- | DEBUG VIEW |-------------------------------------------------------------------------- */
@@ -148,22 +147,24 @@ if (!in_array($sender, $SENDER_IDS)) {
 
 /* |-------------------------------------------------------------------------- | CREDIT CHECK & DEDUCTION |-------------------------------------------------------------------------- */
 $num_recipients = count($validNumbers);
-$required_credits = calculate_credits($message, $num_recipients);
+$required_credits = CreditManager::calculateRequiredCredits($message, $num_recipients);
 $creditManager = new CreditManager();
 $locId = get_ghl_location_id();
 $account_id = $locId ?: 'default';
 
 try {
     $creditManager->deduct_credits(
-        $account_id, 
-        $required_credits, 
-        $batch_id ?? ('single_' . bin2hex(random_bytes(4))), 
+        $account_id,
+        $required_credits,
+        $batch_id ?? ('single_' . bin2hex(random_bytes(4))),
         "SMS sent to $num_recipients recipients"
     );
-} catch (\Exception $e) {
+}
+catch (\Exception $e) {
     if ($e->getMessage() === "Insufficient credits.") {
         echo json_encode(["status" => "error", "message" => "Insufficient credits"]);
-    } else {
+    }
+    else {
         echo json_encode(["status" => "error", "message" => "Credit deduction failed: " . $e->getMessage()]);
     }
     exit;
@@ -196,7 +197,7 @@ foreach ($chunks as $chunk) {
     }
     $result = json_decode($response, true);
     log_sms("SEMAPHORE_RESPONSE_CHUNK", $result);
-    
+
     if (is_array($result)) {
         $all_results = array_merge($all_results, $result);
     }
@@ -214,7 +215,7 @@ if (!empty($all_results)) {
         : ('conv_' . $validNumbers[0]);
 
     // Calculate credits per message for logging
-    $credits_per_message = calculate_credits($message, 1);
+    $credits_per_message = CreditManager::calculateRequiredCredits($message, 1);
 
     foreach ($all_results as $msg) {
         if (!isset($msg['message_id']))
@@ -251,15 +252,15 @@ if (!empty($all_results)) {
         // Legacy/History log (Web UI currently reads outbound history from sms_logs)
         // Also keeps retrieve_status.php working (it polls sms_logs where status is Pending/Queued).
         $logData = [
-            'message_id'   => $messageId,
-            'numbers'      => [$recipient],
-            'message'      => $message,
-            'sender_id'    => $sender,
-            'status'       => $msg['status'] ?? 'Queued',
+            'message_id' => $messageId,
+            'numbers' => [$recipient],
+            'message' => $message,
+            'sender_id' => $sender,
+            'status' => $msg['status'] ?? 'Queued',
             'date_created' => $ts,
-            'source'       => 'semaphore',
-            'batch_id'     => $batch_id,
-            'recipient_key'=> $recipient_key ?? $recipient,
+            'source' => 'semaphore',
+            'batch_id' => $batch_id,
+            'recipient_key' => $recipient_key ?? $recipient,
             'credits_used' => $credits_per_message,
             'conversation_id' => $conversation_id,
         ];
