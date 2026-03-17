@@ -16,8 +16,6 @@ export interface AccountSettings {
     creditBalance: number;
     ghlLocationId: string;
     ghlOAuthConnected?: boolean;
-    approved_sender_id?: string;
-    free_usage_count?: number;
 }
 
 export interface APISettings {

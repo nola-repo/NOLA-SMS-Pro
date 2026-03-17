@@ -58,7 +58,7 @@ export const useConversationMessages = (conversationId: string | undefined) => {
                 id: row.id,
                 text: row.message || "",
                 timestamp: parseFirestoreDate(row.created_at),
-                senderName: row.sender_id || "NOLACRM",
+                senderName: row.sender_id || "NOLASMSPro",
                 status: (row.status as Message["status"]) || "sent",
                 batch_id: row.batch_id,
                 message: row.message,

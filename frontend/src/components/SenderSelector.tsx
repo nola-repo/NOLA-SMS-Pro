@@ -22,7 +22,7 @@ interface SenderSelectorProps {
 }
 
 const DEFAULT_OPTIONS: SenderOption[] = [
-    { id: "NOLACRM", name: "NOLACRM", description: "Default System Sender", icon: <FiGlobe />, color: "bg-blue-500" },
+    { id: "NOLASMSPro", name: "NOLASMSPro", description: "Default System Sender", icon: <FiGlobe />, color: "bg-blue-500" },
     { id: "BRANCH1", name: "BRANCH1", description: "Standard Sender ID", icon: <FiMapPin />, color: "bg-purple-500" },
     { id: "BRANCH2", name: "BRANCH2", description: "Alternate Sender ID", icon: <FiBriefcase />, color: "bg-orange-500" },
 ];

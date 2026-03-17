@@ -15,8 +15,8 @@ const ContactHistory: React.FC<{ phone: string }> = ({ phone }) => {
     <div className="mt-3 bg-gray-50 dark:bg-white/5 rounded-xl p-3 max-h-48 overflow-y-auto custom-scrollbar">
       <div className="flex flex-col gap-2">
         {messages.map((msg) => (
-          <div key={msg.id} className={`flex flex-col ${msg.senderName === 'NOLACRM' ? 'items-end' : 'items-start'}`}>
-            <div className={`px-3 py-2 rounded-xl max-w-[85%] ${msg.senderName === 'NOLACRM' ? 'bg-[#2b83fa] text-white' : 'bg-gray-200 dark:bg-[#2d2d2d] text-[#111111] dark:text-[#ececf1]'} text-[13px]`}>
+          <div key={msg.id} className={`flex flex-col ${msg.senderName === 'NOLASMSPro' ? 'items-end' : 'items-start'}`}>
+            <div className={`px-3 py-2 rounded-xl max-w-[85%] ${msg.senderName === 'NOLASMSPro' ? 'bg-[#2b83fa] text-white' : 'bg-gray-200 dark:bg-[#2d2d2d] text-[#111111] dark:text-[#ececf1]'} text-[13px]`}>
               {msg.text || (msg as any).message}
             </div>
             <span className="text-[10px] text-gray-500 mt-0.5">

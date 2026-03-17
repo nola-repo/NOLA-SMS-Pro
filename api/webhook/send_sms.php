@@ -114,22 +114,9 @@ if ($message) {
     $message = strip_tags($message);
     $message = html_entity_decode($message);
     $message = preg_replace('/\s+/', ' ', $message);
-$message = trim($message);
+    $message = trim($message);
 }
 log_sms("MESSAGE_CLEANED", $message);
-
-// ── Extract Recipients ──────────────────────────────────────────────────────
-$rawNumbers = $customData['phone'] ?? $data['contact']['phone'] ?? $payload['phone'] ?? $payload['number'] ?? $_POST['number'] ?? '';
-$validNumbers = clean_numbers($rawNumbers);
-$num_recipients = count($validNumbers);
-
-if ($num_recipients === 0) {
-    http_response_code(400);
-    echo json_encode(['error' => 'No valid recipient numbers found']);
-    exit;
-}
-
-$required_credits = CreditManager::calculateRequiredCredits($message, $num_recipients);
 
 // ── Multi-Tenancy: Get and Validate locationId ──────────────────────────────────
 $locId = get_ghl_location_id();
@@ -152,7 +139,8 @@ $freeUsageCount = $accountData['free_usage_count'] ?? 0;
 if ($approvedSenderId) {
     $sender = $approvedSenderId;
     $activeApiKey = $customApiKey ?: $SEMAPHORE_API_KEY;
-} else {
+}
+else {
     // Check free limit if using system default
     if ($freeUsageCount >= 10) {
         http_response_code(403);

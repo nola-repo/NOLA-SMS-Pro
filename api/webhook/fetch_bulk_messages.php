@@ -56,7 +56,7 @@ try {
                         'recipients'    => [],
                         'first_message' => $data['message'] ?? '',
                         'date_created'  => $data['date_created'],
-                        'sender_id'     => $data['sender_id'] ?? 'NOLACRM',
+                        'sender_id'     => $data['sender_id'] ?? 'NOLASMSPro',
                         'status'        => $data['status'] ?? 'sent',
                         'location_id'   => $data['location_id'] ?? $locationId,
                     ];

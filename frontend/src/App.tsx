@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from "react";
 import { Dashboard } from "./pages/Dashboard";
-import { AdminDashboard } from "./pages/AdminDashboard";
 import { useGhlLocation } from "./hooks/useGhlLocation";
 import { GhlCallback } from "./pages/GhlCallback";
 
@@ -36,21 +35,6 @@ const App: React.FC = () => {
     setDarkMode(!darkMode);
   };
 
-  const renderContent = () => {
-    const search = window.location.search;
-    if (search.includes('code=')) return <GhlCallback />;
-    if (search.includes('admin=true')) return <AdminDashboard />;
-    
-    return (
-      <Dashboard
-        isMobileMenuOpen={isMobileMenuOpen}
-        onMobileMenuToggle={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-        darkMode={darkMode}
-        toggleDarkMode={toggleDarkMode}
-      />
-    );
-  };
-
   return (
     <div className="h-screen">
       {/* Theme Toggle - Fixed top right (Desktop only) */}
@@ -70,7 +54,17 @@ const App: React.FC = () => {
         )}
       </button>
 
-      {renderContent()}
+      {/* Basic Routing: if the URL has ?code= from GoHighLevel, render the callback component */}
+      {window.location.search.includes('code=') ? (
+        <GhlCallback />
+      ) : (
+        <Dashboard
+          isMobileMenuOpen={isMobileMenuOpen}
+          onMobileMenuToggle={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+          darkMode={darkMode}
+          toggleDarkMode={toggleDarkMode}
+        />
+      )}
     </div>
   );
 };

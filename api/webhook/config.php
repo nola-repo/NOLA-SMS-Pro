@@ -2,12 +2,12 @@
 
 return [
 
-    'SEMAPHORE_API_KEY' => getenv('SEMAPHORE_API_KEY') ?: '509a4465fbbcd064b606ee3c7ef2cf3f',
+    'SEMAPHORE_API_KEY' => getenv('SEMAPHORE_API_KEY') ?: '8089fc9919bc05855ae0d354011f8e4b',
     'SEMAPHORE_URL' => getenv('SEMAPHORE_URL') ?: 'https://api.semaphore.co/api/v4/messages',
 
     // Multiple Sender IDs (first = default when none sent)
     'SENDER_IDS' => [
-        'NOLACRM',
+        'NOLASMSPro',
         'NOLASMS',
         'BRANCH2'
     ],

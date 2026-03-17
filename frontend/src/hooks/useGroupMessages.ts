@@ -113,7 +113,7 @@ export const useGroupMessages = (recipientKey?: string, recipientNumbers?: strin
                             id: m.message_id,
                             text: m.message || '',
                             timestamp: new Date(parseDate(m.date_created)),
-                            senderName: m.sender_id || 'NOLACRM',
+                            senderName: m.sender_id || 'NOLASMSPro',
                             status: (m.status || 'sent') as Message['status'],
                             batch_id: m.batch_id,
                             message: m.message,

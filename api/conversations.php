@@ -12,25 +12,25 @@ require __DIR__ . '/auth_helpers.php';
 
 validate_api_request();
 
-$db     = get_firestore();
+$db = get_firestore();
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
-$locId  = get_ghl_location_id();
-
-if (!$locId) {
-    http_response_code(400);
-    echo json_encode(['success' => false, 'error' => 'Missing location_id (X-GHL-Location-ID header required)']);
-    exit;
-}
 
 try {
     if ($method === 'GET') {
-        $limit  = min((int)($_GET['limit'] ?? 50), 100);
+        $limit = min((int)($_GET['limit'] ?? 50), 100);
         $offset = max((int)($_GET['offset'] ?? 0), 0);
-        $type   = $_GET['type'] ?? null; // optional: direct | bulk
+        $type = $_GET['type'] ?? null; // optional: direct | bulk
+
+        $locId = get_ghl_location_id();
+        if (!$locId) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'Missing location_id (X-GHL-Location-ID header required)']);
+            exit;
+        }
 
         $conversationId = $_GET['id'] ?? $_GET['conversation_id'] ?? null;
         $q = $db->collection('conversations')
-                ->where('location_id', '==', $locId);
+            ->where('location_id', '==', $locId);
 
         if ($conversationId) {
             // Enforce prefixing for lookup if needed
@@ -40,7 +40,7 @@ try {
             }
             $q = $q->where('id', '==', $conversationId);
         }
-        
+
         $q = $q->orderBy('last_message_at', 'DESC');
 
         $query = $q->limit($limit)
@@ -48,18 +48,19 @@ try {
 
         $rows = [];
         foreach ($query->documents() as $doc) {
-            if (!$doc->exists()) continue;
+            if (!$doc->exists())
+                continue;
             $d = $doc->data();
 
             $row = [
-                'id'              => $doc->id(),
-                'location_id'     => $d['location_id'] ?? null,
-                'type'            => $d['type'] ?? null,
-                'members'         => $d['members'] ?? [],
-                'name'            => $d['name'] ?? null,
-                'last_message'    => $d['last_message'] ?? null,
+                'id' => $doc->id(),
+                'location_id' => $d['location_id'] ?? null,
+                'type' => $d['type'] ?? null,
+                'members' => $d['members'] ?? [],
+                'name' => $d['name'] ?? null,
+                'last_message' => $d['last_message'] ?? null,
                 'last_message_at' => isset($d['last_message_at']) ? $d['last_message_at']->formatAsString() : null,
-                'updated_at'      => isset($d['updated_at']) ? $d['updated_at']->formatAsString() : null,
+                'updated_at' => isset($d['updated_at']) ? $d['updated_at']->formatAsString() : null,
             ];
 
             if ($type && ($row['type'] ?? '') !== $type) {
@@ -71,16 +72,17 @@ try {
 
         echo json_encode([
             'success' => true,
-            'data'    => $rows,
-            'limit'   => $limit,
-            'offset'  => $offset,
+            'data' => $rows,
+            'limit' => $limit,
+            'offset' => $offset,
         ], JSON_PRETTY_PRINT);
-    } 
+    }
     elseif ($method === 'POST' || $method === 'PUT') {
         // Update conversation name
         $raw = file_get_contents('php://input');
         $payload = json_decode($raw, true);
-        if (!$payload) $payload = $_POST;
+        if (!$payload)
+            $payload = $_POST;
 
         $id = $payload['id'] ?? $_GET['id'] ?? null;
         $name = $payload['name'] ?? $_GET['name'] ?? null;
@@ -101,7 +103,7 @@ try {
 
         $docRef = $db->collection('conversations')->document($id);
         $doc = $docRef->snapshot();
-        
+
         if (!$doc->exists()) {
             http_response_code(404);
             echo json_encode(['success' => false, 'error' => 'Conversation not found']);
@@ -132,19 +134,8 @@ try {
         if ($snap->exists()) {
             if (($snap->data()['location_id'] ?? '') === $locId) {
                 $docRef->delete();
-                
-                // Cascade delete messages
-                $messages = $db->collection('messages')->where('conversation_id', '==', $id)->documents();
-                foreach ($messages as $msgDoc) {
-                    $msgDoc->reference()->delete();
-                }
-                
-                // Cascade delete legacy sms_logs
-                $logs = $db->collection('sms_logs')->where('conversation_id', '==', $id)->documents();
-                foreach ($logs as $logDoc) {
-                    $logDoc->reference()->delete();
-                }
-            } else {
+            }
+            else {
                 http_response_code(403);
                 echo json_encode(['success' => false, 'error' => 'Permission denied']);
                 exit;
@@ -157,15 +148,15 @@ try {
         http_response_code(405);
         echo json_encode([
             'success' => false,
-            'error'   => 'Method not allowed',
+            'error' => 'Method not allowed',
         ], JSON_PRETTY_PRINT);
     }
-} catch (\Throwable $e) {
+}
+catch (\Throwable $e) {
     http_response_code(500);
     echo json_encode([
         'success' => false,
-        'error'   => 'Failed to process request',
+        'error' => 'Failed to process request',
         'message' => $e->getMessage(),
     ], JSON_PRETTY_PRINT);
 }
-

@@ -1,14 +1,15 @@
-import React, { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
     FiUser, FiSend, FiCode, FiBell, FiCreditCard,
-    FiSave, FiPlus, FiCheck,
-    FiGlobe, FiBriefcase, FiCheckCircle, FiAlertCircle, FiClock,
-    FiEye, FiEyeOff, FiRefreshCw, FiZap, FiCopy,
+    FiSave, FiPlus, FiTrash2, FiCopy, FiCheck,
+    FiGlobe, FiMapPin, FiBriefcase, FiCheckCircle, FiAlertCircle, FiClock,
+    FiEye, FiEyeOff, FiRefreshCw, FiZap,
 } from "react-icons/fi";
 import {
     getAccountSettings, saveAccountSettings,
     getAPISettings, saveAPISettings,
     getNotificationSettings, saveNotificationSettings,
+    getStoredSenderIds, deleteSenderId,
     TIMEZONES, CURRENCIES,
     type AccountSettings, type APISettings, type NotificationSettings, type StoredSenderId,
 } from "../utils/settingsStorage";
@@ -33,6 +34,10 @@ const TABS: { id: SettingsTab; label: string; icon: React.ReactNode; description
     { id: "notifications", label: "Notifications", icon: <FiBell />, description: "Alert & report preferences" },
     { id: "credits", label: "Credits", icon: <FiCreditCard />, description: "Balance & billing" },
 ];
+
+
+
+const SENDER_ICONS = [<FiGlobe />, <FiMapPin />, <FiBriefcase />, <FiCheckCircle />];
 
 const STATUS_CONFIG = {
     approved: { label: "Approved", color: "text-emerald-600 dark:text-emerald-400", bg: "bg-emerald-50 dark:bg-emerald-900/20", icon: <FiCheck className="w-3 h-3" /> },
@@ -129,45 +134,21 @@ const SelectField: React.FC<{
     </div>
 );
 
+// ─── Section: Account ───────────────────────────────────────────────────────
 const AccountSection: React.FC = () => {
     const [form, setForm] = useState<AccountSettings>(getAccountSettings);
     const [saved, setSaved] = useState(false);
-    const [loading, setLoading] = useState(true);
     const ghlLocationIdFromHook = useGhlLocation();
 
-    const fetchAccountData = useCallback(async () => {
-        try {
-            setLoading(true);
-            const locId = ghlLocationIdFromHook || localStorage.getItem('ghl_location_id') || '';
-            const secret = 'f7RkQ2pL9zV3tX8cB1nS4yW6';
-
-            const res = await fetch(`/api/account.php?location_id=${locId}`, {
-                headers: { 'X-Webhook-Secret': secret }
-            });
-            if (!res.ok) throw new Error('Failed to fetch account');
-            const result = await res.json();
-            
-            if (result.status === 'success') {
-                setForm(prev => ({
-                    ...prev,
-                    ghlLocationId: result.data.location_id,
-                    approved_sender_id: result.data.approved_sender_id,
-                    free_usage_count: result.data.free_usage_count
-                }));
-            }
-        } catch (error) {
-            console.error(error);
-        } finally {
-            setLoading(false);
-        }
-    }, [ghlLocationIdFromHook]);
-
     useEffect(() => {
-        fetchAccountData();
-    }, [fetchAccountData]);
+        // Automatically update local form if hook detects a new GHL Location ID
+        if (ghlLocationIdFromHook && ghlLocationIdFromHook !== form.ghlLocationId) {
+            setForm(prev => ({ ...prev, ghlLocationId: ghlLocationIdFromHook }));
+        }
+    }, [ghlLocationIdFromHook, form.ghlLocationId]);
 
     const field = (key: keyof AccountSettings) => ({
-        value: String(form[key] ?? ""),
+        value: String(form[key]),
         onChange: (v: string) => setForm(prev => ({ ...prev, [key]: v })),
     });
 
@@ -185,16 +166,7 @@ const AccountSection: React.FC = () => {
         window.location.href = authUrl;
     };
 
-    const statusCfg = STATUS_CONFIG[form.accountStatus as keyof typeof STATUS_CONFIG] || STATUS_CONFIG.pending;
-    
-    if (loading) {
-        return (
-            <div className="flex flex-col items-center justify-center py-20 animate-pulse">
-                <FiRefreshCw className="w-10 h-10 text-blue-500 animate-spin mb-4" />
-                <p className="text-[#9aa0a6] text-[14px]">Loading account details...</p>
-            </div>
-        );
-    }
+    const statusCfg = STATUS_CONFIG[form.accountStatus];
 
     return (
         <div className="space-y-5">
@@ -312,31 +284,13 @@ const AccountSection: React.FC = () => {
 // ─── Section: Sender IDs ────────────────────────────────────────────────────
 const SenderIdsSection: React.FC<{ autoOpenAddModal?: boolean }> = ({ autoOpenAddModal }) => {
     const DEFAULT_SENDER_IDS: StoredSenderId[] = [
-        { id: "NOLACRM", name: "NOLACRM", description: "Default System Sender", color: "bg-blue-500", status: "approved" },
+        { id: "NOLASMSPro", name: "NOLASMSPro", description: "Default System Sender", color: "bg-blue-500", status: "approved" },
+        { id: "BRANCH1", name: "BRANCH1", description: "Standard Sender ID", color: "bg-purple-500", status: "approved" },
+        { id: "BRANCH2", name: "BRANCH2", description: "Alternate Sender ID", color: "bg-orange-500", status: "approved" },
     ];
 
-    const [requests, setRequests] = useState<any[]>([]);
+    const [customIds, setCustomIds] = useState<StoredSenderId[]>(getStoredSenderIds);
     const [isAdding, setIsAdding] = useState(false);
-    const ghlLocationId = useGhlLocation() || localStorage.getItem('ghl_location_id') || '';
-
-    const fetchRequests = useCallback(async () => {
-        try {
-            const secret = 'f7RkQ2pL9zV3tX8cB1nS4yW6';
-            const res = await fetch(`/api/sender_requests.php?location_id=${ghlLocationId}`, {
-                headers: { 'X-Webhook-Secret': secret }
-            });
-            const result = await res.json();
-            if (result.status === 'success') {
-                setRequests(result.data);
-            }
-        } catch (e) {
-            console.error(e);
-        }
-    }, [ghlLocationId]);
-
-    useEffect(() => {
-        fetchRequests();
-    }, [fetchRequests]);
 
     // Auto-open modal when triggered from Composer
     useEffect(() => {
@@ -345,9 +299,15 @@ const SenderIdsSection: React.FC<{ autoOpenAddModal?: boolean }> = ({ autoOpenAd
         }
     }, [autoOpenAddModal]);
 
-    const handleSuccess = () => {
-        fetchRequests();
-        setIsAdding(false);
+    const allIds = [...DEFAULT_SENDER_IDS, ...customIds];
+
+    const handleSuccess = (created: StoredSenderId) => {
+        setCustomIds(prev => [...prev, created]);
+    };
+
+    const handleDelete = (id: string) => {
+        deleteSenderId(id);
+        setCustomIds(prev => prev.filter(s => s.id !== id));
     };
 
     return (
@@ -356,7 +316,7 @@ const SenderIdsSection: React.FC<{ autoOpenAddModal?: boolean }> = ({ autoOpenAd
 
             <Card>
                 <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-[13px] font-bold text-[#37352f] dark:text-[#ececf1] uppercase tracking-wider">Requested Sender Names</h3>
+                    <h3 className="text-[13px] font-bold text-[#37352f] dark:text-[#ececf1] uppercase tracking-wider">Active Sender IDs</h3>
                     <button
                         onClick={() => setIsAdding(true)}
                         className="flex items-center gap-1.5 px-3 py-2 text-[12px] font-bold text-[#2b83fa] bg-gradient-to-r from-[#2b83fa]/10 to-[#2b83fa]/5 hover:from-[#2b83fa]/20 hover:to-[#2b83fa]/10 hover:shadow-[0_4px_12px_rgba(43,131,250,0.2)] rounded-xl transition-all"
@@ -366,12 +326,14 @@ const SenderIdsSection: React.FC<{ autoOpenAddModal?: boolean }> = ({ autoOpenAd
                 </div>
 
                 <div className="space-y-2">
-                    {DEFAULT_SENDER_IDS.map(sid => {
-                        const statusCfg = STATUS_CONFIG[sid.status as keyof typeof STATUS_CONFIG];
+                    {allIds.map((sid, i) => {
+                        const isCustom = DEFAULT_SENDER_IDS.every(d => d.id !== sid.id);
+                        const statusCfg = STATUS_CONFIG[sid.status];
+                        const icon = SENDER_ICONS[i % SENDER_ICONS.length];
                         return (
-                             <div key={sid.id} className="flex items-center gap-3 p-3 rounded-xl bg-[#f7f7f7] dark:bg-[#0d0e10] group">
+                            <div key={sid.id} className="flex items-center gap-3 p-3 rounded-xl bg-[#f7f7f7] dark:bg-[#0d0e10] group">
                                 <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-white flex-shrink-0 text-[14px] ${sid.color}`}>
-                                    <FiGlobe />
+                                    {icon}
                                 </div>
                                 <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-2 flex-wrap">
@@ -382,33 +344,17 @@ const SenderIdsSection: React.FC<{ autoOpenAddModal?: boolean }> = ({ autoOpenAd
                                     </div>
                                     <span className="text-[11px] text-[#9aa0a6]">{sid.description}</span>
                                 </div>
+                                {isCustom && sid.status !== "approved" && (
+                                    <button
+                                        onClick={() => handleDelete(sid.id)}
+                                        className="opacity-0 group-hover:opacity-100 p-2 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all"
+                                    >
+                                        <FiTrash2 className="w-4 h-4" />
+                                    </button>
+                                )}
                             </div>
                         );
                     })}
-
-                    {requests.map((req: any, i: number) => {
-                        const statusCfg = STATUS_CONFIG[req.status as keyof typeof STATUS_CONFIG] || STATUS_CONFIG.pending;
-                        return (
-                            <div key={req.id || i} className="flex items-center gap-3 p-3 rounded-xl bg-[#f7f7f7] dark:bg-[#0d0e10] group">
-                                <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-white flex-shrink-0 text-[14px] bg-indigo-500`}>
-                                    <FiBriefcase />
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                        <span className="text-[13px] font-bold text-[#111111] dark:text-[#ececf1]">{req.requested_id}</span>
-                                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${statusCfg.bg} ${statusCfg.color}`}>
-                                            {statusCfg.icon} {statusCfg.label}
-                                        </span>
-                                    </div>
-                                    <span className="text-[11px] text-[#9aa0a6]">{req.purpose}</span>
-                                </div>
-                            </div>
-                        );
-                    })}
-
-                    {requests.length === 0 && (
-                        <p className="text-[13px] text-gray-500 text-center py-4">No custom sender IDs requested yet.</p>
-                    )}
                 </div>
             </Card>
 
@@ -457,13 +403,13 @@ const APISection: React.FC = () => {
         });
     };
 
-    const ENDPOINTS = [
-        { label: "Send SMS", method: "POST", path: "/api/v1/messages" },
-        { label: "List Messages", method: "GET", path: "/api/v1/messages" },
-        { label: "List Sender IDs", method: "GET", path: "/api/v1/sender-ids" },
-        { label: "Credit Balance", method: "GET", path: "/api/v1/credits" },
-        { label: "GHL Webhook", method: "POST", path: "/api/webhook/send_sms.php" },
-        { label: "Receive SMS", method: "POST", path: "/api/webhook/receive_sms.php" },
+    const ENDPOINT_ROWS = [
+        { label: "Send SMS", method: "POST", path: "/api/v1/accounts/{id}/messages" },
+        { label: "List Messages", method: "GET", path: "/api/v1/accounts/{id}/messages" },
+        { label: "List Sender IDs", method: "GET", path: "/api/v1/accounts/{id}/sender-ids" },
+        { label: "Credit Balance", method: "GET", path: "/api/v1/accounts/{id}/credits" },
+        { label: "GHL Webhook", method: "POST", path: "/webhook/send_sms" },
+        { label: "Receive SMS", method: "POST", path: "/webhook/receive_sms" },
     ];
 
     return (
@@ -516,7 +462,7 @@ const APISection: React.FC = () => {
             <Card>
                 <h3 className="text-[13px] font-bold text-[#37352f] dark:text-[#ececf1] mb-4 uppercase tracking-wider">API Endpoints Reference</h3>
                 <div className="space-y-1.5">
-                    {ENDPOINTS.map(ep => (
+                    {ENDPOINT_ROWS.map(ep => (
                         <div key={`${ep.method}-${ep.path}`} className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-[#f7f7f7] dark:bg-[#0d0e10] group">
                             <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md tracking-wider flex-shrink-0 ${ep.method === "POST" ? "bg-[#2b83fa]/10 text-[#2b83fa]" : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"}`}>
                                 {ep.method}
@@ -548,7 +494,7 @@ const NotificationsSection: React.FC = () => {
     const [saved, setSaved] = useState(false);
 
     const toggle = (key: keyof NotificationSettings) =>
-        setForm((prev: NotificationSettings) => ({ ...prev, [key]: !prev[key] }));
+        setForm(prev => ({ ...prev, [key]: !prev[key] }));
 
     const handleSave = () => {
         saveNotificationSettings(form);
@@ -612,23 +558,7 @@ const NotificationsSection: React.FC = () => {
 
 // ─── Section: Credits ───────────────────────────────────────────────────────
 const CreditsSection: React.FC = () => {
-    const [account, setAccount] = useState<AccountSettings>(getAccountSettings());
-    const ghlLocationId = useGhlLocation() || localStorage.getItem('ghl_location_id') || '';
-
-    useEffect(() => {
-        const fetchAcc = async () => {
-            const secret = 'f7RkQ2pL9zV3tX8cB1nS4yW6';
-            const res = await fetch(`/api/account.php?location_id=${ghlLocationId}`, {
-                headers: { 'X-Webhook-Secret': secret }
-            });
-            const result = await res.json();
-            if (result.status === 'success') {
-                setAccount((prev: AccountSettings) => ({ ...prev, ...result.data }));
-            }
-        };
-        fetchAcc();
-    }, [ghlLocationId]);
-
+    const account = getAccountSettings();
     const [topUpAmount, setTopUpAmount] = useState(500);
     const [submitted, setSubmitted] = useState(false);
 
@@ -645,15 +575,8 @@ const CreditsSection: React.FC = () => {
         setTimeout(() => { setSubmitted(false); }, 2500);
     };
 
-    const hasCustomSender = !!account.approved_sender_id;
-    const freeCount = account.free_usage_count || 0;
-    const usagePercent = hasCustomSender 
-        ? Math.min(100, (account.creditBalance / 1000) * 100)
-        : Math.min(100, (freeCount / 10) * 100);
-    
-    const usageColor = hasCustomSender
-        ? (account.creditBalance < 50 ? "bg-red-500" : account.creditBalance < 200 ? "bg-amber-400" : "bg-emerald-500")
-        : (freeCount >= 10 ? "bg-red-500" : "bg-[#2b83fa]");
+    const usagePercent = Math.min(100, (account.creditBalance / 1000) * 100);
+    const usageColor = account.creditBalance < 50 ? "bg-red-500" : account.creditBalance < 200 ? "bg-amber-400" : "bg-emerald-500";
 
     const LEDGER_MOCK = [
         { type: "deduction", amount: -3, note: "SMS to +63917XXXXXXX", date: "Today, 2:15 PM" },
@@ -671,15 +594,9 @@ const CreditsSection: React.FC = () => {
             <div className="bg-gradient-to-br from-[#2b83fa] to-[#60a5fa] rounded-2xl p-5 text-white shadow-lg shadow-blue-500/25">
                 <div className="flex items-start justify-between mb-4">
                     <div>
-                        <p className="text-[12px] font-semibold text-white/70 uppercase tracking-wider">
-                            {hasCustomSender ? "Available Credits" : "Free Trial Usage"}
-                        </p>
-                        <p className="text-[42px] font-black leading-none mt-1">
-                            {hasCustomSender ? account.creditBalance.toLocaleString() : `${freeCount}/10`}
-                        </p>
-                        <p className="text-[12px] text-white/60 mt-1">
-                            {hasCustomSender ? "1 credit ≈ 1 SMS (160 chars)" : "Register a custom Sender ID for unlimited sending."}
-                        </p>
+                        <p className="text-[12px] font-semibold text-white/70 uppercase tracking-wider">Available Credits</p>
+                        <p className="text-[42px] font-black leading-none mt-1">{account.creditBalance.toLocaleString()}</p>
+                        <p className="text-[12px] text-white/60 mt-1">1 credit ≈ 1 SMS (160 chars)</p>
                     </div>
                     <div className="w-12 h-12 rounded-xl bg-white/10 flex items-center justify-center">
                         <FiCreditCard className="w-6 h-6 text-white" />
@@ -692,7 +609,7 @@ const CreditsSection: React.FC = () => {
                 </div>
                 <div className="flex items-center justify-between text-[11px] text-white/60">
                     <span>0</span>
-                    <span>{hasCustomSender ? "1,000+" : "10"}</span>
+                    <span>1,000+</span>
                 </div>
             </div>
 

@@ -79,7 +79,7 @@ export const Composer: React.FC<ComposerProps> = ({
 }) => {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
-  const [senderName, setSenderName] = useState<SenderId>("NOLACRM");
+  const [senderName, setSenderName] = useState<SenderId>("NOLASMSPro");
 
   useEffect(() => {
     const fetchDefaultSender = async () => {
