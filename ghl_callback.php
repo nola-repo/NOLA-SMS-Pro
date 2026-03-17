@@ -92,6 +92,30 @@ if (!$locationId) {
 
 $expiresAtUnix = time() + $expires; // store as Unix int to match ghl_oauth.php
 
+// --- New: Fetch Location Name from GHL API ---
+$locationName = '';
+try {
+    $locationUrl = 'https://services.leadconnectorhq.com/locations/' . $locationId;
+    $ch = curl_init($locationUrl);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Authorization: Bearer ' . $data['access_token'],
+        'Accept: application/json',
+        'Version: 2021-07-28',
+    ]);
+    $locResponse = curl_exec($ch);
+    $locHttpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($locHttpCode === 200) {
+        $locData = json_decode($locResponse, true);
+        $locationName = $locData['location']['name'] ?? '';
+    }
+} catch (Exception $e) {
+    // Log error but proceed with storing tokens
+    error_log("Failed to fetch location name: " . $e->getMessage());
+}
+
 $db->collection('ghl_tokens')
     ->document((string)$locationId)
     ->set([
@@ -99,6 +123,7 @@ $db->collection('ghl_tokens')
     'refresh_token' => $data['refresh_token'] ?? null,
     'scope' => $data['scope'] ?? null,
     'location_id' => $locationId,
+    'location_name' => $locationName,
     'expires_at' => $expiresAtUnix,
     'userType' => $data['userType'] ?? 'Location',
     'companyId' => $data['companyId'] ?? '',

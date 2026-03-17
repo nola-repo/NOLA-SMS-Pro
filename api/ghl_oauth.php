@@ -83,6 +83,30 @@ if ($http_status == 200 && is_array($result) && isset($result['access_token'])) 
     try {
         $docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string) $locationId);
         
+        // --- New: Fetch Location Name from GHL API ---
+        $locationName = '';
+        try {
+            $locationUrl = 'https://services.leadconnectorhq.com/locations/' . $locationId;
+            $ch = curl_init($locationUrl);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                'Authorization: Bearer ' . $result['access_token'],
+                'Accept: application/json',
+                'Version: 2021-07-28',
+            ]);
+            $locResponse = curl_exec($ch);
+            $locHttpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if ($locHttpCode === 200) {
+                $locData = json_decode($locResponse, true);
+                $locationName = $locData['location']['name'] ?? '';
+            }
+        } catch (Exception $e) {
+            // Log error but proceed
+            error_log("Failed to fetch location name: " . $e->getMessage());
+        }
+
         $db->collection('integrations')
             ->document($docId)
             ->set([
@@ -91,6 +115,7 @@ if ($http_status == 200 && is_array($result) && isset($result['access_token'])) 
             'expires_at' => new \Google\Cloud\Core\Timestamp($expiresAt),
             'scope' => $result['scope'] ?? '',
             'location_id' => $locationId,
+            'location_name' => $locationName,
             'updated_at' => new \Google\Cloud\Core\Timestamp($now),
             'created_at' => new \Google\Cloud\Core\Timestamp($now)
         ], ['merge' => true]);
