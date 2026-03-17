@@ -61,6 +61,9 @@ RewriteRule ^api/ghl-contacts$ /api/ghl-contacts.php [L]
 # Conversations API (for Web UI sidebar)
 RewriteRule ^api/conversations$ /api/conversations.php [L]
 
+# Account Profile API (for Web UI Settings)
+RewriteRule ^api/account$ /api/account.php [L]
+
 # OAuth callback (GHL / marketplace integrations)
 RewriteRule ^oauth/callback$ /ghl_callback.php [L]
 
