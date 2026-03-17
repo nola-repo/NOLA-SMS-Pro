@@ -1,17 +1,11 @@
 import { useState } from "react";
 import { FiPlus, FiX, FiCheck } from "react-icons/fi";
-import { addSenderId, type StoredSenderId } from "../utils/settingsStorage";
 
 interface SenderRequestModalProps {
     isOpen: boolean;
     onClose: () => void;
-    onSuccess?: (newSender: StoredSenderId) => void;
+    onSuccess?: () => void;
 }
-
-const SENDER_COLORS = [
-    "bg-blue-500", "bg-purple-500", "bg-orange-500",
-    "bg-emerald-500", "bg-rose-500", "bg-amber-500", "bg-indigo-500", "bg-cyan-500",
-];
 
 export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, onClose, onSuccess }) => {
     const [newId, setNewId] = useState("");
@@ -21,24 +15,44 @@ export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, 
 
     if (!isOpen) return null;
 
-    const handleAdd = (e: React.FormEvent) => {
+    const handleAdd = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!newId.trim()) return;
 
-        const fullDesc = `Purpose: ${newPurpose} | Sample: ${newSample}`;
-        // Note: In real app, color index might need better management
-        const created = addSenderId(newId, fullDesc, SENDER_COLORS[Math.floor(Math.random() * SENDER_COLORS.length)]);
+        try {
+            const locId = localStorage.getItem('ghl_location_id') || '';
+            const secret = 'f7RkQ2pL9zV3tX8cB1nS4yW6'; 
 
-        if (onSuccess) onSuccess(created);
-        setIsSubmitted(true);
+            const response = await fetch('/api/sender_requests.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Webhook-Secret': secret,
+                    'X-GHL-Location-ID': locId
+                },
+                body: JSON.stringify({
+                    requested_id: newId,
+                    purpose: newPurpose,
+                    sample: newSample
+                })
+            });
 
-        setTimeout(() => {
-            setNewId("");
-            setNewPurpose("");
-            setNewSample("");
-            setIsSubmitted(false);
-            onClose();
-        }, 3000);
+            if (!response.ok) throw new Error('Failed to submit request');
+
+            setIsSubmitted(true);
+
+            setTimeout(() => {
+                setNewId("");
+                setNewPurpose("");
+                setNewSample("");
+                setIsSubmitted(false);
+                onSuccess?.();
+                onClose();
+            }, 3000);
+        } catch (error) {
+            console.error(error);
+            alert("Failed to submit request. Please try again.");
+        }
     };
 
     return (

@@ -80,6 +80,25 @@ export const Composer: React.FC<ComposerProps> = ({
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [senderName, setSenderName] = useState<SenderId>("NOLACRM");
+
+  useEffect(() => {
+    const fetchDefaultSender = async () => {
+      try {
+        const locId = localStorage.getItem('ghl_location_id') || '';
+        const secret = 'f7RkQ2pL9zV3tX8cB1nS4yW6';
+        const res = await fetch(`/api/account.php?location_id=${locId}`, {
+          headers: { 'X-Webhook-Secret': secret }
+        });
+        const data = await res.json();
+        if (data?.status === 'success' && data.data.approved_sender_id) {
+          setSenderName(data.data.approved_sender_id);
+        }
+      } catch (e) {
+        console.error("Failed to fetch default sender:", e);
+      }
+    };
+    fetchDefaultSender();
+  }, []);
   const [expandedMessageId, setExpandedMessageId] = useState<string | null>(null);
   const [lottieError, setLottieError] = useState(false);
 

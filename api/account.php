@@ -45,13 +45,20 @@ try {
 
     $data = $snapshot->data();
     
+    // Fetch account settings for sender and usage
+    $accountRef = $db->collection('accounts')->document($locId);
+    $accountSnap = $accountRef->snapshot();
+    $accountData = $accountSnap->exists() ? $accountSnap->data() : [];
+
     // 4. Response format
     // Must return location_id and location_name. Do NOT return OAuth tokens.
     echo json_encode([
         'status' => 'success',
         'data' => [
             'location_id' => $locId,
-            'location_name' => $data['location_name'] ?? 'Unknown'
+            'location_name' => $data['location_name'] ?? 'Unknown',
+            'approved_sender_id' => $accountData['approved_sender_id'] ?? null,
+            'free_usage_count' => $accountData['free_usage_count'] ?? 0
         ]
     ]);
 

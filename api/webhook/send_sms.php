@@ -114,39 +114,21 @@ if ($message) {
     $message = strip_tags($message);
     $message = html_entity_decode($message);
     $message = preg_replace('/\s+/', ' ', $message);
-    $message = trim($message);
+$message = trim($message);
 }
 log_sms("MESSAGE_CLEANED", $message);
 
-$sender = $customData['sendername'] ?? $payload['sendername'] ?? $data['sendername'] ?? ($SENDER_IDS[0] ?? "");
-
-/* |-------------------------------------------------------------------------- | EXTRACT PHONE NUMBER |-------------------------------------------------------------------------- */
-$number_input = $customData['number'] ?? $customData['phone'] ?? $payload['number'] ?? $payload['phone'] ?? $payload['phoneNumber'] ?? ($data['phone'] ?? ($data['Phone'] ?? ($data['number'] ?? ($data['mobile'] ?? ($payload['contact']['phone'] ?? ($payload['contact']['phoneNumber'] ?? ($payload['contact']['mobile'] ?? null)))))));
-log_sms("NUMBER_INPUT_RAW", $number_input);
-
-$validNumbers = clean_numbers($number_input);
-log_sms("NUMBER_AFTER_CLEAN", $validNumbers);
-
-if (empty($validNumbers)) {
-    echo json_encode(["status" => "error", "message" => "No valid Philippine numbers found", "received" => $number_input]);
-    exit;
-}
-if (!$message) {
-    echo json_encode(["status" => "error", "message" => "Message empty"]);
-    exit;
-}
-
-// Auto batch id for bulk sends if not provided
-if (!$batch_id && count($validNumbers) > 1) {
-    $batch_id = 'batch-' . bin2hex(random_bytes(8));
-}
-
-if (!in_array($sender, $SENDER_IDS)) {
-    $sender = $SENDER_IDS[0];
-}
-
-/* |-------------------------------------------------------------------------- | CREDIT CHECK & DEDUCTION |-------------------------------------------------------------------------- */
+// ── Extract Recipients ──────────────────────────────────────────────────────
+$rawNumbers = $customData['phone'] ?? $data['contact']['phone'] ?? $payload['phone'] ?? $payload['number'] ?? $_POST['number'] ?? '';
+$validNumbers = clean_numbers($rawNumbers);
 $num_recipients = count($validNumbers);
+
+if ($num_recipients === 0) {
+    http_response_code(400);
+    echo json_encode(['error' => 'No valid recipient numbers found']);
+    exit;
+}
+
 $required_credits = CreditManager::calculateRequiredCredits($message, $num_recipients);
 
 // ── Multi-Tenancy: Get and Validate locationId ──────────────────────────────────
@@ -158,6 +140,32 @@ if (!$locId) {
 }
 $account_id = $locId ?: 'default';
 
+$db = get_firestore();
+$accountDoc = $db->collection('accounts')->document($account_id)->snapshot();
+$accountData = $accountDoc->exists() ? $accountDoc->data() : [];
+
+$approvedSenderId = $accountData['approved_sender_id'] ?? null;
+$customApiKey = $accountData['semaphore_api_key'] ?? null;
+$freeUsageCount = $accountData['free_usage_count'] ?? 0;
+
+// Sender ID Logic: prioritize approved custom sender, otherwise use default
+if ($approvedSenderId) {
+    $sender = $approvedSenderId;
+    $activeApiKey = $customApiKey ?: $SEMAPHORE_API_KEY;
+} else {
+    // Check free limit if using system default
+    if ($freeUsageCount >= 10) {
+        http_response_code(403);
+        echo json_encode(["status" => "error", "message" => "Free message limit reached (10/10). Please register a custom Sender ID to continue."]);
+        exit;
+    }
+    $sender = $customData['sendername'] ?? $payload['sendername'] ?? $data['sendername'] ?? ($SENDER_IDS[0] ?? "");
+    if (!in_array($sender, $SENDER_IDS)) {
+        $sender = $SENDER_IDS[0];
+    }
+    $activeApiKey = $SEMAPHORE_API_KEY;
+}
+
 $creditManager = new CreditManager();
 
 try {
@@ -167,6 +175,13 @@ try {
         $batch_id ?? ('single_' . bin2hex(random_bytes(4))),
         "SMS sent to $num_recipients recipients"
     );
+
+    // Increment free usage count if using system default (no approved custom sender)
+    if (!$approvedSenderId) {
+        $db->collection('accounts')->document($account_id)->set([
+            'free_usage_count' => $freeUsageCount + $num_recipients
+        ], ['merge' => true]);
+    }
 }
 catch (\Exception $e) {
     if ($e->getMessage() === "Insufficient credits.") {
@@ -185,7 +200,7 @@ $total_status = 200;
 
 foreach ($chunks as $chunk) {
     $sms_data = [
-        "apikey" => $SEMAPHORE_API_KEY,
+        "apikey" => $activeApiKey,
         "number" => implode(',', $chunk),
         "message" => $message,
         "sendername" => $sender
