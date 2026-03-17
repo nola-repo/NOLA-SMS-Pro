@@ -118,6 +118,20 @@ if ($message) {
 }
 log_sms("MESSAGE_CLEANED", $message);
 
+// Extract Numbers
+$numberRaw = $customData['number'] ?? $payload['number'] ?? $data['number'] ?? $payload['phone'] ?? null;
+$validNumbers = clean_numbers($numberRaw);
+$num_recipients = count($validNumbers);
+
+if ($num_recipients === 0) {
+    http_response_code(400);
+    echo json_encode(["status" => "error", "message" => "No valid Philippine mobile numbers provided."]);
+    exit;
+}
+
+// Calculate Credits
+$required_credits = CreditManager::calculateRequiredCredits($message, $num_recipients);
+
 // ── Multi-Tenancy: Get and Validate locationId ──────────────────────────────────
 $locId = get_ghl_location_id();
 if (!$locId) {
