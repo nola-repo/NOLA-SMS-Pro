@@ -46,6 +46,15 @@ RewriteRule ^api/messages$ /api/messages.php [L]
 # Contacts API (for Web UI)
 RewriteRule ^api/contacts$ /api/contacts.php [L]
 
+# Account Profile API (for Web UI Settings)
+RewriteRule ^api/account$ /api/account.php [L]
+
+# Account Sender Configuration API
+RewriteRule ^api/account-sender$ /api/account-sender.php [L]
+
+# Sender ID Requests API
+RewriteRule ^api/sender-requests$ /api/sender-requests.php [L]
+
 # Credit balance API (for Web UI)
 RewriteRule ^api/credits$ /api/credits.php [L]
 
@@ -60,9 +69,6 @@ RewriteRule ^api/ghl-contacts$ /api/ghl-contacts.php [L]
 
 # Conversations API (for Web UI sidebar)
 RewriteRule ^api/conversations$ /api/conversations.php [L]
-
-# Account Profile API (for Web UI Settings)
-RewriteRule ^api/account$ /api/account.php [L]
 
 # OAuth callback (GHL / marketplace integrations)
 RewriteRule ^oauth/callback$ /ghl_callback.php [L]
