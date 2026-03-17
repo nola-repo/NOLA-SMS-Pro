@@ -29,25 +29,11 @@ try {
     $db = get_firestore();
     
     // 3. Database Query
-    // The requirement says: location_id to query the integrations collection (document id: ghl_{location_id})
-    $docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string) $locId);
-    $docRef = $db->collection('integrations')->document($docId);
-    $snapshot = $docRef->snapshot();
+    $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string) $locId);
+    $intSnap = $db->collection('integrations')->document($intDocId)->snapshot();
 
-    if (!$snapshot->exists()) {
-        http_response_code(404);
-        echo json_encode([
-            'status' => 'error',
-            'message' => 'Account profile not found'
-        ]);
-        exit;
-    }
-
-    $data = $snapshot->data();
-    
     // Fetch account settings for sender and usage
-    $accountRef = $db->collection('accounts')->document($locId);
-    $accountSnap = $accountRef->snapshot();
+    $accountSnap = $db->collection('accounts')->document($locId)->snapshot();
     $accountData = $accountSnap->exists() ? $accountSnap->data() : [];
 
     // 4. Response format
@@ -56,7 +42,7 @@ try {
         'status' => 'success',
         'data' => [
             'location_id' => $locId,
-            'location_name' => $data['location_name'] ?? 'Unknown',
+            'location_name' => ($intSnap->exists() ? $intSnap->data()['location_name'] : 'Unknown'),
             'approved_sender_id' => $accountData['approved_sender_id'] ?? null,
             'free_usage_count' => $accountData['free_usage_count'] ?? 0
         ]

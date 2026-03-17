@@ -24,12 +24,12 @@ if (!$locId) {
 
 $db = get_firestore();
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
-$docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string) $locId);
+$docId = (string) $locId;
 
 try {
     if ($method === 'GET') {
         // Fetch configuration
-        $docRef = $db->collection('integrations')->document($docId);
+        $docRef = $db->collection('accounts')->document($docId);
         $snapshot = $docRef->snapshot();
 
         $data = $snapshot->exists() ? $snapshot->data() : [];
@@ -60,7 +60,7 @@ try {
             exit;
         }
 
-        $db->collection('integrations')->document($docId)->set([
+        $db->collection('accounts')->document($docId)->set([
             'semaphore_api_key' => $apiKey,
             'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
         ], ['merge' => true]);
