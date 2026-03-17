@@ -16,17 +16,17 @@ $db = get_firestore();
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 try {
+    $locId = get_ghl_location_id();
+    if (!$locId) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'Missing location_id (X-GHL-Location-ID header or query param required)']);
+        exit;
+    }
+
     if ($method === 'GET') {
         $limit = min((int)($_GET['limit'] ?? 50), 100);
         $offset = max((int)($_GET['offset'] ?? 0), 0);
         $type = $_GET['type'] ?? null; // optional: direct | bulk
-
-        $locId = get_ghl_location_id();
-        if (!$locId) {
-            http_response_code(400);
-            echo json_encode(['success' => false, 'error' => 'Missing location_id (X-GHL-Location-ID header required)']);
-            exit;
-        }
 
         $conversationId = $_GET['id'] ?? $_GET['conversation_id'] ?? null;
         $q = $db->collection('conversations')
