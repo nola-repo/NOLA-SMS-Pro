@@ -21,16 +21,40 @@ try {
         $json = file_get_contents('php://input');
         $jsonPayload = json_decode($json, true) ?? [];
         $formPayload = $_POST ?? [];
-        $payload = !empty($jsonPayload) ? $jsonPayload : $formPayload;
+        
+        // Merge payloads, prioritizing JSON but allowing form fields as fallback
+        $payload = array_merge($formPayload, $jsonPayload);
 
-        $action      = $payload['action'] ?? '';
-        $amount      = isset($payload['amount']) ? (int)$payload['amount'] : 0;
-        $reference   = $payload['reference'] ?? 'api_update';
-        $description = $payload['description'] ?? 'Balance updated via API';
+        // Basic logging for debugging (will be removed later)
+        // file_put_contents(__DIR__ . '/credits_debug.log', date('[Y-m-d H:i:s] ') . "Method: $method, Payload: " . json_encode($payload) . "\n", FILE_APPEND);
+
+        $action = $payload['action'] ?? $payload['Action'] ?? '';
+        
+        // Robust amount extraction
+        $amountValue = $payload['amount'] ?? $payload['Amount'] ?? $payload['credits'] ?? $payload['Credits'] ?? 0;
+        $amount = (int)$amountValue;
+
+        // Extra robust check for nested customData (GHL sometimes nests these)
+        if ($amount === 0 && isset($payload['customData']) && is_array($payload['customData'])) {
+            $amountValue = $payload['customData']['amount'] ?? $payload['customData']['Amount'] ?? 0;
+            $amount = (int)$amountValue;
+        }
+        
+        $reference   = $payload['reference'] ?? $payload['Reference'] ?? 'api_update';
+        $description = $payload['description'] ?? $payload['Description'] ?? 'Balance updated via API';
         
         if ($amount <= 0) {
+            // Log the failure to help troubleshoot
+            $logMsg = date('[Y-m-d H:i:s] ') . "Invalid Amount Failure. Payload: " . json_encode($payload) . " | Raw Amount: " . var_export($amountValue, true) . "\n";
+            file_put_contents(__DIR__ . '/credits_error.log', $logMsg, FILE_APPEND);
+
             http_response_code(400);
-            echo json_encode(['success' => false, 'error' => 'Invalid amount'], JSON_PRETTY_PRINT);
+            echo json_encode([
+                'success' => false, 
+                'error' => 'Invalid amount',
+                'received_amount' => $amountValue,
+                'suggestion' => 'Ensure "amount" is sent as a positive integer in the request body.'
+            ], JSON_PRETTY_PRINT);
             exit;
         }
 
