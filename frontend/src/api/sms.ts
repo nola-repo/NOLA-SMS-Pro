@@ -1,7 +1,16 @@
 import type { SmsLog, BulkMessageHistoryItem, FirestoreMessage, Conversation } from "../types/Sms";
 import { API_BASE_URL, WEBHOOK_SECRET } from "./config";
+import { getAccountSettings } from "../utils/settingsStorage";
+
+const getHeaders = () => ({
+  'X-Webhook-Secret': WEBHOOK_SECRET,
+  'X-GHL-Location-ID': getAccountSettings().ghlLocationId,
+  'Content-Type': 'application/json',
+});
 
 const WEBHOOK_URL = `${API_BASE_URL}/api/messages`;
+const CONVERSATIONS_URL = `${API_BASE_URL}/api/conversations`;
+const BULK_CAMPAIGNS_URL = `${API_BASE_URL}/api/bulk-campaigns`;
 
 export type SenderId = string;
 
@@ -57,9 +66,7 @@ export const fetchSmsLogs = async (phoneNumber: string): Promise<SmsLog[]> => {
     // Fetch ALL outbound messages (without number filter)
     // Then filter client-side by checking if phoneNumber is in the numbers array
     const res = await fetch(`${WEBHOOK_URL}?direction=outbound&limit=500`, {
-      headers: {
-        'X-Webhook-Secret': WEBHOOK_SECRET,
-      },
+      headers: getHeaders(),
     });
     if (!res.ok) throw new Error("Failed to fetch message history");
     const data = await res.json();
@@ -134,10 +141,7 @@ export const sendSms = async (
   try {
     const res = await fetch(SEND_SMS_URL, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Webhook-Secret": WEBHOOK_SECRET,
-      },
+      headers: getHeaders(),
       body: JSON.stringify(payload),
     });
 
@@ -202,9 +206,7 @@ export const fetchBatchMessages = async (batchId: string): Promise<SmsLog[]> => 
 
   try {
     const res = await fetch(`${WEBHOOK_URL}?batch_id=${batchId}&limit=500`, {
-      headers: {
-        'X-Webhook-Secret': WEBHOOK_SECRET,
-      },
+      headers: getHeaders(),
     });
     if (!res.ok) throw new Error("Failed to fetch batch messages");
     const data = await res.json();
@@ -229,7 +231,9 @@ export const fetchMessagesByConversationId = async (
 
   try {
     const DIRECT_MESSAGES_URL = `${API_BASE_URL}/api/messages?conversation_id=${encodeURIComponent(conversationId)}&limit=${limit}`;
-    const res = await fetch(DIRECT_MESSAGES_URL);
+    const res = await fetch(DIRECT_MESSAGES_URL, {
+      headers: getHeaders(),
+    });
     if (!res.ok) throw new Error(`Failed to fetch conversation messages: ${res.status}`);
     const data = await res.json();
     return (data.data || data || []) as FirestoreMessage[];
@@ -245,8 +249,9 @@ export const fetchMessagesByConversationId = async (
  */
 export const fetchConversations = async (): Promise<Conversation[]> => {
   try {
-    const CONVERSATIONS_URL = `${API_BASE_URL}/api/conversations`;
-    const res = await fetch(CONVERSATIONS_URL);
+    const res = await fetch(CONVERSATIONS_URL, {
+      headers: getHeaders(),
+    });
     if (!res.ok) throw new Error(`Failed to fetch conversations: ${res.status}`);
     const data = await res.json();
     // Data may be { data: [...] } or a plain array or { conversations: [...] }
@@ -263,9 +268,7 @@ export const fetchMessagesByRecipientKey = async (recipientKey: string): Promise
 
   try {
     const res = await fetch(`${WEBHOOK_URL}?recipient_key=${encodeURIComponent(recipientKey)}&limit=500`, {
-      headers: {
-        'X-Webhook-Secret': WEBHOOK_SECRET,
-      },
+      headers: getHeaders(),
     });
     if (!res.ok) throw new Error("Failed to fetch messages by recipient_key");
     const data = await res.json();
@@ -280,8 +283,9 @@ export const fetchMessagesByRecipientKey = async (recipientKey: string): Promise
 // Fetch all bulk messages from Firestore (grouped by batch)
 export const fetchAllBulkMessages = async (): Promise<BulkMessageHistoryItem[]> => {
   try {
-    const BULK_CAMPAIGNS_URL = `${API_BASE_URL}/api/bulk-campaigns`;
-    const res = await fetch(BULK_CAMPAIGNS_URL);
+    const res = await fetch(BULK_CAMPAIGNS_URL, {
+      headers: getHeaders(),
+    });
     console.log('[fetchAllBulkMessages] Response status:', res.status);
     if (!res.ok) {
       const errorText = await res.text();

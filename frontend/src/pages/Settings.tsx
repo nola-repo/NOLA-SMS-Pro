@@ -16,6 +16,8 @@ import {
 import { SenderRequestModal } from "../components/SenderRequestModal";
 import { useGhlLocation } from "../hooks/useGhlLocation";
 
+const WEBHOOK_SECRET = 'f7RkQ2pL9zV3tX8cB1nS4yW6';
+
 // ─── Types ──────────────────────────────────────────────────────────────────
 type SettingsTab = "account" | "senderIds" | "api" | "notifications" | "credits";
 
@@ -152,7 +154,10 @@ const AccountSection: React.FC = () => {
             if (!form.ghlLocationId) return;
             try {
                 const res = await fetch(`/api/account.php`, {
-                    headers: { 'X-GHL-Location-ID': form.ghlLocationId }
+                    headers: { 
+                        'X-GHL-Location-ID': form.ghlLocationId,
+                        'X-Webhook-Secret': WEBHOOK_SECRET
+                    }
                 });
                 const data = await res.json();
                 if (data?.status === 'success') {
@@ -328,10 +333,18 @@ const SenderIdsSection: React.FC<{ autoOpenAddModal?: boolean }> = ({ autoOpenAd
     useEffect(() => {
         const fetchData = async () => {
             try {
-                // Fetch Sender ID requests
-                const reqRes = await fetch('/api/sender-requests.php', {
-                    headers: { 'X-GHL-Location-ID': getAccountSettings().ghlLocationId }
-                });
+                const locId = getAccountSettings().ghlLocationId;
+                const headers = { 
+                    'X-GHL-Location-ID': locId,
+                    'X-Webhook-Secret': WEBHOOK_SECRET 
+                };
+
+                // Fetch data in parallel for better performance
+                const [reqRes, accRes] = await Promise.all([
+                    fetch('/api/sender-requests.php', { headers }),
+                    fetch('/api/account-sender.php', { headers })
+                ]);
+
                 if (reqRes.ok) {
                     const data = await reqRes.json();
                     if (Array.isArray(data)) {
@@ -339,16 +352,12 @@ const SenderIdsSection: React.FC<{ autoOpenAddModal?: boolean }> = ({ autoOpenAd
                             id: r.id,
                             name: r.requested_id,
                             description: r.purpose || "Custom Sender ID",
-                            color: "bg-purple-500", // Default color for now
+                            color: "bg-purple-500",
                             status: r.status
                         })));
                     }
                 }
 
-                // Fetch Account Settings to get API Key
-                const accRes = await fetch('/api/account-sender.php', {
-                    headers: { 'X-GHL-Location-ID': getAccountSettings().ghlLocationId }
-                });
                 if (accRes.ok) {
                     const accData = await accRes.json();
                     if (accData.status === 'success' && accData.data) {
@@ -393,7 +402,8 @@ const SenderIdsSection: React.FC<{ autoOpenAddModal?: boolean }> = ({ autoOpenAd
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
-                    'X-GHL-Location-ID': getAccountSettings().ghlLocationId 
+                    'X-GHL-Location-ID': getAccountSettings().ghlLocationId,
+                    'X-Webhook-Secret': WEBHOOK_SECRET
                 },
                 body: JSON.stringify({ api_key: nolaApiKey })
             });

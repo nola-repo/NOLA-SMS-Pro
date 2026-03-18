@@ -2,140 +2,460 @@
 
 require __DIR__ . '/api/webhook/firestore_client.php';
 
-function ghl_send_json(array $data, int $status = 200): void
+// ─── Global Context ────────────────────────────────────────────────────────────
+$locationIdSafe = '';
+$backendApiUrl = 'https://smspro-api.nolacrm.io';
+
+/**
+ * Send a full HTML page and exit.
+ */
+function render_page(string $title, string $body_html): void
 {
-    header('Content-Type: application/json');
-    http_response_code($status);
-    echo json_encode($data, JSON_PRETTY_PRINT);
+    global $locationIdSafe, $backendApiUrl;
+
+    header('Content-Type: text/html; charset=utf-8');
+    echo <<<HTML
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{$title} — NOLA SMS Pro</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        html { font-family: 'Poppins', system-ui, -apple-system, sans-serif; background: #fdfdfd; color: #1a1a1a; -webkit-font-smoothing: antialiased; }
+        body { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 20px; }
+
+        .unified-card { 
+            max-width: 440px; width: 100%; 
+            background: #fff; border-radius: 36px; padding: 44px 32px; 
+            box-shadow: 0 12px 48px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.02); 
+            border: 1px solid rgba(0,0,0,0.04); text-align: center;
+            animation: card-in 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+        }
+        @keyframes card-in { from { opacity: 0; transform: translateY(40px); } to { opacity: 1; transform: translateY(0); } }
+
+        .success-ring { position: relative; display: inline-flex; margin: 0 auto 31px; }
+        .success-ring::before { 
+            content: ''; position: absolute; inset: -10px; border-radius: 50%; 
+            border: 3px solid #2b83fa; opacity: 0.4; 
+            animation: pulse-ring 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite; 
+        }
+        @keyframes pulse-ring { 
+            0% { transform: scale(0.95); opacity: 0.6; } 70% { transform: scale(1.35); opacity: 0; } 100% { transform: scale(1.35); opacity: 0; } 
+        }
+
+        .success-icon { 
+            width: 72px; height: 72px; border-radius: 50%; 
+            background: #2b83fa; display: flex; align-items: center; justify-content: center; 
+            z-index: 10; position: relative; box-shadow: 0 10px 24px rgba(43,131,250,0.4);
+        }
+
+        .error-icon { 
+            width: 72px; height: 72px; border-radius: 50%; 
+            background: #fef2f2; display: flex; align-items: center; justify-content: center; 
+            z-index: 10; position: relative; box-shadow: 0 10px 24px rgba(220,38,38,0.1);
+            border: 1px solid #fee2e2;
+        }
+
+        h1 { font-size: 30px; font-weight: 800; letter-spacing: -1.4px; margin-bottom: 6px; color: #111; line-height: 1; }
+        p.subtitle { font-size: 16px; color: #6e6e73; margin-bottom: 36px; line-height: 1.4; font-weight: 500; }
+
+        .btn-primary { 
+            display: inline-flex; align-items: center; justify-content: center; gap: 10px; 
+            width: auto; padding: 14px 44px; border-radius: 99px; 
+            background: #2b83fa; color: #fff; font-size: 16px; font-weight: 700; 
+            text-decoration: none; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); 
+            box-shadow: 0 6px 16px rgba(43,131,250,0.35); border: none; cursor: pointer;
+            margin: 0 auto;
+        }
+        .btn-primary:hover { background: #1d6bd4; transform: translateY(-3px); box-shadow: 0 12px 32px rgba(43,131,250,0.45); }
+        .btn-primary:active { transform: scale(0.97); }
+
+        .sender-toggle { 
+            font-size: 13px; font-weight: 700; color: #6e6e73; 
+            cursor: pointer; display: inline-flex; align-items: center; gap: 8px;
+            padding: 10px 20px; border-radius: 99px; transition: all 0.2s;
+            background: #f8f8f8; border: 1px solid rgba(0,0,0,0.03);
+            margin: 0 auto;
+        }
+        .sender-toggle:hover { background: #f0f0f0; color: #111; transform: translateY(-1px); }
+
+        /* MODAL STYLES */
+        .modal-overlay { 
+            position: fixed; inset: 0; background: rgba(0,0,0,0.5); 
+            backdrop-filter: blur(4px); display: none; align-items: center; justify-content: center; 
+            z-index: 1000; animation: fade-in 0.3s ease; 
+        }
+        .modal-content { 
+            background: #fff; width: 92%; max-width: 440px; border-radius: 28px; 
+            padding: 32px; box-shadow: 0 20px 60px rgba(0,0,0,0.2); 
+            animation: modal-up 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+            text-align: left; position: relative;
+        }
+        @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes modal-up { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+        .modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+        .modal-title { font-size: 18px; font-weight: 800; color: #111; letter-spacing: -0.4px; }
+        .modal-close { cursor: pointer; color: #aaa; transition: 0.2s; padding: 4px; }
+        .modal-close:hover { color: #111; transform: scale(1.1); }
+
+        label { display: block; font-size: 11px; font-weight: 800; text-transform: uppercase; color: #9aa0a6; margin-bottom: 8px; letter-spacing: 0.05em; }
+        input, textarea { 
+            width: 100%; padding: 14px; border-radius: 14px; border: 1px solid #e0e0e0; 
+            background: #fafafa; font-family: inherit; font-size: 14px; margin-bottom: 16px; 
+            outline: none; transition: 0.2s;
+        }
+        input:focus, textarea:focus { border-color: #2b83fa; background: #fff; box-shadow: 0 0 0 4px rgba(43,131,250,0.1); }
+
+        .btn-submit { 
+            background: #2b83fa; color: #fff; 
+            border: none; padding: 16px; border-radius: 18px; font-weight: 700; 
+            cursor: pointer; width: 100%; font-size: 14px; transition: 0.2s; 
+            box-shadow: 0 4px 12px rgba(43,131,250,0.2); margin-top: 8px;
+        }
+        .btn-submit:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(43,131,250,0.3); }
+
+        .tutorial-link { 
+            font-size: 11px; color: #a1a1aa; text-decoration: underline; 
+            cursor: pointer; margin-top: 16px; display: inline-block;
+            transition: color 0.15s; font-weight: 600; text-underline-offset: 4px;
+        }
+        .tutorial-link:hover { color: #6e6e73; }
+        
+        .hidden { display: none !important; }
+        
+        /* Debug Pre */
+        .error-pre { margin-top: 12px; font-size: 10px; color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; border-radius: 10px; padding: 10px; overflow: auto; max-height: 120px; text-align: left; white-space: pre-wrap; word-break: break-all; font-family: monospace; }
+    </style>
+</head>
+<body>
+    <div class="unified-card">
+        {$body_html}
+    </div>
+
+    <p style="font-size: 10px; color: #ddd; margin-top: 40px; font-weight: 500;">© 2026 Powered by NOLA CRM</p>
+
+    <!-- SENDER ID MODAL -->
+    <div id="sender-modal" class="modal-overlay" onclick="if(event.target === this) toggleModal('sender-modal')">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Request Sender ID</h3>
+                <div class="modal-close" onclick="toggleModal('sender-modal')">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </div>
+            </div>
+
+            <form id="sender-form" onsubmit="handleSenderSubmit(event)">
+                <div id="sender-success" class="hidden" style="text-align:center; padding: 20px 0;">
+                    <div style="width:48px; height:48px; background:#f0fdf4; color:#16a34a; border-radius:50%; display:flex; align-items:center; justify-content:center; margin:0 auto 16px;">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    </div>
+                    <p style="color: #111; font-weight: 800; font-size: 16px; margin-bottom: 4px;">Request Submitted!</p>
+                    <p style="font-size: 13px; color: #6e6e73;">Review takes about 5 business days.</p>
+                </div>
+
+                <div id="form-fields">
+                    <div id="sender-error" class="hidden" style="color:#ef4444; font-size:12px; font-weight:600; margin-bottom:16px;"></div>
+                    
+                    <label>Sender Name</label>
+                    <input id="sender-name" type="text" maxlength="11" placeholder="ex. MyBrand" required>
+                    
+                    <label>Purpose</label>
+                    <textarea id="sender-purpose" rows="2" placeholder="What will you be using it for?" required></textarea>
+                    
+                    <label>Sample Message</label>
+                    <textarea id="sender-sample" rows="2" placeholder="Specific example of messages you'll send." required></textarea>
+                    
+                    <button type="submit" id="submit-btn" class="btn-submit">Submit Request</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- HOW IT WORKS MODAL -->
+    <div id="how-modal" class="modal-overlay" onclick="if(event.target === this) toggleModal('how-modal')">
+        <div class="modal-content" style="text-align: center;">
+            <div class="modal-header">
+                <div style="width:24px;"></div>
+                <h3 class="modal-title">How it Works</h3>
+                <div class="modal-close" onclick="toggleModal('how-modal')">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </div>
+            </div>
+
+            <div id="tutorial-step-1" class="tutorial-step">
+                <div style="width:56px; height:56px; background:#f0f7ff; color:#2b83fa; font-size:24px; font-weight:900; border-radius:18px; display:flex; align-items:center; justify-content:center; margin:0 auto 20px;">1</div>
+                <h4 style="font-size:16px; font-weight:800; margin-bottom:8px; color:#111;">Open Nola SMS Pro</h4>
+                <p style="font-size:13px; color:#444; line-height:1.5; margin-bottom:24px;">Access the application from your GoHighLevel sidebar sub-account menu.</p>
+                <button class="btn-primary" onclick="nextStep(2)" style="width:auto; padding:10px 24px; font-size:14px; border-radius:12px;">Next Step &rarr;</button>
+            </div>
+
+            <div id="tutorial-step-2" class="tutorial-step hidden">
+                <div style="width:56px; height:56px; background:#f0f7ff; color:#2b83fa; font-size:24px; font-weight:900; border-radius:18px; display:flex; align-items:center; justify-content:center; margin:0 auto 20px;">2</div>
+                <h4 style="font-size:16px; font-weight:800; margin-bottom:8px; color:#111;">10 Free Credits</h4>
+                <p style="font-size:13px; color:#444; line-height:1.5; margin-bottom:24px;">You start with 10 free SMS credits using our shared sender to test immediately.</p>
+                <button class="btn-primary" onclick="nextStep(3)" style="width:auto; padding:10px 24px; font-size:14px; border-radius:12px;">Final Step &rarr;</button>
+            </div>
+
+            <div id="tutorial-step-3" class="tutorial-step hidden">
+                <div style="width:56px; height:56px; background:#f0fdf4; color:#16a34a; font-size:24px; font-weight:900; border-radius:18px; display:flex; align-items:center; justify-content:center; margin:0 auto 20px;">3</div>
+                <h4 style="font-size:16px; font-weight:800; margin-bottom:8px; color:#111;">Ready to Send!</h4>
+                <p style="font-size:13px; color:#444; line-height:1.5; margin-bottom:24px;">You can also request a custom Sender ID to message using your brand name.</p>
+                <button class="btn-primary" onclick="toggleModal('how-modal')" style="width:auto; padding:10px 24px; font-size:14px; border-radius:12px;">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+      const LOCATION_ID = '{$locationIdSafe}';
+      const API_BASE    = '{$backendApiUrl}';
+
+      function toggleModal(id) {
+        const el = document.getElementById(id);
+        if (el && el.style.display === 'flex') {
+          el.style.display = 'none';
+          if (id === 'how-modal') resetTutorial();
+        } else if (el) {
+          el.style.display = 'flex';
+        }
+      }
+
+      function nextStep(step) {
+        document.querySelectorAll('.tutorial-step').forEach(s => s.classList.add('hidden'));
+        document.getElementById('tutorial-step-' + step).classList.remove('hidden');
+      }
+
+      function resetTutorial() {
+        document.querySelectorAll('.tutorial-step').forEach(s => s.classList.add('hidden'));
+        document.getElementById('tutorial-step-1').classList.remove('hidden');
+      }
+
+      async function handleSenderSubmit(e) {
+        e.preventDefault();
+        const btn = document.getElementById('submit-btn');
+        btn.disabled = true;
+        btn.innerHTML = 'Submitting...';
+
+        try {
+          const res = await fetch(API_BASE + '/api/sender-requests', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-GHL-Location-ID': LOCATION_ID },
+            body: JSON.stringify({
+              location_id:    LOCATION_ID,
+              requested_id:   document.getElementById('sender-name').value.trim().toUpperCase(),
+              purpose:        document.getElementById('sender-purpose').value.trim(),
+              sample_message: document.getElementById('sender-sample').value.trim()
+            }),
+          });
+          if (!res.ok) throw new Error();
+          document.getElementById('form-fields').classList.add('hidden');
+          document.getElementById('sender-success').classList.remove('hidden');
+        } catch {
+          document.getElementById('sender-error').textContent = "Failed to submit. Try again.";
+          document.getElementById('sender-error').classList.remove('hidden');
+          btn.disabled = false;
+          btn.innerHTML = 'Submit Request';
+        }
+      }
+    </script>
+</body>
+</html>
+HTML;
+}
+
+/**
+ * Stop early with a styled error page.
+ */
+function render_error(string $message, array $details = []): void
+{
+    $msg_safe = htmlspecialchars($message);
+    $details_html = '';
+    if (!empty($details)) {
+        $json = htmlspecialchars(json_encode($details, JSON_PRETTY_PRINT));
+        $details_html = "<pre class=\"error-pre\">{$json}</pre>";
+    }
+
+    $reinstall_url = 'https://marketplace.leadconnectorhq.com/oauth/chooselocation?response_type=code&redirect_uri=https%3A%2F%2Fsmspro-api.nolacrm.io%2Foauth%2Fcallback&client_id=6999da2b8f278296d95f7274-mmn30t4f&scope=workflows.readonly+conversations%2Fmessage.readonly+conversations.readonly+conversations.write+contacts.readonly+contacts.write+conversations%2Fmessage.write&version_id=6999da2b8f278296d95f7274';
+
+    $body = <<<HTML
+        <div class="error-icon" style="margin: 0 auto 32px;">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+        </div>
+        <h1>Installation Failed</h1>
+        <p class="subtitle" style="margin-bottom: 24px;">{$msg_safe}</p>
+        {$details_html}
+        <div style="margin-top: 32px;">
+            <a href="{$reinstall_url}" class="btn-primary">Try Again</a>
+        </div>
+HTML;
+    render_page('Installation Failed', $body);
     exit;
 }
 
+// ─── Preview Logic ────────────────────────────────────────────────────────────
+if (isset($_GET['test'])) {
+    if ($_GET['test'] === 'success') {
+        $locationIdSafe = 'test_location_123';
+        $locationNameDisplay = 'Test Sub-Account';
+        $dashboardUrl = '#';
+        $body = <<<HTML
+            <div class="success-ring"><div class="success-icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div></div>
+            <h1>Success!</h1>
+            <p class="subtitle">You are now connected to NOLA SMS Pro <b>{$locationNameDisplay}</b></p>
+            <div style="display:flex; flex-direction:column; gap:16px; margin-bottom:32px;">
+                <a href="{$dashboardUrl}" class="btn-primary">Open Dashboard</a>
+                <div class="sender-toggle" onclick="toggleModal('sender-modal')">Request Sender ID</div>
+            </div>
+            <div onclick="toggleModal('how-modal')" class="tutorial-link">How it works & Credits</div>
+HTML;
+        render_page('Success!', $body);
+        exit;
+    }
+    if ($_GET['test'] === 'error') {
+        render_error('Test error message appearing here.', ['debug' => 'active', 'timestamp' => time()]);
+    }
+}
+
+// ─── OAuth Config ──────────────────────────────────────────────────────────────
 $clientId = getenv('GHL_CLIENT_ID');
 $clientSecret = getenv('GHL_CLIENT_SECRET');
 $redirectUri = 'https://smspro-api.nolacrm.io/oauth/callback';
 
-if (!$clientId || !$clientSecret) {
-    ghl_send_json([
-        'success' => false,
-        'error' => 'GHL_CLIENT_ID or GHL_CLIENT_SECRET not configured on server.',
-    ], 500);
-}
-
-if (!isset($_GET['code'])) {
-    ghl_send_json([
-        'success' => false,
-        'error' => 'No authorization code received.',
-    ], 400);
-}
+if (!$clientId || !$clientSecret)
+    render_error('Server configuration error: GHL credentials are not set up.');
+if (!isset($_GET['code']))
+    render_error('No authorization code was received.');
 
 $code = $_GET['code'];
-// state = subaccount/location id from install link (e.g. &state=location123)
 $state = $_GET['state'] ?? null;
 
-$tokenUrl = 'https://services.leadconnectorhq.com/oauth/token';
-$postData = [
+// ─── Token Exchange ────────────────────────────────────────────────────────────
+$ch = curl_init('https://services.leadconnectorhq.com/oauth/token');
+curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+curl_setopt($ch, CURLOPT_POST, true);
+curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query([
     'client_id' => $clientId,
     'client_secret' => $clientSecret,
     'grant_type' => 'authorization_code',
     'code' => $code,
     'user_type' => 'Location',
     'redirect_uri' => $redirectUri,
-];
-
-$ch = curl_init($tokenUrl);
-curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-curl_setopt($ch, CURLOPT_POST, true);
-curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($postData));
-curl_setopt($ch, CURLOPT_HTTPHEADER, [
-    'Accept: application/json',
-    'Content-Type: application/x-www-form-urlencoded',
-    'Version: 2021-07-28',
-]);
+]));
+curl_setopt($ch, CURLOPT_HTTPHEADER, ['Accept: application/json', 'Version: 2021-07-28']);
 
 $response = curl_exec($ch);
 $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-$curlError = curl_error($ch);
 curl_close($ch);
 
-if ($curlError) {
-    ghl_send_json([
-        'success' => false,
-        'error' => 'cURL error: ' . $curlError,
-    ], 500);
-}
-
 $data = json_decode($response, true);
+if ($httpCode !== 200 || !is_array($data))
+    render_error('Authorization failed.', $data ?: []);
 
-if ($httpCode !== 200 || !is_array($data)) {
-    ghl_send_json([
-        'success' => false,
-        'error' => 'GHL token exchange failed.',
-        'http_code' => $httpCode,
-        'ghl_result' => $data ?: $response,
-    ], $httpCode);
-}
-
-$db = get_firestore();
-$now = new DateTimeImmutable();
-$expires = (int)($data['expires_in'] ?? 0);
-$expiresAt = (clone $now)->modify('+' . $expires . ' seconds');
-
-// Per-subaccount: doc id = raw locationId (matches GhlTokenManager / ghl_oauth.php convention)
 $locationId = $state ?? $data['locationId'] ?? $data['location_id'] ?? null;
+if (!$locationId)
+    render_error('No Location ID returned.');
 
-if (!$locationId) {
-    ghl_send_json([
-        'success' => false,
-        'error' => 'No locationId returned by GHL — cannot store token.',
-    ], 400);
-}
+$locationIdSafe = htmlspecialchars((string)$locationId, ENT_QUOTES, 'UTF-8');
 
-$expiresAtUnix = time() + $expires; // store as Unix int to match ghl_oauth.php
-
-// --- New: Fetch Location Name from GHL API ---
+// ─── Fetch Location Name ───────────────────────────────────────────────────────
 $locationName = '';
 try {
-    $locationUrl = 'https://services.leadconnectorhq.com/locations/' . $locationId;
-    $ch = curl_init($locationUrl);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+    $locCh = curl_init('https://services.leadconnectorhq.com/locations/' . $locationId);
+    curl_setopt($locCh, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($locCh, CURLOPT_HTTPHEADER, [
         'Authorization: Bearer ' . $data['access_token'],
         'Accept: application/json',
         'Version: 2021-07-28',
     ]);
-    $locResponse = curl_exec($ch);
-    $locHttpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+    $locResp = curl_exec($locCh);
+    $locCode = curl_getinfo($locCh, CURLINFO_HTTP_CODE);
+    curl_close($locCh);
 
-    if ($locHttpCode === 200) {
-        $locData = json_decode($locResponse, true);
+    if ($locCode === 200) {
+        $locData = json_decode($locResp, true);
         $locationName = $locData['location']['name'] ?? '';
     }
-} catch (Exception $e) {
-    // Log error but proceed with storing tokens
-    error_log("Failed to fetch location name: " . $e->getMessage());
+}
+catch (Exception $e) {
 }
 
-$db->collection('ghl_tokens')
-    ->document((string)$locationId)
-    ->set([
-    'access_token' => $data['access_token'] ?? null,
-    'refresh_token' => $data['refresh_token'] ?? null,
-    'scope' => $data['scope'] ?? null,
-    'location_id' => $locationId,
-    'location_name' => $locationName,
-    'expires_at' => $expiresAtUnix,
-    'userType' => $data['userType'] ?? 'Location',
-    'companyId' => $data['companyId'] ?? '',
-    'userId' => $data['userId'] ?? '',
-    'raw' => $data,
-    'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-], ['merge' => true]);
+$locationNameDisplay = $locationName ? htmlspecialchars($locationName, ENT_QUOTES, 'UTF-8') : 'Your Sub-Account';
+$dashboardUrl = 'https://app.nolacrm.io/v2/location/' . $locationIdSafe . '/custom-page-link/69a642aae76974824fd39bb6';
 
-ghl_send_json([
-    'success' => true,
-    'message' => 'GHL tokens stored successfully.',
-    'collection' => 'ghl_tokens',
-    'document_id' => (string)$locationId,
-    'location_id' => $locationId,
-]);
+// ─── Save Tokens & Metadata to Firestore ──────────────────────────────────────
+$db = get_firestore();
+$now = new DateTimeImmutable();
+$expiresAtUnix = time() + (int)($data['expires_in'] ?? 0);
+
+try {
+    // 1. Save main tokens
+    $db->collection('ghl_tokens')->document((string)$locationId)->set([
+        'access_token' => $data['access_token'] ?? null,
+        'refresh_token' => $data['refresh_token'] ?? null,
+        'scope' => $data['scope'] ?? null,
+        'location_id' => $locationId,
+        'location_name' => $locationName,
+        'expires_at' => $expiresAtUnix,
+        'userType' => $data['userType'] ?? 'Location',
+        'companyId' => $data['companyId'] ?? '',
+        'userId' => $data['userId'] ?? '',
+        'raw' => $data,
+        'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+    ], ['merge' => true]);
+
+    // 2. Provision Credits for new users
+    $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locationId);
+    $integrationRef = $db->collection('integrations')->document($intDocId);
+    $integrationSnap = $integrationRef->snapshot();
+
+    if (!$integrationSnap->exists()) {
+        // First-time install — 10 free credits & clear API keys
+        $integrationRef->set([
+            'location_id' => $locationId,
+            'location_name' => $locationName,
+            'free_credits_total' => 10,
+            'free_usage_count' => 0,
+            'approved_sender_id' => null,
+            'semaphore_api_key' => null,
+            'nola_pro_api_key' => null,
+            'system_default_sender' => 'NOLASMSPro',
+            'installed_at' => new \Google\Cloud\Core\Timestamp($now),
+            'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+        ]);
+    }
+    else {
+        // Re-install: preserve credits, just update name
+        $integrationRef->set([
+            'location_name' => $locationName,
+            'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+        ], ['merge' => true]);
+    }
+}
+catch (Exception $e) {
+    render_error('Callback authorized, but failed to save tokens: ' . $e->getMessage());
+}
+
+// ─── Render Success Page ───────────────────────────────────────────────────────
+$body = <<<HTML
+    <div class="success-ring">
+        <div class="success-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+    </div>
+    <h1>Success!</h1>
+    <p class="subtitle">Connected to <b>{$locationNameDisplay}</b></p>
+    
+    <div style="display: flex; flex-direction: column; gap: 16px; margin-bottom: 32px;">
+        <a href="{$dashboardUrl}" class="btn-primary">Open Dashboard</a>
+        <div class="sender-toggle" onclick="toggleModal('sender-modal')">Request Sender ID</div>
+    </div>
+
+    <div onclick="toggleModal('how-modal')" class="tutorial-link">How it works & Credits</div>
+HTML;
+
+render_page('Success!', $body);

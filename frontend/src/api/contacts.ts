@@ -1,11 +1,20 @@
 import type { Contact } from "../types/Contact";
-import { API_BASE_URL } from "./config";
+import { API_BASE_URL, WEBHOOK_SECRET } from "./config";
+import { getAccountSettings } from "../utils/settingsStorage";
 
 const CONTACTS_API_URL = `${API_BASE_URL}/api/ghl-contacts`;
 
+const getHeaders = () => ({
+  'X-Webhook-Secret': WEBHOOK_SECRET,
+  'X-GHL-Location-ID': getAccountSettings().ghlLocationId,
+  'Content-Type': 'application/json',
+});
+
 export const fetchContacts = async (): Promise<Contact[]> => {
   try {
-    const res = await fetch(CONTACTS_API_URL);
+    const res = await fetch(CONTACTS_API_URL, {
+      headers: getHeaders()
+    });
     
     if (!res.ok) {
       console.error('Contacts API returned error:', res.status, res.statusText);
@@ -40,9 +49,7 @@ export const addContact = async (params: AddContactParams): Promise<Contact | nu
   try {
     const res = await fetch(CONTACTS_API_URL, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: getHeaders(),
       body: JSON.stringify(params),
     });
     
@@ -73,9 +80,7 @@ export const updateContact = async (params: UpdateContactParams): Promise<Contac
   try {
     const res = await fetch(CONTACTS_API_URL, {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: getHeaders(),
       body: JSON.stringify(params),
     });
     
@@ -98,6 +103,7 @@ export const deleteContact = async (id: string): Promise<boolean> => {
   try {
     const res = await fetch(`${CONTACTS_API_URL}?id=${encodeURIComponent(id)}`, {
       method: 'DELETE',
+      headers: getHeaders(),
     });
     
     if (!res.ok) {

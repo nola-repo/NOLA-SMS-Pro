@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { FiPlus, FiX, FiCheck } from "react-icons/fi";
 import { getAccountSettings, type StoredSenderId } from "../utils/settingsStorage";
+import { WEBHOOK_SECRET } from "../api/config";
 
 interface SenderRequestModalProps {
     isOpen: boolean;
@@ -42,7 +43,8 @@ export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, 
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
-                    'X-GHL-Location-ID': getAccountSettings().ghlLocationId 
+                    'X-GHL-Location-ID': getAccountSettings().ghlLocationId,
+                    'X-Webhook-Secret': WEBHOOK_SECRET
                  },
                 body: JSON.stringify({
                     requested_id: cleanId,

@@ -29,38 +29,38 @@ try {
     $db = get_firestore();
     
     // 3. Database Query
-    // Try integrations collection (document id: ghl_{location_id})
-    $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string) $locId);
-    $intSnap = $db->collection('integrations')->document($intDocId)->snapshot();
-    
     $locationName = 'Unknown';
-    if ($intSnap->exists()) {
-        $data = $intSnap->data();
-        $locationName = $data['location_name'] ?? 'Unknown';
+
+    // 1. FIRST check the newer 'ghl_tokens' collection
+    $tokenSnap = $db->collection('ghl_tokens')->document((string)$locId)->snapshot();
+    if ($tokenSnap->exists()) {
+        $tokenData = $tokenSnap->data();
+        $locationName = $tokenData['location_name'] ?? 'Unknown';
     }
-    
-    // Fallback to ghl_tokens collection (document id: {location_id}) if name is still unknown
+
+    // 2. FALLBACK to 'integrations' collection if still Unknown
+    $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string) $locId);
+    $intRef = $db->collection('integrations')->document($intDocId);
+    $intSnap = $intRef->snapshot();
+
     if ($locationName === 'Unknown' || empty($locationName)) {
-        $tokenSnap = $db->collection('ghl_tokens')->document((string)$locId)->snapshot();
-        if ($tokenSnap->exists()) {
-            $tokenData = $tokenSnap->data();
-            $locationName = $tokenData['location_name'] ?? 'Unknown';
+        if ($intSnap->exists()) {
+            $intData = $intSnap->data();
+            $locationName = $intData['location_name'] ?? 'Unknown';
         }
     }
 
-    // Fetch account settings for sender and usage
-    $accountSnap = $db->collection('accounts')->document($locId)->snapshot();
-    $accountData = $accountSnap->exists() ? $accountSnap->data() : [];
+    $intData = $intSnap->exists() ? $intSnap->data() : [];
 
     // 4. Response format
-    // Must return location_id and location_name. Do NOT return OAuth tokens.
     echo json_encode([
         'status' => 'success',
         'data' => [
             'location_id' => $locId,
             'location_name' => $locationName,
-            'approved_sender_id' => $accountData['approved_sender_id'] ?? null,
-            'free_usage_count' => $accountData['free_usage_count'] ?? 0
+            'approved_sender_id' => $intData['approved_sender_id'] ?? null,
+            'free_usage_count' => $intData['free_usage_count'] ?? 0,
+            'free_credits_total' => $intData['free_credits_total'] ?? 10
         ]
     ]);
 

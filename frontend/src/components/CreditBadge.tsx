@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { FiCreditCard, FiRefreshCw, FiZap, FiPlus } from "react-icons/fi";
 import { API_BASE_URL, WEBHOOK_SECRET } from "../api/config";
+import { getAccountSettings } from "../utils/settingsStorage";
 
 export const CreditBadge = () => {
     const [balance, setBalance] = useState<number | null>(null);
@@ -18,6 +19,7 @@ export const CreditBadge = () => {
             const res = await fetch(`${API_BASE_URL}/api/credits`, {
                 headers: {
                     'X-Webhook-Secret': WEBHOOK_SECRET,
+                    'X-GHL-Location-ID': getAccountSettings().ghlLocationId,
                     'Content-Type': 'application/json',
                 }
             });

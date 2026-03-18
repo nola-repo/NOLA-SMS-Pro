@@ -30,7 +30,8 @@ try {
         // Fetch sender ID requests for this location
         $query = $db->collection('sender_requests')
                     ->where('location_id', '==', $locId)
-                    ->orderBy('created_at', 'DESC');
+                    ->orderBy('created_at', 'DESC')
+                    ->limit(50);
         
         $results = [];
         foreach ($query->documents() as $doc) {

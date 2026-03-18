@@ -28,19 +28,21 @@ $docId = (string) $locId;
 
 try {
     if ($method === 'GET') {
-        // Fetch configuration
-        $docRef = $db->collection('accounts')->document($docId);
-        $snapshot = $docRef->snapshot();
+        // 3. Database Query (Source: integrations collection)
+        $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string) $locId);
+        $intRef = $db->collection('integrations')->document($intDocId);
+        $intSnap = $intRef->snapshot();
 
-        $data = $snapshot->exists() ? $snapshot->data() : [];
+        $data = $intSnap->exists() ? $intSnap->data() : [];
 
         echo json_encode([
             'status' => 'success',
             'data' => [
                 'approved_sender_id' => $data['approved_sender_id'] ?? null,
-                'nola_pro_api_key' => $data['nola_pro_api_key'] ?? ($data['semaphore_api_key'] ?? null), // Backward compat
+                'nola_pro_api_key' => $data['nola_pro_api_key'] ?? ($data['semaphore_api_key'] ?? null),
                 'free_usage_count' => $data['free_usage_count'] ?? 0,
-                'system_default_sender' => 'NOLASMSPro' // As requested
+                'free_credits_total' => $data['free_credits_total'] ?? 10,
+                'system_default_sender' => 'NOLASMSPro'
             ]
         ]);
         exit;
@@ -60,7 +62,8 @@ try {
             exit;
         }
 
-        $db->collection('accounts')->document($docId)->set([
+        $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string) $locId);
+        $db->collection('integrations')->document($intDocId)->set([
             'nola_pro_api_key' => $apiKey,
             'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
         ], ['merge' => true]);

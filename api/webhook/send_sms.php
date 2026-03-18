@@ -139,16 +139,18 @@ if (!$locId) {
     echo json_encode(['error' => 'Missing location_id (X-GHL-Location-ID header or query param required)']);
     exit;
 }
-$account_id = $locId ?: 'default';
 
 $db = get_firestore();
-$accountDoc = $db->collection('accounts')->document($account_id)->snapshot();
-$accountData = $accountDoc->exists() ? $accountDoc->data() : [];
+$intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string) $locId);
+$intRef = $db->collection('integrations')->document($intDocId);
+$intSnap = $intRef->snapshot();
+$intData = $intSnap->exists() ? $intSnap->data() : [];
 
-$approvedSenderId = $accountData['approved_sender_id'] ?? null;
+$approvedSenderId = $intData['approved_sender_id'] ?? null;
 // Support legacy semaphore_api_key but prefer the new nola_pro_api_key
-$customApiKey = $accountData['nola_pro_api_key'] ?? ($accountData['semaphore_api_key'] ?? null);
-$freeUsageCount = $accountData['free_usage_count'] ?? 0;
+$customApiKey = $intData['nola_pro_api_key'] ?? ($intData['semaphore_api_key'] ?? null);
+$freeUsageCount = $intData['free_usage_count'] ?? 0;
+$freeCreditsTotal = $intData['free_credits_total'] ?? 10;
 
 // Sender ID Logic: prioritize approved custom sender + custom valid API key
 if ($approvedSenderId && $customApiKey) {
@@ -156,10 +158,14 @@ if ($approvedSenderId && $customApiKey) {
     $activeApiKey = $customApiKey;
 }
 else {
-    // Only block if they try to send > 10 messages but haven't bought/setup an API key yet
-    if ($freeUsageCount >= 10) {
+    // Only block if they try to send more than their free credit limit
+    if ($freeUsageCount + $num_recipients > $freeCreditsTotal) {
         http_response_code(403);
-        echo json_encode(["status" => "error", "message" => "Free message limit reached (10/10). Registration of a custom Sender ID and API Key is required."]);
+        echo json_encode([
+            "status" => "error", 
+            "message" => "Free message limit reached ($freeUsageCount/$freeCreditsTotal). Registration of a custom Sender ID and API Key is required.",
+            "error" => "free_credits_exhausted"
+        ]);
         exit;
     }
     // Fallback to system default
@@ -171,6 +177,7 @@ else {
 }
 
 $creditManager = new CreditManager();
+$account_id = $locId ?: 'default';
 
 try {
     $creditManager->deduct_credits(
@@ -182,8 +189,9 @@ try {
 
     // Increment free usage count if using system default (no approved custom sender + key combo)
     if (!($approvedSenderId && $customApiKey)) {
-        $db->collection('accounts')->document($account_id)->set([
-            'free_usage_count' => $freeUsageCount + $num_recipients
+        $intRef->set([
+            'free_usage_count' => $freeUsageCount + $num_recipients,
+            'updated_at'       => new \Google\Cloud\Core\Timestamp(new \DateTime()),
         ], ['merge' => true]);
     }
 }

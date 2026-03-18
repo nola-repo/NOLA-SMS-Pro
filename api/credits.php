@@ -16,15 +16,48 @@ $db = get_firestore();
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 try {
-    if ($method !== 'GET') {
-        http_response_code(405);
+    if ($method === 'POST') {
+        $json = file_get_contents('php://input');
+        $payload = json_decode($json, true) ?? [];
+        
+        $action = $payload['action'] ?? ''; // 'add' or 'deduct'
+        $amount = (int)($payload['amount'] ?? 0);
+        $reference = $payload['reference'] ?? 'api_update';
+        $description = $payload['description'] ?? 'Balance updated via API';
+        
+        if ($amount <= 0) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'Invalid amount'], JSON_PRETTY_PRINT);
+            exit;
+        }
+
+        require_once __DIR__ . '/services/CreditManager.php';
+        $creditManager = new CreditManager();
+        $locId = get_ghl_location_id();
+        $accountId = $locId ?: 'default';
+
+        if ($action === 'add') {
+            $newBalance = $creditManager->add_credits($accountId, $amount, $reference, $description);
+        } elseif ($action === 'deduct') {
+            $newBalance = $creditManager->deduct_credits($accountId, $amount, $reference, $description);
+        } else {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'Invalid action. Use "add" or "deduct".'], JSON_PRETTY_PRINT);
+            exit;
+        }
+
         echo json_encode([
-            'success' => false,
-            'error' => 'Method not allowed',
+            'success' => true,
+            'account_id' => $accountId,
+            'action' => $action,
+            'amount' => $amount,
+            'new_balance' => $newBalance,
+            'message' => "Successfully updated balance for account $accountId."
         ], JSON_PRETTY_PRINT);
         exit;
     }
 
+    // Default GET logic
     $locId = get_ghl_location_id();
     $accountId = $locId ?: 'default';
     $docRef = $db->collection('accounts')->document($accountId);
