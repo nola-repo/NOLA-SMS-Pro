@@ -38,7 +38,7 @@ try {
             'status' => 'success',
             'data' => [
                 'approved_sender_id' => $data['approved_sender_id'] ?? null,
-                'semaphore_api_key' => $data['semaphore_api_key'] ?? null,
+                'nola_pro_api_key' => $data['nola_pro_api_key'] ?? ($data['semaphore_api_key'] ?? null), // Backward compat
                 'free_usage_count' => $data['free_usage_count'] ?? 0,
                 'system_default_sender' => 'NOLASMSPro' // As requested
             ]
@@ -47,21 +47,21 @@ try {
     }
 
     if ($method === 'POST') {
-        // Update semaphore_api_key
+        // Update nola_pro_api_key
         $raw = file_get_contents('php://input');
         $payload = json_decode($raw, true);
         if (!is_array($payload)) $payload = $_POST;
 
-        $apiKey = $payload['semaphore_api_key'] ?? null;
+        $apiKey = $payload['api_key'] ?? null;
 
         if ($apiKey === null) {
             http_response_code(400);
-            echo json_encode(['status' => 'error', 'message' => 'Missing semaphore_api_key']);
+            echo json_encode(['status' => 'error', 'message' => 'Missing api_key']);
             exit;
         }
 
         $db->collection('accounts')->document($docId)->set([
-            'semaphore_api_key' => $apiKey,
+            'nola_pro_api_key' => $apiKey,
             'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
         ], ['merge' => true]);
 

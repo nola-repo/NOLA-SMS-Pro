@@ -68,9 +68,17 @@ try {
             exit;
         }
 
+        // Validate requested_id format: length 3-11, alphanumeric only (no spaces)
+        if (!preg_match('/^[a-zA-Z0-9]{3,11}$/', $requestedId)) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'Sender Name must be 3-11 alphanumeric characters with no spaces']);
+            exit;
+        }
+
         $requestId = 'req_' . bin2hex(random_bytes(8));
         $now = new \Google\Cloud\Core\Timestamp(new \DateTime());
 
+        // Update database payload schema to match requirements
         $db->collection('sender_requests')->document($requestId)->set([
             'location_id' => $locId,
             'requested_id' => $requestedId,

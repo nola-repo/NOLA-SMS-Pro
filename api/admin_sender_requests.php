@@ -11,9 +11,9 @@ validate_api_request();
 
 $db = get_firestore();
 
-if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && (!isset($_GET['action']) || $_GET['action'] !== 'accounts')) {
     // In production, we'd probably filter by "pending" first, but let's fetch all
-    $requests = $db->collection('sender_id_requests')
+    $requests = $db->collection('sender_requests')
         ->orderBy('created_at', 'DESC')
         ->documents();
 
@@ -38,15 +38,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $requestId = $payload['request_id'] ?? null;
     $status = $payload['status'] ?? null; // 'approved' or 'rejected'
     $apiKey = $payload['api_key'] ?? null;
+    $note = $payload['note'] ?? null;
 
-    if (!$requestId || !$status) {
+    if (!$requestId || !in_array($status, ['approved', 'rejected'])) {
         http_response_code(400);
-        echo json_encode(['status' => 'error', 'message' => 'Missing request_id or status']);
+        echo json_encode(['status' => 'error', 'message' => 'Missing or invalid request_id or status']);
         exit;
     }
 
     // 1. Update the request status
-    $requestRef = $db->collection('sender_id_requests')->document($requestId);
+    $requestRef = $db->collection('sender_requests')->document($requestId);
     $reqSnapshot = $requestRef->snapshot();
     
     if (!$reqSnapshot->exists()) {
@@ -58,17 +59,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $reqData = $reqSnapshot->data();
     $locId = $reqData['location_id'];
 
-    $requestRef->set(['status' => $status], ['merge' => true]);
+    $updateData = ['status' => $status];
+    if ($status === 'rejected' && $note) {
+        $updateData['admin_notes'] = $note;
+    }
+    $updateData['updated_at'] = new \Google\Cloud\Core\Timestamp(new \DateTime());
+
+    $requestRef->set($updateData, ['merge' => true]);
 
     // 2. If approved, update the account mapping
     if ($status === 'approved') {
         $accountRef = $db->collection('accounts')->document($locId);
         $accountRef->set([
             'approved_sender_id' => $reqData['requested_id'],
-            'semaphore_api_key' => $apiKey // Manual assignment by boss
+            'nola_pro_api_key' => $apiKey // Manual assignment by boss
         ], ['merge' => true]);
     }
 
     echo json_encode(['status' => 'success', 'message' => "Request $status and account updated."]);
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'accounts') {
+    // High-level overview of GHL accounts
+    $accounts = $db->collection('accounts')->documents();
+    $results = [];
+    foreach ($accounts as $acc) {
+        $results[] = [
+            'id' => $acc->id(),
+            'data' => $acc->data()
+        ];
+    }
+    echo json_encode(['status' => 'success', 'data' => $results]);
     exit;
 }

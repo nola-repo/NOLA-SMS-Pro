@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { FiPlus, FiX, FiCheck } from "react-icons/fi";
-import { addSenderId, type StoredSenderId } from "../utils/settingsStorage";
+import { getAccountSettings, type StoredSenderId } from "../utils/settingsStorage";
 
 interface SenderRequestModalProps {
     isOpen: boolean;
@@ -17,28 +17,72 @@ export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, 
     const [newId, setNewId] = useState("");
     const [newPurpose, setNewPurpose] = useState("");
     const [newSample, setNewSample] = useState("");
+    const [isSubmitting, setIsSubmitting] = useState(false);
     const [isSubmitted, setIsSubmitted] = useState(false);
+    const [errorMsg, setErrorMsg] = useState("");
 
     if (!isOpen) return null;
 
-    const handleAdd = (e: React.FormEvent) => {
+    const handleAdd = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!newId.trim()) return;
+        setErrorMsg("");
+        
+        const cleanId = newId.trim().toUpperCase();
+        if (!cleanId) return;
 
-        const fullDesc = `Purpose: ${newPurpose} | Sample: ${newSample}`;
-        // Note: In real app, color index might need better management
-        const created = addSenderId(newId, fullDesc, SENDER_COLORS[Math.floor(Math.random() * SENDER_COLORS.length)]);
+        // Validation: 3-11 chars, alphanumeric no spaces
+        if (!/^[A-Z0-9]{3,11}$/.test(cleanId)) {
+            setErrorMsg("Sender Name must be 3-11 alphanumeric characters with no spaces.");
+            return;
+        }
 
-        if (onSuccess) onSuccess(created);
-        setIsSubmitted(true);
+        setIsSubmitting(true);
+        try {
+            const res = await fetch('/api/sender-requests.php', {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'X-GHL-Location-ID': getAccountSettings().ghlLocationId 
+                 },
+                body: JSON.stringify({
+                    requested_id: cleanId,
+                    purpose: newPurpose,
+                    sample_message: newSample
+                })
+            });
 
-        setTimeout(() => {
-            setNewId("");
-            setNewPurpose("");
-            setNewSample("");
-            setIsSubmitted(false);
-            onClose();
-        }, 3000);
+            const data = await res.json();
+            
+            if (!res.ok || data.status === 'error') {
+                throw new Error(data.message || "Failed to submit request");
+            }
+
+            // Note: In real app, color index might need better management
+            const color = SENDER_COLORS[Math.floor(Math.random() * SENDER_COLORS.length)];
+            
+            const newEntry: StoredSenderId = {
+                id: data.id || `req_${Date.now()}`,
+                name: cleanId,
+                description: newPurpose || "Custom Sender ID",
+                color,
+                status: "pending",
+            };
+
+            if (onSuccess) onSuccess(newEntry);
+            setIsSubmitted(true);
+
+            setTimeout(() => {
+                setNewId("");
+                setNewPurpose("");
+                setNewSample("");
+                setIsSubmitted(false);
+                onClose();
+            }, 3000);
+        } catch (err: any) {
+            setErrorMsg(err.message || 'An error occurred during submission.');
+        } finally {
+            setIsSubmitting(false);
+        }
     };
 
     return (
@@ -105,10 +149,15 @@ export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, 
                                 className="w-full px-4 py-2.5 rounded-xl text-[14px] border bg-[#f7f7f7] dark:bg-[#0d0e10] border-[#e0e0e0] dark:border-[#ffffff0a] text-[#111111] dark:text-[#ececf1] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#2b83fa]/25 resize-none"
                             />
                         </div>
+                        {errorMsg && (
+                            <div className="p-3 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-[12px] rounded-xl border border-red-200 dark:border-red-900/30">
+                                {errorMsg}
+                            </div>
+                        )}
                         <div className="flex flex-col-reverse sm:flex-row gap-3 pt-2">
-                            <button type="button" onClick={onClose} className="flex-1 py-2.5 text-[13px] font-semibold text-gray-500 hover:bg-gray-100 dark:hover:bg-white/5 rounded-xl transition-colors">Cancel</button>
-                            <button type="submit" className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-[#2b83fa] to-[#1d6bd4] hover:shadow-[0_8px_25px_rgba(43,131,250,0.4)] text-white rounded-xl font-semibold text-[13px] transition-all shadow-md shadow-blue-500/20">
-                                Submit Request
+                            <button type="button" onClick={onClose} disabled={isSubmitting} className="flex-1 py-2.5 text-[13px] font-semibold text-gray-500 hover:bg-gray-100 dark:hover:bg-white/5 rounded-xl transition-colors disabled:opacity-50">Cancel</button>
+                            <button type="submit" disabled={isSubmitting} className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-[#2b83fa] to-[#1d6bd4] hover:shadow-[0_8px_25px_rgba(43,131,250,0.4)] text-white rounded-xl font-semibold text-[13px] transition-all shadow-md shadow-blue-500/20 disabled:opacity-50">
+                                {isSubmitting ? "Submitting..." : "Submit Request"}
                             </button>
                         </div>
                     </form>

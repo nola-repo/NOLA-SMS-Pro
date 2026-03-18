@@ -146,21 +146,23 @@ $accountDoc = $db->collection('accounts')->document($account_id)->snapshot();
 $accountData = $accountDoc->exists() ? $accountDoc->data() : [];
 
 $approvedSenderId = $accountData['approved_sender_id'] ?? null;
-$customApiKey = $accountData['semaphore_api_key'] ?? null;
+// Support legacy semaphore_api_key but prefer the new nola_pro_api_key
+$customApiKey = $accountData['nola_pro_api_key'] ?? ($accountData['semaphore_api_key'] ?? null);
 $freeUsageCount = $accountData['free_usage_count'] ?? 0;
 
-// Sender ID Logic: prioritize approved custom sender, otherwise use default
-if ($approvedSenderId) {
+// Sender ID Logic: prioritize approved custom sender + custom valid API key
+if ($approvedSenderId && $customApiKey) {
     $sender = $approvedSenderId;
-    $activeApiKey = $customApiKey ?: $SEMAPHORE_API_KEY;
+    $activeApiKey = $customApiKey;
 }
 else {
-    // Check free limit if using system default
+    // Only block if they try to send > 10 messages but haven't bought/setup an API key yet
     if ($freeUsageCount >= 10) {
         http_response_code(403);
-        echo json_encode(["status" => "error", "message" => "Free message limit reached (10/10). Please register a custom Sender ID to continue."]);
+        echo json_encode(["status" => "error", "message" => "Free message limit reached (10/10). Registration of a custom Sender ID and API Key is required."]);
         exit;
     }
+    // Fallback to system default
     $sender = $customData['sendername'] ?? $payload['sendername'] ?? $data['sendername'] ?? ($SENDER_IDS[0] ?? "");
     if (!in_array($sender, $SENDER_IDS)) {
         $sender = $SENDER_IDS[0];
@@ -178,8 +180,8 @@ try {
         "SMS sent to $num_recipients recipients"
     );
 
-    // Increment free usage count if using system default (no approved custom sender)
-    if (!$approvedSenderId) {
+    // Increment free usage count if using system default (no approved custom sender + key combo)
+    if (!($approvedSenderId && $customApiKey)) {
         $db->collection('accounts')->document($account_id)->set([
             'free_usage_count' => $freeUsageCount + $num_recipients
         ], ['merge' => true]);

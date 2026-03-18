@@ -289,8 +289,54 @@ const SenderIdsSection: React.FC<{ autoOpenAddModal?: boolean }> = ({ autoOpenAd
         { id: "BRANCH2", name: "BRANCH2", description: "Alternate Sender ID", color: "bg-orange-500", status: "approved" },
     ];
 
-    const [customIds, setCustomIds] = useState<StoredSenderId[]>(getStoredSenderIds);
+    // Real data fetching
+    const [customIds, setCustomIds] = useState<StoredSenderId[]>([]);
+    const [nolaApiKey, setNolaApiKey] = useState("");
     const [isAdding, setIsAdding] = useState(false);
+    const [apiKeySaved, setApiKeySaved] = useState(false);
+
+    useEffect(() => {
+        const fetchData = async () => {
+            try {
+                // Fetch Sender ID requests
+                const reqRes = await fetch('/api/sender-requests.php', {
+                    headers: { 'X-GHL-Location-ID': getAccountSettings().ghlLocationId }
+                });
+                if (reqRes.ok) {
+                    const data = await reqRes.json();
+                    if (Array.isArray(data)) {
+                        setCustomIds(data.map((r: any) => ({
+                            id: r.id,
+                            name: r.requested_id,
+                            description: r.purpose || "Custom Sender ID",
+                            color: "bg-purple-500", // Default color for now
+                            status: r.status
+                        })));
+                    }
+                }
+
+                // Fetch Account Settings to get API Key
+                const accRes = await fetch('/api/account-sender.php', {
+                    headers: { 'X-GHL-Location-ID': getAccountSettings().ghlLocationId }
+                });
+                if (accRes.ok) {
+                    const accData = await accRes.json();
+                    if (accData.status === 'success' && accData.data) {
+                        setNolaApiKey(accData.data.nola_pro_api_key || "");
+                    }
+                }
+            } catch (err) {
+                console.error("Failed to fetch sender data", err);
+            }
+        };
+
+        const locId = getAccountSettings().ghlLocationId;
+        if (locId) {
+            fetchData();
+        } else {
+            setCustomIds(getStoredSenderIds()); // fallback to local during dev without location
+        }
+    }, [getAccountSettings().ghlLocationId]);
 
     // Auto-open modal when triggered from Composer
     useEffect(() => {
@@ -302,12 +348,32 @@ const SenderIdsSection: React.FC<{ autoOpenAddModal?: boolean }> = ({ autoOpenAd
     const allIds = [...DEFAULT_SENDER_IDS, ...customIds];
 
     const handleSuccess = (created: StoredSenderId) => {
-        setCustomIds(prev => [...prev, created]);
+        setCustomIds(prev => [created, ...prev]);
     };
 
     const handleDelete = (id: string) => {
+        // Technically real deletion requires backend endpoint, falling back to local for now
         deleteSenderId(id);
         setCustomIds(prev => prev.filter(s => s.id !== id));
+    };
+
+    const handleSaveApiKey = async () => {
+        try {
+            const res = await fetch('/api/account-sender.php', {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'X-GHL-Location-ID': getAccountSettings().ghlLocationId 
+                },
+                body: JSON.stringify({ api_key: nolaApiKey })
+            });
+            if (res.ok) {
+                setApiKeySaved(true);
+                setTimeout(() => setApiKeySaved(false), 2000);
+            }
+        } catch (err) {
+            console.error("Failed to save NOLA Pro API Key", err);
+        }
     };
 
     return (
@@ -355,6 +421,35 @@ const SenderIdsSection: React.FC<{ autoOpenAddModal?: boolean }> = ({ autoOpenAd
                             </div>
                         );
                     })}
+                </div>
+            </Card>
+
+            {/* NOLA SMS Pro API Key Configuration */}
+            <Card>
+                <div className="mb-4">
+                    <h3 className="text-[13px] font-bold text-[#37352f] dark:text-[#ececf1] uppercase tracking-wider flex items-center gap-2">
+                        <FiZap className="w-4 h-4 text-emerald-500" />
+                        NOLA SMS Pro API Key
+                    </h3>
+                    <p className="text-[12px] text-[#9aa0a6] mt-1">
+                        Once your Sender ID is approved, NOLA will issue a dedicated API key for your subaccount. Enter it here to start sending from your brand using your active NOLA Credits.
+                    </p>
+                </div>
+                
+                <div className="flex items-center gap-3">
+                    <div className="flex-1">
+                        <InputField 
+                            label="" 
+                            id="nolaApiKey" 
+                            type="password"
+                            placeholder="Enter your approved NOLA SMS Pro API Key..." 
+                            value={nolaApiKey}
+                            onChange={v => setNolaApiKey(v)}
+                        />
+                    </div>
+                </div>
+                <div className="mt-4 flex justify-end">
+                    <SaveButton onClick={handleSaveApiKey} saved={apiKeySaved} />
                 </div>
             </Card>
 
