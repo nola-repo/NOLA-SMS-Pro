@@ -29,8 +29,24 @@ try {
     $db = get_firestore();
     
     // 3. Database Query
+    // Try integrations collection (document id: ghl_{location_id})
     $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string) $locId);
     $intSnap = $db->collection('integrations')->document($intDocId)->snapshot();
+    
+    $locationName = 'Unknown';
+    if ($intSnap->exists()) {
+        $data = $intSnap->data();
+        $locationName = $data['location_name'] ?? 'Unknown';
+    }
+    
+    // Fallback to ghl_tokens collection (document id: {location_id}) if name is still unknown
+    if ($locationName === 'Unknown' || empty($locationName)) {
+        $tokenSnap = $db->collection('ghl_tokens')->document((string)$locId)->snapshot();
+        if ($tokenSnap->exists()) {
+            $tokenData = $tokenSnap->data();
+            $locationName = $tokenData['location_name'] ?? 'Unknown';
+        }
+    }
 
     // Fetch account settings for sender and usage
     $accountSnap = $db->collection('accounts')->document($locId)->snapshot();
@@ -42,7 +58,7 @@ try {
         'status' => 'success',
         'data' => [
             'location_id' => $locId,
-            'location_name' => ($intSnap->exists() ? $intSnap->data()['location_name'] : 'Unknown'),
+            'location_name' => $locationName,
             'approved_sender_id' => $accountData['approved_sender_id'] ?? null,
             'free_usage_count' => $accountData['free_usage_count'] ?? 0
         ]

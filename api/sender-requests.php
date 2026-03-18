@@ -43,7 +43,9 @@ try {
                     'status' => $d['status'] ?? 'pending',
                     'purpose' => $d['purpose'] ?? '',
                     'sample_message' => $d['sample_message'] ?? '',
-                    'created_at' => isset($d['created_at']) ? $d['created_at']->formatAsString() : null
+                    'created_at' => (isset($d['created_at']) && $d['created_at'] instanceof \Google\Cloud\Core\Timestamp) 
+                        ? $d['created_at']->get()->format('Y-m-d H:i:s') 
+                        : null
                 ];
             }
         }
