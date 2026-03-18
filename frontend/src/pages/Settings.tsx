@@ -147,6 +147,28 @@ const AccountSection: React.FC = () => {
         }
     }, [ghlLocationIdFromHook, form.ghlLocationId]);
 
+    useEffect(() => {
+        const fetchAccountDetails = async () => {
+            if (!form.ghlLocationId) return;
+            try {
+                const res = await fetch(`/api/account.php`, {
+                    headers: { 'X-GHL-Location-ID': form.ghlLocationId }
+                });
+                const data = await res.json();
+                if (data?.status === 'success') {
+                    setForm(prev => ({
+                        ...prev,
+                        locationName: data.data.location_name,
+                        accountStatus: data.data.approved_sender_id ? 'approved' : prev.accountStatus, // Basic sync
+                    }));
+                }
+            } catch (e) {
+                console.error("Failed to fetch account labels:", e);
+            }
+        };
+        fetchAccountDetails();
+    }, [form.ghlLocationId]);
+
     const field = (key: keyof AccountSettings) => ({
         value: String(form[key]),
         onChange: (v: string) => setForm(prev => ({ ...prev, [key]: v })),
@@ -225,13 +247,21 @@ const AccountSection: React.FC = () => {
                     </div>
                 )}
 
-                <div className="mb-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
                     <InputField
                         label="GHL Location ID"
                         id="ghlLocationId"
                         placeholder="Paste your Location ID here"
                         hint="Your unique GoHighLevel subaccount ID."
                         {...field("ghlLocationId")}
+                    />
+                    <InputField
+                        label="GOHIGHLEVEL SUBACCOUNT"
+                        id="locationName"
+                        value={form.locationName || "Unknown"}
+                        onChange={() => {}}
+                        disabled={true}
+                        hint="Auto-detected from your GHL connection."
                     />
                 </div>
 
