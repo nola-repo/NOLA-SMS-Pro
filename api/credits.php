@@ -28,7 +28,12 @@ try {
         // Basic logging for debugging (will be removed later)
         // file_put_contents(__DIR__ . '/credits_debug.log', date('[Y-m-d H:i:s] ') . "Method: $method, Payload: " . json_encode($payload) . "\n", FILE_APPEND);
 
-        $action = $payload['action'] ?? $payload['Action'] ?? '';
+        $action = trim(strtolower($payload['action'] ?? $payload['Action'] ?? ''));
+        
+        // Extra robust check for nested customData (GHL sometimes nests these)
+        if (empty($action) && isset($payload['customData']) && is_array($payload['customData'])) {
+            $action = trim(strtolower($payload['customData']['action'] ?? $payload['customData']['Action'] ?? ''));
+        }
         
         // Robust amount extraction
         $amountValue = $payload['amount'] ?? $payload['Amount'] ?? $payload['credits'] ?? $payload['Credits'] ?? 0;
@@ -68,8 +73,17 @@ try {
         } elseif ($action === 'deduct') {
             $newBalance = $creditManager->deduct_credits($accountId, $amount, $reference, $description);
         } else {
+            // Log the failure to help troubleshoot
+            $logMsg = date('[Y-m-d H:i:s] ') . "Invalid Action Failure. Payload: " . json_encode($payload) . " | Raw Action: " . var_export($action, true) . "\n";
+            file_put_contents(__DIR__ . '/credits_error.log', $logMsg, FILE_APPEND);
+
             http_response_code(400);
-            echo json_encode(['success' => false, 'error' => 'Invalid action. Use "add" or "deduct".'], JSON_PRETTY_PRINT);
+            echo json_encode([
+                'success' => false, 
+                'error' => 'Invalid action. Use "add" or "deduct".',
+                'received_action' => $action,
+                'suggestion' => 'Ensure "action" is set to "add" or "deduct" exactly.'
+            ], JSON_PRETTY_PRINT);
             exit;
         }
 
