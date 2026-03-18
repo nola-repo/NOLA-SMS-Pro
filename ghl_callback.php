@@ -1,6 +1,6 @@
 <?php
 
-require __DIR__ . '/api/webhook/firestore_client.php';
+require _DIR_ . '/api/webhook/firestore_client.php';
 
 // ─── Global Context ────────────────────────────────────────────────────────────
 $locationIdSafe = '';
@@ -24,17 +24,27 @@ function render_page(string $title, string $body_html): void
     <title>{$title} — NOLA SMS Pro</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
         html { font-family: 'Poppins', system-ui, -apple-system, sans-serif; background: #fdfdfd; color: #1a1a1a; -webkit-font-smoothing: antialiased; }
-        body { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 20px; }
+        body { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 20px; overflow: hidden; }
+
+        #antigravity-bg { 
+            position: fixed; inset: 0; z-index: -1; pointer-events: none;
+            background: radial-gradient(circle at center, #ffffff 0%, #f0f7ff 100%);
+        }
 
         .unified-card { 
             max-width: 440px; width: 100%; 
-            background: #fff; border-radius: 36px; padding: 44px 32px; 
-            box-shadow: 0 12px 48px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.02); 
-            border: 1px solid rgba(0,0,0,0.04); text-align: center;
+            background: rgba(255, 255, 255, 0.72); 
+            backdrop-filter: blur(20px) saturate(180%);
+            -webkit-backdrop-filter: blur(20px) saturate(180%);
+            border-radius: 36px; padding: 44px 32px; 
+            box-shadow: 0 10px 40px rgba(0,0,0,0.06), inset 0 0 0 1px rgba(255,255,255,0.4); 
+            border: 1px solid rgba(43,131,250,0.1); text-align: center;
             animation: card-in 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+            z-index: 10;
         }
         @keyframes card-in { from { opacity: 0; transform: translateY(40px); } to { opacity: 1; transform: translateY(0); } }
 
@@ -68,7 +78,7 @@ function render_page(string $title, string $body_html): void
             display: inline-flex; align-items: center; justify-content: center; gap: 10px; 
             width: auto; padding: 14px 44px; border-radius: 99px; 
             background: #2b83fa; color: #fff; font-size: 16px; font-weight: 700; 
-            text-decoration: none; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); 
+            text-decoration: none; transition: all 0.23s cubic-bezier(0.4, 0, 0.2, 1); 
             box-shadow: 0 6px 16px rgba(43,131,250,0.35); border: none; cursor: pointer;
             margin: 0 auto;
         }
@@ -108,7 +118,7 @@ function render_page(string $title, string $body_html): void
         input, textarea { 
             width: 100%; padding: 14px; border-radius: 14px; border: 1px solid #e0e0e0; 
             background: #fafafa; font-family: inherit; font-size: 14px; margin-bottom: 16px; 
-            outline: none; transition: 0.2s;
+            outline: none; transition: all 0.2s;
         }
         input:focus, textarea:focus { border-color: #2b83fa; background: #fff; box-shadow: 0 0 0 4px rgba(43,131,250,0.1); }
 
@@ -129,11 +139,12 @@ function render_page(string $title, string $body_html): void
         
         .hidden { display: none !important; }
         
-        /* Debug Pre */
         .error-pre { margin-top: 12px; font-size: 10px; color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; border-radius: 10px; padding: 10px; overflow: auto; max-height: 120px; text-align: left; white-space: pre-wrap; word-break: break-all; font-family: monospace; }
     </style>
 </head>
 <body>
+    <canvas id="antigravity-bg"></canvas>
+
     <div class="unified-card">
         {$body_html}
     </div>
@@ -172,6 +183,12 @@ function render_page(string $title, string $body_html): void
                     <textarea id="sender-sample" rows="2" placeholder="Specific example of messages you'll send." required></textarea>
                     
                     <button type="submit" id="submit-btn" class="btn-submit">Submit Request</button>
+
+                    <div style="margin-top: 20px; border-radius: 12px; background: #fffcf0; border: 1px solid #fdf2c2; padding: 12px; text-align: center;">
+                        <p style="font-size: 11px; color: #856404; font-weight: 500; line-height: 1.4;">
+                            <strong>Note:</strong> It may take a few business days for your sender name to be approved by the carrier network.
+                        </p>
+                    </div>
                 </div>
             </form>
         </div>
@@ -191,22 +208,28 @@ function render_page(string $title, string $body_html): void
             <div id="tutorial-step-1" class="tutorial-step">
                 <div style="width:56px; height:56px; background:#f0f7ff; color:#2b83fa; font-size:24px; font-weight:900; border-radius:18px; display:flex; align-items:center; justify-content:center; margin:0 auto 20px;">1</div>
                 <h4 style="font-size:16px; font-weight:800; margin-bottom:8px; color:#111;">Open Nola SMS Pro</h4>
-                <p style="font-size:13px; color:#444; line-height:1.5; margin-bottom:24px;">Access the application from your GoHighLevel sidebar sub-account menu.</p>
-                <button class="btn-primary" onclick="nextStep(2)" style="width:auto; padding:10px 24px; font-size:14px; border-radius:12px;">Next Step &rarr;</button>
+                <p style="font-size:13px; color:#444; line-height:1.5; margin-bottom:24px;">Open the Nola SMS Pro application from your GoHighLevel sidebar menu.</p>
+                <div style="display:flex; justify-content:center;">
+                    <button class="btn-primary" onclick="nextStep(2)" style="width:auto; padding:14px 24px; font-size:14px; border-radius:12px;">Next Step &rarr;</button>
+                </div>
             </div>
 
             <div id="tutorial-step-2" class="tutorial-step hidden">
                 <div style="width:56px; height:56px; background:#f0f7ff; color:#2b83fa; font-size:24px; font-weight:900; border-radius:18px; display:flex; align-items:center; justify-content:center; margin:0 auto 20px;">2</div>
-                <h4 style="font-size:16px; font-weight:800; margin-bottom:8px; color:#111;">10 Free Credits</h4>
-                <p style="font-size:13px; color:#444; line-height:1.5; margin-bottom:24px;">You start with 10 free SMS credits using our shared sender to test immediately.</p>
-                <button class="btn-primary" onclick="nextStep(3)" style="width:auto; padding:10px 24px; font-size:14px; border-radius:12px;">Final Step &rarr;</button>
+                <h4 style="font-size:16px; font-weight:800; margin-bottom:8px; color:#111;">Select a Contact</h4>
+                <p style="font-size:13px; color:#444; line-height:1.5; margin-bottom:24px;">Choose any contact from your GHL CRM to start a message thread.</p>
+                <div style="display:flex; justify-content:center;">
+                    <button class="btn-primary" onclick="nextStep(3)" style="width:auto; padding:14px 24px; font-size:14px; border-radius:12px;">Next Step &rarr;</button>
+                </div>
             </div>
 
             <div id="tutorial-step-3" class="tutorial-step hidden">
                 <div style="width:56px; height:56px; background:#f0fdf4; color:#16a34a; font-size:24px; font-weight:900; border-radius:18px; display:flex; align-items:center; justify-content:center; margin:0 auto 20px;">3</div>
                 <h4 style="font-size:16px; font-weight:800; margin-bottom:8px; color:#111;">Ready to Send!</h4>
-                <p style="font-size:13px; color:#444; line-height:1.5; margin-bottom:24px;">You can also request a custom Sender ID to message using your brand name.</p>
-                <button class="btn-primary" onclick="toggleModal('how-modal')" style="width:auto; padding:10px 24px; font-size:14px; border-radius:12px;">Done</button>
+                <p style="font-size:13px; color:#444; line-height:1.5; margin-bottom:24px;">Your account starts with 10 free credits to get you up and running immediately.</p>
+                <div style="display:flex; justify-content:center;">
+                    <button class="btn-primary" onclick="toggleModal('how-modal')" style="width:auto; padding:14px 24px; font-size:14px; border-radius:12px;">Got it!</button>
+                </div>
             </div>
         </div>
     </div>
@@ -214,6 +237,147 @@ function render_page(string $title, string $body_html): void
     <script>
       const LOCATION_ID = '{$locationIdSafe}';
       const API_BASE    = '{$backendApiUrl}';
+
+      (function() {
+        const canvas = document.getElementById('antigravity-bg');
+        const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 50;
+
+        const count = 300;
+        const magnetRadius = 6;
+        const ringRadius = 7;
+        const waveSpeed = 0.4;
+        const waveAmplitude = 1;
+        const particleSize = 1.5;
+        const lerpSpeed = 0.05;
+        const autoAnimate = true;
+        const particleVariance = 1;
+        const rotationSpeed = 0;
+        const depthFactor = 1;
+        const pulseSpeed = 3;
+        const fieldStrength = 10;
+        const color = '#2b83fa';
+
+        const geometry = new THREE.CapsuleGeometry(0.1, 0.4, 4, 8);
+        const material = new THREE.MeshBasicMaterial({ color: new THREE.Color(color) });
+        const mesh = new THREE.InstancedMesh(geometry, material, count);
+        scene.add(mesh);
+
+        const dummy = new THREE.Object3D();
+        const particles = [];
+        
+        function initParticles() {
+            const aspect = window.innerWidth / window.innerHeight;
+            const h = 2 * Math.tan((camera.fov * Math.PI) / 360) * camera.position.z;
+            const w = h * aspect;
+
+            for (let i = 0; i < count; i++) {
+                const x = (Math.random() - 0.5) * w;
+                const y = (Math.random() - 0.5) * h;
+                const z = (Math.random() - 0.5) * 20;
+                particles.push({
+                    t: Math.random() * 100,
+                    speed: 0.01 + Math.random() / 200,
+                    mx: x, my: y, mz: z,
+                    cx: x, cy: y, cz: z,
+                    randomRadiusOffset: (Math.random() - 0.5) * 2
+                });
+            }
+        }
+        initParticles();
+
+        let mouse = new THREE.Vector2(0, 0);
+        let virtualMouse = new THREE.Vector2(0, 0);
+        let lastMouseMoveTime = 0;
+
+        window.addEventListener('mousemove', (e) => {
+            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+            lastMouseMoveTime = Date.now();
+        });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const time = performance.now() / 1000;
+            
+            const aspect = window.innerWidth / window.innerHeight;
+            const vh = 2 * Math.tan((camera.fov * Math.PI) / 360) * camera.position.z;
+            const vw = vh * aspect;
+
+            let destX = (mouse.x * vw) / 2;
+            let destY = (mouse.y * vh) / 2;
+
+            if (autoAnimate && Date.now() - lastMouseMoveTime > 2000) {
+                destX = Math.sin(time * 0.5) * (vw / 4);
+                destY = Math.cos(time * 0.5 * 2) * (vh / 4);
+            }
+
+            virtualMouse.x += (destX - virtualMouse.x) * 0.05;
+            virtualMouse.y += (destY - virtualMouse.y) * 0.05;
+
+            const globalRotation = time * rotationSpeed;
+
+            for (let i = 0; i < count; i++) {
+                const p = particles[i];
+                p.t += p.speed / 2;
+
+                const projectionFactor = 1 - p.cz / 50;
+                const pTargetX = virtualMouse.x * projectionFactor;
+                const pTargetY = virtualMouse.y * projectionFactor;
+
+                const dx = p.mx - pTargetX;
+                const dy = p.my - pTargetY;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                let targetX = p.mx;
+                let targetY = p.my;
+                let targetZ = p.mz * depthFactor;
+
+                if (dist < magnetRadius) {
+                    const angle = Math.atan2(dy, dx) + globalRotation;
+                    const wave = Math.sin(p.t * waveSpeed + angle) * (0.5 * waveAmplitude);
+                    const deviation = p.randomRadiusOffset * (5 / (fieldStrength + 0.1));
+                    const currentRingRadius = ringRadius + wave + deviation;
+
+                    targetX = pTargetX + currentRingRadius * Math.cos(angle);
+                    targetY = pTargetY + currentRingRadius * Math.sin(angle);
+                    targetZ = p.mz * depthFactor + Math.sin(p.t) * (1 * waveAmplitude * depthFactor);
+                }
+
+                p.cx += (targetX - p.cx) * lerpSpeed;
+                p.cy += (targetY - p.cy) * lerpSpeed;
+                p.cz += (targetZ - p.cz) * lerpSpeed;
+
+                dummy.position.set(p.cx, p.cy, p.cz);
+                dummy.lookAt(pTargetX, pTargetY, p.cz);
+                dummy.rotateX(Math.PI / 2);
+
+                const currentDist = Math.sqrt(Math.pow(p.cx - pTargetX, 2) + Math.pow(p.cy - pTargetY, 2));
+                const distFromRing = Math.abs(currentDist - ringRadius);
+                let scaleFactor = Math.max(0, Math.min(1, 1 - distFromRing / 10));
+                const finalScale = scaleFactor * (0.8 + Math.sin(p.t * pulseSpeed) * 0.2 * particleVariance) * particleSize;
+                
+                dummy.scale.set(finalScale, finalScale, finalScale);
+                dummy.updateMatrix();
+                mesh.setMatrixAt(i, dummy.matrix);
+            }
+
+            mesh.instanceMatrix.needsUpdate = true;
+            renderer.render(scene, camera);
+        }
+        animate();
+      })();
 
       function toggleModal(id) {
         const el = document.getElementById(id);

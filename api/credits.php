@@ -17,12 +17,15 @@ $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 try {
     if ($method === 'POST') {
+        // Support both JSON body (Postman/API) and form-encoded data (GHL Webhooks)
         $json = file_get_contents('php://input');
-        $payload = json_decode($json, true) ?? [];
-        
-        $action = $payload['action'] ?? ''; // 'add' or 'deduct'
-        $amount = (int)($payload['amount'] ?? 0);
-        $reference = $payload['reference'] ?? 'api_update';
+        $jsonPayload = json_decode($json, true) ?? [];
+        $formPayload = $_POST ?? [];
+        $payload = !empty($jsonPayload) ? $jsonPayload : $formPayload;
+
+        $action      = $payload['action'] ?? '';
+        $amount      = isset($payload['amount']) ? (int)$payload['amount'] : 0;
+        $reference   = $payload['reference'] ?? 'api_update';
         $description = $payload['description'] ?? 'Balance updated via API';
         
         if ($amount <= 0) {
