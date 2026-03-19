@@ -1,6 +1,6 @@
 <?php
 
-require _DIR_ . '/api/webhook/firestore_client.php';
+require __DIR__ . '/api/webhook/firestore_client.php';
 
 // ─── Global Context ────────────────────────────────────────────────────────────
 $locationIdSafe = '';
@@ -15,6 +15,15 @@ function render_page(string $title, string $body_html): void
 
     header('Content-Type: text/html; charset=utf-8');
     echo <<<HTML
+
+
+
+
+
+
+
+
+
 
 <!DOCTYPE html>
 <html lang="en">
@@ -148,8 +157,6 @@ function render_page(string $title, string $body_html): void
     <div class="unified-card">
         {$body_html}
     </div>
-
-    <p style="font-size: 10px; color: #ddd; margin-top: 40px; font-weight: 500;">© 2026 Powered by NOLA CRM</p>
 
     <!-- SENDER ID MODAL -->
     <div id="sender-modal" class="modal-overlay" onclick="if(event.target === this) toggleModal('sender-modal')">
@@ -444,7 +451,7 @@ function render_error(string $message, array $details = []): void
         $details_html = "<pre class=\"error-pre\">{$json}</pre>";
     }
 
-    $reinstall_url = 'https://marketplace.leadconnectorhq.com/oauth/chooselocation?response_type=code&redirect_uri=https%3A%2F%2Fsmspro-api.nolacrm.io%2Foauth%2Fcallback&client_id=6999da2b8f278296d95f7274-mmn30t4f&scope=workflows.readonly+conversations%2Fmessage.readonly+conversations.readonly+conversations.write+contacts.readonly+contacts.write+conversations%2Fmessage.write&version_id=6999da2b8f278296d95f7274';
+    $reinstall_url = 'https://marketplace.leadconnectorhq.com/oauth/chooselocation?response_type=code&redirect_uri=https%3A%2F%2Fsmspro-api.nolacrm.io%2Foauth%2Fcallback&client_id=6999da2b8f278296d95f7274-mmn30t4f&scope=locations.readonly+workflows.readonly+conversations%2Fmessage.readonly+conversations.readonly+conversations.write+contacts.readonly+contacts.write+conversations%2Fmessage.write&version_id=6999da2b8f278296d95f7274';
 
     $body = <<<HTML
         <div class="error-icon" style="margin: 0 auto 32px;">
@@ -465,17 +472,18 @@ HTML;
 if (isset($_GET['test'])) {
     if ($_GET['test'] === 'success') {
         $locationIdSafe = 'test_location_123';
-        $locationNameDisplay = 'Test Sub-Account';
+        $locationNameDisplay = 'Sub-Account';
         $dashboardUrl = '#';
         $body = <<<HTML
             <div class="success-ring"><div class="success-icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div></div>
             <h1>Success!</h1>
-            <p class="subtitle">You are now connected to NOLA SMS Pro <b>{$locationNameDisplay}</b></p>
+            <p class="subtitle">Your <b>{$locationNameDisplay}</b> is now connected to <b>NOLA SMS Pro</b></p>
             <div style="display:flex; flex-direction:column; gap:16px; margin-bottom:32px;">
                 <a href="{$dashboardUrl}" class="btn-primary">Open Dashboard</a>
                 <div class="sender-toggle" onclick="toggleModal('sender-modal')">Request Sender ID</div>
             </div>
             <div onclick="toggleModal('how-modal')" class="tutorial-link">How it works & Credits</div>
+             <p style="font-size: 10px; color: #ddd; margin-top: 40px; font-weight: 500;">© 2026 Powered by NOLA CRM</p>
 HTML;
         render_page('Success!', $body);
         exit;
@@ -546,6 +554,7 @@ try {
     }
 }
 catch (Exception $e) {
+    error_log("Failed to fetch location name in callback for $locationId: " . $e->getMessage());
 }
 
 $locationNameDisplay = $locationName ? htmlspecialchars($locationName, ENT_QUOTES, 'UTF-8') : 'Your Sub-Account';
@@ -612,7 +621,7 @@ $body = <<<HTML
         </div>
     </div>
     <h1>Success!</h1>
-    <p class="subtitle">Connected to <b>{$locationNameDisplay}</b></p>
+    <p class="subtitle">Your <b>{$locationNameDisplay}</b> is now connected to <b>NOLA SMS Pro</b></p>
     
     <div style="display: flex; flex-direction: column; gap: 16px; margin-bottom: 32px;">
         <a href="{$dashboardUrl}" class="btn-primary">Open Dashboard</a>

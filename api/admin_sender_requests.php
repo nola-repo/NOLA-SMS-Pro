@@ -95,15 +95,90 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'accounts') {
-    // High-level overview of GHL accounts
-    $accounts = $db->collection('integrations')->documents();
     $results = [];
-    foreach ($accounts as $acc) {
+
+    // 1. Fetch all tokens (Master list of installations)
+    $tokens = $db->collection('ghl_tokens')->documents();
+    
+    // 2. Fetch all integrations (For credit balances and sender IDs)
+    $integrationsRaw = $db->collection('integrations')->documents();
+    $integrationMap = [];
+    foreach ($integrationsRaw as $intDoc) {
+        $integrationMap[$intDoc->id()] = $intDoc->data();
+    }
+
+    foreach ($tokens as $tokenDoc) {
+        $locId = $tokenDoc->id();
+        $tokenData = $tokenDoc->data();
+        
+        // Skip the master 'ghl' settings document if it accidentally exists in this collection
+        if ($locId === 'ghl') continue;
+
+        $locationName = $tokenData['location_name'] ?? '';
+
+        // --- THE FIX: Fetch missing location name using GHL API ---
+        if (empty(trim($locationName))) {
+            $accessToken = $tokenData['access_token'] ?? '';
+            
+            if ($accessToken) {
+                try {
+                    $locationUrl = 'https://services.leadconnectorhq.com/locations/' . $locId;
+                    $ch = curl_init($locationUrl);
+                    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                        'Authorization: Bearer ' . $accessToken,
+                        'Accept: application/json',
+                        'Version: 2021-07-28',
+                    ]);
+                    $locResponse = curl_exec($ch);
+                    $locHttpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                    curl_close($ch);
+
+                    if ($locHttpCode === 200) {
+                        $locData = json_decode($locResponse, true);
+                        if (!empty($locData['location']['name'])) {
+                            $locationName = $locData['location']['name'];
+                            
+                            // Save back to Firestore so we don't query it again
+                            $db->collection('ghl_tokens')->document($locId)->set([
+                                'location_name' => $locationName
+                            ], ['merge' => true]);
+                            
+                            // Sync name to integrations collection if it exists
+                            $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
+                            if (isset($integrationMap[$intDocId])) {
+                                $db->collection('integrations')->document($intDocId)->set([
+                                    'location_name' => $locationName
+                                ], ['merge' => true]);
+                            }
+                        }
+                    }
+                } catch (Exception $e) {
+                    error_log("Failed to fetch location name for $locId: " . $e->getMessage());
+                }
+            }
+        }
+        
+        if (empty(trim($locationName))) {
+            $locationName = 'Unknown Location';
+        }
+
+        // 3. Merge with integrations data for the UI
+        $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
+        $intData = $integrationMap[$intDocId] ?? [];
+
         $results[] = [
-            'id' => $acc->id(),
-            'data' => $acc->data()
+            'id' => $intDocId, // Expected by frontend mapping
+            'data' => [
+                'location_id' => $locId,
+                'location_name' => $locationName,
+                'approved_sender_id' => $intData['approved_sender_id'] ?? null,
+                'credit_balance' => (int)($intData['credit_balance'] ?? 0),
+                'free_usage_count' => (int)($intData['free_usage_count'] ?? 0)
+            ]
         ];
     }
+
     echo json_encode(['status' => 'success', 'data' => $results]);
     exit;
 }

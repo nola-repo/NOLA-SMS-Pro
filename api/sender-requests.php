@@ -27,10 +27,9 @@ $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 try {
     if ($method === 'GET') {
-        // Fetch sender ID requests for this location
+        // Fetch sender ID requests for this location (removed orderBy to avoid composite index requirement)
         $query = $db->collection('sender_id_requests')
                     ->where('location_id', '==', $locId)
-                    ->orderBy('created_at', 'DESC')
                     ->limit(50);
         
         $results = [];
@@ -50,6 +49,13 @@ try {
                 ];
             }
         }
+
+        // Sort descending by created_at in PHP memory
+        usort($results, function($a, $b) {
+            if (!$a['created_at']) return 1;
+            if (!$b['created_at']) return -1;
+            return strtotime($b['created_at']) - strtotime($a['created_at']);
+        });
 
         echo json_encode($results);
         exit;
