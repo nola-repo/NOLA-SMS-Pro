@@ -11,7 +11,72 @@ validate_api_request();
 
 $db = get_firestore();
 
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && (!isset($_GET['action']) || $_GET['action'] !== 'accounts')) {
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'logs') {
+    $unifiedLogs = [];
+
+    // 1. Fetch recent messages
+    $messages = $db->collection('messages')->orderBy('date_created', 'DESC')->limit(30)->documents();
+    foreach ($messages as $doc) {
+        if ($doc->exists()) {
+            $data = $doc->data();
+            $ts = isset($data['date_created']) && $data['date_created'] instanceof \Google\Cloud\Core\Timestamp 
+                  ? $data['date_created']->get()->format('c') : null;
+            
+            $unifiedLogs[] = array_merge($data, [
+                'id' => $doc->id(),
+                'type' => 'message',
+                'timestamp' => $ts
+            ]);
+        }
+    }
+
+    // 2. Fetch sender requests
+    $requests = $db->collection('sender_id_requests')->orderBy('created_at', 'DESC')->limit(20)->documents();
+    foreach ($requests as $doc) {
+        if ($doc->exists()) {
+            $data = $doc->data();
+            $ts = isset($data['created_at']) && $data['created_at'] instanceof \Google\Cloud\Core\Timestamp 
+                  ? $data['created_at']->get()->format('c') : null;
+            
+            $unifiedLogs[] = array_merge($data, [
+                'id' => $doc->id(),
+                'type' => 'sender_request',
+                'timestamp' => $ts
+            ]);
+        }
+    }
+
+    // 3. Fetch credit transactions
+    $purchases = $db->collection('credit_transactions')->orderBy('created_at', 'DESC')->limit(20)->documents();
+    foreach ($purchases as $doc) {
+        if ($doc->exists()) {
+            $data = $doc->data();
+            $ts = isset($data['created_at']) && $data['created_at'] instanceof \Google\Cloud\Core\Timestamp 
+                  ? $data['created_at']->get()->format('c') : null;
+            
+            $unifiedLogs[] = array_merge($data, [
+                'id' => $doc->id(),
+                'type' => 'credit_purchase',
+                'timestamp' => $ts
+            ]);
+        }
+    }
+
+    // Sort combined array by timestamp descending
+    usort($unifiedLogs, function($a, $b) {
+        $timeA = strtotime($a['timestamp'] ?? '1970-01-01');
+        $timeB = strtotime($b['timestamp'] ?? '1970-01-01');
+        return $timeB - $timeA;
+    });
+
+    // Return the top 50
+    $finalLogs = array_slice($unifiedLogs, 0, 50);
+
+    echo json_encode(['status' => 'success', 'data' => $finalLogs]);
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && (!isset($_GET['action']) || $_GET['action'] === 'sender_requests')) {
     // In production, we'd probably filter by "pending" first, but let's fetch all
     $requests = $db->collection('sender_id_requests')
         ->orderBy('created_at', 'DESC')
