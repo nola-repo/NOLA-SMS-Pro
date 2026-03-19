@@ -152,24 +152,32 @@ $customApiKey = $intData['nola_pro_api_key'] ?? ($intData['semaphore_api_key'] ?
 $freeUsageCount = $intData['free_usage_count'] ?? 0;
 $freeCreditsTotal = $intData['free_credits_total'] ?? 10;
 
-// Sender ID Logic: prioritize approved custom sender + custom valid API key
-if ($approvedSenderId && $customApiKey) {
+// Extract the sendername the frontend/user selected
+$requestedSender = $customData['sendername'] ?? $payload['sendername'] ?? $data['sendername'] ?? null;
+
+// Determine which sender to use:
+if ($approvedSenderId && $customApiKey && $requestedSender === $approvedSenderId) {
+    // ✅ User explicitly selected their approved custom sender → use custom key
     $sender = $approvedSenderId;
     $activeApiKey = $customApiKey;
-}
-else {
-    // Only block if they try to send more than their free credit limit
+} elseif ($approvedSenderId && $customApiKey && empty($requestedSender)) {
+    // ✅ No sender specified (e.g. webhook call) → default to approved sender
+    $sender = $approvedSenderId;
+    $activeApiKey = $customApiKey;
+} else {
+    // ✅ User chose a system default sender (NOLASMSPro), or no approved sender exists
+    // Check free usage limit before allowing
     if ($freeUsageCount + $num_recipients > $freeCreditsTotal) {
         http_response_code(403);
         echo json_encode([
-            "status" => "error", 
+            "status"  => "error",
             "message" => "Free message limit reached ($freeUsageCount/$freeCreditsTotal). Registration of a custom Sender ID and API Key is required.",
-            "error" => "free_credits_exhausted"
+            "error"   => "free_credits_exhausted"
         ]);
         exit;
     }
-    // Fallback to system default
-    $sender = $customData['sendername'] ?? $payload['sendername'] ?? $data['sendername'] ?? ($SENDER_IDS[0] ?? "");
+    // Use system sender + system API key
+    $sender = $requestedSender ?? ($SENDER_IDS[0] ?? "");
     if (!in_array($sender, $SENDER_IDS)) {
         $sender = $SENDER_IDS[0];
     }
@@ -187,8 +195,8 @@ try {
         "SMS sent to $num_recipients recipients"
     );
 
-    // Increment free usage count if using system default (no approved custom sender + key combo)
-    if (!($approvedSenderId && $customApiKey)) {
+    // ✅ Only increment free usage when system key was used
+    if ($activeApiKey === $SEMAPHORE_API_KEY) {
         $intRef->set([
             'free_usage_count' => $freeUsageCount + $num_recipients,
             'updated_at'       => new \Google\Cloud\Core\Timestamp(new \DateTime()),

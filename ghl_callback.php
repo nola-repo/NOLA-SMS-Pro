@@ -25,6 +25,16 @@ function render_page(string $title, string $body_html): void
 
 
 
+
+
+
+
+
+
+
+
+
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -472,12 +482,12 @@ HTML;
 if (isset($_GET['test'])) {
     if ($_GET['test'] === 'success') {
         $locationIdSafe = 'test_location_123';
-        $locationNameDisplay = 'Sub-Account';
+        $locationNameDisplay = $locationName;
         $dashboardUrl = '#';
         $body = <<<HTML
             <div class="success-ring"><div class="success-icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div></div>
             <h1>Success!</h1>
-            <p class="subtitle">Your <b>{$locationNameDisplay}</b> is now connected to <b>NOLA SMS Pro</b></p>
+            <p class="subtitle"><b>{$locationNameDisplay}</b> is now connected to <b>NOLA SMS Pro</b></p>
             <div style="display:flex; flex-direction:column; gap:16px; margin-bottom:32px;">
                 <a href="{$dashboardUrl}" class="btn-primary">Open Dashboard</a>
                 <div class="sender-toggle" onclick="toggleModal('sender-modal')">Request Sender ID</div>
@@ -621,7 +631,7 @@ $body = <<<HTML
         </div>
     </div>
     <h1>Success!</h1>
-    <p class="subtitle">Your <b>{$locationNameDisplay}</b> is now connected to <b>NOLA SMS Pro</b></p>
+    <p class="subtitle"><b>{$locationNameDisplay}</b> is now connected to <b>NOLA SMS Pro</b></p>
     
     <div style="display: flex; flex-direction: column; gap: 16px; margin-bottom: 32px;">
         <a href="{$dashboardUrl}" class="btn-primary">Open Dashboard</a>
