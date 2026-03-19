@@ -79,7 +79,7 @@ class CreditManager
 
     public function get_balance($account_id = 'default')
     {
-        $docRef = $this->db->collection('accounts')->document($account_id);
+        $docRef = $this->get_account_ref($account_id);
         $snapshot = $docRef->snapshot();
         if ($snapshot->exists()) {
             return (int)($snapshot->data()['credit_balance'] ?? 0);
@@ -93,7 +93,7 @@ class CreditManager
             return true;
         }
 
-        $accountRef = $this->db->collection('accounts')->document($account_id);
+        $accountRef = $this->get_account_ref($account_id);
         $transactionRef = $this->db->collection('credit_transactions')->newDocument();
 
         $now = new \DateTimeImmutable();
@@ -152,7 +152,7 @@ class CreditManager
             return true;
         }
 
-        $accountRef = $this->db->collection('accounts')->document($account_id);
+        $accountRef = $this->get_account_ref($account_id);
         $transactionRef = $this->db->collection('credit_transactions')->newDocument();
 
         $now = new \DateTimeImmutable();
@@ -202,5 +202,23 @@ class CreditManager
         });
 
         return $result;
+    }
+
+    /**
+     * Helper to get the correct account reference based on account_id.
+     * Uses 'integrations' collection with 'ghl_' prefix for GHL locations.
+     */
+    private function get_account_ref($account_id)
+    {
+        if ($account_id === 'default') {
+            return $this->db->collection('accounts')->document('default');
+        }
+        
+        // Ensure ghl_ prefix
+        $docId = (strpos($account_id, 'ghl_') === 0) 
+            ? $account_id 
+            : 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$account_id);
+            
+        return $this->db->collection('integrations')->document($docId);
     }
 }

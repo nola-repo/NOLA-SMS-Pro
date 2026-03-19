@@ -24,6 +24,10 @@ function validate_api_request(): void
  */
 function get_ghl_location_id(): ?string
 {
-    $locId = $_SERVER['HTTP_X_GHL_LOCATION_ID'] ?? $_GET['location_id'] ?? $_GET['locationId'] ?? null;
+    $locId = $_SERVER['HTTP_X_GHL_LOCATION_ID'] ??
+        $_SERVER['HTTP_X_GHL_LOCATIONID'] ??
+        $_GET['location_id'] ??
+        $_GET['locationId'] ??
+        null;
     return $locId ? (string)$locId : null;
 }

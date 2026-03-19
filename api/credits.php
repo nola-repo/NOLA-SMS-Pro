@@ -101,15 +101,28 @@ try {
     // Default GET logic
     $locId = get_ghl_location_id();
     $accountId = $locId ?: 'default';
-    $docRef = $db->collection('accounts')->document($accountId);
+    
+    if ($accountId === 'default') {
+        $docRef = $db->collection('accounts')->document('default');
+    } else {
+        $docId = (strpos($accountId, 'ghl_') === 0) 
+            ? $accountId 
+            : 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$accountId);
+        $docRef = $db->collection('integrations')->document($docId);
+    }
+
     $snapshot = $docRef->snapshot();
 
     if ($snapshot->exists()) {
         $data = $snapshot->data();
         $creditBalance = (int)($data['credit_balance'] ?? 0);
         $currency = $data['currency'] ?? 'PHP';
-        $updatedAt = isset($data['updated_at']) ? $data['updated_at']->formatAsString() : null;
-        $createdAt = isset($data['created_at']) ? $data['created_at']->formatAsString() : null;
+        $updatedAt = isset($data['updated_at']) && $data['updated_at'] instanceof \Google\Cloud\Core\Timestamp 
+            ? $data['updated_at']->get()->format('Y-m-d H:i:s') 
+            : null;
+        $createdAt = isset($data['created_at']) && $data['created_at'] instanceof \Google\Cloud\Core\Timestamp 
+            ? $data['created_at']->get()->format('Y-m-d H:i:s') 
+            : null;
     }
     else {
         // Initialize with zero balance if not present
@@ -122,7 +135,7 @@ try {
             'created_at' => new \Google\Cloud\Core\Timestamp($now),
             'updated_at' => new \Google\Cloud\Core\Timestamp($now),
         ]);
-        $createdAt = $now->format(DATE_ATOM);
+        $createdAt = $now->format('Y-m-d H:i:s');
         $updatedAt = $createdAt;
     }
 

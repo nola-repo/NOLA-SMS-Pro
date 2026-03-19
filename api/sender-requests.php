@@ -28,7 +28,7 @@ $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 try {
     if ($method === 'GET') {
         // Fetch sender ID requests for this location
-        $query = $db->collection('sender_requests')
+        $query = $db->collection('sender_id_requests')
                     ->where('location_id', '==', $locId)
                     ->orderBy('created_at', 'DESC')
                     ->limit(50);
@@ -82,7 +82,7 @@ try {
         $now = new \Google\Cloud\Core\Timestamp(new \DateTime());
 
         // Update database payload schema to match requirements
-        $db->collection('sender_requests')->document($requestId)->set([
+        $db->collection('sender_id_requests')->document($requestId)->set([
             'location_id' => $locId,
             'requested_id' => $requestedId,
             'purpose' => $purpose,

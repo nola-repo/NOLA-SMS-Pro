@@ -60,7 +60,9 @@ try {
             'location_name' => $locationName,
             'approved_sender_id' => $intData['approved_sender_id'] ?? null,
             'free_usage_count' => $intData['free_usage_count'] ?? 0,
-            'free_credits_total' => $intData['free_credits_total'] ?? 10
+            'free_credits_total' => $intData['free_credits_total'] ?? 10,
+            'credit_balance' => (int)($intData['credit_balance'] ?? 0),
+            'currency' => $intData['currency'] ?? 'PHP'
         ]
     ]);
 

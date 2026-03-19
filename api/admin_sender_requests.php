@@ -13,7 +13,7 @@ $db = get_firestore();
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && (!isset($_GET['action']) || $_GET['action'] !== 'accounts')) {
     // In production, we'd probably filter by "pending" first, but let's fetch all
-    $requests = $db->collection('sender_requests')
+    $requests = $db->collection('sender_id_requests')
         ->orderBy('created_at', 'DESC')
         ->documents();
 
@@ -47,7 +47,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     // 1. Update the request status
-    $requestRef = $db->collection('sender_requests')->document($requestId);
+    $requestRef = $db->collection('sender_id_requests')->document($requestId);
     $reqSnapshot = $requestRef->snapshot();
     
     if (!$reqSnapshot->exists()) {
@@ -69,10 +69,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // 2. If approved, update the account mapping
     if ($status === 'approved') {
-        $accountRef = $db->collection('accounts')->document($locId);
+        // Format Doc ID for integrations
+        $docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
+        $accountRef = $db->collection('integrations')->document($docId);
+        
+        // Fetch location name for better record keeping
+        $locationName = 'Unknown';
+        $tokenSnap = $db->collection('ghl_tokens')->document((string)$locId)->snapshot();
+        if ($tokenSnap->exists()) {
+            $locationName = $tokenSnap->data()['location_name'] ?? 'Unknown';
+        }
+
         $accountRef->set([
+            'location_id' => $locId,
+            'location_name' => $locationName,
             'approved_sender_id' => $reqData['requested_id'],
-            'nola_pro_api_key' => $apiKey // Manual assignment by boss
+            'nola_pro_api_key' => $apiKey, // Manual assignment by boss
+            'semaphore_api_key' => $apiKey, // Alias for backward compatibility
+            'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
         ], ['merge' => true]);
     }
 
@@ -82,7 +96,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'accounts') {
     // High-level overview of GHL accounts
-    $accounts = $db->collection('accounts')->documents();
+    $accounts = $db->collection('integrations')->documents();
     $results = [];
     foreach ($accounts as $acc) {
         $results[] = [
