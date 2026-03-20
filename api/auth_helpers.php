@@ -24,10 +24,31 @@ function validate_api_request(): void
  */
 function get_ghl_location_id(): ?string
 {
+    // Try standard PHP server headers (case-insensitive search)
     $locId = $_SERVER['HTTP_X_GHL_LOCATION_ID'] ??
         $_SERVER['HTTP_X_GHL_LOCATIONID'] ??
-        $_GET['location_id'] ??
-        $_GET['locationId'] ??
         null;
+
+    if (!$locId) {
+        // Fallback to searching all headers (some environments don't use HTTP_ prefix correctly)
+        $headers = function_exists('getallheaders') ? getallheaders() : [];
+        foreach ($headers as $key => $value) {
+            if (strcasecmp($key, 'X-GHL-Location-Id') === 0 || strcasecmp($key, 'X-GHL-LocationID') === 0) {
+                $locId = $value;
+                break;
+            }
+        }
+    }
+
+    if (!$locId) {
+        $locId = $_GET['location_id'] ?? $_GET['locationId'] ?? null;
+    }
+
+    // Special robust handling for GHL's dynamic values:
+    // If it looks like a variable template that wasn't replaced, treat as null
+    if ($locId && strpos((string)$locId, '{{') !== false) {
+        return null;
+    }
+
     return $locId ? (string)$locId : null;
 }

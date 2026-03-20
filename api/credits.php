@@ -26,8 +26,13 @@ try {
         $payload = array_merge($formPayload, $jsonPayload);
 
         // ALWAYS log the payload for webhook debugging
-        $debugMsg = date('[Y-m-d H:i:s] ') . "Method: $method, Payload: " . json_encode($payload) . "\n";
+        $headers = function_exists('getallheaders') ? getallheaders() : [];
+        $debugMsg = date('[Y-m-d H:i:s] ') . "Method: $method\nHeaders: " . json_encode($headers) . "\nPayload: " . json_encode($payload) . "\n\n";
+        
+        // Try multiple log locations
         file_put_contents(__DIR__ . '/credits_debug.log', $debugMsg, FILE_APPEND);
+        @file_put_contents('/tmp/credits_debug.log', $debugMsg, FILE_APPEND);
+        error_log("Credits API Debug: " . $debugMsg);
 
         $action = trim(strtolower($payload['action'] ?? $payload['Action'] ?? ''));
         
@@ -70,12 +75,15 @@ try {
         
         // Robust check for location_id in the payload (for webhooks/automations)
         if (!$locId) {
-            $locId = $payload['location_id'] ?? $payload['locationId'] ?? $payload['location'] ?? null;
+            $locId = $payload['location_id'] ?? $payload['locationId'] ?? $payload['location'] ?? 
+                     $payload['business.name'] ?? $payload['business_name'] ?? null;
         }
         
         // Extra robust check for nested customData (GHL sometimes nests these)
         if (!$locId && isset($payload['customData']) && is_array($payload['customData'])) {
-            $locId = $payload['customData']['location_id'] ?? $payload['customData']['locationId'] ?? $payload['customData']['location'] ?? null;
+            $locId = $payload['customData']['location_id'] ?? $payload['customData']['locationId'] ?? 
+                     $payload['customData']['location'] ?? $payload['customData']['business.name'] ?? 
+                     $payload['customData']['business_name'] ?? null;
         }
 
         // If it's still null, and we see GHL-like headers or payload structure, log it
@@ -112,14 +120,24 @@ try {
             exit;
         }
 
-        echo json_encode([
+        $response = [
             'success' => true,
             'account_id' => $accountId,
             'action' => $action,
             'amount' => $amount,
             'new_balance' => $newBalance,
             'message' => "Successfully updated balance for account $accountId."
-        ], JSON_PRETTY_PRINT);
+        ];
+
+        if ($accountId === 'default') {
+            $response['debug'] = [
+                'received_loc_id' => $locId,
+                'headers' => function_exists('getallheaders') ? getallheaders() : [],
+                'payload' => $payload
+            ];
+        }
+
+        echo json_encode($response, JSON_PRETTY_PRINT);
         exit;
     }
 
