@@ -100,6 +100,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $raw = file_get_contents('php://input');
     $payload = json_decode($raw, true);
 
+    // 1. Action: manage_sender (Update existing)
+    if (isset($payload['action']) && $payload['action'] === 'manage_sender') {
+        $locId = $payload['location_id'] ?? null;
+        $senderId = $payload['sender_id'] ?? null;
+        $apiKey = $payload['api_key'] ?? null;
+
+        if (!$locId || !$senderId || !$apiKey) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'Missing fields']);
+            exit;
+        }
+
+        $docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
+        $db->collection('integrations')->document($docId)->set([
+            'approved_sender_id' => $senderId,
+            'nola_pro_api_key'   => $apiKey,
+            'semaphore_api_key'  => $apiKey, // for backward compat
+            'updated_at'         => new \Google\Cloud\Core\Timestamp(new \DateTime())
+        ], ['merge' => true]);
+
+        echo json_encode(['status' => 'success', 'message' => 'Sender configuration updated successfully.']);
+        exit;
+    }
+
+    // 2. Action: revoke_sender (Clear/Delete)
+    if (isset($payload['action']) && $payload['action'] === 'revoke_sender') {
+        $locId = $payload['location_id'] ?? null;
+
+        if (!$locId) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'Missing location_id']);
+            exit;
+        }
+
+        $docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
+        $db->collection('integrations')->document($docId)->set([
+            'approved_sender_id' => null,  // Set to null to clear
+            'nola_pro_api_key'   => null,
+            'semaphore_api_key'  => null,
+            'updated_at'         => new \Google\Cloud\Core\Timestamp(new \DateTime())
+        ], ['merge' => true]);
+
+        echo json_encode(['status' => 'success', 'message' => 'Sender ID has been revoked.']);
+        exit;
+    }
+
     $requestId = $payload['request_id'] ?? null;
     $status = $payload['status'] ?? null; // 'approved' or 'rejected'
     $apiKey = $payload['api_key'] ?? null;

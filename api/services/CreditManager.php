@@ -210,14 +210,23 @@ class CreditManager
      */
     private function get_account_ref($account_id)
     {
-        if ($account_id === 'default') {
+        // Robust handling of $account_id: ensure it's a string, not an array
+        if (is_array($account_id)) {
+            // Log this as it suggests a bug elsewhere or weird webhook payload
+            error_log("CreditManager: \$account_id is an array: " . print_r($account_id, true));
+            $account_id = $account_id['locationId'] ?? $account_id['location_id'] ?? $account_id[0] ?? 'default';
+        }
+
+        $account_id = trim((string)$account_id);
+
+        if ($account_id === 'default' || empty($account_id)) {
             return $this->db->collection('accounts')->document('default');
         }
         
         // Ensure ghl_ prefix
         $docId = (strpos($account_id, 'ghl_') === 0) 
             ? $account_id 
-            : 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$account_id);
+            : 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $account_id);
             
         return $this->db->collection('integrations')->document($docId);
     }

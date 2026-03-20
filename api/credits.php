@@ -25,8 +25,9 @@ try {
         // Merge payloads, prioritizing JSON but allowing form fields as fallback
         $payload = array_merge($formPayload, $jsonPayload);
 
-        // Basic logging for debugging (will be removed later)
-        // file_put_contents(__DIR__ . '/credits_debug.log', date('[Y-m-d H:i:s] ') . "Method: $method, Payload: " . json_encode($payload) . "\n", FILE_APPEND);
+        // ALWAYS log the payload for webhook debugging
+        $debugMsg = date('[Y-m-d H:i:s] ') . "Method: $method, Payload: " . json_encode($payload) . "\n";
+        file_put_contents(__DIR__ . '/credits_debug.log', $debugMsg, FILE_APPEND);
 
         $action = trim(strtolower($payload['action'] ?? $payload['Action'] ?? ''));
         
@@ -66,7 +67,31 @@ try {
         require_once __DIR__ . '/services/CreditManager.php';
         $creditManager = new CreditManager();
         $locId = get_ghl_location_id();
+        
+        // Robust check for location_id in the payload (for webhooks/automations)
+        if (!$locId) {
+            $locId = $payload['location_id'] ?? $payload['locationId'] ?? $payload['location'] ?? null;
+        }
+        
+        // Extra robust check for nested customData (GHL sometimes nests these)
+        if (!$locId && isset($payload['customData']) && is_array($payload['customData'])) {
+            $locId = $payload['customData']['location_id'] ?? $payload['customData']['locationId'] ?? $payload['customData']['location'] ?? null;
+        }
+
+        // If it's still null, and we see GHL-like headers or payload structure, log it
+        if (!$locId && (isset($payload['contact']) || isset($payload['workflow']))) {
+            $locId = $payload['locationId'] ?? $payload['contact']['locationId'] ?? null;
+        }
+
         $accountId = $locId ?: 'default';
+        
+        // Ensure accountId is a string if it's not 'default'
+        if ($accountId !== 'default') {
+            if (is_array($accountId)) {
+                $accountId = $accountId[0] ?? 'default';
+            }
+            $accountId = trim((string)$accountId);
+        }
 
         if ($action === 'add') {
             $newBalance = $creditManager->add_credits($accountId, $amount, $reference, $description);
