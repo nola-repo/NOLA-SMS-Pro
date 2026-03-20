@@ -100,16 +100,13 @@ try {
 
     // Default GET logic
     $locId = get_ghl_location_id();
-    $accountId = $locId ?: 'default';
-    
-    if ($accountId === 'default') {
-        $docRef = $db->collection('accounts')->document('default');
-    } else {
-        $docId = (strpos($accountId, 'ghl_') === 0) 
-            ? $accountId 
-            : 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$accountId);
-        $docRef = $db->collection('integrations')->document($docId);
+    if (!$locId) {
+        echo json_encode(['success' => false, 'error' => 'Missing location_id']);
+        exit;
     }
+    
+    $docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
+    $docRef = $db->collection('integrations')->document($docId);
 
     $snapshot = $docRef->snapshot();
 
@@ -117,6 +114,29 @@ try {
         $data = $snapshot->data();
         $creditBalance = (int)($data['credit_balance'] ?? 0);
         $currency = $data['currency'] ?? 'PHP';
+
+        // One-time migration: check if credits are orphaned in 'accounts' collection
+        if ($creditBalance === 0) {
+            $accountsRef = $db->collection('accounts')->document($locId);
+            $accSnap = $accountsRef->snapshot();
+            if ($accSnap->exists()) {
+                $accBal = (int)($accSnap->data()['credit_balance'] ?? 0);
+                if ($accBal > 0) {
+                    $creditBalance = $accBal;
+                    $now = new \DateTimeImmutable();
+                    $docRef->set([
+                        'credit_balance' => $accBal,
+                        'updated_at'     => new \Google\Cloud\Core\Timestamp($now),
+                    ], ['merge' => true]);
+                    $accountsRef->set([
+                        'credit_balance' => 0,
+                        'migrated_to'    => $docId,
+                        'updated_at'     => new \Google\Cloud\Core\Timestamp($now),
+                    ], ['merge' => true]);
+                }
+            }
+        }
+
         $updatedAt = isset($data['updated_at']) && $data['updated_at'] instanceof \Google\Cloud\Core\Timestamp 
             ? $data['updated_at']->get()->format('Y-m-d H:i:s') 
             : null;
@@ -141,7 +161,7 @@ try {
 
     echo json_encode([
         'success' => true,
-        'account_id' => $accountId,
+        'account_id' => $locId,
         'credit_balance' => $creditBalance,
         'currency' => $currency,
         'created_at' => $createdAt,

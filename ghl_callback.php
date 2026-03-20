@@ -603,6 +603,7 @@ try {
             'location_name' => $locationName,
             'free_credits_total' => 10,
             'free_usage_count' => 0,
+            'credit_balance' => 0,
             'approved_sender_id' => null,
             'semaphore_api_key' => null,
             'nola_pro_api_key' => null,
