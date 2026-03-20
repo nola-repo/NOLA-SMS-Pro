@@ -214,7 +214,7 @@ class CreditManager
         if (is_array($account_id)) {
             // Log this as it suggests a bug elsewhere or weird webhook payload
             error_log("CreditManager: \$account_id is an array: " . print_r($account_id, true));
-            $account_id = $account_id['locationId'] ?? $account_id['location_id'] ?? $account_id[0] ?? 'default';
+            $account_id = $account_id['id'] ?? $account_id['locationId'] ?? $account_id['location_id'] ?? $account_id[0] ?? 'default';
         }
 
         $account_id = trim((string)$account_id);

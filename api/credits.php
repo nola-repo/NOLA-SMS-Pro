@@ -75,15 +75,30 @@ try {
         
         // Robust check for location_id in the payload (for webhooks/automations)
         if (!$locId) {
-            $locId = $payload['location_id'] ?? $payload['locationId'] ?? $payload['location'] ?? 
+            $locId = $payload['company_name'] ?? $payload['companyName'] ?? 
+                     $payload['location_id'] ?? $payload['locationId'] ?? $payload['location'] ?? 
                      $payload['business.name'] ?? $payload['business_name'] ?? null;
         }
         
         // Extra robust check for nested customData (GHL sometimes nests these)
-        if (!$locId && isset($payload['customData']) && is_array($payload['customData'])) {
-            $locId = $payload['customData']['location_id'] ?? $payload['customData']['locationId'] ?? 
-                     $payload['customData']['location'] ?? $payload['customData']['business.name'] ?? 
-                     $payload['customData']['business_name'] ?? null;
+        if (empty($locId) || is_array($locId)) {
+            $nestedLocId = $payload['customData']['company_name'] ?? $payload['customData']['companyName'] ?? 
+                            $payload['customData']['location_id'] ?? $payload['customData']['locationId'] ?? 
+                            $payload['customData']['location'] ?? $payload['customData']['business.name'] ?? 
+                            $payload['customData']['business_name'] ?? null;
+            if ($nestedLocId && !is_array($nestedLocId)) {
+                $locId = $nestedLocId;
+            }
+        }
+
+        // If it's still null or an object (like GHL's standard location object), try to get the ID
+        if (is_array($locId) || is_object($locId)) {
+            $locId = $locId['id'] ?? $locId['locationId'] ?? $locId['location_id'] ?? null;
+        }
+
+        // Final prioritize check: if we have a company_name that is a string, use it
+        if (!empty($payload['company_name']) && is_string($payload['company_name'])) {
+            $locId = $payload['company_name'];
         }
 
         // If it's still null, and we see GHL-like headers or payload structure, log it
@@ -120,24 +135,14 @@ try {
             exit;
         }
 
-        $response = [
+        echo json_encode([
             'success' => true,
             'account_id' => $accountId,
             'action' => $action,
             'amount' => $amount,
             'new_balance' => $newBalance,
             'message' => "Successfully updated balance for account $accountId."
-        ];
-
-        if ($accountId === 'default') {
-            $response['debug'] = [
-                'received_loc_id' => $locId,
-                'headers' => function_exists('getallheaders') ? getallheaders() : [],
-                'payload' => $payload
-            ];
-        }
-
-        echo json_encode($response, JSON_PRETTY_PRINT);
+        ], JSON_PRETTY_PRINT);
         exit;
     }
 
