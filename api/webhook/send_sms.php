@@ -188,15 +188,16 @@ $creditManager = new CreditManager();
 $account_id = $locId ?: 'default';
 
 try {
-    $creditManager->deduct_credits(
-        $account_id,
-        $required_credits,
-        $batch_id ?? ('single_' . bin2hex(random_bytes(4))),
-        "SMS sent to $num_recipients recipients"
-    );
-
-    // ✅ Only increment free usage when system key was used
-    if ($activeApiKey === $SEMAPHORE_API_KEY) {
+    // ✅ Only deduct credits if NOT using the system shared sender
+    if ($activeApiKey !== $SEMAPHORE_API_KEY) {
+        $creditManager->deduct_credits(
+            $account_id,
+            $required_credits,
+            $batch_id ?? ('single_' . bin2hex(random_bytes(4))),
+            "SMS sent to $num_recipients recipients"
+        );
+    } else {
+        // ✅ For system sender, we only track free usage count
         $intRef->set([
             'free_usage_count' => $freeUsageCount + $num_recipients,
             'updated_at'       => new \Google\Cloud\Core\Timestamp(new \DateTime()),
