@@ -428,7 +428,7 @@ function render_page(string $title, string $body_html): void
             headers: { 'Content-Type': 'application/json', 'X-GHL-Location-ID': LOCATION_ID },
             body: JSON.stringify({
               location_id:    LOCATION_ID,
-              requested_id:   document.getElementById('sender-name').value.trim().toUpperCase(),
+              requested_id:   document.getElementById('sender-name').value.trim(),
               purpose:        document.getElementById('sender-purpose').value.trim(),
               sample_message: document.getElementById('sender-sample').value.trim()
             }),

@@ -84,13 +84,27 @@ try {
             exit;
         }
 
+        // 1. Check for duplicates (case-insensitive)
+        $requestedIdLower = strtolower($requestedId);
+        $duplicateQuery = $db->collection('sender_id_requests')
+                             ->where('requested_id_lower', '==', $requestedIdLower)
+                             ->limit(1);
+        
+        $duplicates = $duplicateQuery->documents();
+        if (!$duplicates->isEmpty()) {
+            http_response_code(409); // Conflict
+            echo json_encode(['status' => 'error', 'message' => 'This Sender Name has already been requested or is already in use.']);
+            exit;
+        }
+
         $requestId = 'req_' . bin2hex(random_bytes(8));
         $now = new \Google\Cloud\Core\Timestamp(new \DateTime());
 
-        // Update database payload schema to match requirements
+        // 2. Save new request
         $db->collection('sender_id_requests')->document($requestId)->set([
             'location_id' => $locId,
             'requested_id' => $requestedId,
+            'requested_id_lower' => $requestedIdLower,
             'purpose' => $purpose,
             'sample_message' => $sampleMessage,
             'status' => 'pending',

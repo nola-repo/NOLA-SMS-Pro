@@ -28,11 +28,11 @@ export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, 
         e.preventDefault();
         setErrorMsg("");
         
-        const cleanId = newId.trim().toUpperCase();
+        const cleanId = newId.trim();
         if (!cleanId) return;
 
         // Validation: 3-11 chars, alphanumeric no spaces
-        if (!/^[A-Z0-9]{3,11}$/.test(cleanId)) {
+        if (!/^[a-zA-Z0-9]{3,11}$/.test(cleanId)) {
             setErrorMsg("Sender Name must be 3-11 alphanumeric characters with no spaces.");
             return;
         }
@@ -120,7 +120,7 @@ export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, 
                             <input
                                 autoFocus
                                 value={newId}
-                                onChange={e => setNewId(e.target.value.toUpperCase())}
+                                onChange={e => setNewId(e.target.value)}
                                 placeholder="ex. NOLASMSPro"
                                 maxLength={11}
                                 required
