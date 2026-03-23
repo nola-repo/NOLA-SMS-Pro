@@ -1,113 +1,68 @@
-# Backend Handoff: Auto-Provision 10 Free Credits on GHL Installation
+# Backend Handoff: White-Label Branding & Credits
 
-## Overview
-
-When a new location installs NOLA SMS Pro via the GoHighLevel Marketplace, we need to **automatically provision 10 free SMS credits** to their account. The OAuth callback (`ghl_callback.php`) already stores the GHL tokens in the `ghl_tokens` Firestore collection. This handoff defines the additional step to provision credits at install time.
+This document covers the synchronization between the frontend and backend for handling credits and branded (White-Label) Sender IDs.
 
 ---
 
-## Firestore Data Model
+## 1. Automatic White-Label Branding
 
-### `integrations` collection
+The system now prioritizes an approved custom Sender ID over the system default `NOLASMSPro`.
 
-Each location has a document keyed by `ghl_{locationId}` (sanitized, replacing non-alphanumeric chars with `_`). This is the same document used by `account-sender.php`.
+### Account Configuration Fetch
+The frontend calls `GET /api/account.php?location_id={locId}` on mount. 
+**Required Response Fields:**
+- `approved_sender_id`: The custom ID to use as default.
+- `credit_balance`: For displaying remaining credits.
 
-**Fields relevant to credits:**
-
-| Field | Type | Description |
-|---|---|---|
-| `free_usage_count` | integer | Number of SMS messages sent using the shared NOLA sender. Initially `0`. |
-| `free_credits_total` | integer | Total free credits provisioned. Set to `10` on first install. |
-| `approved_sender_id` | string\|null | The custom sender ID once approved. `null` by default. |
-| `system_default_sender` | string | Always `"NOLASMSPro"`. Read-only constant used by frontend. |
-| `installed_at` | timestamp | When the location first installed the app. |
-| `location_id` | string | The GHL location ID. |
+### Frontend Logic (Managed by Raely)
+- If `approved_sender_id` is present, the UI will:
+    - Automatically select it as the default sender.
+    - **Hide** the "Nola SMS Pro" option from the dropdown to create a white-labeled experience.
 
 ---
 
-## Required Change in `ghl_callback.php`
+## 2. Multi-Tenant Status Retrieval
 
-After the existing Firestore token save (line ~119–133), **add a call to provision credits** if the integration document does not already exist.
+Message statuses are updated via a backend worker triggered by a Cron job.
 
-### Pseudocode Logic
-
-```php
-$docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string) $locationId);
-$integrationRef = $db->collection('integrations')->document($docId);
-$integrationDoc = $integrationRef->snapshot();
-
-if (!$integrationDoc->exists()) {
-    // First-time install — provision 10 free credits
-    $integrationRef->set([
-        'location_id'           => $locationId,
-        'location_name'         => $locationName,
-        'free_credits_total'    => 10,
-        'free_usage_count'      => 0,
-        'approved_sender_id'    => null,
-        'semaphore_api_key'     => null,
-        'nola_pro_api_key'      => null,
-        'installed_at'          => new \Google\Cloud\Core\Timestamp(new \DateTime()),
-        'updated_at'            => new \Google\Cloud\Cloud\Timestamp(new \DateTime()),
-    ]);
-} else {
-    // Re-install: preserve existing credits, just update tokens/name
-    $integrationRef->set([
-        'location_name' => $locationName,
-        'updated_at'    => new \Google\Cloud\Core\Timestamp(new \DateTime()),
-    ], ['merge' => true]);
-}
-```
-
-> [!IMPORTANT]
-> Use `['merge' => true]` on re-installs so existing credits and sender configuration are NOT reset.
+- **Script**: `api/webhook/retrieve_status.php`
+- **Logic**:
+    1. Fetches the `location_id` for every message in `sms_logs` with a status of 'Queued' or 'Pending'.
+    2. Retrieves the specific `nola_pro_api_key` or `semaphore_api_key` for that location.
+    3. Calls Semaphore with the correct key (crucial for messages sent using custom Sender IDs).
+    4. Falls back to the system `SEMAPHORE_API_KEY` if no custom key is configured.
+    5. Updates statuses in both `sms_logs` and `messages` collections.
 
 ---
 
-## How Credits Are Consumed
+## 3. Auto-Provision 10 Free Credits on GHL Installation
 
-In `send_sms.php`, when a message is sent using the shared `NOLASMSPro` sender (i.e., `approved_sender_id` is `null`):
+When a new location installs NOLA SMS Pro, they receive 10 free credits automatically.
 
-1. Read `integrations/{docId}.free_usage_count` and `free_credits_total`.
-2. If `free_usage_count >= free_credits_total`, **block the send** and return an error like `{"error": "free_credits_exhausted"}`.
-3. If allowed, after successful send, increment `free_usage_count` by 1:
+### OAuth Callback (`ghl_callback.php`)
+1. Determine sanitized `docId` as `ghl_{locationId}`.
+2. If the `integrations/{docId}` document does not exist:
+    - Set `free_credits_total: 10`
+    - Set `free_usage_count: 0`
+    - Set `location_id`, `location_name`, and `installed_at`.
 
-```php
-$integrationRef->set([
-    'free_usage_count' => $currentUsage + 1,
-    'updated_at'       => new \Google\Cloud\Core\Timestamp(new \DateTime()),
-], ['merge' => true]);
-```
+---
+
+## 4. Free Credit Tracking (Shared Sender)
+
+In `send_sms.php`, when using the shared `NOLASMSPro` sender:
+1. Validate that `free_usage_count < free_credits_total`.
+2. Block send if limit is reached.
+3. Increment `free_usage_count` upon successful send.
 
 > [!NOTE]
-> This logic should be bypassed if `approved_sender_id` is set — in that case, credit tracking is handled by the paid plan.
-
----
-
-## Document to Modify
-
-- **File**: `NOLA-SMS-Pro-Backend/ghl_callback.php`
-  - Add the `integrations` provisioning block after the `ghl_tokens` write.
-
-- **File**: `NOLA-SMS-Pro-Backend/api/webhook/send_sms.php`
-  - Add free credit check + increment when using shared sender.
-
----
-
-## Frontend Expectations
-
-The `account-sender.php` GET endpoint already returns `free_usage_count`. The frontend reads it via `fetchAccountSenderConfig()` in `src/api/senderRequests.ts`. No frontend changes needed for the basic free credit display — it reads `free_usage_count` and compares it to `10` (hardcoded as `free_credits_total` for now).
-
-If you want the frontend to read `free_credits_total` dynamically, add it to the `account-sender.php` GET response:
-
-```php
-'free_credits_total' => $data['free_credits_total'] ?? 10,
-```
+> This tracking is bypassed if an `approved_sender_id` is used, as those sends rely on the account's standard `credit_balance`.
 
 ---
 
 ## Testing Checklist
 
-- [ ] Install app via Marketplace link → verify `integrations/ghl_{locationId}` document created with `free_credits_total: 10` and `free_usage_count: 0`
-- [ ] Re-install → verify existing `free_usage_count` is preserved (not reset)
-- [ ] Send 10 messages using shared sender → verify 11th is blocked with `free_credits_exhausted` error
-- [ ] Set `approved_sender_id` → verify free credit check is bypassed
+- [ ] Verify `api/account.php` returns `approved_sender_id`.
+- [ ] Verify UI hides "Nola SMS Pro" if an approved ID exists.
+- [ ] Run `php api/webhook/retrieve_status.php` and verify status updates for custom sender messages.
+- [ ] Verify 10 free credits are provisioned on first installation.

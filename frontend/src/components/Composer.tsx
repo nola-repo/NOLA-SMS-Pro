@@ -80,6 +80,7 @@ export const Composer: React.FC<ComposerProps> = ({
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [senderName, setSenderName] = useState<SenderId>("NOLASMSPro");
+  const [approvedSenderId, setApprovedSenderId] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchDefaultSender = async () => {
@@ -91,6 +92,7 @@ export const Composer: React.FC<ComposerProps> = ({
         });
         const data = await res.json();
         if (data?.status === 'success' && data.data.approved_sender_id) {
+          setApprovedSenderId(data.data.approved_sender_id);
           setSenderName(data.data.approved_sender_id);
         }
       } catch (e) {
@@ -548,6 +550,7 @@ export const Composer: React.FC<ComposerProps> = ({
                   value={senderName}
                   onChange={setSenderName}
                   onRequestSettings={onRequestSettings}
+                  approvedSenderId={approvedSenderId}
                 />
               </div>
             </div>
@@ -589,6 +592,7 @@ export const Composer: React.FC<ComposerProps> = ({
                   value={senderName}
                   onChange={setSenderName}
                   onRequestSettings={onRequestSettings}
+                  approvedSenderId={approvedSenderId}
                 />
               </div>
             </div>
@@ -681,6 +685,7 @@ export const Composer: React.FC<ComposerProps> = ({
                       onChange={setSenderName}
                       align="left"
                       onRequestSettings={onRequestSettings}
+                      approvedSenderId={approvedSenderId}
                     />
                   </div>
                 </div>
@@ -812,6 +817,7 @@ export const Composer: React.FC<ComposerProps> = ({
                   onChange={setSenderName}
                   size="sm"
                   onRequestSettings={onRequestSettings}
+                  approvedSenderId={approvedSenderId}
                 />
               </div>
             </div>

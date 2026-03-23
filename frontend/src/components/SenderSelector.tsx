@@ -19,6 +19,7 @@ interface SenderSelectorProps {
     size?: "sm" | "md";
     align?: "left" | "right";
     onRequestSettings?: () => void;
+    approvedSenderId?: string | null;
 }
 
 const DEFAULT_OPTIONS: SenderOption[] = [
@@ -35,7 +36,8 @@ export const SenderSelector: React.FC<SenderSelectorProps> = ({
     label = "From:",
     size = "md",
     align = "right",
-    onRequestSettings
+    onRequestSettings,
+    approvedSenderId
 }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [isAdding, setIsAdding] = useState(false);
@@ -60,7 +62,27 @@ export const SenderSelector: React.FC<SenderSelectorProps> = ({
         }
     }, []);
 
-    const allOptions = useMemo(() => [...DEFAULT_OPTIONS, ...customOptions], [customOptions]);
+    const allOptions = useMemo(() => {
+        let options = [...DEFAULT_OPTIONS, ...customOptions];
+        
+        // If there's an approved sender ID, hide the system default "NOLASMSPro"
+        if (approvedSenderId) {
+            options = options.filter(opt => opt.id !== "NOLASMSPro");
+            
+            // Also ensure the approved sender is in the list if it's not already in customOptions
+            if (!options.find(opt => opt.id === approvedSenderId)) {
+                options.push({
+                    id: approvedSenderId as SenderId,
+                    name: approvedSenderId,
+                    description: "Approved Custom Sender",
+                    icon: <FiCheckCircle />,
+                    color: "bg-green-500"
+                });
+            }
+        }
+        
+        return options;
+    }, [customOptions, approvedSenderId]);
 
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
