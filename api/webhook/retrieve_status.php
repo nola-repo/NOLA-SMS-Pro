@@ -2,7 +2,11 @@
 require_once __DIR__ . '/../cors.php';
 date_default_timezone_set('UTC');
 
-$logFile = __DIR__ . '/logs/cron_execution.log';
+$logDir = __DIR__ . '/logs';
+if (!is_dir($logDir)) {
+    mkdir($logDir, 0777, true);
+}
+$logFile = $logDir . '/cron_execution.log';
 
 file_put_contents(
     $logFile,
@@ -22,6 +26,7 @@ $query = $db->collection('sms_logs')
     ->where('status', 'in', ['Queued', 'Pending']);
 
 $documents = $query->documents();
+$keyCache = []; // locationId => apiKey
 
 foreach ($documents as $doc) {
     if (!$doc->exists()) {
@@ -30,12 +35,32 @@ foreach ($documents as $doc) {
 
     $data = $doc->data();
     $messageId = $data['message_id'] ?? null;
+    $locId = $data['location_id'] ?? null;
 
     if (!$messageId) {
         continue;
     }
 
-    $url = "https://api.semaphore.co/api/v4/messages/$messageId?apikey=$apiKey";
+    // Determine the correct API key for this location
+    $activeKey = $apiKey; // Default to system key
+    if ($locId) {
+        if (isset($keyCache[$locId])) {
+            $activeKey = $keyCache[$locId];
+        } else {
+            $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
+            $intSnap = $db->collection('integrations')->document($intDocId)->snapshot();
+            if ($intSnap->exists()) {
+                $intData = $intSnap->data();
+                $customKey = $intData['nola_pro_api_key'] ?? ($intData['semaphore_api_key'] ?? null);
+                if ($customKey) {
+                    $activeKey = $customKey;
+                }
+            }
+            $keyCache[$locId] = $activeKey;
+        }
+    }
+
+    $url = "https://api.semaphore.co/api/v4/messages/$messageId?apikey=$activeKey";
 
     $ch = curl_init($url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -52,19 +77,19 @@ foreach ($documents as $doc) {
             // Update in sms_logs
             $doc->reference()->update([
                 ['path' => 'status', 'value' => $newStatus],
+                ['path' => 'updated_at', 'value' => new \Google\Cloud\Core\Timestamp(new \DateTime())],
             ]);
 
             // Also update the main UI 'messages' collection
-            // In our system, the document ID in 'messages' collection is the Semaphore messageId (string)
             $messageRef = $db->collection('messages')->document($messageId);
             try {
                 $messageRef->update([
                     ['path' => 'status', 'value' => $newStatus],
+                    ['path' => 'updated_at', 'value' => new \Google\Cloud\Core\Timestamp(new \DateTime())],
                 ]);
             }
             catch (\Exception $e) {
-                // If the document doesn't exist in 'messages', we can ignore it or log it
-                error_log("Failed to update status in 'messages' for ID $messageId: " . $e->getMessage());
+                // Ignore if not present in messages
             }
         }
     }
