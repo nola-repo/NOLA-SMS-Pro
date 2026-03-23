@@ -1020,8 +1020,8 @@ export const Composer: React.FC<ComposerProps> = ({
                               {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                             </span>
                             <span className="text-[10px] text-gray-400">•</span>
-                            <span className={`text-[10px] font-bold capitalize tracking-wider ${msg.status === 'sent' ? 'text-green-500' : msg.status === 'delivered' ? 'text-blue-400' : msg.status === 'failed' ? 'text-red-500' : 'text-gray-400'}`}>
-                              {msg.status === 'sending' ? '⟳' : msg.status === 'sent' ? '✓' : msg.status === 'delivered' ? '✓✓' : '✗'} {msg.status}
+                            <span className={`text-[10px] font-bold capitalize tracking-wider ${['sent', 'pending', 'queued'].includes(msg.status) ? 'text-green-500' : msg.status === 'delivered' ? 'text-blue-400' : msg.status === 'failed' ? 'text-red-500' : 'text-gray-400'}`}>
+                              {msg.status === 'sending' ? '⟳' : ['sent', 'pending', 'queued'].includes(msg.status) ? '✓' : msg.status === 'delivered' ? '✓✓' : '✗'} {msg.status}
                             </span>
                           </div>
                         </div>

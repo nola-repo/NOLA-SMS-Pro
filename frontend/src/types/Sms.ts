@@ -64,7 +64,7 @@ export interface Message {
   text: string;
   timestamp: Date;
   senderName: string;
-  status: 'sending' | 'sent' | 'delivered' | 'failed';
+  status: 'sending' | 'pending' | 'queued' | 'sent' | 'delivered' | 'failed';
   // Extra fields for compatibility
   batch_id?: string;
   message?: string;
