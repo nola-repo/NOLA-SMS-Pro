@@ -30,7 +30,8 @@ Message statuses are updated via a backend worker triggered by a Cron job.
     1. Fetches the `location_id` for every message in `sms_logs` with a status of 'Queued' or 'Pending'.
     2. Retrieves the specific `nola_pro_api_key` or `semaphore_api_key` for that location.
     3. Calls Semaphore with the correct key (crucial for messages sent using custom Sender IDs).
-    4. Falls back to the system `SEMAPHORE_API_KEY` if no custom key is configured.
+    4. **Status Guard**: Implements a priority check to ensure statuses only "upgrade" (e.g., `Pending` -> `Sent` -> `Delivered`). This prevents a lagging API response from overwriting `Sent` with `Pending`.
+    5. Falls back to the system `SEMAPHORE_API_KEY` if no custom key is configured.
     5. Updates statuses in both `sms_logs` and `messages` collections.
 
 ---

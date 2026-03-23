@@ -74,6 +74,30 @@ foreach ($documents as $doc) {
         if (isset($decoded[0]['status'])) {
             $newStatus = $decoded[0]['status'];
 
+            // Status Guard: Only update if the new status is not a "downgrade" 
+            // (e.g. don't overwrite "Sent" with "Pending" if the API is lagging)
+            $currentStatus = $data['status'] ?? 'Queued';
+            $statusPriority = [
+                'Queued'    => 1,
+                'Pending'   => 2,
+                'Sent'      => 3,
+                'Delivered' => 4,
+                'Failed'    => 4,
+                'Expired'   => 4
+            ];
+
+            $newPriority = $statusPriority[$newStatus] ?? 0;
+            $oldPriority = $statusPriority[$currentStatus] ?? 0;
+
+            // Only update if it's an upgrade or the same priority but different status
+            if ($newPriority < $oldPriority) {
+                continue; // Skip downgrade
+            }
+
+            if ($newStatus === $currentStatus) {
+                continue; // No change needed
+            }
+
             // Update in sms_logs
             $doc->reference()->update([
                 ['path' => 'status', 'value' => $newStatus],

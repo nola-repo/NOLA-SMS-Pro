@@ -79,4 +79,48 @@ foreach ($testMessages as $msg) {
     echo "--------------------------------------------------\n";
 }
 
-echo "\nVerification complete. Use 'php api/test_status_retriever.php' to run this test.\n";
+echo "\n--- Status Guard Hierarchy Test ---\n";
+
+function test_guard($current, $new) {
+    $statusPriority = [
+        'Queued'    => 1,
+        'Pending'   => 2,
+        'Sent'      => 3,
+        'Delivered' => 4,
+        'Failed'    => 4,
+        'Expired'   => 4
+    ];
+
+    $newPriority = $statusPriority[$new] ?? 0;
+    $oldPriority = $statusPriority[$current] ?? 0;
+
+    echo "Current: [$current] (Prio: $oldPriority) -> New: [$new] (Prio: $newPriority) ";
+
+    if ($newPriority < $oldPriority) {
+        echo " [REJECTED] - Status downgrade blocked.\n";
+        return false;
+    }
+
+    if ($new === $current) {
+        echo " [SKIPPED] - No change needed.\n";
+        return false;
+    }
+
+    echo " [APPROVED] - Status update allowed.\n";
+    return true;
+}
+
+$guardTests = [
+    ['current' => 'Pending', 'new' => 'Sent', 'expected' => true],
+    ['current' => 'Sent', 'new' => 'Pending', 'expected' => false], // The problematic case
+    ['current' => 'Sent', 'new' => 'Delivered', 'expected' => true],
+    ['current' => 'Delivered', 'new' => 'Sent', 'expected' => false],
+    ['current' => 'Pending', 'new' => 'Pending', 'expected' => false],
+    ['current' => 'Pending', 'new' => 'Queued', 'expected' => false],
+];
+
+foreach ($guardTests as $test) {
+    test_guard($test['current'], $test['new']);
+}
+
+echo "\nVerification complete.\n";
