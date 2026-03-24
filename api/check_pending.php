@@ -14,6 +14,7 @@ foreach ($docs as $doc) {
 
 if ($count === 0) {
     echo "No pending or queued messages found in Firestore.\n";
-} else {
+}
+else {
     echo "Total pending/queued: $count\n";
 }

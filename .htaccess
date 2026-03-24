@@ -1,79 +1,58 @@
-RewriteEngine On
-Options +FollowSymLinks
+# NOLA SMS Pro — Apache Rewrite Rules
+# Maps production URLs to actual PHP files
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /
 
-# ── CORS preflight: Apache handles OPTIONS directly ──
-SetEnvIf Request_Method OPTIONS IS_OPTIONS
-<IfModule mod_headers.c>
-    Header always set Access-Control-Allow-Origin "*" env=IS_OPTIONS
-    Header always set Access-Control-Allow-Methods "GET, POST, PUT, DELETE, PATCH, OPTIONS" env=IS_OPTIONS
-    Header always set Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Webhook-Secret" env=IS_OPTIONS
-    Header always set Access-Control-Max-Age "86400" env=IS_OPTIONS
+    Options -MultiViews
+
+    # ── CORS: Handle OPTIONS preflight at Apache level ───────────────
+    # Browsers send OPTIONS before POST with custom headers.
+    # Apache must respond 204 before PHP even runs.
+    RewriteCond %{REQUEST_METHOD} OPTIONS
+    RewriteRule ^(.*)$ $1 [R=204,L]
+
+    # If the request is for an existing file or directory, serve it directly
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # ── OAuth ────────────────────────────────────────────────────────────
+    # /oauth/callback -> /ghl_callback.php
+    RewriteRule ^oauth/callback$ /ghl_callback.php [L,QSA]
+
+    # ── Webhook endpoints (public URLs without /api/ prefix) ─────────
+    # /webhook/send_sms     -> /api/webhook/send_sms.php
+    # /webhook/receive_sms  -> /api/webhook/receive_sms.php
+    # /webhook/retrieve_status -> /api/webhook/retrieve_status.php
+    # /webhook/debug_ghl    -> /api/webhook/debug_ghl.php
+    # Generic: /webhook/XXX -> /api/webhook/XXX.php
+    RewriteRule ^webhook/(.+)$ /api/webhook/$1.php [L,QSA]
+
+    # ── Specialized Frontend-Backend Reconciliation ──────────────────
+    # /api/bulk-campaigns -> /api/webhook/fetch_bulk_messages.php
+    RewriteRule ^api/bulk-campaigns$ /api/webhook/fetch_bulk_messages.php [L,QSA]
+
+    # /api/ghl-contacts -> /api/ghl_contacts.php (Standardized on the more robust version)
+    RewriteRule ^api/ghl-contacts$ /api/ghl_contacts.php [L,QSA]
+
+    # ── Generic API endpoints ───────────────────────────────────────────
+    # /api/messages -> /api/messages.php (if the .php file exists)
+    RewriteCond %{REQUEST_FILENAME}.php -f
+    RewriteRule ^(.*)$ $1.php [L,QSA]
+
 </IfModule>
 
-RewriteCond %{REQUEST_METHOD} OPTIONS
-RewriteRule ^ - [R=204,L]
+# ── CORS headers for ALL responses ──────────────────────────────────
+<IfModule mod_headers.c>
+    Header always set Access-Control-Allow-Origin "*"
+    Header always set Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE, PATCH"
+    Header always set Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Webhook-Secret, X-GHL-Location-ID, X-GHL-LocationID"
+    Header always set Access-Control-Allow-Credentials "true"
+    Header always set Access-Control-Max-Age "86400"
+</IfModule>
 
-# Hide .php by redirecting direct access to clean URLs
-# (Only triggers for real browser/client requests; internal rewrites are not redirected.)
-RewriteCond %{THE_REQUEST} \s/+api/webhook/send_sms\.php[\s?] [NC]
-RewriteRule ^api/webhook/send_sms\.php$ /webhook/send_sms [R=301,L]
-RewriteCond %{THE_REQUEST} \s/+api/webhook/receive_sms\.php[\s?] [NC]
-RewriteRule ^api/webhook/receive_sms\.php$ /webhook/receive_sms [R=301,L]
-RewriteCond %{THE_REQUEST} \s/+api/webhook/retrieve_status\.php[\s?] [NC]
-RewriteRule ^api/webhook/retrieve_status\.php$ /webhook/retrieve_status [R=301,L]
-RewriteCond %{THE_REQUEST} \s/+api/messages\.php[\s?] [NC]
-RewriteRule ^api/messages\.php$ /api/messages [R=301,L]
-RewriteCond %{THE_REQUEST} \s/+api/contacts\.php[\s?] [NC]
-RewriteRule ^api/contacts\.php$ /api/contacts [R=301,L]
-RewriteCond %{THE_REQUEST} \s/+api/credits\.php[\s?] [NC]
-RewriteRule ^api/credits\.php$ /api/credits [R=301,L]
-RewriteCond %{THE_REQUEST} \s/+api/get_credit_transactions\.php[\s?] [NC]
-RewriteRule ^api/get_credit_transactions\.php$ /api/get_credit_transactions [R=301,L]
-RewriteCond %{THE_REQUEST} \s/+ghl_callback\.php[\s?] [NC]
-RewriteRule ^ghl_callback\.php$ /oauth/callback [R=301,L]
-
-RewriteRule ^webhook/send_sms$ /api/webhook/send_sms.php [L]
-RewriteRule ^webhook/send_sms\.php$ /api/webhook/send_sms.php [L]
-RewriteRule ^webhook/receive_sms$ /api/webhook/receive_sms.php [L]
-RewriteRule ^webhook/retrieve_status$ /api/webhook/retrieve_status.php [L]
-
-# SMS sending API
-RewriteRule ^api/sms$ /api/webhook/send_sms.php [L]
-
-# Message history API (for Web UI)
-RewriteRule ^api/messages$ /api/messages.php [L]
-
-# Contacts API (for Web UI)
-RewriteRule ^api/contacts$ /api/contacts.php [L]
-
-# Account Profile API (for Web UI Settings)
-RewriteRule ^api/account$ /api/account.php [L]
-
-# Account Sender Configuration API
-RewriteRule ^api/account-sender$ /api/account-sender.php [L]
-
-# Sender ID Requests API
-RewriteRule ^api/sender-requests$ /api/sender-requests.php [L]
-
-# Credit balance API (for Web UI)
-RewriteRule ^api/credits$ /api/credits.php [L]
-
-# Credit transactions ledger API
-RewriteRule ^api/get_credit_transactions$ /api/get_credit_transactions.php [L]
-
-# Bulk campaigns API (for Web UI)
-RewriteRule ^api/bulk-campaigns$ /api/webhook/fetch_bulk_messages.php [L]
-
-# GHL Contacts proxy (for Web UI — proxies to GoHighLevel API)
-RewriteRule ^api/ghl-contacts$ /api/ghl-contacts.php [L]
-
-# Conversations API (for Web UI sidebar)
-RewriteRule ^api/conversations$ /api/conversations.php [L]
-
-# OAuth callback (GHL / marketplace integrations)
-RewriteRule ^oauth/callback$ /ghl_callback.php [L]
-
-
-
-
-
+# Ensure PHP files are executed
+<FilesMatch "\.php$">
+    SetHandler application/x-httpd-php
+</FilesMatch>

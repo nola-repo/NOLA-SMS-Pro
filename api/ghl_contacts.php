@@ -10,6 +10,9 @@ header('Content-Type: application/json');
 require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
 
+// Standardized Auth Check
+validate_api_request();
+
 $db = get_firestore();
 
 $locationHeader = get_ghl_location_id();

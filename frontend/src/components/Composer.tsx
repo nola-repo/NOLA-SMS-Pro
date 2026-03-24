@@ -1019,9 +1019,15 @@ export const Composer: React.FC<ComposerProps> = ({
                             <span className="text-[10px] text-gray-500 dark:text-gray-400 font-medium">
                               {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                             </span>
-                            <span className="text-[10px] text-gray-400">•</span>
-                            <span className={`text-[10px] font-bold capitalize tracking-wider ${['sent', 'pending', 'queued'].includes(msg.status) ? 'text-green-500' : msg.status === 'delivered' ? 'text-blue-400' : msg.status === 'failed' ? 'text-red-500' : 'text-gray-400'}`}>
-                              {msg.status === 'sending' ? '⟳' : ['sent', 'pending', 'queued'].includes(msg.status) ? '✓' : msg.status === 'delivered' ? '✓✓' : '✗'} {msg.status}
+                            <span className={`text-[10px] text-gray-400 font-bold tracking-widest uppercase`}>•</span>
+                            <span className={`text-[10px] font-bold capitalize tracking-wider ${
+                              (msg.status || '').toLowerCase() === 'sent' ? 'text-green-500' : 
+                              ['pending', 'queued'].includes((msg.status || '').toLowerCase()) ? 'text-amber-500' :
+                              (msg.status || '').toLowerCase() === 'delivered' ? 'text-blue-400' : 
+                              ['failed', 'error'].includes((msg.status || '').toLowerCase()) ? 'text-red-500' : 
+                              'text-gray-400'
+                            }`}>
+                              {msg.status === 'sending' ? '⟳' : (msg.status || '').toLowerCase() === 'sent' ? '✓' : ['pending', 'queued'].includes((msg.status || '').toLowerCase()) ? '⏳' : (msg.status || '').toLowerCase() === 'delivered' ? '✓✓' : '✗'} {msg.status}
                             </span>
                           </div>
                         </div>

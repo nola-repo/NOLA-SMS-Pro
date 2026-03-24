@@ -118,8 +118,8 @@ if ($message) {
 }
 log_sms("MESSAGE_CLEANED", $message);
 
-// Extract Numbers
-$numberRaw = $customData['number'] ?? $payload['number'] ?? $data['number'] ?? $payload['phone'] ?? null;
+// Extract Numbers — GHL Marketplace may send as 'number' or 'phone' depending on field reference
+$numberRaw = $customData['number'] ?? $customData['phone'] ?? $payload['number'] ?? $data['number'] ?? $payload['phone'] ?? $data['phone'] ?? null;
 $validNumbers = clean_numbers($numberRaw);
 $num_recipients = count($validNumbers);
 
@@ -133,10 +133,20 @@ if ($num_recipients === 0) {
 $required_credits = CreditManager::calculateRequiredCredits($message, $num_recipients);
 
 // ── Multi-Tenancy: Get and Validate locationId ──────────────────────────────────
+// GHL does NOT interpolate {{variables}} in custom HTTP headers for Marketplace actions —
+// only in the request body. So we check the header first, then fall back to the body.
 $locId = get_ghl_location_id();
 if (!$locId) {
+    // Fallback: read location_id from the JSON body (where GHL DOES replace {{location.id}})
+    $locId = $customData['location_id'] ?? $payload['location_id'] ?? $data['location_id'] ?? null;
+    // Sanitise: if it still looks like an un-replaced template, treat as missing
+    if ($locId && strpos((string)$locId, '{{') !== false) {
+        $locId = null;
+    }
+}
+if (!$locId) {
     http_response_code(400);
-    echo json_encode(['error' => 'Missing location_id (X-GHL-Location-ID header or query param required)']);
+    echo json_encode(['error' => 'Missing location_id. Pass it via X-GHL-Location-ID header or as location_id in the request body.']);
     exit;
 }
 
@@ -153,7 +163,8 @@ $freeUsageCount = $intData['free_usage_count'] ?? 0;
 $freeCreditsTotal = $intData['free_credits_total'] ?? 10;
 
 // Extract the sendername the frontend/user selected
-$requestedSender = $customData['sendername'] ?? $payload['sendername'] ?? $data['sendername'] ?? null;
+$requestedSender = $customData['sendername'] ?? $payload['sendername'] ?? $data['sendername'] ?? 
+                  $customData['sender_name'] ?? $payload['sender_name'] ?? $data['sender_name'] ?? null;
 
 // Determine which sender to use:
 if ($approvedSenderId && $customApiKey && $requestedSender === $approvedSenderId) {

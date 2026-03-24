@@ -6,11 +6,24 @@
  */
 function validate_api_request(): void
 {
+    // Try standard PHP server headers first
     $receivedSecret = $_SERVER['HTTP_X_WEBHOOK_SECRET'] ?? '';
+
+    if (!$receivedSecret) {
+        // Fallback: search all headers for the secret (Apache/Cloud Run compatibility)
+        $headers = function_exists('getallheaders') ? getallheaders() : [];
+        foreach ($headers as $key => $value) {
+            if (strcasecmp($key, 'X-Webhook-Secret') === 0) {
+                $receivedSecret = $value;
+                break;
+            }
+        }
+    }
+
     // Use the value from CLOUD-RUN-SECRETS.md as fallback if env not set
     $expectedSecret = getenv('WEBHOOK_SECRET') ?: 'f7RkQ2pL9zV3tX8cB1nS4yW6';
 
-    if (!hash_equals($expectedSecret, $receivedSecret)) {
+    if (!hash_equals($expectedSecret, (string)$receivedSecret)) {
         header('Content-Type: application/json');
         http_response_code(401);
         echo json_encode(['status' => 'error', 'message' => 'Unauthorized Access']);
