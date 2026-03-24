@@ -166,63 +166,77 @@ $freeCreditsTotal = $intData['free_credits_total'] ?? 10;
 $requestedSender = $customData['sendername'] ?? $payload['sendername'] ?? $data['sendername'] ?? 
                   $customData['sender_name'] ?? $payload['sender_name'] ?? $data['sender_name'] ?? null;
 
-// Determine which sender to use:
+// ── Three-Tier Sender + Credit Logic ────────────────────────────────────────
+// Tier 1: Custom sender (approved sender ID + custom API key) — no system credit deduction
+// Tier 2: Free trial active (system sender, free quota not exhausted) — increment free counter + deduct paid
+// Tier 3: Paid fallback (system sender, free quota exhausted) — deduct paid credits only
+// ❌ Hard 403 only when BOTH free trial exhausted AND paid credits insufficient
+
+$usingCustomSender = false;
+$usingFreeCredits  = false;
+
 if ($approvedSenderId && $customApiKey && $requestedSender === $approvedSenderId) {
-    // ✅ User explicitly selected their approved custom sender → use custom key
+    // ✅ Tier 1: User explicitly selected their approved custom sender → use custom key
     $sender = $approvedSenderId;
     $activeApiKey = $customApiKey;
+    $usingCustomSender = true;
 } elseif ($approvedSenderId && $customApiKey && empty($requestedSender)) {
-    // ✅ No sender specified (e.g. webhook call) → default to approved sender
+    // ✅ Tier 1: No sender specified (e.g. webhook call) → default to approved sender
     $sender = $approvedSenderId;
     $activeApiKey = $customApiKey;
+    $usingCustomSender = true;
 } else {
-    // ✅ User chose a system default sender (NOLASMSPro), or no approved sender exists
-    // Check free usage limit before allowing
-    if ($freeUsageCount + $num_recipients > $freeCreditsTotal) {
-        http_response_code(403);
-        echo json_encode([
-            "status"  => "error",
-            "message" => "Free message limit reached ($freeUsageCount/$freeCreditsTotal). Registration of a custom Sender ID and API Key is required.",
-            "error"   => "free_credits_exhausted"
-        ]);
-        exit;
-    }
-    // Use system sender + system API key
+    // ✅ Tier 2 or 3: Use system sender + system API key
     $sender = $requestedSender ?? ($SENDER_IDS[0] ?? "");
     if (!in_array($sender, $SENDER_IDS)) {
         $sender = $SENDER_IDS[0];
     }
     $activeApiKey = $SEMAPHORE_API_KEY;
+
+    // Determine if this send falls within the free trial quota
+    if ($freeUsageCount + $num_recipients <= $freeCreditsTotal) {
+        $usingFreeCredits = true; // Tier 2: still within free trial
+    }
+    // If free quota IS exhausted → Tier 3: fall through to paid credits (no block here)
 }
 
 $creditManager = new CreditManager();
 $account_id = $locId ?: 'default';
 
-try {
-    // ✅ Only deduct credits if NOT using the system shared sender
-    if ($activeApiKey !== $SEMAPHORE_API_KEY) {
+// ── Credit Deduction ────────────────────────────────────────────────────────
+// Custom sender (Tier 1): no system credit deduction — uses their own Semaphore account
+// System sender (Tier 2 & 3): always deduct from paid credit pool
+if (!$usingCustomSender) {
+    try {
         $creditManager->deduct_credits(
             $account_id,
             $required_credits,
             $batch_id ?? ('single_' . bin2hex(random_bytes(4))),
             "SMS sent to $num_recipients recipients"
         );
-    } else {
-        // ✅ For system sender, we only track free usage count
+    } catch (\Exception $e) {
+        if ($e->getMessage() === "Insufficient credits.") {
+            // Both free trial exhausted AND paid credits insufficient → hard block
+            http_response_code(403);
+            echo json_encode([
+                "status"  => "error",
+                "message" => "Insufficient credits to send SMS. Please top up your credits.",
+                "error"   => "insufficient_credits"
+            ]);
+        } else {
+            http_response_code(500);
+            echo json_encode(["status" => "error", "message" => "Credit deduction failed: " . $e->getMessage()]);
+        }
+        exit;
+    }
+
+    // Increment free usage counter only if this send was within the free quota (Tier 2)
+    if ($usingFreeCredits) {
         $intRef->set([
             'free_usage_count' => $freeUsageCount + $num_recipients,
             'updated_at'       => new \Google\Cloud\Core\Timestamp(new \DateTime()),
         ], ['merge' => true]);
     }
-}
-catch (\Exception $e) {
-    if ($e->getMessage() === "Insufficient credits.") {
-        echo json_encode(["status" => "error", "message" => "Insufficient credits"]);
-    }
-    else {
-        echo json_encode(["status" => "error", "message" => "Credit deduction failed: " . $e->getMessage()]);
-    }
-    exit;
 }
 
 /* |-------------------------------------------------------------------------- | SEND SMS (BATCHED) |-------------------------------------------------------------------------- */
