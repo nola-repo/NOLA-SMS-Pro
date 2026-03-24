@@ -34,7 +34,7 @@ try {
     }
 
     $adminData = $snapshot->data();
-    $storedHash = $adminData['password'] ?? '';
+    $storedHash = $adminData['hashed_password'] ?? '';
 
     if (password_verify($password, $storedHash)) {
         // Successful login

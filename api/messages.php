@@ -9,10 +9,17 @@ header('Content-Type: application/json');
 
 require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
+require __DIR__ . '/services/StatusSync.php';
 
 validate_api_request();
 
 $db = get_firestore();
+$config = require __DIR__ . '/webhook/config.php';
+
+// Passive Sync: Trigger status update if necessary (once every 5 mins)
+if (isset($_GET['sync']) || $_SERVER['REQUEST_METHOD'] === 'GET') {
+    \Nola\Services\StatusSync::syncIfNecessary($db, $config['SEMAPHORE_API_KEY']);
+}
 
 $direction = $_GET['direction'] ?? 'outbound'; // outbound | inbound | all
 $conversationId = $_GET['conversation_id'] ?? null; // when set, load messages for one chat (fixes bulk mixing)
