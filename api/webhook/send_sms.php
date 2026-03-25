@@ -16,6 +16,17 @@ $SEMAPHORE_API_KEY = $config['SEMAPHORE_API_KEY'];
 $SEMAPHORE_URL = $config['SEMAPHORE_URL'];
 $SENDER_IDS = $config['SENDER_IDS'];
 
+// --- Maintenance Mode Check ---
+$db_maintenance = get_firestore();
+$globalConfigRef = $db_maintenance->collection('admin_config')->document('global');
+$globalConfigSnap = $globalConfigRef->snapshot();
+if ($globalConfigSnap->exists() && !empty($globalConfigSnap->data()['maintenance_mode'])) {
+    http_response_code(503);
+    echo json_encode(['status' => 'error', 'message' => 'System is currently in maintenance mode.']);
+    exit;
+}
+// ------------------------------
+
 validate_api_request();
 
 function log_sms($label, $data)

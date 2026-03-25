@@ -22,6 +22,16 @@ try {
     $apiKey = $config['SEMAPHORE_API_KEY'];
     $db = get_firestore();
 
+    // --- Maintenance Mode Check ---
+    $globalConfigRef = $db->collection('admin_config')->document('global');
+    $globalConfigSnap = $globalConfigRef->snapshot();
+    if ($globalConfigSnap->exists() && !empty($globalConfigSnap->data()['maintenance_mode'])) {
+        error_log("[" . date('Y-m-d H:i:s') . "] Cron skipped: System is in maintenance mode.");
+        echo "Maintenance mode active. Skipping sync.";
+        exit;
+    }
+    // ------------------------------
+
     // 3. Keep the script stateless and delegate logic to the service class
     $updatedCount = \Nola\Services\StatusSync::runSync($db, $apiKey);
 

@@ -34,7 +34,14 @@ try {
     }
 
     $adminData = $snapshot->data();
-    $storedHash = $adminData['hashed_password'] ?? '';
+    
+    if (empty($adminData['active'])) {
+        http_response_code(403);
+        echo json_encode(['status' => 'error', 'message' => 'Account is deactivated.']);
+        exit;
+    }
+
+    $storedHash = $adminData['password_hash'] ?? $adminData['hashed_password'] ?? '';
 
     if (password_verify($password, $storedHash)) {
         // Successful login
