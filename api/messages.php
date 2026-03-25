@@ -9,17 +9,14 @@ header('Content-Type: application/json');
 
 require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
-require __DIR__ . '/services/StatusSync.php';
 
 validate_api_request();
 
 $db = get_firestore();
 $config = require __DIR__ . '/webhook/config.php';
 
-// Passive Sync: Trigger status update if necessary (once every 5 mins)
-if (isset($_GET['sync']) || $_SERVER['REQUEST_METHOD'] === 'GET') {
-    \Nola\Services\StatusSync::syncIfNecessary($db, $config['SEMAPHORE_API_KEY']);
-}
+// Status syncing is now handled by Cloud Scheduler (every 5 min)
+// via api/webhook/retrieve_status.php → StatusSync::runSync()
 
 $direction = $_GET['direction'] ?? 'outbound'; // outbound | inbound | all
 $conversationId = $_GET['conversation_id'] ?? null; // when set, load messages for one chat (fixes bulk mixing)
@@ -109,9 +106,15 @@ $out = [
     'success' => true,
     'data' => [],
     'total' => 0,
-    'limit' => $limit,
     'offset' => $offset,
 ];
+
+// Helper to map backend pending/queued to UI Sent to prevent flickering
+$mapStatus = function($s) {
+    if (!$s) return null;
+    $l = strtolower($s);
+    return ($l === 'pending' || $l === 'queued') ? 'Sent' : $s;
+};
 
 try {
     // Bulk fetch by batch_id (frontend: /api/messages?batch_id=...).
@@ -144,7 +147,7 @@ try {
                 'message' => $d['message'] ?? null,
                 'direction' => $d['direction'] ?? 'outbound',
                 'sender_id' => $d['sender_id'] ?? null,
-                'status' => $d['status'] ?? null,
+                'status' => $mapStatus($d['status'] ?? null),
                 'batch_id' => $d['batch_id'] ?? null,
                 'recipient_key' => $d['recipient_key'] ?? null,
                 'date_created' => isset($d['date_created']) ? $d['date_created']->formatAsString() : null,
@@ -204,7 +207,7 @@ try {
                 'message' => $d['message'] ?? null,
                 'direction' => $d['direction'] ?? 'outbound',
                 'sender_id' => $d['sender_id'] ?? null,
-                'status' => $d['status'] ?? null,
+                'status' => $mapStatus($d['status'] ?? null),
                 'batch_id' => $d['batch_id'] ?? null,
                 'recipient_key' => $d['recipient_key'] ?? null,
                 'created_at' => isset($d['created_at']) ? $d['created_at']->formatAsString() : null,
@@ -236,7 +239,7 @@ try {
                 'message' => $d['message'] ?? null,
                 'direction' => $d['direction'] ?? 'outbound',
                 'sender_id' => $d['sender_id'] ?? null,
-                'status' => $d['status'] ?? null,
+                'status' => $mapStatus($d['status'] ?? null),
                 'batch_id' => $d['batch_id'] ?? null,
                 'recipient_key' => $d['recipient_key'] ?? null,
                 'created_at' => isset($d['created_at']) ? $d['created_at']->formatAsString() : null,
@@ -297,7 +300,7 @@ try {
                 'numbers' => $d['numbers'] ?? [],
                 'message' => $d['message'] ?? null,
                 'sender_id' => $d['sender_id'] ?? null,
-                'status' => $d['status'] ?? null,
+                'status' => $mapStatus($d['status'] ?? null),
                 'date_created' => isset($d['date_created']) ? $d['date_created']->formatAsString() : null,
                 'source' => $d['source'] ?? null,
             ];

@@ -54,15 +54,21 @@ export const useConversationMessages = (conversationId: string | undefined) => {
                     parseFirestoreDate(b.created_at).getTime()
             );
 
-            const formatted: Message[] = sorted.map((row) => ({
-                id: row.id,
-                text: row.message || "",
-                timestamp: parseFirestoreDate(row.created_at),
-                senderName: row.sender_id || "NOLASMSPro",
-                status: (row.status as Message["status"]) || "sent",
-                batch_id: row.batch_id,
-                message: row.message,
-            }));
+            const formatted: Message[] = sorted.map((row) => {
+                let mappedStatus = (row.status || "sent").toLowerCase();
+                if (mappedStatus === "pending" || mappedStatus === "queued") {
+                    mappedStatus = "sent";
+                }
+                return {
+                    id: row.id,
+                    text: row.message || "",
+                    timestamp: parseFirestoreDate(row.created_at),
+                    senderName: row.sender_id || "NOLASMSPro",
+                    status: mappedStatus as Message["status"],
+                    batch_id: row.batch_id,
+                    message: row.message,
+                };
+            });
 
             // Merge optimistic "temp-" messages that haven't been confirmed yet
             const cached = getCachedMessages(conversationId) || [];

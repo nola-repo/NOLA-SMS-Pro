@@ -57,7 +57,7 @@ try {
                         'first_message' => $data['message'] ?? '',
                         'date_created'  => $data['date_created'],
                         'sender_id'     => $data['sender_id'] ?? 'NOLASMSPro',
-                        'status'        => $data['status'] ?? 'sent',
+                        'status'        => (strtolower($data['status'] ?? '') === 'pending' || strtolower($data['status'] ?? '') === 'queued') ? 'Sent' : ($data['status'] ?? 'sent'),
                         'location_id'   => $data['location_id'] ?? $locationId,
                     ];
                 }

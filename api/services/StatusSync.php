@@ -17,14 +17,17 @@ class StatusSync
         $updatedCount = 0;
 
         try {
-            // Find all SMS logs with status Queued or Pending
+            // Find all SMS logs with status Queued or Pending (Try both cases)
             $query = $db->collection('sms_logs')
-                ->where('status', 'in', ['Queued', 'Pending']);
+                ->where('status', 'in', ['Queued', 'Pending', 'queued', 'pending']);
 
             $documents = $query->documents();
+            $allDocs = $documents->rows();
+            
+            error_log("[StatusSync] Query found " . count($allDocs) . " messages in 'sms_logs' with status Queued/Pending");
 
             // Loop through all pending/queued messages
-            foreach ($documents as $doc) {
+            foreach ($allDocs as $doc) {
                 if (!$doc->exists()) {
                     continue;
                 }
@@ -34,6 +37,35 @@ class StatusSync
 
                 if (!$messageId) {
                     continue;
+                }
+
+                // Expiration Filter: Mark as "Expired" if older than 3 days (prevent infinite polling of stuck messages)
+                $now = time();
+                $dateCreated = null;
+                if (isset($data['date_created'])) {
+                    $dateCreated = $data['date_created'] instanceof \Google\Cloud\Core\Timestamp 
+                        ? $data['date_created']->get()->getTimestamp() 
+                        : strtotime((string)$data['date_created']);
+                } elseif (isset($data['created_at'])) {
+                    $dateCreated = $data['created_at'] instanceof \Google\Cloud\Core\Timestamp 
+                        ? $data['created_at']->get()->getTimestamp() 
+                        : strtotime((string)$data['created_at']);
+                }
+
+                if ($dateCreated && ($now - $dateCreated > 259200)) { // 3 days in seconds
+                    $doc->reference()->update([
+                        ['path' => 'status', 'value' => 'Expired'],
+                        ['path' => 'updated_at', 'value' => new \Google\Cloud\Core\Timestamp(new \DateTime())],
+                    ]);
+                    
+                    try {
+                        $db->collection('messages')->document($messageId)->update([
+                            ['path' => 'status', 'value' => 'Expired'],
+                        ]);
+                    } catch (\Exception $e) {}
+                    
+                    error_log("[StatusSync] Message ID $messageId is older than 3 days. Marked as Expired to save API quota.");
+                    continue; // Skip the Semaphore API call
                 }
 
                 // Call Semaphore API to get the latest status
@@ -54,7 +86,9 @@ class StatusSync
                 curl_close($ch);
 
                 if ($httpCode !== 200) {
-                    error_log("[StatusSync] Semaphore API returned HTTP $httpCode for message ID $messageId. response: " . $response);
+                    if ($httpCode !== 404) {
+                        error_log("[StatusSync] Semaphore API returned HTTP $httpCode for message ID $messageId. response: " . $response);
+                    }
                     continue;
                 }
 
@@ -65,12 +99,13 @@ class StatusSync
                     if ($decoded && is_array($decoded) && isset($decoded[0]['status'])) {
                         $newStatus = $decoded[0]['status'];
 
-                        // Only update if the status actually changed
-                        if ($newStatus !== $data['status']) {
+                        // Only update if the status is an upgrade (e.g., Pending -> Sent)
+                        if (self::shouldUpdateStatus($data['status'], $newStatus)) {
 
                             // 1. Update the 'sms_logs' collection
                             $doc->reference()->update([
                                 ['path' => 'status', 'value' => $newStatus],
+                                ['path' => 'updated_at', 'value' => new \Google\Cloud\Core\Timestamp(new \DateTime())],
                             ]);
 
                             // 2. Update the main UI 'messages' collection
@@ -94,6 +129,9 @@ class StatusSync
                         error_log("[StatusSync] Empty or unexpected response format for message ID $messageId: " . $response);
                     }
                 }
+
+                // Respect Semaphore Rate Limits: 30 calls per minute (1 every 2 seconds)
+                usleep(2000000); // 2 seconds delay
             }
         }
         catch (\Exception $e) {
@@ -102,5 +140,32 @@ class StatusSync
         }
 
         return $updatedCount;
+    }
+
+    /**
+     * Prevents status downgrades (e.g. Sent -> Pending)
+     */
+    private static function shouldUpdateStatus($current, $new)
+    {
+        $statusPriority = [
+            'Queued'    => 1,
+            'queued'    => 1,
+            'Pending'   => 2,
+            'pending'   => 2,
+            'Sent'      => 3,
+            'sent'      => 3,
+            'Delivered' => 4,
+            'delivered' => 4,
+            'Failed'    => 4,
+            'failed'    => 4,
+            'Expired'   => 4,
+            'expired'   => 4
+        ];
+
+        $newPriority = $statusPriority[$new] ?? 0;
+        $oldPriority = $statusPriority[$current] ?? 0;
+
+        // Condition: New priority must be >= old priority, AND status must actually be different
+        return ($newPriority >= $oldPriority) && ($new !== $current);
     }
 }
