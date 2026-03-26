@@ -123,6 +123,22 @@ class StatusSync
 
                             $updatedCount++;
                             error_log("[StatusSync] Successfully updated message ID $messageId to status: $newStatus");
+
+                            // ── Delivery Report Notification ──────────────────────────
+                            if (in_array($newStatus, ['Delivered', 'Failed', 'delivered', 'failed'])) {
+                                try {
+                                    $msgLocId = $data['location_id'] ?? null;
+                                    if ($msgLocId) {
+                                        require_once __DIR__ . '/NotificationService.php';
+                                        \NotificationService::notifyDeliveryStatus(
+                                            $db, $msgLocId, $messageId, $newStatus,
+                                            $data['number'] ?? $data['numbers'][0] ?? 'unknown'
+                                        );
+                                    }
+                                } catch (\Throwable $e) {
+                                    error_log('[DeliveryReport] ' . $e->getMessage());
+                                }
+                            }
                         }
                     }
                     else {

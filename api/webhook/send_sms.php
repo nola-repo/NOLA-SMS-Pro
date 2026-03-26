@@ -248,6 +248,15 @@ if (!$usingCustomSender) {
             'updated_at'       => new \Google\Cloud\Core\Timestamp(new \DateTime()),
         ], ['merge' => true]);
     }
+
+    // ── Low Balance Alert ──────────────────────────────────────────────────
+    try {
+        require_once __DIR__ . '/../services/NotificationService.php';
+        $newBalance = $creditManager->get_balance($account_id);
+        NotificationService::checkLowBalance($db, $locId, $newBalance);
+    } catch (\Throwable $e) {
+        error_log('[LowBalanceAlert] ' . $e->getMessage());
+    }
 }
 
 /* |-------------------------------------------------------------------------- | SEND SMS (BATCHED) |-------------------------------------------------------------------------- */
