@@ -245,17 +245,11 @@ function transformGHLContact(array $contact): array
 }
 
 try {
-    // ── GET — fetch contacts ────────────────────────────────────────────
+    // ── GET — fetch contacts (shadow-refactored to use GhlClient) ───────
     if ($method === 'GET') {
-        $url = "{$GHL_API_URL}/contacts?locationId={$GHL_LOCATION_ID}&limit=100";
-        $headers = [
-            "Authorization: Bearer {$integration['access_token']}",
-            'Content-Type: application/json',
-            'Version: 2021-07-28',
-        ];
-
-        $getPayload = null;
-        $resp = executeGHLRequest($url, 'GET', $headers, $getPayload, $db, $integration);
+        require_once __DIR__ . '/services/GhlClient.php';
+        $client = new GhlClient($db, $locationHeader);
+        $resp = $client->request('GET', '/contacts/?locationId=' . urlencode($GHL_LOCATION_ID) . '&limit=100');
         $status = $resp['status'];
         $body = $resp['body'];
 

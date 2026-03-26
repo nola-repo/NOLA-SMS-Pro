@@ -58,6 +58,9 @@
     # /api/ghl-contacts -> /api/ghl_contacts.php (Using the more robust underscore version)
     RewriteRule ^api/ghl-contacts/?$ /api/ghl_contacts.php [NC,L,QSA]
 
+    # /api/ghl-conversations -> /api/ghl-conversations.php
+    RewriteRule ^api/ghl-conversations/?$ /api/ghl-conversations.php [NC,L,QSA]
+
     # ── Generic API endpoints ───────────────────────────────────────────
     # /api/messages -> /api/messages.php
     # /api/contacts -> /api/contacts.php
