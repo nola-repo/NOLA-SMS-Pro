@@ -241,6 +241,7 @@ function transformGHLContact(array $contact): array
         'name' => $name,
         'phone' => $contact['phone'] ?? $contact['mobileNumber'] ?? '',
         'email' => $contact['email'] ?? '',
+        'tags' => $contact['tags'] ?? [],
     ];
 }
 

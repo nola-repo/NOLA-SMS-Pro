@@ -75,6 +75,7 @@
     RewriteRule ^api/credits/?$ /api/credits.php [NC,L,QSA]
     RewriteRule ^api/get_credit_transactions/?$ /api/get_credit_transactions.php [NC,L,QSA]
     RewriteRule ^api/conversations/?$ /api/conversations.php [NC,L,QSA]
+    RewriteRule ^api/templates/?$ /api/templates.php [NC,L,QSA]
 
     # Catch-all: /api/XXX -> /api/XXX.php (if the .php file exists)
     RewriteCond %{REQUEST_FILENAME}.php -f
