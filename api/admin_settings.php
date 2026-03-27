@@ -11,13 +11,16 @@ $configRef = $db->collection('admin_config')->document('global');
 if ($method === 'GET') {
     try {
         $snapshot = $configRef->snapshot();
-        $data = $snapshot->exists() ? $snapshot->data() : [
-            'sender_default' => 'NOLASMSPro',
-            'free_limit' => 10,
-            'maintenance_mode' => false,
-            'poll_interval' => 15
+        $raw = $snapshot->exists() ? $snapshot->data() : [];
+
+        // Return only the fields the frontend expects (exclude Firestore metadata)
+        $data = [
+            'sender_default'   => $raw['sender_default'] ?? 'NOLASMSPro',
+            'free_limit'       => (int) ($raw['free_limit'] ?? 10),
+            'maintenance_mode' => (bool) ($raw['maintenance_mode'] ?? false),
+            'poll_interval'    => (int) ($raw['poll_interval'] ?? 15),
         ];
-        
+
         echo json_encode([
             'status' => 'success',
             'data' => $data
@@ -46,7 +49,7 @@ if ($method === 'GET') {
     
     try {
         $configRef->set($saveData, ['merge' => true]);
-        echo json_encode(['status' => 'success']);
+        echo json_encode(['status' => 'success', 'message' => 'Settings updated.']);
         exit;
     } catch (Exception $e) {
         http_response_code(500);

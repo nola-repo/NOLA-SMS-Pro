@@ -77,6 +77,8 @@ if ($method === 'GET') {
                 'created_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
                 'last_login' => null
             ]);
+            echo json_encode(['status' => 'success', 'message' => 'Admin user created.']);
+            exit;
         } elseif ($action === 'reset_password') {
             $new_password = $input['new_password'] ?? '';
             if (empty($new_password)) {
@@ -87,11 +89,15 @@ if ($method === 'GET') {
             $adminRef->set([
                 'password_hash' => password_hash($new_password, PASSWORD_BCRYPT)
             ], ['merge' => true]);
+            echo json_encode(['status' => 'success', 'message' => 'Password reset successfully.']);
+            exit;
         } elseif ($action === 'toggle_status') {
             $active = isset($input['active']) ? (bool)$input['active'] : false;
             $adminRef->set([
                 'active' => $active
             ], ['merge' => true]);
+            echo json_encode(['status' => 'success', 'message' => 'Status updated.']);
+            exit;
         } elseif ($action === 'record_login') {
             $adminRef->set([
                 'last_login' => new \Google\Cloud\Core\Timestamp(new \DateTime())
@@ -102,7 +108,7 @@ if ($method === 'GET') {
             exit;
         }
 
-        echo json_encode(['status' => 'success']);
+        echo json_encode(['status' => 'success', 'message' => 'Action completed.']);
         exit;
     } catch (Exception $e) {
         http_response_code(500);
@@ -142,7 +148,7 @@ if ($method === 'GET') {
         }
 
         $adminRef->delete();
-        echo json_encode(['status' => 'success']);
+        echo json_encode(['status' => 'success', 'message' => 'Admin deleted.']);
         exit;
     } catch (Exception $e) {
         http_response_code(500);
