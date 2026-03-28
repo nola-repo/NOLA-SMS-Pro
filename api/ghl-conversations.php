@@ -63,18 +63,36 @@ try {
     $resp    = $client->request('POST', '/conversations/', $payload, '2021-04-15');
     $ghlData = json_decode($resp['body'], true);
 
-    if ($resp['status'] >= 400) {
-        http_response_code($resp['status']);
-        echo json_encode([
-            'success'    => false,
-            'error'      => 'GHL API error',
-            'ghl_status' => $resp['status'],
-            'ghl_error'  => $ghlData['message'] ?? $resp['body'],
-        ]);
-        exit;
-    }
+    $ghlConvId = null;
 
-    $ghlConvId = $ghlData['conversation']['id'] ?? $ghlData['id'] ?? null;
+    if ($resp['status'] >= 400) {
+        // "Conversation already exists" is NOT an error — search for the existing one
+        if ($resp['status'] === 400 && str_contains($resp['body'], 'already exists')) {
+            $searchResp = $client->request(
+                'GET',
+                '/conversations/search?contactId=' . urlencode($contactId) . '&locationId=' . urlencode($locId),
+                null,
+                '2021-04-15'
+            );
+            $searchData = json_decode($searchResp['body'], true);
+            $ghlConvId = $searchData['conversations'][0]['id'] ?? null;
+
+            if (!$ghlConvId) {
+                error_log("GHL conversation exists but search returned no results for contact {$contactId}");
+            }
+        } else {
+            http_response_code($resp['status']);
+            echo json_encode([
+                'success'    => false,
+                'error'      => 'GHL API error',
+                'ghl_status' => $resp['status'],
+                'ghl_error'  => $ghlData['message'] ?? $resp['body'],
+            ]);
+            exit;
+        }
+    } else {
+        $ghlConvId = $ghlData['conversation']['id'] ?? $ghlData['id'] ?? null;
+    }
 
     // ── 2. Fetch the contact's phone number for the local conversation ID ─
     $contactResp = $client->request('GET', "/contacts/{$contactId}");

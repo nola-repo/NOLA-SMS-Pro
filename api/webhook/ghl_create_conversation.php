@@ -31,8 +31,8 @@ $locationId = get_ghl_location_id() ?: ($payload['locationId'] ?? $payload['loca
 if (!$contactId || !$locationId) {
     http_response_code(400);
     echo json_encode([
-        'success' => false, 
-        'error' => 'Missing required fields', 
+        'success' => false,
+        'error' => 'Missing required fields',
         'received' => [
             'contactId' => $contactId,
             'locationId' => $locationId
@@ -48,37 +48,53 @@ try {
     // ── 1. Create/Get conversation on GHL ───────────────────────────────────
     $ghlPayload = json_encode([
         'locationId' => $locationId,
-        'contactId'  => $contactId,
+        'contactId' => $contactId,
     ]);
 
     // Conversations endpoint uses API version 2021-04-15
     $resp = $client->request('POST', '/conversations/', $ghlPayload, '2021-04-15');
     $ghlData = json_decode($resp['body'], true);
 
-    if ($resp['status'] >= 400) {
-        // If it already exists, GHL might return a 400/409 with the ID or a message
-        // However, we'll try to handle common errors here
-        if ($resp['status'] === 400 && str_contains($resp['body'], 'already exists')) {
-            // Logic to fetch existing might be needed, but usually GHL returns the existing one or we can fetch it
-        }
-        
-        http_response_code($resp['status']);
-        echo json_encode([
-            'success'    => false,
-            'error'      => 'GHL API error',
-            'ghl_status' => $resp['status'],
-            'ghl_error'  => $ghlData['message'] ?? $resp['body'],
-        ]);
-        exit;
-    }
+    $ghlConvId = null;
 
-    $ghlConvId = $ghlData['conversation']['id'] ?? $ghlData['id'] ?? null;
+    if ($resp['status'] >= 400) {
+        // "Conversation already exists" is NOT an error — search for the existing one
+        if ($resp['status'] === 400 && str_contains($resp['body'], 'already exists')) {
+            $searchResp = $client->request(
+                'GET',
+                '/conversations/search?contactId=' . urlencode($contactId) . '&locationId=' . urlencode($locationId),
+                null,
+                '2021-04-15'
+            );
+            $searchData = json_decode($searchResp['body'], true);
+            $ghlConvId = $searchData['conversations'][0]['id'] ?? null;
+
+            if (!$ghlConvId) {
+                // Search failed — report it but still continue with Firestore sync
+                error_log("GHL conversation exists but search returned no results for contact {$contactId}");
+            }
+        }
+        else {
+            // Genuine API error
+            http_response_code($resp['status']);
+            echo json_encode([
+                'success' => false,
+                'error' => 'GHL API error',
+                'ghl_status' => $resp['status'],
+                'ghl_error' => $ghlData['message'] ?? $resp['body'],
+            ]);
+            exit;
+        }
+    }
+    else {
+        $ghlConvId = $ghlData['conversation']['id'] ?? $ghlData['id'] ?? null;
+    }
 
     // ── 2. Fetch contact details to normalize phone number ─────────────────
     $contactResp = $client->request('GET', "/contacts/{$contactId}");
     $contactData = json_decode($contactResp['body'], true);
     $phone = $contactData['contact']['phone'] ?? '';
-    $contactName = $contactData['contact']['name'] 
+    $contactName = $contactData['contact']['name']
         ?? trim(($contactData['contact']['firstName'] ?? '') . ' ' . ($contactData['contact']['lastName'] ?? ''))
         ?? 'Contact';
 
@@ -93,17 +109,17 @@ try {
     $localDocId = "{$locationId}_conv_{$digits}";
 
     $db->collection('conversations')->document($localDocId)->set([
-        'id'                   => $localDocId,
-        'location_id'          => $locationId,
-        'type'                 => 'direct',
-        'name'                 => $contactName,
-        'ghl_conversation_id'  => $ghlConvId,
-        'ghl_contact_id'       => $contactId,
-        'members'              => [$digits],
-        'last_message'         => null,
-        'last_message_at'      => new \Google\Cloud\Core\Timestamp($now),
-        'updated_at'           => new \Google\Cloud\Core\Timestamp($now),
-        'source'               => 'ghl_workflow',
+        'id' => $localDocId,
+        'location_id' => $locationId,
+        'type' => 'direct',
+        'name' => $contactName,
+        'ghl_conversation_id' => $ghlConvId,
+        'ghl_contact_id' => $contactId,
+        'members' => [$digits],
+        'last_message' => null,
+        'last_message_at' => new \Google\Cloud\Core\Timestamp($now),
+        'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+        'source' => 'ghl_workflow',
     ], ['merge' => true]);
 
     echo json_encode([
@@ -113,7 +129,8 @@ try {
         'message' => 'Conversation synced successfully'
     ]);
 
-} catch (\Throwable $e) {
+}
+catch (\Throwable $e) {
     http_response_code(500);
     echo json_encode([
         'success' => false,
