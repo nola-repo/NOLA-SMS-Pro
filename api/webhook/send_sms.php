@@ -11,6 +11,7 @@ $config = require __DIR__ . '/config.php';
 require __DIR__ . '/firestore_client.php';
 require __DIR__ . '/../auth_helpers.php';
 require __DIR__ . '/../services/CreditManager.php';
+require __DIR__ . '/../services/GhlClient.php';
 
 $SEMAPHORE_API_KEY = $config['SEMAPHORE_API_KEY'];
 $SEMAPHORE_URL = $config['SEMAPHORE_URL'];
@@ -118,6 +119,12 @@ $data = $payload['data'] ?? [];
 
 $batch_id = $customData['batch_id'] ?? $data['batch_id'] ?? $payload['batch_id'] ?? $_POST['batch_id'] ?? null;
 $recipient_key = $customData['recipient_key'] ?? $data['recipient_key'] ?? $payload['recipient_key'] ?? $_POST['recipient_key'] ?? null;
+
+// GHL Contact ID — passed by GHL Workflows as {{contact.id}} in customData.
+// Used by the GHL sync block below to post the message back to GHL Conversations.
+$contactId = $customData['contactId'] ?? $customData['contact_id']
+    ?? $data['contactId'] ?? $data['contact_id']
+    ?? $payload['contactId'] ?? $payload['contact_id'] ?? null;
 
 $message = $customData['message'] ?? $payload['message'] ?? $data['message'] ?? '';
 
@@ -383,6 +390,85 @@ if (!empty($all_results)) {
     $db->collection('conversations')
         ->document($conversation_id)
         ->set($convData, ['merge' => true]);
+
+    // ── GHL Bidirectional Sync (Best-Effort) ─────────────────────────────────
+    // Post the outbound message to GHL Conversations so it appears in the GHL
+    // Conversation Tab. Only for direct (single-recipient) messages.
+    // This NEVER blocks the SMS send — all errors are swallowed and logged.
+    if (!$isBulk && $locId) {
+        try {
+            $ghlClient = new GhlClient($db, $locId);
+
+            // ── Step 1: Resolve GHL Conversation ID ──────────────────────────
+            $ghlConvId = null;
+            $resolvedContactId = $contactId;
+
+            // Check Firestore conversation doc first (avoids extra GHL API calls)
+            $convSnap = $db->collection('conversations')->document($conversation_id)->snapshot();
+            if ($convSnap->exists()) {
+                $ghlConvId = $convSnap->data()['ghl_conversation_id'] ?? null;
+                if (!$resolvedContactId) {
+                    $resolvedContactId = $convSnap->data()['ghl_contact_id'] ?? null;
+                }
+            }
+
+            // If no cached conv ID, find/create it on GHL using the contactId
+            if (!$ghlConvId && $resolvedContactId) {
+                $ghlConvResp = $ghlClient->request(
+                    'POST',
+                    '/conversations/',
+                    json_encode(['locationId' => $locId, 'contactId' => $resolvedContactId]),
+                    '2021-04-15'
+                );
+                $ghlConvData = json_decode($ghlConvResp['body'], true);
+
+                if ($ghlConvResp['status'] === 400 && str_contains($ghlConvResp['body'], 'already exists')) {
+                    // Search for the existing conversation
+                    $searchResp = $ghlClient->request(
+                        'GET',
+                        '/conversations/search?contactId=' . urlencode($resolvedContactId) . '&locationId=' . urlencode($locId),
+                        null,
+                        '2021-04-15'
+                    );
+                    $searchData = json_decode($searchResp['body'], true);
+                    $ghlConvId  = $searchData['conversations'][0]['id'] ?? null;
+                } else {
+                    $ghlConvId = $ghlConvData['conversation']['id'] ?? $ghlConvData['id'] ?? null;
+                }
+
+                // Cache in Firestore for future sends
+                if ($ghlConvId) {
+                    $db->collection('conversations')->document($conversation_id)->set([
+                        'ghl_conversation_id' => $ghlConvId,
+                        'ghl_contact_id'      => $resolvedContactId,
+                    ], ['merge' => true]);
+                }
+            }
+
+            // ── Step 2: Post message to GHL Conversation ─────────────────────
+            if ($ghlConvId) {
+                $ghlClient->request(
+                    'POST',
+                    '/conversations/messages',
+                    json_encode([
+                        'type'           => 'SMS',
+                        'conversationId' => $ghlConvId,
+                        'locationId'     => $locId,
+                        'message'        => $message,
+                        'direction'      => 'outbound',
+                    ]),
+                    '2021-04-15'
+                );
+                error_log("[GHL Sync] Posted message to GHL conv {$ghlConvId} for location {$locId}");
+            } else {
+                error_log("[GHL Sync] Skipped — no ghl_conversation_id resolved for {$conversation_id}");
+            }
+        } catch (\Throwable $e) {
+            // Never block SMS delivery due to GHL sync failure
+            error_log('[GHL Sync] Failed (non-fatal): ' . $e->getMessage());
+        }
+    }
+    // ── End GHL Sync ──────────────────────────────────────────────────────────
 }
 
 echo json_encode([

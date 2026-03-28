@@ -60,6 +60,7 @@ try {
                 'name'       => $d['name'] ?? null,
                 'phone'      => $d['phone'] ?? null,
                 'email'      => $d['email'] ?? null,
+                'ghl_contact_id' => $d['ghl_contact_id'] ?? null,
                 'created_at' => isset($d['created_at']) ? $d['created_at']->formatAsString() : null,
                 'updated_at' => isset($d['updated_at']) ? $d['updated_at']->formatAsString() : null,
             ];
@@ -98,6 +99,7 @@ try {
             'name'        => $name ?: null,
             'phone'       => $phone,
             'email'       => $email ?: null,
+            'ghl_contact_id' => $body['ghl_contact_id'] ?? null,
             'location_id' => $locId,
             'created_at'  => new \Google\Cloud\Core\Timestamp($now),
             'updated_at'  => new \Google\Cloud\Core\Timestamp($now),

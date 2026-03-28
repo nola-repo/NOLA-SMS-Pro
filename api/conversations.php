@@ -61,6 +61,7 @@ try {
                 'last_message' => $d['last_message'] ?? null,
                 'last_message_at' => isset($d['last_message_at']) ? $d['last_message_at']->formatAsString() : null,
                 'updated_at' => isset($d['updated_at']) ? $d['updated_at']->formatAsString() : null,
+                'ghl_contact_id' => $d['ghl_contact_id'] ?? null,
             ];
 
             if ($type && ($row['type'] ?? '') !== $type) {

@@ -369,7 +369,15 @@ export const Composer: React.FC<ComposerProps> = ({
         if (recipients.length === 1) {
           // Optimistic update for single message
           const tempId = addOptimisticMessage(messageText, senderName);
-          const smsResult = await sendSms(recipients[0].phone, messageText, senderName, undefined, recipients[0].name);
+          const smsResult = await sendSms(
+            recipients[0].phone,
+            messageText,
+            senderName,
+            undefined,
+            recipients[0].name,
+            undefined,
+            recipients[0].ghl_contact_id
+          );
 
           if (smsResult.success) {
             updateMessageStatus(tempId, 'sent');
