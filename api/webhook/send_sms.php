@@ -447,6 +447,15 @@ if (!empty($all_results)) {
 
             // ── Step 2: Post message to GHL Conversation ─────────────────────
             if ($ghlConvId) {
+                // Write a deduplication flag to Firestore BEFORE syncing to GHL.
+                // When GHL receives this payload, it will attempt to route it to ghl_provider.php.
+                // The provider will check this flag and safely skip sending a duplicate SMS via Semaphore.
+                $dedupKey = md5($locId . $validNumbers[0] . $message);
+                $db->collection('ghl_sync_dedup')->document($dedupKey)->set([
+                    'timestamp' => time(),
+                    'source'    => 'send_sms_sync'
+                ]);
+
                 $ghlClient->request(
                     'POST',
                     '/conversations/messages',

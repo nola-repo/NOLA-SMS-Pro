@@ -129,6 +129,36 @@ if (str_starts_with($digits, '63') && strlen($digits) === 12) {
     exit;
 }
 
+if (!isset($db)) {
+    $db = get_firestore();
+}
+
+// ── Deduplication Check ─────────────────────────────────────────────────────
+// If this webhook was triggered because send_sms.php synced a message 
+// back to GHL's Conversation API, we must skip sending to prevent a double-send loop.
+$dedupKey = md5($locationId . $normalizedPhone . $message);
+$dedupRef = $db->collection('ghl_sync_dedup')->document($dedupKey);
+$dedupSnap = $dedupRef->snapshot();
+
+if ($dedupSnap->exists()) {
+    $dedupData = $dedupSnap->data();
+    if (time() - $dedupData['timestamp'] < 30) {
+        // It's a sync loop! Acknowledge success to GHL without sending via Semaphore
+        error_log('[ghl_provider] Skipped sending message to ' . $normalizedPhone . ' (prevented double-send loop).');
+        
+        // Clean up the dedup flag to keep the database tidy
+        $dedupRef->delete();
+        
+        http_response_code(200);
+        echo json_encode([
+            'success' => true, 
+            'message' => 'Skipped to prevent double-send',
+            'message_id' => $messageId
+        ]);
+        exit;
+    }
+}
+
 // ── Load Integration Config ─────────────────────────────────────────────────
 if (!isset($db)) {
     $db = get_firestore();
