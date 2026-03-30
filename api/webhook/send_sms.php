@@ -169,7 +169,7 @@ if (!$locId) {
 }
 
 $db = get_firestore();
-$intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string) $locId);
+$intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
 $intRef = $db->collection('integrations')->document($intDocId);
 $intSnap = $intRef->snapshot();
 $intData = $intSnap->exists() ? $intSnap->data() : [];
@@ -181,8 +181,8 @@ $freeUsageCount = $intData['free_usage_count'] ?? 0;
 $freeCreditsTotal = $intData['free_credits_total'] ?? 10;
 
 // Extract the sendername the frontend/user selected
-$requestedSender = $customData['sendername'] ?? $payload['sendername'] ?? $data['sendername'] ?? 
-                  $customData['sender_name'] ?? $payload['sender_name'] ?? $data['sender_name'] ?? null;
+$requestedSender = $customData['sendername'] ?? $payload['sendername'] ?? $data['sendername'] ??
+    $customData['sender_name'] ?? $payload['sender_name'] ?? $data['sender_name'] ?? null;
 
 // ── Three-Tier Sender + Credit Logic ────────────────────────────────────────
 // Tier 1: Custom sender (approved sender ID + custom API key) — no system credit deduction
@@ -191,19 +191,21 @@ $requestedSender = $customData['sendername'] ?? $payload['sendername'] ?? $data[
 // ❌ Hard 403 only when BOTH free trial exhausted AND paid credits insufficient
 
 $usingCustomSender = false;
-$usingFreeCredits  = false;
+$usingFreeCredits = false;
 
 if ($approvedSenderId && $customApiKey && $requestedSender === $approvedSenderId) {
     // ✅ Tier 1: User explicitly selected their approved custom sender → use custom key
     $sender = $approvedSenderId;
     $activeApiKey = $customApiKey;
     $usingCustomSender = true;
-} elseif ($approvedSenderId && $customApiKey && empty($requestedSender)) {
+}
+elseif ($approvedSenderId && $customApiKey && empty($requestedSender)) {
     // ✅ Tier 1: No sender specified (e.g. webhook call) → default to approved sender
     $sender = $approvedSenderId;
     $activeApiKey = $customApiKey;
     $usingCustomSender = true;
-} else {
+}
+else {
     // ✅ Tier 2 or 3: Use system sender + system API key
     $sender = $requestedSender ?? ($SENDER_IDS[0] ?? "");
     if (!in_array($sender, $SENDER_IDS)) {
@@ -215,7 +217,7 @@ if ($approvedSenderId && $customApiKey && $requestedSender === $approvedSenderId
     if ($freeUsageCount + $num_recipients <= $freeCreditsTotal) {
         $usingFreeCredits = true; // Tier 2: still within free trial
     }
-    // If free quota IS exhausted → Tier 3: fall through to paid credits (no block here)
+// If free quota IS exhausted → Tier 3: fall through to paid credits (no block here)
 }
 
 $creditManager = new CreditManager();
@@ -232,16 +234,18 @@ if (!$usingCustomSender) {
             $batch_id ?? ('single_' . bin2hex(random_bytes(4))),
             "SMS sent to $num_recipients recipients"
         );
-    } catch (\Exception $e) {
+    }
+    catch (\Exception $e) {
         if ($e->getMessage() === "Insufficient credits.") {
             // Both free trial exhausted AND paid credits insufficient → hard block
             http_response_code(403);
             echo json_encode([
-                "status"  => "error",
+                "status" => "error",
                 "message" => "Insufficient credits to send SMS. Please top up your credits.",
-                "error"   => "insufficient_credits"
+                "error" => "insufficient_credits"
             ]);
-        } else {
+        }
+        else {
             http_response_code(500);
             echo json_encode(["status" => "error", "message" => "Credit deduction failed: " . $e->getMessage()]);
         }
@@ -252,7 +256,7 @@ if (!$usingCustomSender) {
     if ($usingFreeCredits) {
         $intRef->set([
             'free_usage_count' => $freeUsageCount + $num_recipients,
-            'updated_at'       => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+            'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
         ], ['merge' => true]);
     }
 
@@ -261,7 +265,8 @@ if (!$usingCustomSender) {
         require_once __DIR__ . '/../services/NotificationService.php';
         $newBalance = $creditManager->get_balance($account_id);
         NotificationService::checkLowBalance($db, $locId, $newBalance);
-    } catch (\Throwable $e) {
+    }
+    catch (\Throwable $e) {
         error_log('[LowBalanceAlert] ' . $e->getMessage());
     }
 }
@@ -413,35 +418,49 @@ if (!empty($all_results)) {
             }
 
             // If no cached conv ID, find/create it on GHL using the contactId
-            if (!$ghlConvId && $resolvedContactId) {
-                $ghlConvResp = $ghlClient->request(
-                    'POST',
-                    '/conversations/',
-                    json_encode(['locationId' => $locId, 'contactId' => $resolvedContactId]),
-                    '2021-04-15'
-                );
-                $ghlConvData = json_decode($ghlConvResp['body'], true);
+            if (!$ghlConvId) {
+                // If contactId wasn't passed by frontend/workflow, search GHL by phone
+                if (!$resolvedContactId) {
+                    $searchPhoneUrl = '/contacts/?locationId=' . urlencode($locId) . '&query=' . urlencode($validNumbers[0]);
+                    $phoneSearchResp = $ghlClient->request('GET', $searchPhoneUrl, null, '2021-07-28');
+                    $phoneSearchData = json_decode($phoneSearchResp['body'], true);
 
-                if ($ghlConvResp['status'] === 400 && str_contains($ghlConvResp['body'], 'already exists')) {
-                    // Search for the existing conversation
-                    $searchResp = $ghlClient->request(
-                        'GET',
-                        '/conversations/search?contactId=' . urlencode($resolvedContactId) . '&locationId=' . urlencode($locId),
-                        null,
-                        '2021-04-15'
-                    );
-                    $searchData = json_decode($searchResp['body'], true);
-                    $ghlConvId  = $searchData['conversations'][0]['id'] ?? null;
-                } else {
-                    $ghlConvId = $ghlConvData['conversation']['id'] ?? $ghlConvData['id'] ?? null;
+                    if (!empty($phoneSearchData['contacts'][0]['id'])) {
+                        $resolvedContactId = $phoneSearchData['contacts'][0]['id'];
+                    }
                 }
 
-                // Cache in Firestore for future sends
-                if ($ghlConvId) {
-                    $db->collection('conversations')->document($conversation_id)->set([
-                        'ghl_conversation_id' => $ghlConvId,
-                        'ghl_contact_id'      => $resolvedContactId,
-                    ], ['merge' => true]);
+                if ($resolvedContactId) {
+                    $ghlConvResp = $ghlClient->request(
+                        'POST',
+                        '/conversations/',
+                        json_encode(['locationId' => $locId, 'contactId' => $resolvedContactId]),
+                        '2021-04-15'
+                    );
+                    $ghlConvData = json_decode($ghlConvResp['body'], true);
+
+                    if ($ghlConvResp['status'] === 400 && str_contains($ghlConvResp['body'], 'already exists')) {
+                        // Search for the existing conversation
+                        $searchResp = $ghlClient->request(
+                            'GET',
+                            '/conversations/search?contactId=' . urlencode($resolvedContactId) . '&locationId=' . urlencode($locId),
+                            null,
+                            '2021-04-15'
+                        );
+                        $searchData = json_decode($searchResp['body'], true);
+                        $ghlConvId = $searchData['conversations'][0]['id'] ?? null;
+                    }
+                    else {
+                        $ghlConvId = $ghlConvData['conversation']['id'] ?? $ghlConvData['id'] ?? null;
+                    }
+
+                    // Cache in Firestore for future sends
+                    if ($ghlConvId) {
+                        $db->collection('conversations')->document($conversation_id)->set([
+                            'ghl_conversation_id' => $ghlConvId,
+                            'ghl_contact_id' => $resolvedContactId,
+                        ], ['merge' => true]);
+                    }
                 }
             }
 
@@ -453,31 +472,43 @@ if (!empty($all_results)) {
                 $dedupKey = md5($locId . $validNumbers[0] . $message);
                 $db->collection('ghl_sync_dedup')->document($dedupKey)->set([
                     'timestamp' => time(),
-                    'source'    => 'send_sms_sync'
+                    'source' => 'send_sms_sync'
                 ]);
 
-                $ghlClient->request(
+                $msgSyncResp = $ghlClient->request(
                     'POST',
                     '/conversations/messages',
                     json_encode([
-                        'type'           => 'SMS',
-                        'conversationId' => $ghlConvId,
-                        'locationId'     => $locId,
-                        'message'        => $message,
-                        'direction'      => 'outbound',
-                    ]),
+                    'type' => 'SMS',
+                    'contactId' => $resolvedContactId,
+                    'conversationId' => $ghlConvId,
+                    'locationId' => $locId,
+                    'message' => $message,
+                    // Removed direction since POST /conversations/messages is implicitly outbound
+                ]),
                     '2021-04-15'
                 );
+
+                // Debug log to a temp file that we can read later
+                $logContent = date('Y-m-d H:i:s') . " - {$locId} - Sync Resp: " . json_encode($msgSyncResp) . "\n";
+                file_put_contents(sys_get_temp_dir() . '/ghl_sync_debug.log', $logContent, FILE_APPEND);
+
                 error_log("[GHL Sync] Posted message to GHL conv {$ghlConvId} for location {$locId}");
-            } else {
+            }
+            else {
+                $logContent = date('Y-m-d H:i:s') . " - {$locId} - Skipped Sync: No conv ID resolved\n";
+                file_put_contents(sys_get_temp_dir() . '/ghl_sync_debug.log', $logContent, FILE_APPEND);
                 error_log("[GHL Sync] Skipped — no ghl_conversation_id resolved for {$conversation_id}");
             }
-        } catch (\Throwable $e) {
+        }
+        catch (\Throwable $e) {
+            $logContent = date('Y-m-d H:i:s') . " - ERROR: " . $e->getMessage() . "\n";
+            file_put_contents(sys_get_temp_dir() . '/ghl_sync_debug.log', $logContent, FILE_APPEND);
             // Never block SMS delivery due to GHL sync failure
             error_log('[GHL Sync] Failed (non-fatal): ' . $e->getMessage());
         }
     }
-    // ── End GHL Sync ──────────────────────────────────────────────────────────
+// ── End GHL Sync ──────────────────────────────────────────────────────────
 }
 
 echo json_encode([
@@ -487,5 +518,12 @@ echo json_encode([
     "sender" => $sender,
     "batch_id" => $batch_id,
     "credits_deducted" => $required_credits,
-    "response" => $all_results
+    "response" => $all_results,
+    "debug_info" => [
+        "location_id" => $locId,
+        "contact_id_resolved" => $resolvedContactId ?? "not_found",
+        "ghl_sync_status" => isset($msgSyncResp) ? $msgSyncResp : "skipped",
+        "provider_selected" => $sender,
+        "is_custom_provider" => $usingCustomSender
+    ]
 ]);
