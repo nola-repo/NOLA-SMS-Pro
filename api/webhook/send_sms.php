@@ -231,8 +231,20 @@ if ($locId) {
     if ($agencySubSnap->exists()) {
         $agencySubData = $agencySubSnap->data();
         if (!empty($agencySubData['toggle_enabled'])) {
+            $today = date('Y-m-d');
+            $lastReset = $agencySubData['last_reset_date'] ?? '';
             $attempt_count = $agencySubData['attempt_count'] ?? 0;
             $rate_limit = $agencySubData['rate_limit'] ?? 0;
+
+            // Daily Reset Logic
+            if ($lastReset !== $today) {
+                $attempt_count = 0;
+                $agencySubRef->set([
+                    'attempt_count' => 0,
+                    'last_reset_date' => $today
+                ], ['merge' => true]);
+            }
+
             if ($attempt_count < $rate_limit) {
                 $useMyCrmSim = true;
                 // --- FIX 1: Atomic Increment to prevent race conditions ---
@@ -241,7 +253,7 @@ if ($locId) {
                 ], ['merge' => true]);
             } else {
                 http_response_code(403);
-                echo json_encode(["status" => "error", "message" => "Agency subaccount rate limit exceeded."]);
+                echo json_encode(["status" => "error", "message" => "Agency subaccount daily rate limit exceeded ($rate_limit)."]);
                 exit;
             }
         }
@@ -324,6 +336,8 @@ if ($useMyCrmSim) {
             "Authorization: Bearer " . $myCrmSimToken
         ]);
         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($sms_data));
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5); 
+        curl_setopt($ch, CURLOPT_TIMEOUT, 5); 
         $response = curl_exec($ch);
         $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);

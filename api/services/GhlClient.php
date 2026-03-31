@@ -262,8 +262,8 @@ class GhlClient
 
         // Fallback to legacy env vars if appId is missing or not found in map
         if (!$clientId || !$clientSecret) {
-            $clientId     = getenv('GHL_CLIENT_ID');
-            $clientSecret = getenv('GHL_CLIENT_SECRET');
+            $clientId     = getenv('GHL_CLIENT_ID') ?: '6999da2b8f278296d95f7274-mmn30t4f';
+            $clientSecret = getenv('GHL_CLIENT_SECRET') ?: 'f9de7ccf-8bb9-4bc2-8956-621817dd861a';
         }
 
         $refreshToken = $this->integration['refresh_token'] ?? null;

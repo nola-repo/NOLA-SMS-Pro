@@ -204,8 +204,20 @@ if ($locationId) {
     if ($agencySubSnap->exists()) {
         $agencySubData = $agencySubSnap->data();
         if (!empty($agencySubData['toggle_enabled'])) {
+            $today = date('Y-m-d');
+            $lastReset = $agencySubData['last_reset_date'] ?? '';
             $attempt_count = $agencySubData['attempt_count'] ?? 0;
             $rate_limit = $agencySubData['rate_limit'] ?? 0;
+
+            // Daily Reset Logic
+            if ($lastReset !== $today) {
+                $attempt_count = 0;
+                $agencySubRef->set([
+                    'attempt_count' => 0,
+                    'last_reset_date' => $today
+                ], ['merge' => true]);
+            }
+
             if ($attempt_count < $rate_limit) {
                 $useMyCrmSim = true;
                 // --- FIX 1: Atomic Increment to prevent race conditions ---
@@ -214,7 +226,7 @@ if ($locationId) {
                 ], ['merge' => true]);
             } else {
                 http_response_code(403);
-                echo json_encode(['success' => false, 'error' => 'rate_limit_exceeded', 'message' => 'Agency subaccount rate limit exceeded.']);
+                echo json_encode(['success' => false, 'error' => 'rate_limit_exceeded', 'message' => "Agency subaccount daily rate limit exceeded ($rate_limit)."]);
                 exit;
             }
         }
@@ -225,7 +237,8 @@ if ($locationId) {
 $creditManager = new CreditManager();
 $required_credits = CreditManager::calculateRequiredCredits($message, 1);
 
-if (!$usingCustomSender) {
+// --- FIX 2: Only deduct credits if NOT using myCRMSIM (Smart Billing) ---
+if (!$useMyCrmSim && !$usingCustomSender) {
     try {
         $creditManager->deduct_credits(
             $locationId,
@@ -274,6 +287,8 @@ if ($useMyCrmSim) {
         'Authorization: Bearer ' . $myCrmSimToken
     ]);
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($smsData));
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5); 
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5); 
 
     $smsResponse = curl_exec($ch);
     $smsStatus   = curl_getinfo($ch, CURLINFO_HTTP_CODE);
