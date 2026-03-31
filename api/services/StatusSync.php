@@ -15,19 +15,29 @@ class StatusSync
     public static function runSync($db, $apiKey)
     {
         $updatedCount = 0;
+        $startTime = time();
+        $maxExecutionTime = 240; // 4 minutes safety limit
 
         try {
             // Find all SMS logs with status Queued or Pending (Try both cases)
+            // Optimization: Limit to 50 per run and order by date_created (FIFO)
             $query = $db->collection('sms_logs')
-                ->where('status', 'in', ['Queued', 'Pending', 'queued', 'pending']);
+                ->where('status', 'in', ['Queued', 'Pending', 'queued', 'pending'])
+                ->orderBy('date_created', 'asc')
+                ->limit(50);
 
             $documents = $query->documents();
-            $allDocs = $documents->rows();
             
-            error_log("[StatusSync] Query found " . count($allDocs) . " messages in 'sms_logs' with status Queued/Pending");
+            error_log("[StatusSync] Starting sync session (Limit: 50 messages, Order: Oldest First)");
 
             // Loop through all pending/queued messages
-            foreach ($allDocs as $doc) {
+            foreach ($documents as $doc) {
+                // Safety: Check if we are approaching the 5-minute cron interval
+                if (time() - $startTime > $maxExecutionTime) {
+                    error_log("[StatusSync] Reached 4-minute safety limit. Stopping current session to prevent cron overlap.");
+                    break;
+                }
+
                 if (!$doc->exists()) {
                     continue;
                 }

@@ -141,28 +141,62 @@ class GhlClient
      */
     private function loadIntegration(string $locationId): ?array
     {
-        // Primary: doc ID = raw locationId
+        $cacheDir = __DIR__ . '/../cache/tokens';
+        $cacheFile = $cacheDir . '/token_' . preg_replace('/[^a-zA-Z0-9_\-]/', '', $locationId) . '.json';
+        $cacheTTL = 300; // 5 minutes cache
+
+        // 1. Check local file cache first (reduce Firestore reads)
+        if (file_exists($cacheFile) && (time() - filemtime($cacheFile) < $cacheTTL)) {
+            $cachedData = json_decode(file_get_contents($cacheFile), true);
+            if ($cachedData && is_array($cachedData)) {
+                // error_log("GhlClient: Using cached token for location {$locationId}");
+                return $cachedData;
+            }
+        }
+
+        // 2. Not in cache? Hit Firestore (Primary: doc ID = raw locationId)
+        $data = null;
         $doc = $this->db->collection('ghl_tokens')->document($locationId)->snapshot();
         if ($doc->exists()) {
             $data = $doc->data();
             $data['firestore_doc_id'] = $locationId;
-            return $data;
-        }
-
-        // Fallback: search by location_id field (handles legacy docs)
-        $query = $this->db->collection('ghl_tokens')
-            ->where('location_id', '==', $locationId)
-            ->limit(1)
-            ->documents();
-        foreach ($query as $doc) {
-            if ($doc->exists()) {
-                $data = $doc->data();
-                $data['firestore_doc_id'] = $doc->id();
-                return $data;
+        } else {
+            // Fallback: search by location_id field (handles legacy docs)
+            $query = $this->db->collection('ghl_tokens')
+                ->where('location_id', '==', $locationId)
+                ->limit(1)
+                ->documents();
+            foreach ($query as $doc) {
+                if ($doc->exists()) {
+                    $data = $doc->data();
+                    $data['firestore_doc_id'] = $doc->id();
+                    break;
+                }
             }
         }
 
+        // 3. Save to cache if found
+        if ($data) {
+            if (!is_dir($cacheDir)) {
+                @mkdir($cacheDir, 0755, true);
+            }
+            file_put_contents($cacheFile, json_encode($data));
+            return $data;
+        }
+
         return null;
+    }
+
+    /**
+     * Clear the local cache for this location (useful after explicit refresh).
+     */
+    public function clearCache(): void
+    {
+        $cacheDir = __DIR__ . '/../cache/tokens';
+        $cacheFile = $cacheDir . '/token_' . preg_replace('/[^a-zA-Z0-9_\-]/', '', $this->locationId) . '.json';
+        if (file_exists($cacheFile)) {
+            @unlink($cacheFile);
+        }
     }
 
     /**
@@ -267,5 +301,10 @@ class GhlClient
         $this->integration['access_token']  = $data['access_token'] ?? null;
         $this->integration['refresh_token'] = $data['refresh_token'] ?? null;
         $this->integration['expires_at']    = $expiresAtUnix;
+
+        // Update local file cache immediately
+        $cacheDir = __DIR__ . '/../cache/tokens';
+        $cacheFile = $cacheDir . '/token_' . preg_replace('/[^a-zA-Z0-9_\-]/', '', $this->locationId) . '.json';
+        file_put_contents($cacheFile, json_encode($this->integration));
     }
 }

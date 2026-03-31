@@ -208,8 +208,10 @@ if ($locationId) {
             $rate_limit = $agencySubData['rate_limit'] ?? 0;
             if ($attempt_count < $rate_limit) {
                 $useMyCrmSim = true;
-                // Increment attempt count
-                $agencySubRef->set(['attempt_count' => $attempt_count + 1], ['merge' => true]);
+                // --- FIX 1: Atomic Increment to prevent race conditions ---
+                $agencySubRef->set([
+                    'attempt_count' => \Google\Cloud\Firestore\FieldValue::increment(1)
+                ], ['merge' => true]);
             } else {
                 http_response_code(403);
                 echo json_encode(['success' => false, 'error' => 'rate_limit_exceeded', 'message' => 'Agency subaccount rate limit exceeded.']);
@@ -249,6 +251,7 @@ if (!$usingCustomSender) {
     }
 }
 
+$myCrmSimSuccess = false;
 if ($useMyCrmSim) {
     // ── Send via myCRMSIM (Placeholder) ─────────────────────────────────────
     $smsData = [
@@ -272,17 +275,36 @@ if ($useMyCrmSim) {
     $smsStatus   = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
     
-    // Mock result for myCRMSIM
-    $smsResult = [
-        'message_id' => 'mycrmsim_' . bin2hex(random_bytes(6)),
-        'status' => 'Queued'
-    ];
-    error_log('[ghl_provider] myCRMSIM mock response: ' . $smsResponse);
+    // --- FIX 3: Hardware Fallover Logic ---
+    if ($smsStatus == 200 || $smsStatus == 201) {
+        $myCrmSimSuccess = true;
+        $smsResult = [
+            'message_id' => 'mycrmsim_' . bin2hex(random_bytes(6)),
+            'status' => 'Queued'
+        ];
+    } else {
+        error_log("[myCRMSIM] Hardware API failed (Status: $smsStatus). Falling back to Semaphore.");
+        $myCrmSimSuccess = false;
+    }
+}
+
+if (!$useMyCrmSim || !$myCrmSimSuccess) {
+    // ── Send SMS via Semaphore (Default or Fallback) ────────────────────────
     
-    // normalize status
-    if ($smsStatus == 201) $smsStatus = 200;
-} else {
-    // ── Send SMS via Semaphore ──────────────────────────────────────────────────
+    // If this is a fallback send, we MUST deduct credits now because we skipped it earlier
+    if ($useMyCrmSim && !$myCrmSimSuccess) {
+        try {
+            $creditManager->deduct_credits(
+                $locationId,
+                $required_credits,
+                $messageId ?? ('ghl_prov_' . bin2hex(random_bytes(4))),
+                "Semaphore Fallback SMS to {$normalizedPhone}"
+            );
+        } catch (\Exception $e) {
+            error_log("[Fallback] Credit deduction failed: " . $e->getMessage());
+        }
+    }
+
     $smsData = [
         'apikey' => $activeApiKey,
         'number' => $normalizedPhone,
