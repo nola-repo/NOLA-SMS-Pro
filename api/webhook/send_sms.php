@@ -223,6 +223,29 @@ else {
 $creditManager = new CreditManager();
 $account_id = $locId ?: 'default';
 
+// ── Agency myCRMSIM Routing Check ──────────────────────────────────────────
+$useMyCrmSim = false;
+if ($locId) {
+    $agencySubRef = $db->collection('agency_subaccounts')->document($locId);
+    $agencySubSnap = $agencySubRef->snapshot();
+    if ($agencySubSnap->exists()) {
+        $agencySubData = $agencySubSnap->data();
+        if (!empty($agencySubData['toggle_enabled'])) {
+            $attempt_count = $agencySubData['attempt_count'] ?? 0;
+            $rate_limit = $agencySubData['rate_limit'] ?? 0;
+            if ($attempt_count < $rate_limit) {
+                $useMyCrmSim = true;
+                // Increment attempt count
+                $agencySubRef->set(['attempt_count' => $attempt_count + 1], ['merge' => true]);
+            } else {
+                http_response_code(403);
+                echo json_encode(["status" => "error", "message" => "Agency subaccount rate limit exceeded."]);
+                exit;
+            }
+        }
+    }
+}
+
 // ── Credit Deduction ────────────────────────────────────────────────────────
 // Custom sender (Tier 1): no system credit deduction — uses their own Semaphore account
 // System sender (Tier 2 & 3): always deduct from paid credit pool
@@ -276,31 +299,69 @@ $chunks = array_chunk($validNumbers, 500);
 $all_results = [];
 $total_status = 200;
 
-foreach ($chunks as $chunk) {
-    $sms_data = [
-        "apikey" => $activeApiKey,
-        "number" => implode(',', $chunk),
-        "message" => $message,
-        "sendername" => $sender
-    ];
-    log_sms("SEMAPHORE_REQUEST_CHUNK", ["chunk_size" => count($chunk)]);
-
-    $ch = curl_init($SEMAPHORE_URL);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, ["Content-Type: application/json"]);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($sms_data));
-
-    $response = curl_exec($ch);
-    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    if ($status != 200) {
-        $total_status = $status;
+if ($useMyCrmSim) {
+    // ── Send via myCRMSIM ───────────────────────────────────────────────────
+    foreach ($chunks as $chunk) {
+        $sms_data = [
+            "messages" => [
+                [
+                    "to" => implode(',', $chunk),
+                    "content" => $message
+                ]
+            ]
+        ];
+        // PLACEHOLDER API CALL until actual endpoint is provided
+        $ch = curl_init('https://api.mycrmsim.com/v1/messages/placeholder');
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            "Content-Type: application/json",
+            "Authorization: Bearer PLACEHOLDER_TOKEN"
+        ]);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($sms_data));
+        $response = curl_exec($ch);
+        $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        if ($status != 200 && $status != 201) {
+            $total_status = $status;
+        }
+        
+        foreach ($chunk as $num) {
+            $all_results[] = [
+                'message_id' => 'mycrmsim_' . bin2hex(random_bytes(6)),
+                'number' => $num,
+                'status' => 'Queued',
+                'network' => 'myCRMSIM'
+            ];
+        }
     }
-    $result = json_decode($response, true);
-    log_sms("SEMAPHORE_RESPONSE_CHUNK", $result);
+} else {
+    // ── Send via Semaphore ──────────────────────────────────────────────────
+    foreach ($chunks as $chunk) {
+        $sms_data = [
+            "apikey" => $activeApiKey,
+            "number" => implode(',', $chunk),
+            "message" => $message,
+            "sendername" => $sender
+        ];
+        log_sms("SEMAPHORE_REQUEST_CHUNK", ["chunk_size" => count($chunk)]);
 
-    if (is_array($result)) {
-        $all_results = array_merge($all_results, $result);
+        $ch = curl_init($SEMAPHORE_URL);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ["Content-Type: application/json"]);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($sms_data));
+
+        $response = curl_exec($ch);
+        $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        if ($status != 200) {
+            $total_status = $status;
+        }
+        $result = json_decode($response, true);
+        log_sms("SEMAPHORE_RESPONSE_CHUNK", $result);
+
+        if (is_array($result)) {
+            $all_results = array_merge($all_results, $result);
+        }
     }
 }
 

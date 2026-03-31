@@ -135,7 +135,7 @@ try {
         if ($snap->exists()) {
             if (($snap->data()['location_id'] ?? '') === $locId) {
                 $docRef->delete();
-                
+
                 // Optional: Cascade delete messages sharing this ID
                 $messages = $db->collection('messages')->where('conversation_id', '==', $id)->documents();
                 foreach ($messages as $msgDoc) {
@@ -150,7 +150,8 @@ try {
                 echo json_encode(['success' => false, 'error' => 'Permission denied']);
                 exit;
             }
-        } else {
+        }
+        else {
             http_response_code(404);
             echo json_encode(['success' => false, 'error' => "Conversation $id not found"]);
             exit;

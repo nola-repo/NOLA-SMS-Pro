@@ -193,6 +193,32 @@ else {
     $usingCustomSender = false;
 }
 
+// ── Agency myCRMSIM Routing Check ──────────────────────────────────────────
+$useMyCrmSim = false;
+if ($locationId) {
+    if (!isset($db)) {
+        $db = get_firestore();
+    }
+    $agencySubRef = $db->collection('agency_subaccounts')->document($locationId);
+    $agencySubSnap = $agencySubRef->snapshot();
+    if ($agencySubSnap->exists()) {
+        $agencySubData = $agencySubSnap->data();
+        if (!empty($agencySubData['toggle_enabled'])) {
+            $attempt_count = $agencySubData['attempt_count'] ?? 0;
+            $rate_limit = $agencySubData['rate_limit'] ?? 0;
+            if ($attempt_count < $rate_limit) {
+                $useMyCrmSim = true;
+                // Increment attempt count
+                $agencySubRef->set(['attempt_count' => $attempt_count + 1], ['merge' => true]);
+            } else {
+                http_response_code(403);
+                echo json_encode(['success' => false, 'error' => 'rate_limit_exceeded', 'message' => 'Agency subaccount rate limit exceeded.']);
+                exit;
+            }
+        }
+    }
+}
+
 // ── Credit Deduction ────────────────────────────────────────────────────────
 $creditManager = new CreditManager();
 $required_credits = CreditManager::calculateRequiredCredits($message, 1);
@@ -223,26 +249,60 @@ if (!$usingCustomSender) {
     }
 }
 
-// ── Send SMS via Semaphore ──────────────────────────────────────────────────
-$smsData = [
-    'apikey' => $activeApiKey,
-    'number' => $normalizedPhone,
-    'message' => $message,
-    'sendername' => $sender,
-];
+if ($useMyCrmSim) {
+    // ── Send via myCRMSIM (Placeholder) ─────────────────────────────────────
+    $smsData = [
+        "messages" => [
+            [
+                "to" => $normalizedPhone,
+                "content" => $message
+            ]
+        ]
+    ];
+    $ch = curl_init('https://api.mycrmsim.com/v1/messages/placeholder');
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json',
+        'Authorization: Bearer PLACEHOLDER_TOKEN'
+    ]);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($smsData));
 
-$ch = curl_init($SEMAPHORE_URL);
-curl_setopt($ch, CURLOPT_POST, true);
-curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
-curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($smsData));
+    $smsResponse = curl_exec($ch);
+    $smsStatus   = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    
+    // Mock result for myCRMSIM
+    $smsResult = [
+        'message_id' => 'mycrmsim_' . bin2hex(random_bytes(6)),
+        'status' => 'Queued'
+    ];
+    error_log('[ghl_provider] myCRMSIM mock response: ' . $smsResponse);
+    
+    // normalize status
+    if ($smsStatus == 201) $smsStatus = 200;
+} else {
+    // ── Send SMS via Semaphore ──────────────────────────────────────────────────
+    $smsData = [
+        'apikey' => $activeApiKey,
+        'number' => $normalizedPhone,
+        'message' => $message,
+        'sendername' => $sender,
+    ];
 
-$smsResponse = curl_exec($ch);
-$smsStatus = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-curl_close($ch);
+    $ch = curl_init($SEMAPHORE_URL);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($smsData));
 
-$smsResult = json_decode($smsResponse, true);
-error_log('[ghl_provider] Semaphore response: ' . $smsResponse);
+    $smsResponse = curl_exec($ch);
+    $smsStatus = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    $smsResult = json_decode($smsResponse, true);
+    error_log('[ghl_provider] Semaphore response: ' . $smsResponse);
+}
 
 if ($smsStatus !== 200 || empty($smsResult)) {
     // Refund credits if SMS failed and we deducted

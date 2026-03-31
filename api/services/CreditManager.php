@@ -93,57 +93,40 @@ class CreditManager
             return true;
         }
 
+        // Optimistic upfront check (prevents massive overrun if already low)
+        $current_bal = $this->get_balance($account_id);
+        if ($current_bal < $amount) {
+            throw new \Exception("Insufficient credits.");
+        }
+
         $accountRef = $this->get_account_ref($account_id);
         $transactionRef = $this->db->collection('credit_transactions')->newDocument();
 
         $now = new \DateTimeImmutable();
         $ts = new Timestamp($now);
 
-        $result = $this->db->runTransaction(function ($transaction) use ($accountRef, $transactionRef, $amount, $reference_id, $description, $ts) {
-            $snapshot = $transaction->snapshot($accountRef);
-            $current_balance = 0;
+        // Lock-free atomic batch to prevent concurrency aborts during bulk workflows
+        $batch = $this->db->batch();
 
-            if ($snapshot->exists()) {
-                $current_balance = (int)($snapshot->data()['credit_balance'] ?? 0);
-                $currency = $snapshot->data()['currency'] ?? 'PHP';
-            }
-            else {
-                $current_balance = 0;
-                $currency = 'PHP';
-                $transaction->set($accountRef, [
-                    'credit_balance' => 0,
-                    'currency' => $currency,
-                    'created_at' => $ts,
-                    'updated_at' => $ts
-                ]);
-            }
+        $batch->set($accountRef, [
+            'credit_balance' => \Google\Cloud\Firestore\FieldValue::increment(-$amount),
+            'updated_at' => $ts
+        ], ['merge' => true]);
 
-            if ($current_balance < $amount) {
-                throw new \Exception("Insufficient credits.");
-            }
+        $batch->create($transactionRef, [
+            'transaction_id' => $transactionRef->id(),
+            'account_id' => $accountRef->id(),
+            'type' => 'deduction',
+            'amount' => -$amount,
+            // With async increment, balance_after is not strictly accurate in logs, but safe
+            'reference_id' => $reference_id,
+            'description' => $description,
+            'created_at' => $ts
+        ]);
 
-            $new_balance = $current_balance - $amount;
-
-            $transaction->set($accountRef, [
-                'credit_balance' => $new_balance,
-                'updated_at' => $ts
-            ], ['merge' => true]);
-
-            $transaction->create($transactionRef, [
-                'transaction_id' => $transactionRef->id(),
-                'account_id' => $accountRef->id(),
-                'type' => 'deduction',
-                'amount' => -$amount,
-                'balance_after' => $new_balance,
-                'reference_id' => $reference_id,
-                'description' => $description,
-                'created_at' => $ts
-            ]);
-
-            return $new_balance;
-        });
-
-        return $result;
+        $batch->commit();
+        
+        return true;
     }
 
     public function add_credits($account_id, $amount, $reference_id, $description, $type = 'top_up')
