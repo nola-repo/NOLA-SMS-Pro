@@ -303,42 +303,44 @@ $total_status = 200;
 $myCrmSimSuccess = false;
 if ($useMyCrmSim) {
     // ── Send via myCRMSIM ───────────────────────────────────────────────────
-    foreach ($chunks as $chunk) {
+    $myCrmSimToken = $config['MYCRMSIM_API_KEY'] ?? '';
+    $myCrmSimUrl = $config['MYCRMSIM_URL'] ?? 'https://r6bszuuso6.execute-api.ap-southeast-2.amazonaws.com/prod/webhook';
+
+    foreach ($validNumbers as $num) {
+        $msgId = 'mycrmsim_' . bin2hex(random_bytes(6));
         $sms_data = [
-            "messages" => [
-                [
-                    "to" => implode(',', $chunk),
-                    "content" => $message
-                ]
-            ]
+            "location_id" => $locId,
+            "message_id" => $msgId,
+            "channel" => "SMS",
+            "phone" => $num,
+            "message" => $message
         ];
-        // PLACEHOLDER API CALL until actual endpoint is provided
-        $ch = curl_init('https://api.mycrmsim.com/v1/messages/placeholder');
+
+        $ch = curl_init($myCrmSimUrl);
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             "Content-Type: application/json",
-            "Authorization: Bearer PLACEHOLDER_TOKEN"
+            "Authorization: Bearer " . $myCrmSimToken
         ]);
         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($sms_data));
         $response = curl_exec($ch);
         $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
         
-        // --- FIX 3: Hardware Fallover Logic ---
         if ($status == 200 || $status == 201) {
             $myCrmSimSuccess = true;
-            foreach ($chunk as $num) {
-                $all_results[] = [
-                    'message_id' => 'mycrmsim_' . bin2hex(random_bytes(6)),
-                    'number' => $num,
-                    'status' => 'Queued',
-                    'network' => 'myCRMSIM'
-                ];
-            }
+            $all_results[] = [
+                'message_id' => $msgId,
+                'number' => $num,
+                'status' => 'Queued',
+                'network' => 'myCRMSIM'
+            ];
         } else {
-            error_log("[myCRMSIM] Hardware API failed (Status: $status). Falling back to Semaphore.");
+            error_log("[myCRMSIM] Hardware API failed for $num (Status: $status). Falling back to Semaphore.");
+            // If one fails, we fall back the entire remaining set to Semaphore to ensure delivery
             $myCrmSimSuccess = false;
-            break; // Stop and fall back to the Semaphore loop below
+            break; 
         }
     }
 }

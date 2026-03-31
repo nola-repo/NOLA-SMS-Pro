@@ -234,10 +234,40 @@ class GhlClient
      */
     private function refreshToken(): void
     {
-        $clientId     = getenv('GHL_CLIENT_ID');
-        $clientSecret = getenv('GHL_CLIENT_SECRET');
+        // 1. Identify which app are we refreshing (Sub-account vs Agency)
+        $ghlApps = [
+            'subaccount' => [
+                'clientId'     => getenv('GHL_CLIENT_ID') ?: '6999da2b8f278296d95f7274-mmn30t4f',
+                'clientSecret' => getenv('GHL_CLIENT_SECRET') ?: 'f9de7ccf-8bb9-4bc2-8956-621817dd861a',
+            ],
+            'agency' => [
+                'clientId'     => '69cb813b4b007d172f7e7a35-mneicksx',
+                'clientSecret' => 'f2c52910-fa01-47b1-9cf7-d812464fe2ad',
+            ]
+        ];
+
+        $appId = $this->integration['appId'] ?? null;
+        $clientId = null;
+        $clientSecret = null;
+
+        if ($appId) {
+            foreach ($ghlApps as $app) {
+                if ($app['clientId'] === $appId) {
+                    $clientId = $app['clientId'];
+                    $clientSecret = $app['clientSecret'];
+                    break;
+                }
+            }
+        }
+
+        // Fallback to legacy env vars if appId is missing or not found in map
+        if (!$clientId || !$clientSecret) {
+            $clientId     = getenv('GHL_CLIENT_ID');
+            $clientSecret = getenv('GHL_CLIENT_SECRET');
+        }
+
         $refreshToken = $this->integration['refresh_token'] ?? null;
-        $docId        = $this->integration['firestore_doc_id'] ?? 'ghl';
+        $docId        = $this->integration['firestore_doc_id'] ?? $this->locationId;
 
         if (!$clientId || !$clientSecret || !$refreshToken) {
             $missing = [];
@@ -254,7 +284,7 @@ class GhlClient
             'client_secret' => $clientSecret,
             'grant_type'    => 'refresh_token',
             'refresh_token' => $refreshToken,
-            'user_type'     => 'Location',
+            'user_type'     => ($this->integration['userType'] ?? 'Location'),
         ];
 
         $ch = curl_init($tokenUrl);

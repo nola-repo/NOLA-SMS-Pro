@@ -253,21 +253,25 @@ if (!$usingCustomSender) {
 
 $myCrmSimSuccess = false;
 if ($useMyCrmSim) {
-    // ── Send via myCRMSIM (Placeholder) ─────────────────────────────────────
+    // ── Send via myCRMSIM ───────────────────────────────────────────────────
+    $myCrmSimToken = $config['MYCRMSIM_API_KEY'] ?? '';
+    $myCrmSimUrl = $config['MYCRMSIM_URL'] ?? 'https://r6bszuuso6.execute-api.ap-southeast-2.amazonaws.com/prod/webhook';
+
+    $storedMsgId = $messageId ?? uniqid('ghl_prov_');
     $smsData = [
-        "messages" => [
-            [
-                "to" => $normalizedPhone,
-                "content" => $message
-            ]
-        ]
+        "location_id" => $locationId,
+        "message_id" => $storedMsgId,
+        "channel" => "SMS",
+        "phone" => $normalizedPhone,
+        "message" => $message
     ];
-    $ch = curl_init('https://api.mycrmsim.com/v1/messages/placeholder');
+
+    $ch = curl_init($myCrmSimUrl);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_HTTPHEADER, [
         'Content-Type: application/json',
-        'Authorization: Bearer PLACEHOLDER_TOKEN'
+        'Authorization: Bearer ' . $myCrmSimToken
     ]);
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($smsData));
 

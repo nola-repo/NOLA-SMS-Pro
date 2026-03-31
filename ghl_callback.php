@@ -15,26 +15,6 @@ function render_page(string $title, string $body_html): void
 
     header('Content-Type: text/html; charset=utf-8');
     echo <<<HTML
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -478,81 +458,94 @@ HTML;
     exit;
 }
 
-// ─── Preview Logic ────────────────────────────────────────────────────────────
-if (isset($_GET['test'])) {
-    if ($_GET['test'] === 'success') {
-        $locationIdSafe = 'test_location_123';
-        $locationNameDisplay = $locationName;
-        $dashboardUrl = '#';
-        $body = <<<HTML
-            <div class="success-ring"><div class="success-icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div></div>
-            <h1>Success!</h1>
-            <p class="subtitle"><b>{$locationNameDisplay}</b> is now connected to <b>NOLA SMS Pro</b></p>
-            <div style="display:flex; flex-direction:column; gap:16px; margin-bottom:32px;">
-                <a href="{$dashboardUrl}" class="btn-primary">Open Dashboard</a>
-                <div class="sender-toggle" onclick="toggleModal('sender-modal')">Request Sender ID</div>
-            </div>
-            <div onclick="toggleModal('how-modal')" class="tutorial-link">How it works & Credits</div>
-             <p style="font-size: 10px; color: #ddd; margin-top: 40px; font-weight: 500;">© 2026 Powered by NOLA CRM</p>
-HTML;
-        render_page('Success!', $body);
-        exit;
-    }
-    if ($_GET['test'] === 'error') {
-        render_error('Test error message appearing here.', ['debug' => 'active', 'timestamp' => time()]);
-    }
-}
+// ─── OAuth Logic ────────────────────────────────────────────────────────────
 
-// ─── OAuth Config ──────────────────────────────────────────────────────────────
-$clientId = getenv('GHL_CLIENT_ID');
-$clientSecret = getenv('GHL_CLIENT_SECRET');
+// We now support both the legacy Sub-account app and the new Agency-level app.
+$ghlApps = [
+    'subaccount' => [
+        'clientId'     => getenv('GHL_CLIENT_ID') ?: '6999da2b8f278296d95f7274-mmn30t4f',
+        'clientSecret' => getenv('GHL_CLIENT_SECRET') ?: 'f9de7ccf-8bb9-4bc2-8956-621817dd861a',
+    ],
+    'agency' => [
+        'clientId'     => '69cb813b4b007d172f7e7a35-mneicksx',
+        'clientSecret' => 'f2c52910-fa01-47b1-9cf7-d812464fe2ad',
+    ]
+];
+
 $redirectUri = 'https://smspro-api.nolacrm.io/oauth/callback';
 
-if (!$clientId || !$clientSecret)
-    render_error('Server configuration error: GHL credentials are not set up.');
-if (!isset($_GET['code']))
+if (!isset($_GET['code'])) {
+    if (isset($_GET['test'])) {
+        render_page('Success!', '<h1>Test Page</h1>');
+        exit;
+    }
     render_error('No authorization code was received.');
+}
 
 $code = $_GET['code'];
 $state = $_GET['state'] ?? null;
 
-// ─── Token Exchange ────────────────────────────────────────────────────────────
-$ch = curl_init('https://services.leadconnectorhq.com/oauth/token');
-curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-curl_setopt($ch, CURLOPT_POST, true);
-curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query([
-    'client_id' => $clientId,
-    'client_secret' => $clientSecret,
-    'grant_type' => 'authorization_code',
-    'code' => $code,
-    'user_type' => 'Location',
-    'redirect_uri' => $redirectUri,
-]));
-curl_setopt($ch, CURLOPT_HTTPHEADER, ['Accept: application/json', 'Version: 2021-07-28']);
+// ─── Token Exchange (Multi-Client Fallback) ────────────────────────────────────
+$data = null;
+$httpCode = 0;
+$usedAppType = '';
+$response = '';
 
-$response = curl_exec($ch);
-$httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-curl_close($ch);
+foreach ($ghlApps as $appType => $config) {
+    if (!$config['clientId'] || !$config['clientSecret']) continue;
 
-$data = json_decode($response, true);
-if ($httpCode !== 200 || !is_array($data))
-    render_error('Authorization failed.', $data ?: []);
+    $ch = curl_init('https://services.leadconnectorhq.com/oauth/token');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query([
+        'client_id'     => $config['clientId'],
+        'client_secret' => $config['clientSecret'],
+        'grant_type'    => 'authorization_code',
+        'code'          => $code,
+        'user_type'     => ($appType === 'agency' ? 'Company' : 'Location'),
+        'redirect_uri'  => $redirectUri,
+    ]));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Accept: application/json', 'Version: 2021-07-28']);
 
-$locationId = $state ?? $data['locationId'] ?? $data['location_id'] ?? null;
-if (!$locationId)
-    render_error('No Location ID returned.');
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
 
-$locationIdSafe = htmlspecialchars((string)$locationId, ENT_QUOTES, 'UTF-8');
+    $responseData = json_decode($response, true);
+    if ($httpCode === 200 && is_array($responseData)) {
+        $data = $responseData;
+        $usedAppType = $appType;
+        break; // Success!
+    }
+}
 
-// ─── Fetch Location Name ───────────────────────────────────────────────────────
-$locationName = '';
+if (!$data) {
+    render_error('Authorization failed. Tried both Sub-account and Agency credentials.', ['code' => $httpCode, 'response' => $response]);
+}
+
+// ─── Determine ID (Company vs Location) ────────────────────────────────────────
+$userType = $data['userType'] ?? 'Location';
+$id = ($userType === 'Company') ? ($data['companyId'] ?? null) : ($state ?? $data['locationId'] ?? $data['location_id'] ?? null);
+
+if (!$id) {
+    render_error('No valid ID (Location or Company) returned.', $data);
+}
+
+$idSafe = htmlspecialchars((string)$id, ENT_QUOTES, 'UTF-8');
+
+// ─── Fetch Name (Location or Company) ─────────────────────────────────────────
+$displayName = '';
 try {
-    $locCh = curl_init('https://services.leadconnectorhq.com/locations/' . $locationId);
+    $fetchUrl = ($userType === 'Company') 
+        ? 'https://services.leadconnectorhq.com/companies/' . $id
+        : 'https://services.leadconnectorhq.com/locations/' . $id;
+
+    $locCh = curl_init($fetchUrl);
     curl_setopt($locCh, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($locCh, CURLOPT_HTTPHEADER, [
         'Authorization: Bearer ' . $data['access_token'],
         'Accept: application/json',
-        'Version: 2021-07-28',
+        'Version: ' . ($userType === 'Company' ? '2021-04-15' : '2021-07-28'),
     ]);
     $locResp = curl_exec($locCh);
     $locCode = curl_getinfo($locCh, CURLINFO_HTTP_CODE);
@@ -560,15 +553,14 @@ try {
 
     if ($locCode === 200) {
         $locData = json_decode($locResp, true);
-        $locationName = $locData['location']['name'] ?? '';
+        $displayName = ($userType === 'Company') ? ($locData['company']['name'] ?? '') : ($locData['location']['name'] ?? '');
     }
-}
-catch (Exception $e) {
-    error_log("Failed to fetch location name in callback for $locationId: " . $e->getMessage());
+} catch (Exception $e) {
+    error_log("Failed to fetch name in callback for $id: " . $e->getMessage());
 }
 
-$locationNameDisplay = $locationName ? htmlspecialchars($locationName, ENT_QUOTES, 'UTF-8') : 'Your Sub-Account';
-$dashboardUrl = 'https://app.nolacrm.io/v2/location/' . $locationIdSafe . '/custom-page-link/69a642aae76974824fd39bb6';
+$displayNameSafe = $displayName ? htmlspecialchars($displayName, ENT_QUOTES, 'UTF-8') : ($userType === 'Company' ? 'Your Agency' : 'Your Sub-Account');
+$dashboardUrl = 'https://app.nolacrm.io/v2/' . ($userType === 'Company' ? 'agency' : 'location') . '/' . $idSafe . '/custom-page-link/69a642aae76974824fd39bb6';
 
 // ─── Save Tokens & Metadata to Firestore ──────────────────────────────────────
 $db = get_firestore();
@@ -577,50 +569,56 @@ $expiresAtUnix = time() + (int)($data['expires_in'] ?? 0);
 
 try {
     // 1. Save main tokens
-    $db->collection('ghl_tokens')->document((string)$locationId)->set([
-        'access_token' => $data['access_token'] ?? null,
-        'refresh_token' => $data['refresh_token'] ?? null,
-        'scope' => $data['scope'] ?? null,
-        'location_id' => $locationId,
-        'location_name' => $locationName,
-        'expires_at' => $expiresAtUnix,
-        'userType' => $data['userType'] ?? 'Location',
-        'companyId' => $data['companyId'] ?? '',
-        'userId' => $data['userId'] ?? '',
-        'raw' => $data,
-        'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-    ], ['merge' => true]);
+    $tokenPayload = [
+        'access_token'    => $data['access_token'] ?? null,
+        'refresh_token'   => $data['refresh_token'] ?? null,
+        'scope'           => $data['scope'] ?? null,
+        'expires_at'      => $expiresAtUnix,
+        'userType'        => $userType,
+        'companyId'       => $data['companyId'] ?? '',
+        'hashed_companyId'=> $data['hashedCompanyId'] ?? '',
+        'userId'          => $data['userId'] ?? '',
+        'appId'           => $ghlApps[$usedAppType]['clientId'], // Store which app provided this token
+        'appType'         => $usedAppType,
+        'raw'             => $data,
+        'updated_at'      => new \Google\Cloud\Core\Timestamp($now),
+    ];
 
-    // 2. Provision Credits for new users
-    $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locationId);
-    $integrationRef = $db->collection('integrations')->document($intDocId);
-    $integrationSnap = $integrationRef->snapshot();
+    if ($userType === 'Location') {
+        $tokenPayload['location_id'] = $id;
+        $tokenPayload['location_name'] = $displayName;
+    } else {
+        $tokenPayload['agency_name'] = $displayName;
+    }
 
-    if (!$integrationSnap->exists()) {
-        // First-time install — 10 free credits & clear API keys
-        $integrationRef->set([
-            'location_id' => $locationId,
-            'location_name' => $locationName,
-            'free_credits_total' => 10,
-            'free_usage_count' => 0,
-            'credit_balance' => 0,
-            'approved_sender_id' => null,
-            'semaphore_api_key' => null,
-            'nola_pro_api_key' => null,
-            'system_default_sender' => 'NOLASMSPro',
-            'installed_at' => new \Google\Cloud\Core\Timestamp($now),
-            'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-        ]);
+    $db->collection('ghl_tokens')->document((string)$id)->set($tokenPayload, ['merge' => true]);
+
+    if ($userType === 'Location') {
+        // 2. Provision Credits for new sub-account users
+        $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$id);
+        $integrationRef = $db->collection('integrations')->document($intDocId);
+        $integrationSnap = $integrationRef->snapshot();
+
+        if (!$integrationSnap->exists()) {
+            // First-time install — 10 free credits
+            $integrationRef->set([
+                'location_id'   => $id,
+                'location_name' => $displayName,
+                'free_credits_total' => 10,
+                'free_usage_count'   => 0,
+                'credit_balance'     => 0,
+                'installed_at'       => new \Google\Cloud\Core\Timestamp($now),
+                'updated_at'         => new \Google\Cloud\Core\Timestamp($now),
+            ]);
+        } else {
+            // Re-install: preserve credits, just update name
+            $integrationRef->set([
+                'location_name' => $displayName,
+                'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
+            ], ['merge' => true]);
+        }
     }
-    else {
-        // Re-install: preserve credits, just update name
-        $integrationRef->set([
-            'location_name' => $locationName,
-            'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-        ], ['merge' => true]);
-    }
-}
-catch (Exception $e) {
+} catch (Exception $e) {
     render_error('Callback authorized, but failed to save tokens: ' . $e->getMessage());
 }
 
@@ -632,7 +630,7 @@ $body = <<<HTML
         </div>
     </div>
     <h1>Success!</h1>
-    <p class="subtitle"><b>{$locationNameDisplay}</b> is now connected to <b>NOLA SMS Pro</b></p>
+    <p class="subtitle"><b>{$displayNameSafe}</b> is now connected to <b>NOLA SMS Pro</b></p>
     
     <div style="display: flex; flex-direction: column; gap: 16px; margin-bottom: 32px;">
         <a href="{$dashboardUrl}" class="btn-primary">Open Dashboard</a>
