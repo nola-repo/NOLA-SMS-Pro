@@ -1,58 +1,13 @@
 import React, { useState, useEffect } from "react";
-import { Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { Routes, Route, useLocation } from "react-router-dom";
 import { Dashboard } from "./pages/Dashboard";
 import { useGhlLocation } from "./hooks/useGhlLocation";
 import { GhlCallback } from "./pages/GhlCallback";
 import { SharedLogin } from "./pages/SharedLogin";
+import { Register } from "./pages/Register";
 
-/**
- * Check if the user has a valid auth token in localStorage.
- * Returns the parsed user object if authenticated, null otherwise.
- */
-function getAuthUser(): { role: string; [key: string]: unknown } | null {
-  try {
-    const token = localStorage.getItem("auth_token");
-    const userStr = localStorage.getItem("auth_user");
-    if (!token || !userStr) return null;
-
-    const user = JSON.parse(userStr);
-
-    // Check token expiry from the payload
-    const payloadB64 = token.split(".")[0];
-    const payload = JSON.parse(atob(payloadB64.replace(/-/g, "+").replace(/_/g, "/")));
-    if (payload.exp && payload.exp < Date.now() / 1000) {
-      // Token expired — clear
-      localStorage.removeItem("auth_token");
-      localStorage.removeItem("auth_user");
-      return null;
-    }
-
-    return user;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Wrapper that protects routes behind authentication.
- * Redirects to /login if not authenticated.
- * Redirects agency users to /agency/.
- */
-const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const user = getAuthUser();
-
-  if (!user) {
-    return <Navigate to="/login" replace />;
-  }
-
-  // If the user is an agency, hard-redirect to the separate agency app
-  if (user.role === "agency") {
-    window.location.href = "/agency/";
-    return null;
-  }
-
-  return <>{children}</>;
-};
+import { AuthProvider } from "./context/AuthContext";
+import { ProtectedRoute } from "./components/ProtectedRoute";
 
 const App: React.FC = () => {
   // Initialize GHL Location detection at root level so it captures the URL immediately
@@ -91,7 +46,8 @@ const App: React.FC = () => {
   const isLoginPage = location.pathname === "/login";
 
   return (
-    <div className="h-screen">
+    <AuthProvider>
+      <div className="h-screen">
       {/* Theme Toggle - Fixed top right (Desktop only, hidden on login page) */}
       {!isLoginPage && (
         <button
@@ -112,8 +68,9 @@ const App: React.FC = () => {
       )}
 
       <Routes>
-        {/* Public: Shared Login */}
+        {/* Public: Shared Login & Register */}
         <Route path="/login" element={<SharedLogin />} />
+        <Route path="/register" element={<Register />} />
 
         {/* Public: GHL OAuth Callback */}
         <Route path="/ghl-callback" element={<GhlCallback />} />
@@ -139,6 +96,7 @@ const App: React.FC = () => {
         />
       </Routes>
     </div>
+    </AuthProvider>
   );
 };
 

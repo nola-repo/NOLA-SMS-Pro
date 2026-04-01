@@ -101,15 +101,14 @@ try {
     ], ['merge' => true]);
 
     echo json_encode([
-        'status' => 'success',
-        'token'  => $token,
-        'user'   => [
-            'uid'         => $userDoc->id(),
-            'email'       => $email,
-            'name'        => $userData['name'] ?? '',
-            'role'        => $role,
-            'agency_id'   => $userData['agency_id'] ?? null,
-            'location_id' => $userData['location_id'] ?? null,
+        'token'       => $token,
+        'role'        => $role,
+        'company_id'  => $userData['company_id'] ?? $userData['agency_id'] ?? null,
+        'location_id' => $role === 'user' ? ($userData['active_location_id'] ?? $userData['location_id'] ?? null) : null,
+        'user'        => [
+            'firstName'   => $userData['firstName'] ?? '',
+            'lastName'    => $userData['lastName'] ?? '',
+            'email'       => $email
         ],
     ]);
 

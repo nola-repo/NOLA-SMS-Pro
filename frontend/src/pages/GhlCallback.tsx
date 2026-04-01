@@ -15,6 +15,7 @@ export const GhlCallback: React.FC = () => {
             const code = params.get('code');
             const error = params.get('error');
             const errorDescription = params.get('error_description');
+            const state = params.get('state');
 
             if (error) {
                 setStatus('error');
@@ -29,6 +30,39 @@ export const GhlCallback: React.FC = () => {
             }
 
             try {
+                // Determine if this is the registration flow
+                if (state === 'registration') {
+                    const API_BASE = import.meta.env.VITE_API_BASE || '';
+                    const response = await fetch(`${API_BASE}/api/ghl/oauth_exchange.php`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ code, redirectUri: REDIRECT_URI })
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error || 'Failed to exchange token');
+                    }
+
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        // Pass companyId back to the main registration window via sessionStorage
+                        sessionStorage.setItem('nola_registration_company_id', data.company_id);
+                        setStatus('success');
+                        setMessage('Successfully connected! You can close this window to continue registration.');
+                        
+                        // Try closing popup automatically
+                        setTimeout(() => {
+                            window.close();
+                        }, 2000);
+                        return;
+                    } else {
+                        throw new Error(data.error || 'OAuth failed');
+                    }
+                }
+
+                // Standard Flow
                 const apiSettings = getAPISettings();
                 const accountSettings = getAccountSettings();
 

@@ -1,4 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { useAuth } from '../context/AuthContext';
+import { authService } from '../services/authService';
+import { Link } from 'react-router-dom';
 
 interface Branding {
   company_name: string;
@@ -24,6 +27,7 @@ export const SharedLogin: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [brandingLoaded, setBrandingLoaded] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const { login } = useAuth();
 
   // Fetch white-label branding on mount
   useEffect(() => {
@@ -47,26 +51,19 @@ export const SharedLogin: React.FC = () => {
     setLoading(true);
 
     try {
-      const res = await fetch(`${API_BASE}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
+      const data = await authService.login(email, password);
 
-      const data = await res.json();
-
-      if (!res.ok || data.status !== 'success') {
+      if (data.status !== 'success') {
         setError(data.message || 'Login failed. Please try again.');
         setLoading(false);
         return;
       }
 
-      // Store auth token & user info
-      localStorage.setItem('auth_token', data.token);
-      localStorage.setItem('auth_user', JSON.stringify(data.user));
+      // Store auth session via context
+      login(data);
 
       // Route based on role
-      if (data.user.role === 'agency') {
+      if (data.role === 'agency') {
         window.location.href = '/agency/';
       } else {
         window.location.href = '/';
@@ -239,6 +236,8 @@ export const SharedLogin: React.FC = () => {
 
         {/* Footer */}
         <p style={styles.footer}>
+          Don't have an account? <Link to="/register" style={{ color: primaryColor, fontWeight: 700, textDecoration: 'none' }}>Register here &rarr;</Link>
+          <br /><br />
           Powered by <span style={{ fontWeight: 700, color: '#e2e8f0' }}>NOLA SMS Pro</span>
         </p>
       </div>
