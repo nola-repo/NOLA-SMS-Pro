@@ -61,6 +61,10 @@
     # /api/ghl-conversations -> /api/ghl-conversations.php
     RewriteRule ^api/ghl-conversations/?$ /api/ghl-conversations.php [NC,L,QSA]
 
+    # ── Public / Auth endpoints ────────────────────────────────────────────
+    RewriteRule ^api/public/whitelabel/?$ /api/public/whitelabel.php [NC,L,QSA]
+    RewriteRule ^api/auth/login/?$ /api/auth/login.php [NC,L,QSA]
+
     # ── Generic API endpoints ───────────────────────────────────────────
     # /api/messages -> /api/messages.php
     # /api/contacts -> /api/contacts.php

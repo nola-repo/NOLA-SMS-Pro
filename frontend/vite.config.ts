@@ -148,6 +148,52 @@ const smsProxyPlugin = () => ({
         res.end(JSON.stringify({ status: 'error', message: 'Failed to proxy contact request' }));
       }
     });
+
+    // ── Shared Login: Whitelabel branding endpoint ──
+    server.middlewares.use('/api/public/whitelabel', async (req, res) => {
+      try {
+        const url = new URL(req.url || '', 'http://localhost');
+        const queryString = url.search || '';
+        const cloudRunUrl = `https://smspro-api.nolacrm.io/api/public/whitelabel${queryString}`;
+        const response = await fetch(cloudRunUrl, {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        const data = await response.json();
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(data));
+      } catch (error) {
+        console.error('Dev proxy error for /api/public/whitelabel:', error);
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ status: 'success', branding: { company_name: 'NOLA SMS Pro', logo_url: '', primary_color: '#2b83fa', agency_id: null } }));
+      }
+    });
+
+    // ── Shared Login: Auth login endpoint ──
+    server.middlewares.use('/api/auth/login', async (req, res) => {
+      try {
+        let body = '';
+        await new Promise((resolve) => {
+          req.on('data', chunk => body += chunk.toString());
+          req.on('end', resolve);
+        });
+        const cloudRunUrl = 'https://smspro-api.nolacrm.io/api/auth/login';
+        const response = await fetch(cloudRunUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+        });
+        const data = await response.json();
+        res.setHeader('Content-Type', 'application/json');
+        res.statusCode = response.status;
+        res.end(JSON.stringify(data));
+      } catch (error) {
+        console.error('Dev proxy error for /api/auth/login:', error);
+        res.setHeader('Content-Type', 'application/json');
+        res.statusCode = 500;
+        res.end(JSON.stringify({ status: 'error', message: 'Proxy error' }));
+      }
+    });
   },
 });
 
