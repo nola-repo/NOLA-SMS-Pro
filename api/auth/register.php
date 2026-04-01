@@ -86,6 +86,8 @@ try {
         $data['company_id'] = $companyId;
         // Map to agency_id for backwards compatibility with existing logic
         $data['agency_id'] = $companyId;
+        // Provide the default sub-accounts limit immediately on registration
+        $data['max_active_subaccounts'] = 3;
     }
     
     if ($role === 'user' && !empty($locationId)) {

@@ -36,7 +36,42 @@ try {
 
     $updateData = [];
     if (isset($payload['toggle_enabled'])) {
-        $updateData['toggle_enabled'] = (bool)$payload['toggle_enabled'];
+        $isTurningOn = (bool)$payload['toggle_enabled'];
+        $currentlyEnabled = $snapshot->data()['toggle_enabled'] ?? false;
+
+        // Validations if they are trying to activate this sub-account
+        if ($isTurningOn && !$currentlyEnabled) {
+            // Fetch agency max limit from users collection
+            $maxActive = 3; // default fallback
+            $userQuery = $db->collection('users')->where('company_id', '=', $agency_id)->limit(1)->documents();
+            foreach ($userQuery as $uDoc) {
+                if ($uDoc->exists()) {
+                    $maxActive = $uDoc->data()['max_active_subaccounts'] ?? 3;
+                    break;
+                }
+            }
+            
+            // Count exactly how many are currently flipped to true for this agency
+            $activeCountQuery = $db->collection('agency_subaccounts')
+                ->where('agency_id', '=', $agency_id)
+                ->where('toggle_enabled', '=', true)
+                ->documents();
+            
+            $activeCount = 0;
+            foreach ($activeCountQuery as $doc) {
+                if ($doc->exists()) {
+                    $activeCount++;
+                }
+            }
+
+            if ($activeCount >= $maxActive) {
+                http_response_code(403);
+                echo json_encode(['status' => 'error', 'message' => "Limit reached. You can only activate {$maxActive} sub-accounts. Please upgrade your plan or disable another account first."]);
+                exit;
+            }
+        }
+        
+        $updateData['toggle_enabled'] = $isTurningOn;
     }
     if (isset($payload['rate_limit'])) {
         $updateData['rate_limit'] = (int)$payload['rate_limit'];

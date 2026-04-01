@@ -108,7 +108,8 @@ try {
         'user'        => [
             'firstName'   => $userData['firstName'] ?? '',
             'lastName'    => $userData['lastName'] ?? '',
-            'email'       => $email
+            'email'       => $email,
+            'max_active_subaccounts' => $role === 'agency' ? ($userData['max_active_subaccounts'] ?? 3) : null
         ],
     ]);
 
