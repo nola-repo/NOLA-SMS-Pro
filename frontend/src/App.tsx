@@ -7,6 +7,7 @@ import { SharedLogin } from "./pages/SharedLogin";
 import { Register } from "./pages/Register";
 
 import { AuthProvider } from "./context/AuthContext";
+import { safeStorage } from "./utils/safeStorage";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
 const App: React.FC = () => {
@@ -16,7 +17,7 @@ const App: React.FC = () => {
   const location = useLocation();
 
   const [darkMode, setDarkMode] = useState(() => {
-    const saved = localStorage.getItem("darkMode");
+    const saved = safeStorage.getItem("darkMode");
     if (saved !== null) {
       return JSON.parse(saved);
     }
@@ -35,7 +36,7 @@ const App: React.FC = () => {
     } else {
       root.classList.remove("dark");
     }
-    localStorage.setItem("darkMode", JSON.stringify(darkMode));
+    safeStorage.setItem("darkMode", JSON.stringify(darkMode));
   }, [darkMode]);
 
   const toggleDarkMode = () => {

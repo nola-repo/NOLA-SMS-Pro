@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { authService, KEYS } from '../services/authService';
+import { safeStorage } from '../utils/safeStorage';
 
 interface Session {
   token: string;
@@ -29,11 +30,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const login = (data: any) => {
     // Save to local storage
-    localStorage.setItem(KEYS.token, data.token);
-    localStorage.setItem(KEYS.user, JSON.stringify(data.user));
-    localStorage.setItem(KEYS.role, data.role);
-    if (data.company_id) localStorage.setItem(KEYS.companyId, data.company_id);
-    if (data.location_id) localStorage.setItem(KEYS.locationId, data.location_id);
+    safeStorage.setItem(KEYS.token, data.token);
+    safeStorage.setItem(KEYS.user, JSON.stringify(data.user));
+    safeStorage.setItem(KEYS.role, data.role);
+    if (data.company_id) safeStorage.setItem(KEYS.companyId, data.company_id);
+    if (data.location_id) safeStorage.setItem(KEYS.locationId, data.location_id);
 
     // Update state
     setSession(authService.getSession());

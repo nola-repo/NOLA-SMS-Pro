@@ -1,3 +1,5 @@
+import { safeStorage } from './safeStorage';
+
 // ─── Keys ────────────────────────────────────────────────────────────────────
 const KEYS = {
     account: "nola_settings_account",
@@ -71,7 +73,7 @@ const DEFAULT_NOTIFICATIONS: NotificationSettings = {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function load<T>(key: string, fallback: T): T {
     try {
-        const raw = localStorage.getItem(key);
+        const raw = safeStorage.getItem(key);
         if (!raw) return fallback;
         return { ...fallback, ...JSON.parse(raw) } as T;
     } catch {
@@ -81,7 +83,7 @@ function load<T>(key: string, fallback: T): T {
 
 function save<T>(key: string, data: T): void {
     try {
-        localStorage.setItem(key, JSON.stringify(data));
+        safeStorage.setItem(key, JSON.stringify(data));
     } catch (e) {
         console.error("settingsStorage: failed to save", key, e);
     }
@@ -110,7 +112,7 @@ export const saveNotificationSettings = (data: NotificationSettings): void =>
 // ─── Sender IDs ───────────────────────────────────────────────────────────────
 export const getStoredSenderIds = (): StoredSenderId[] => {
     try {
-        const raw = localStorage.getItem(KEYS.senderIds);
+        const raw = safeStorage.getItem(KEYS.senderIds);
         if (!raw) return [];
         return JSON.parse(raw) as StoredSenderId[];
     } catch {

@@ -6,6 +6,8 @@ export const KEYS = {
   user: 'nola_auth_user',
 };
 
+import { safeStorage } from '../utils/safeStorage';
+
 // Also support legacy keys for backward compatibility briefly if they exist
 const MIGRATED_KEYS = {
   token: 'auth_token',
@@ -35,21 +37,21 @@ export const authService = {
   },
 
   logout() {
-    Object.values(KEYS).forEach(key => localStorage.removeItem(key));
-    Object.values(MIGRATED_KEYS).forEach(key => localStorage.removeItem(key));
+    Object.values(KEYS).forEach(key => safeStorage.removeItem(key));
+    Object.values(MIGRATED_KEYS).forEach(key => safeStorage.removeItem(key));
   },
 
   getSession() {
     try {
-      const token = localStorage.getItem(KEYS.token) || localStorage.getItem(MIGRATED_KEYS.token);
-      const userStr = localStorage.getItem(KEYS.user) || localStorage.getItem(MIGRATED_KEYS.user);
+      const token = safeStorage.getItem(KEYS.token) || safeStorage.getItem(MIGRATED_KEYS.token);
+      const userStr = safeStorage.getItem(KEYS.user) || safeStorage.getItem(MIGRATED_KEYS.user);
       
       if (!token || !userStr) return null;
 
       const user = JSON.parse(userStr);
-      const role = localStorage.getItem(KEYS.role) || user.role;
-      const companyId = localStorage.getItem(KEYS.companyId) || user.company_id || user.agency_id || null;
-      const locationId = localStorage.getItem(KEYS.locationId) || user.location_id || null;
+      const role = safeStorage.getItem(KEYS.role) || user.role;
+      const companyId = safeStorage.getItem(KEYS.companyId) || user.company_id || user.agency_id || null;
+      const locationId = safeStorage.getItem(KEYS.locationId) || user.location_id || null;
 
       // Check token expiry
       const payloadB64 = token.split(".")[0];

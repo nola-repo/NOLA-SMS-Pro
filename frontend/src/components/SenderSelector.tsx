@@ -3,6 +3,7 @@ import { FiChevronDown, FiCheck, FiGlobe, FiMapPin, FiBriefcase, FiPlus, FiTrash
 import { type SenderId } from "../api/sms";
 import { SenderRequestModal } from "./SenderRequestModal";
 import { type StoredSenderId } from "../utils/settingsStorage";
+import { safeStorage } from "../utils/safeStorage";
 
 interface SenderOption {
     id: SenderId;
@@ -44,9 +45,9 @@ export const SenderSelector: React.FC<SenderSelectorProps> = ({
     const [customOptions, setCustomOptions] = useState<SenderOption[]>([]);
     const dropdownRef = useRef<HTMLDivElement>(null);
 
-    // Load custom options from localStorage
+    // Load custom options from safeStorage
     useEffect(() => {
-        const saved = localStorage.getItem("custom_sender_ids");
+        const saved = safeStorage.getItem("custom_sender_ids");
         if (saved) {
             try {
                 const parsed = JSON.parse(saved);
@@ -122,7 +123,7 @@ export const SenderSelector: React.FC<SenderSelectorProps> = ({
         setCustomOptions(updated);
 
         const toSave = updated.map(({ icon, ...rest }) => rest);
-        localStorage.setItem("custom_sender_ids", JSON.stringify(toSave));
+        safeStorage.setItem("custom_sender_ids", JSON.stringify(toSave));
 
         if (value === id) {
             onChange(DEFAULT_OPTIONS[0].id);

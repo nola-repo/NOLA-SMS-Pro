@@ -64,7 +64,7 @@ export const SharedLogin: React.FC = () => {
 
       // Route based on role
       if (data.role === 'agency') {
-        window.location.href = '/agency/';
+        window.location.href = '/';
       } else {
         window.location.href = '/';
       }

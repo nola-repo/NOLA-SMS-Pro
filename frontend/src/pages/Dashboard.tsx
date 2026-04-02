@@ -8,6 +8,7 @@ import { ContactsTab } from "../components/ContactsTab";
 import { Settings } from "./Settings";
 import { TbLayoutSidebarRightCollapse } from "react-icons/tb";
 import { FiMenu } from "react-icons/fi";
+import { safeStorage } from "../utils/safeStorage";
 
 interface DashboardProps {
   isMobileMenuOpen?: boolean;
@@ -19,25 +20,25 @@ interface DashboardProps {
 export const Dashboard: React.FC<DashboardProps> = ({ isMobileMenuOpen: externalIsMobileMenuOpen, onMobileMenuToggle, darkMode, toggleDarkMode }) => {
   const [activeContact, setActiveContact] = useState<Contact | null>(() => {
     try {
-      const saved = localStorage.getItem('nola_active_contact');
+      const saved = safeStorage.getItem('nola_active_contact');
       return saved ? JSON.parse(saved) : null;
     } catch { return null; }
   });
   const [activeBulkMessage, setActiveBulkMessage] = useState<BulkMessageHistoryItem | null>(() => {
     try {
-      const saved = localStorage.getItem('nola_active_bulk_message');
+      const saved = safeStorage.getItem('nola_active_bulk_message');
       return saved ? JSON.parse(saved) : null;
     } catch { return null; }
   });
   const [selectedContacts, setSelectedContacts] = useState<Contact[]>(() => {
     try {
-      const saved = localStorage.getItem('nola_active_contact');
+      const saved = safeStorage.getItem('nola_active_contact');
       const contact = saved ? JSON.parse(saved) : null;
       return contact ? [contact] : [];
     } catch { return []; }
   });
   const [currentView, setCurrentView] = useState<ViewTab>(
-    () => (localStorage.getItem('nola_active_tab') as ViewTab) || 'compose'
+    () => (safeStorage.getItem('nola_active_tab') as ViewTab) || 'compose'
   );
   const [settingsTab, setSettingsTab] = useState<"account" | "senderIds" | "api" | "notifications" | "credits" | undefined>(undefined);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -49,10 +50,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ isMobileMenuOpen: external
     setSelectedContacts([contact]);
     setActiveContact(contact);
     setActiveBulkMessage(null);
-    localStorage.setItem('nola_active_contact', JSON.stringify(contact));
-    localStorage.removeItem('nola_active_bulk_message');
+    safeStorage.setItem('nola_active_contact', JSON.stringify(contact));
+    safeStorage.removeItem('nola_active_bulk_message');
     setCurrentView('compose');
-    localStorage.setItem('nola_active_tab', 'compose');
+    safeStorage.setItem('nola_active_tab', 'compose');
   };
 
   const handleSelectBulkMessage = (bulkMessage: BulkMessageHistoryItem) => {
@@ -60,42 +61,42 @@ export const Dashboard: React.FC<DashboardProps> = ({ isMobileMenuOpen: external
     setSelectedContacts([]);
     setActiveContact(null);
     setActiveBulkMessage(bulkMessage);
-    localStorage.removeItem('nola_active_contact');
-    localStorage.setItem('nola_active_bulk_message', JSON.stringify(bulkMessage));
+    safeStorage.removeItem('nola_active_contact');
+    safeStorage.setItem('nola_active_bulk_message', JSON.stringify(bulkMessage));
     setCurrentView('compose');
-    localStorage.setItem('nola_active_tab', 'compose');
+    safeStorage.setItem('nola_active_tab', 'compose');
   };
 
   const handleSendToComposer = (contacts: Contact[]) => {
     setSelectedContacts(contacts);
     if (contacts.length === 1) {
       setActiveContact(contacts[0]);
-      localStorage.setItem('nola_active_contact', JSON.stringify(contacts[0]));
+      safeStorage.setItem('nola_active_contact', JSON.stringify(contacts[0]));
     } else {
       setActiveContact(null);
-      localStorage.removeItem('nola_active_contact');
+      safeStorage.removeItem('nola_active_contact');
     }
     setCurrentView('compose');
-    localStorage.setItem('nola_active_tab', 'compose');
+    safeStorage.setItem('nola_active_tab', 'compose');
   };
 
   const handleViewMessages = (contact: Contact) => {
     setActiveContact(contact);
     setSelectedContacts([contact]);
-    localStorage.setItem('nola_active_contact', JSON.stringify(contact));
+    safeStorage.setItem('nola_active_contact', JSON.stringify(contact));
     setCurrentView('compose');
-    localStorage.setItem('nola_active_tab', 'compose');
+    safeStorage.setItem('nola_active_tab', 'compose');
   };
 
   const handleTabChange = (tab: ViewTab) => {
     setCurrentView(tab);
-    localStorage.setItem('nola_active_tab', tab);
+    safeStorage.setItem('nola_active_tab', tab);
     if (tab === 'compose') {
       setSelectedContacts([]);
       setActiveContact(null);
       setActiveBulkMessage(null);
-      localStorage.removeItem('nola_active_contact');
-      localStorage.removeItem('nola_active_bulk_message');
+      safeStorage.removeItem('nola_active_contact');
+      safeStorage.removeItem('nola_active_bulk_message');
     }
     // On mobile, close sidebar when selecting a main action area
     if (window.innerWidth < 768 && tab !== 'compose' && onMobileMenuToggle) {
@@ -120,7 +121,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ isMobileMenuOpen: external
       if (tab) {
         setSettingsTab(tab);
         setCurrentView('settings');
-        localStorage.setItem('nola_active_tab', 'settings');
+        safeStorage.setItem('nola_active_tab', 'settings');
       }
     };
 

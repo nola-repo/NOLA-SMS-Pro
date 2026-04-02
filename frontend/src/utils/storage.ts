@@ -1,4 +1,5 @@
 import type { BulkMessageHistoryItem, Message } from "../types/Sms";
+import { safeStorage } from "./safeStorage";
 
 const BULK_HISTORY_KEY = "nola_sms_bulk_history";
 const DELETED_CONTACTS_KEY = "nola_sms_deleted_contacts";
@@ -11,7 +12,7 @@ interface MessagesCache {
 
 export const getDeletedContactIds = (): string[] => {
   try {
-    const stored = localStorage.getItem(DELETED_CONTACTS_KEY);
+    const stored = safeStorage.getItem(DELETED_CONTACTS_KEY);
     if (!stored) return [];
     return JSON.parse(stored);
   } catch (error) {
@@ -24,7 +25,7 @@ export const deleteContact = (id: string): void => {
     const existing = getDeletedContactIds();
     if (!existing.includes(id)) {
       const updated = [...existing, id];
-      localStorage.setItem(DELETED_CONTACTS_KEY, JSON.stringify(updated));
+      safeStorage.setItem(DELETED_CONTACTS_KEY, JSON.stringify(updated));
     }
   } catch (error) {
     console.error("Failed to delete contact:", error);
@@ -35,7 +36,7 @@ export const restoreContact = (id: string): void => {
   try {
     const existing = getDeletedContactIds();
     const updated = existing.filter(cid => cid !== id);
-    localStorage.setItem(DELETED_CONTACTS_KEY, JSON.stringify(updated));
+    safeStorage.setItem(DELETED_CONTACTS_KEY, JSON.stringify(updated));
   } catch (error) {
     console.error("Failed to restore contact:", error);
   }
@@ -45,7 +46,7 @@ export const saveBulkMessage = (item: BulkMessageHistoryItem): void => {
   try {
     const existing = getBulkMessageHistory();
     const updated = [item, ...existing].slice(0, 50); // Keep max 50 items
-    localStorage.setItem(BULK_HISTORY_KEY, JSON.stringify(updated));
+    safeStorage.setItem(BULK_HISTORY_KEY, JSON.stringify(updated));
   } catch (error) {
     console.error("Failed to save bulk message history:", error);
   }
@@ -53,7 +54,7 @@ export const saveBulkMessage = (item: BulkMessageHistoryItem): void => {
 
 export const getBulkMessageHistory = (): BulkMessageHistoryItem[] => {
   try {
-    const stored = localStorage.getItem(BULK_HISTORY_KEY);
+    const stored = safeStorage.getItem(BULK_HISTORY_KEY);
     if (!stored) return [];
     const history: BulkMessageHistoryItem[] = JSON.parse(stored);
 
@@ -75,7 +76,7 @@ export const getRecipientKey = (numbers: string[]): string => {
 
 const getBulkGroupNames = (): Record<string, string> => {
   try {
-    const stored = localStorage.getItem(BULK_GROUP_NAMES_KEY);
+    const stored = safeStorage.getItem(BULK_GROUP_NAMES_KEY);
     return stored ? JSON.parse(stored) : {};
   } catch {
     return {};
@@ -86,14 +87,14 @@ export const saveBulkGroupName = (recipientKey: string, name: string): void => {
   try {
     const groupNames = getBulkGroupNames();
     groupNames[recipientKey] = name;
-    localStorage.setItem(BULK_GROUP_NAMES_KEY, JSON.stringify(groupNames));
+    safeStorage.setItem(BULK_GROUP_NAMES_KEY, JSON.stringify(groupNames));
 
     // Also update existing history items with this key
     const history = getBulkMessageHistory();
     const updated = history.map(item =>
       item.recipientKey === recipientKey ? { ...item, customName: name } : item
     );
-    localStorage.setItem(BULK_HISTORY_KEY, JSON.stringify(updated));
+    safeStorage.setItem(BULK_HISTORY_KEY, JSON.stringify(updated));
   } catch (error) {
     console.error("Failed to save bulk group name:", error);
   }
@@ -106,7 +107,7 @@ export const getHistoryForGroup = (recipientKey: string): BulkMessageHistoryItem
 
 export const clearBulkMessageHistory = (): void => {
   try {
-    localStorage.removeItem(BULK_HISTORY_KEY);
+    safeStorage.removeItem(BULK_HISTORY_KEY);
   } catch (error) {
     console.error("Failed to clear bulk message history:", error);
   }
@@ -118,7 +119,7 @@ export const renameBulkMessage = (id: string, newName: string): void => {
     const updated = existing.map(item =>
       item.id === id ? { ...item, customName: newName } : item
     );
-    localStorage.setItem(BULK_HISTORY_KEY, JSON.stringify(updated));
+    safeStorage.setItem(BULK_HISTORY_KEY, JSON.stringify(updated));
   } catch (error) {
     console.error("Failed to rename bulk message:", error);
   }
@@ -128,7 +129,7 @@ export const deleteBulkMessage = (id: string): void => {
   try {
     const existing = getBulkMessageHistory();
     const updated = existing.filter(item => item.id !== id);
-    localStorage.setItem(BULK_HISTORY_KEY, JSON.stringify(updated));
+    safeStorage.setItem(BULK_HISTORY_KEY, JSON.stringify(updated));
   } catch (error) {
     console.error("Failed to delete bulk message:", error);
   }
@@ -152,7 +153,7 @@ export const getRelativeTime = (timestamp: string): string => {
 // Message caching functions
 const getMessagesCache = (): MessagesCache => {
   try {
-    const stored = localStorage.getItem(MESSAGES_CACHE_KEY);
+    const stored = safeStorage.getItem(MESSAGES_CACHE_KEY);
     if (!stored) return {};
     return JSON.parse(stored);
   } catch {
@@ -162,7 +163,7 @@ const getMessagesCache = (): MessagesCache => {
 
 const setMessagesCache = (cache: MessagesCache): void => {
   try {
-    localStorage.setItem(MESSAGES_CACHE_KEY, JSON.stringify(cache));
+    safeStorage.setItem(MESSAGES_CACHE_KEY, JSON.stringify(cache));
   } catch {
     console.error("Failed to save messages to cache");
   }
