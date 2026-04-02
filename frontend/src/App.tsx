@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Routes, Route, useLocation } from "react-router-dom";
 import { Dashboard } from "./pages/Dashboard";
+import { AgencyDashboard } from "./pages/AgencyDashboard";
 import { useGhlLocation } from "./hooks/useGhlLocation";
 import { GhlCallback } from "./pages/GhlCallback";
 import { SharedLogin } from "./pages/SharedLogin";
@@ -9,6 +10,7 @@ import { Register } from "./pages/Register";
 import { AuthProvider } from "./context/AuthContext";
 import { safeStorage } from "./utils/safeStorage";
 import { ProtectedRoute } from "./components/ProtectedRoute";
+import { AgencyProtectedRoute } from "./components/auth/AgencyProtectedRoute";
 
 const App: React.FC = () => {
   // Initialize GHL Location detection at root level so it captures the URL immediately
@@ -80,6 +82,16 @@ const App: React.FC = () => {
         {location.search.includes("code=") && (
           <Route path="*" element={<GhlCallback />} />
         )}
+
+        {/* Protected: Agency Dashboard */}
+        <Route
+          path="/agency"
+          element={
+            <AgencyProtectedRoute>
+              <AgencyDashboard />
+            </AgencyProtectedRoute>
+          }
+        />
 
         {/* Protected: Dashboard (user role only) */}
         <Route
