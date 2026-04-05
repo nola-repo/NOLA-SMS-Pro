@@ -19,9 +19,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
     foreach ($messages as $doc) {
         if ($doc->exists()) {
             $data = $doc->data();
-            $ts = isset($data['date_created']) && $data['date_created'] instanceof \Google\Cloud\Core\Timestamp 
-                  ? $data['date_created']->get()->format('c') : null;
-            
+            $ts = isset($data['date_created']) && $data['date_created'] instanceof \Google\Cloud\Core\Timestamp
+                ? $data['date_created']->get()->format('c') : null;
+
             $unifiedLogs[] = array_merge($data, [
                 'id' => $doc->id(),
                 'type' => 'message',
@@ -35,9 +35,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
     foreach ($requests as $doc) {
         if ($doc->exists()) {
             $data = $doc->data();
-            $ts = isset($data['created_at']) && $data['created_at'] instanceof \Google\Cloud\Core\Timestamp 
-                  ? $data['created_at']->get()->format('c') : null;
-            
+            $ts = isset($data['created_at']) && $data['created_at'] instanceof \Google\Cloud\Core\Timestamp
+                ? $data['created_at']->get()->format('c') : null;
+
             $unifiedLogs[] = array_merge($data, [
                 'id' => $doc->id(),
                 'type' => 'sender_request',
@@ -51,9 +51,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
     foreach ($purchases as $doc) {
         if ($doc->exists()) {
             $data = $doc->data();
-            $ts = isset($data['created_at']) && $data['created_at'] instanceof \Google\Cloud\Core\Timestamp 
-                  ? $data['created_at']->get()->format('c') : null;
-            
+            $ts = isset($data['created_at']) && $data['created_at'] instanceof \Google\Cloud\Core\Timestamp
+                ? $data['created_at']->get()->format('c') : null;
+
             $unifiedLogs[] = array_merge($data, [
                 'id' => $doc->id(),
                 'type' => 'credit_purchase',
@@ -63,7 +63,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
     }
 
     // Sort combined array by timestamp descending
-    usort($unifiedLogs, function($a, $b) {
+    usort($unifiedLogs, function ($a, $b) {
         $timeA = strtotime($a['timestamp'] ?? '1970-01-01');
         $timeB = strtotime($b['timestamp'] ?? '1970-01-01');
         return $timeB - $timeA;
@@ -115,9 +115,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
         $db->collection('integrations')->document($docId)->set([
             'approved_sender_id' => $senderId,
-            'nola_pro_api_key'   => $apiKey,
-            'semaphore_api_key'  => $apiKey, // for backward compat
-            'updated_at'         => new \Google\Cloud\Core\Timestamp(new \DateTime())
+            'nola_pro_api_key' => $apiKey,
+            'semaphore_api_key' => $apiKey, // for backward compat
+            'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
         ], ['merge' => true]);
 
         echo json_encode(['status' => 'success', 'message' => 'Sender configuration updated successfully.']);
@@ -136,10 +136,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
         $db->collection('integrations')->document($docId)->set([
-            'approved_sender_id' => null,  // Set to null to clear
-            'nola_pro_api_key'   => null,
-            'semaphore_api_key'  => null,
-            'updated_at'         => new \Google\Cloud\Core\Timestamp(new \DateTime())
+            'approved_sender_id' => null, // Set to null to clear
+            'nola_pro_api_key' => null,
+            'semaphore_api_key' => null,
+            'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
         ], ['merge' => true]);
 
         echo json_encode(['status' => 'success', 'message' => 'Sender ID has been revoked.']);
@@ -151,7 +151,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $apiKey = $payload['api_key'] ?? null;
     $note = $payload['note'] ?? null;
 
-    if (!$requestId || !in_array($status, ['approved', 'rejected'])) {
+    if (!$requestId || !in_array($status, ['approved', 'rejected', 'delete'])) {
         http_response_code(400);
         echo json_encode(['status' => 'error', 'message' => 'Missing or invalid request_id or status']);
         exit;
@@ -160,7 +160,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // 1. Update the request status
     $requestRef = $db->collection('sender_id_requests')->document($requestId);
     $reqSnapshot = $requestRef->snapshot();
-    
+
     if (!$reqSnapshot->exists()) {
         http_response_code(404);
         echo json_encode(['status' => 'error', 'message' => 'Request not found']);
@@ -178,12 +178,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $requestRef->set($updateData, ['merge' => true]);
 
+    if ($status === 'delete') {
+        $requestRef->delete();
+        echo json_encode(['status' => 'success', 'message' => 'Request deleted successfully.']);
+        exit;
+    }
+
     // 2. If approved, update the account mapping
     if ($status === 'approved') {
         // Format Doc ID for integrations
         $docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
         $accountRef = $db->collection('integrations')->document($docId);
-        
+
         // Fetch location name for better record keeping
         $locationName = 'Unknown';
         $tokenSnap = $db->collection('ghl_tokens')->document((string)$locId)->snapshot();
@@ -210,7 +216,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
 
     // 1. Fetch all tokens (Master list of installations)
     $tokens = $db->collection('ghl_tokens')->documents();
-    
+
     // 2. Fetch all integrations (For credit balances and sender IDs)
     $integrationsRaw = $db->collection('integrations')->documents();
     $integrationMap = [];
@@ -221,16 +227,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
     foreach ($tokens as $tokenDoc) {
         $locId = $tokenDoc->id();
         $tokenData = $tokenDoc->data();
-        
+
         // Skip the master 'ghl' settings document if it accidentally exists in this collection
-        if ($locId === 'ghl') continue;
+        if ($locId === 'ghl')
+            continue;
 
         $locationName = $tokenData['location_name'] ?? '';
 
         // --- THE FIX: Fetch missing location name using GHL API ---
         if (empty(trim($locationName))) {
             $accessToken = $tokenData['access_token'] ?? '';
-            
+
             if ($accessToken) {
                 try {
                     $locationUrl = 'https://services.leadconnectorhq.com/locations/' . $locId;
@@ -249,12 +256,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
                         $locData = json_decode($locResponse, true);
                         if (!empty($locData['location']['name'])) {
                             $locationName = $locData['location']['name'];
-                            
+
                             // Save back to Firestore so we don't query it again
                             $db->collection('ghl_tokens')->document($locId)->set([
                                 'location_name' => $locationName
                             ], ['merge' => true]);
-                            
+
                             // Sync name to integrations collection if it exists
                             $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
                             if (isset($integrationMap[$intDocId])) {
@@ -264,12 +271,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
                             }
                         }
                     }
-                } catch (Exception $e) {
+                }
+                catch (Exception $e) {
                     error_log("Failed to fetch location name for $locId: " . $e->getMessage());
                 }
             }
         }
-        
+
         if (empty(trim($locationName))) {
             $locationName = 'Unknown Location';
         }
