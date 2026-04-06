@@ -122,7 +122,25 @@ if ($http_status == 200 && is_array($result) && isset($result['access_token'])) 
                 'created_at' => new \Google\Cloud\Core\Timestamp($now)
             ], ['merge' => true]);
             
-        // Note: As specified, we optionally update users later but for the exchange we just save to ghl_tokens
+        // Also update company_id on matching user documents so login.php can return it
+        try {
+            // Find agency users whose agency_id matches this companyId
+            $userQuery = $db->collection('users')
+                ->where('agency_id', '=', $companyId)
+                ->documents();
+
+            foreach ($userQuery as $userDoc) {
+                if ($userDoc->exists()) {
+                    $userDoc->reference()->set([
+                        'company_id' => $companyId,
+                        'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+                    ], ['merge' => true]);
+                }
+            }
+        } catch (Exception $ue) {
+            // Non-fatal: tokens were saved, user doc update is best-effort
+            error_log("OAuth exchange - failed to update user doc company_id: " . $ue->getMessage());
+        }
     } catch (Exception $e) {
         error_log("Failed to save tokens: " . $e->getMessage());
         // We still return success to frontend since token was retrieved, but tokens aren't saved!
