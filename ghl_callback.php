@@ -15,6 +15,9 @@ function render_page(string $title, string $body_html): void
 
     header('Content-Type: text/html; charset=utf-8');
     echo <<<HTML
+
+
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -463,11 +466,11 @@ HTML;
 // We now support both the legacy Sub-account app and the new Agency-level app.
 $ghlApps = [
     'subaccount' => [
-        'clientId'     => getenv('GHL_CLIENT_ID') ?: '6999da2b8f278296d95f7274-mmn30t4f',
+        'clientId' => getenv('GHL_CLIENT_ID') ?: '6999da2b8f278296d95f7274-mmn30t4f',
         'clientSecret' => getenv('GHL_CLIENT_SECRET') ?: 'f9de7ccf-8bb9-4bc2-8956-621817dd861a',
     ],
     'agency' => [
-        'clientId'     => '69cb813b4b007d172f7e7a35-mneicksx',
+        'clientId' => '69cb813b4b007d172f7e7a35-mneicksx',
         'clientSecret' => 'f2c52910-fa01-47b1-9cf7-d812464fe2ad',
     ]
 ];
@@ -492,18 +495,19 @@ $usedAppType = '';
 $response = '';
 
 foreach ($ghlApps as $appType => $config) {
-    if (!$config['clientId'] || !$config['clientSecret']) continue;
+    if (!$config['clientId'] || !$config['clientSecret'])
+        continue;
 
     $ch = curl_init('https://services.leadconnectorhq.com/oauth/token');
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query([
-        'client_id'     => $config['clientId'],
+        'client_id' => $config['clientId'],
         'client_secret' => $config['clientSecret'],
-        'grant_type'    => 'authorization_code',
-        'code'          => $code,
-        'user_type'     => ($appType === 'agency' ? 'Company' : 'Location'),
-        'redirect_uri'  => $redirectUri,
+        'grant_type' => 'authorization_code',
+        'code' => $code,
+        'user_type' => ($appType === 'agency' ? 'Company' : 'Location'),
+        'redirect_uri' => $redirectUri,
     ]));
     curl_setopt($ch, CURLOPT_HTTPHEADER, ['Accept: application/json', 'Version: 2021-07-28']);
 
@@ -536,7 +540,7 @@ $idSafe = htmlspecialchars((string)$id, ENT_QUOTES, 'UTF-8');
 // ─── Fetch Name (Location or Company) ─────────────────────────────────────────
 $displayName = '';
 try {
-    $fetchUrl = ($userType === 'Company') 
+    $fetchUrl = ($userType === 'Company')
         ? 'https://services.leadconnectorhq.com/companies/' . $id
         : 'https://services.leadconnectorhq.com/locations/' . $id;
 
@@ -555,7 +559,14 @@ try {
         $locData = json_decode($locResp, true);
         $displayName = ($userType === 'Company') ? ($locData['company']['name'] ?? '') : ($locData['location']['name'] ?? '');
     }
-} catch (Exception $e) {
+
+    // Log for monitoring — helps debug when name detection fails
+    error_log(sprintf(
+        '[GHL_CALLBACK] Name fetch for %s %s: HTTP %d | name="%s"',
+        $userType, $id, $locCode, $displayName ?: '(empty)'
+    ));
+}
+catch (Exception $e) {
     error_log("Failed to fetch name in callback for $id: " . $e->getMessage());
 }
 
@@ -570,24 +581,25 @@ $expiresAtUnix = time() + (int)($data['expires_in'] ?? 0);
 try {
     // 1. Save main tokens
     $tokenPayload = [
-        'access_token'    => $data['access_token'] ?? null,
-        'refresh_token'   => $data['refresh_token'] ?? null,
-        'scope'           => $data['scope'] ?? null,
-        'expires_at'      => $expiresAtUnix,
-        'userType'        => $userType,
-        'companyId'       => $data['companyId'] ?? '',
-        'hashed_companyId'=> $data['hashedCompanyId'] ?? '',
-        'userId'          => $data['userId'] ?? '',
-        'appId'           => $ghlApps[$usedAppType]['clientId'], // Store which app provided this token
-        'appType'         => $usedAppType,
-        'raw'             => $data,
-        'updated_at'      => new \Google\Cloud\Core\Timestamp($now),
+        'access_token' => $data['access_token'] ?? null,
+        'refresh_token' => $data['refresh_token'] ?? null,
+        'scope' => $data['scope'] ?? null,
+        'expires_at' => $expiresAtUnix,
+        'userType' => $userType,
+        'companyId' => $data['companyId'] ?? '',
+        'hashed_companyId' => $data['hashedCompanyId'] ?? '',
+        'userId' => $data['userId'] ?? '',
+        'appId' => $ghlApps[$usedAppType]['clientId'], // Store which app provided this token
+        'appType' => $usedAppType,
+        'raw' => $data,
+        'updated_at' => new \Google\Cloud\Core\Timestamp($now),
     ];
 
     if ($userType === 'Location') {
         $tokenPayload['location_id'] = $id;
         $tokenPayload['location_name'] = $displayName;
-    } else {
+    }
+    else {
         $tokenPayload['agency_name'] = $displayName;
     }
 
@@ -602,23 +614,50 @@ try {
         if (!$integrationSnap->exists()) {
             // First-time install — 10 free credits
             $integrationRef->set([
-                'location_id'   => $id,
+                'location_id' => $id,
                 'location_name' => $displayName,
                 'free_credits_total' => 10,
-                'free_usage_count'   => 0,
-                'credit_balance'     => 0,
-                'installed_at'       => new \Google\Cloud\Core\Timestamp($now),
-                'updated_at'         => new \Google\Cloud\Core\Timestamp($now),
+                'free_usage_count' => 0,
+                'credit_balance' => 0,
+                'installed_at' => new \Google\Cloud\Core\Timestamp($now),
+                'updated_at' => new \Google\Cloud\Core\Timestamp($now),
             ]);
-        } else {
+        }
+        else {
             // Re-install: preserve credits, just update name
             $integrationRef->set([
                 'location_name' => $displayName,
-                'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
+                'updated_at' => new \Google\Cloud\Core\Timestamp($now),
             ], ['merge' => true]);
         }
     }
-} catch (Exception $e) {
+
+    // 3. Update matching user docs with company_id and company_name
+    if ($userType === 'Company' && $id) {
+        try {
+            $userQuery = $db->collection('users')
+                ->where('agency_id', '=', (string)$id)
+                ->documents();
+
+            $updateFields = ['company_id' => (string)$id, 'updated_at' => new \Google\Cloud\Core\Timestamp($now)];
+            if (!empty($displayName)) {
+                $updateFields['company_name'] = $displayName;
+            }
+
+            foreach ($userQuery as $uDoc) {
+                if ($uDoc->exists()) {
+                    $uDoc->reference()->set($updateFields, ['merge' => true]);
+                }
+            }
+
+            error_log(sprintf('[GHL_CALLBACK] Updated users collection with company_id=%s company_name="%s"', $id, $displayName ?: '(empty)'));
+        }
+        catch (Exception $ue) {
+            error_log('GHL Callback - failed to update user docs: ' . $ue->getMessage());
+        }
+    }
+}
+catch (Exception $e) {
     render_error('Callback authorized, but failed to save tokens: ' . $e->getMessage());
 }
 

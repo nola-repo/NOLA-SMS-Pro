@@ -7,7 +7,7 @@ import { useAuth } from '../context/AuthContext';
 export const AgencyDashboard: React.FC = () => {
     const [activeTab, setActiveTab] = useState<ViewTab>('compose'); // Using 'compose' as default management view for now
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-    const { logout, user } = useAuth();
+    const { logout, user, isGhlFrame } = useAuth();
 
     // Map 'compose' to SubaccountManager for Agency view
     const renderContent = () => {
@@ -43,12 +43,14 @@ export const AgencyDashboard: React.FC = () => {
                     </div>
                     
                     <div className="flex items-center gap-4">
-                        <button 
-                            onClick={logout}
-                            className="text-[13px] font-bold text-red-500 hover:text-red-600 transition-colors"
-                        >
-                            Logout
-                        </button>
+                        {!isGhlFrame && (
+                            <button 
+                                onClick={logout}
+                                className="text-[13px] font-bold text-red-500 hover:text-red-600 transition-colors"
+                            >
+                                Logout
+                            </button>
+                        )}
                         <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 shadow-sm flex items-center justify-center text-white font-bold text-sm">
                             {user?.name?.charAt(0) || 'A'}
                         </div>

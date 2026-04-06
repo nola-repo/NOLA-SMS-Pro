@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { authService, KEYS } from '../services/authService';
 import { safeStorage } from '../utils/safeStorage';
+import { useGhlCompany, type AutoLoginStatus } from '../hooks/useGhlCompany';
 
 interface Session {
   token: string;
@@ -14,6 +15,8 @@ interface AuthContextType extends Session {
   login: (data: any) => void;
   logout: () => void;
   isAuthenticated: boolean;
+  isGhlFrame: boolean;
+  autoLoginStatus: AutoLoginStatus;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -22,11 +25,22 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const s = authService.getSession();
-    setSession(s || null);
-    setLoading(false);
+  const refreshSession = useCallback(() => {
+    setSession(authService.getSession() || null);
   }, []);
+
+  useEffect(() => {
+    refreshSession();
+    setLoading(false);
+  }, [refreshSession]);
+
+  // GHL auto-login hook — re-reads session on success
+  const { isGhlFrame, autoLoginStatus } = useGhlCompany(
+    useCallback((_data: any) => {
+      // Session was saved to localStorage by authService.ghlAutoLogin — just refresh state
+      refreshSession();
+    }, [refreshSession])
+  );
 
   const login = (data: any) => {
     // Save to local storage
@@ -62,6 +76,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         login,
         logout,
         isAuthenticated: !!session,
+        isGhlFrame,
+        autoLoginStatus,
       }}
     >
       {children}

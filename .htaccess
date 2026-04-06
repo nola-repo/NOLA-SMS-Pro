@@ -64,6 +64,9 @@
     # ── Public / Auth endpoints ────────────────────────────────────────────
     RewriteRule ^api/public/whitelabel/?$ /api/public/whitelabel.php [NC,L,QSA]
     RewriteRule ^api/auth/login/?$ /api/auth/login.php [NC,L,QSA]
+    RewriteRule ^api/auth/register/?$ /api/auth/register.php [NC,L,QSA]
+    RewriteRule ^api/agency/ghl_autologin/?$ /api/agency/ghl_autologin.php [NC,L,QSA]
+    RewriteRule ^api/agency/link_company/?$ /api/agency/link_company.php [NC,L,QSA]
 
     # ── Generic API endpoints ───────────────────────────────────────────
     # /api/messages -> /api/messages.php

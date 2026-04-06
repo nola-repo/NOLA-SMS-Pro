@@ -132,8 +132,9 @@ if ($http_status == 200 && is_array($result) && isset($result['access_token'])) 
             foreach ($userQuery as $userDoc) {
                 if ($userDoc->exists()) {
                     $userDoc->reference()->set([
-                        'company_id' => $companyId,
-                        'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+                        'company_id'   => $companyId,
+                        'company_name' => $companyName,
+                        'updated_at'   => new \Google\Cloud\Core\Timestamp($now),
                     ], ['merge' => true]);
                 }
             }
@@ -149,6 +150,14 @@ if ($http_status == 200 && is_array($result) && isset($result['access_token'])) 
         echo json_encode(["success" => false, "error" => "Failed to save tokens."]);
         exit;
     }
+
+    // Monitor log — visible in Cloud Run / server logs
+    error_log(sprintf(
+        '[OAUTH_EXCHANGE] company_id detected: %s | company_name: %s | time: %s',
+        $companyId,
+        $companyName,
+        (new DateTimeImmutable())->format('Y-m-d H:i:s')
+    ));
 
     echo json_encode([
         "success" => true,

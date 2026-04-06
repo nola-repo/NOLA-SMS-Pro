@@ -69,5 +69,27 @@ export const authService = {
 
   isAuthenticated() {
     return this.getSession() !== null;
+  },
+
+  async ghlAutoLogin(companyId: string) {
+    const API_BASE_URL = import.meta.env.VITE_API_BASE || '';
+    const res = await fetch(`${API_BASE_URL}/api/agency/ghl_autologin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ company_id: companyId }),
+    });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.message || errData.error || `Auto-login failed (${res.status})`);
+    }
+    const data = await res.json();
+
+    // Persist session — same keys as normal login
+    safeStorage.setItem(KEYS.token, data.token);
+    safeStorage.setItem(KEYS.role, data.role);
+    if (data.company_id) safeStorage.setItem(KEYS.companyId, data.company_id);
+    if (data.user) safeStorage.setItem(KEYS.user, JSON.stringify(data.user));
+
+    return data;
   }
 };

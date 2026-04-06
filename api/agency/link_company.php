@@ -11,7 +11,7 @@
  *   Authorization: Bearer <jwt_token>
  *   X-Webhook-Secret: f7RkQ2pL9zV3tX8cB1nS4yW6
  *   Content-Type: application/json
- * Body: { "company_id": "GHL_COMPANY_123" }
+ * Body: { "company_id": "GHL_COMPANY_123", "company_name": "Acme Agency" }
  */
 
 ini_set('display_errors', 0);
@@ -51,7 +51,8 @@ if (!$uid) {
 
 // 3. Read and validate company_id from body
 $input = json_decode(file_get_contents('php://input'), true);
-$companyId = trim($input['company_id'] ?? '');
+$companyId   = trim($input['company_id'] ?? '');
+$companyName = trim($input['company_name'] ?? '');
 
 if (empty($companyId)) {
     http_response_code(422);
@@ -72,15 +73,20 @@ try {
         exit;
     }
 
-    // 5. Update user document with company_id
-    $userRef->set([
+    // 5. Update user document with company_id (and company_name if provided)
+    $updateData = [
         'company_id'  => $companyId,
         'updated_at'  => new \Google\Cloud\Core\Timestamp(new DateTimeImmutable()),
-    ], ['merge' => true]);
+    ];
+    if (!empty($companyName)) {
+        $updateData['company_name'] = $companyName;
+    }
+    $userRef->set($updateData, ['merge' => true]);
 
     echo json_encode([
-        'success'    => true,
-        'company_id' => $companyId,
+        'success'      => true,
+        'company_id'   => $companyId,
+        'company_name' => $companyName ?: null,
     ]);
 
 } catch (Exception $e) {
