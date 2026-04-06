@@ -1,93 +1,73 @@
 <?php
+/**
+ * POST /api/agency/update_subaccount
+ * 
+ * Updates the SMS settings (toggle, rate limit, attempt resets) 
+ * for a specific subaccount inside ghl_tokens.
+ */
 require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
-
-require_once __DIR__ . '/auth_helper.php';
-$agency_id = validate_agency_request(true);
-
+require __DIR__ . '/../webhook/firestore_client.php';
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
-    echo json_encode(['status' => 'error', 'message' => 'Method Not Allowed']);
+    echo json_encode(['error' => 'Method not allowed']);
     exit;
 }
-
-require_once __DIR__ . '/../webhook/firestore_client.php';
-$db = get_firestore();
-
-$raw = file_get_contents('php://input');
-$payload = json_decode($raw, true);
-
-$location_id = $payload['location_id'] ?? null;
-if (!$location_id) {
+$agencyId = $_SERVER['HTTP_X_AGENCY_ID'] ?? '';
+if (!$agencyId) {
     http_response_code(400);
-    echo json_encode(['status' => 'error', 'message' => 'Missing location_id']);
+    echo json_encode(['error' => 'Missing X-Agency-ID header.']);
     exit;
 }
-
+$input = json_decode(file_get_contents('php://input'), true);
+$locationId = $input['location_id'] ?? '';
+if (!$locationId) {
+    http_response_code(400);
+    echo json_encode(['error' => 'Missing location_id.']);
+    exit;
+}
 try {
-    $docRef = $db->collection('agency_subaccounts')->document($location_id);
+    $db = get_firestore();
+    
+    // Validate that the location actually belongs to this agency
+    $docRef = $db->collection('ghl_tokens')->document($locationId);
     $snapshot = $docRef->snapshot();
-
-    if (!$snapshot->exists()) {
+    
+    if (!$snapshot->exists() || trim($snapshot->data()['companyId'] ?? '') !== trim($agencyId)) {
         http_response_code(404);
-        echo json_encode(['status' => 'error', 'message' => 'Sub-account not found']);
+        echo json_encode(['error' => 'Subaccount not found for this agency.']);
         exit;
     }
-
-    $updateData = [];
-    if (isset($payload['toggle_enabled'])) {
-        $isTurningOn = (bool)$payload['toggle_enabled'];
-        $currentlyEnabled = $snapshot->data()['toggle_enabled'] ?? false;
-
-        // Validations if they are trying to activate this sub-account
-        if ($isTurningOn && !$currentlyEnabled) {
-            // Fetch agency max limit from users collection
-            $maxActive = 3; // default fallback
-            $userQuery = $db->collection('users')->where('company_id', '=', $agency_id)->limit(1)->documents();
-            foreach ($userQuery as $uDoc) {
-                if ($uDoc->exists()) {
-                    $maxActive = $uDoc->data()['max_active_subaccounts'] ?? 3;
-                    break;
-                }
-            }
-            
-            // Count exactly how many are currently flipped to true for this agency
-            $activeCountQuery = $db->collection('agency_subaccounts')
-                ->where('agency_id', '=', $agency_id)
-                ->where('toggle_enabled', '=', true)
-                ->documents();
-            
-            $activeCount = 0;
-            foreach ($activeCountQuery as $doc) {
-                if ($doc->exists()) {
-                    $activeCount++;
-                }
-            }
-
-            if ($activeCount >= $maxActive) {
-                http_response_code(403);
-                echo json_encode(['status' => 'error', 'message' => "Limit reached. You can only activate {$maxActive} sub-accounts. Please upgrade your plan or disable another account first."]);
-                exit;
-            }
+    $currentData = $snapshot->data();
+    
+    $toggleEnabled = isset($input['toggle_enabled']) ? (bool)$input['toggle_enabled'] : ($currentData['toggle_enabled'] ?? false);
+    $rateLimit = isset($input['rate_limit']) ? (int)$input['rate_limit'] : ($currentData['rate_limit'] ?? 5);
+    $resetCounter = isset($input['reset_counter']) ? (bool)$input['reset_counter'] : false;
+    
+    $updates = [
+        'toggle_enabled' => $toggleEnabled,
+        'rate_limit' => $rateLimit,
+        'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTimeImmutable())
+    ];
+    
+    // Enforce 3 max activations for "toggle_enabled"
+    if ($toggleEnabled && !($currentData['toggle_enabled'] ?? false)) {
+        $activations = (int)($currentData['toggle_activation_count'] ?? 0);
+        if ($activations >= 3) {
+            http_response_code(403);
+            echo json_encode(['error' => 'Activation Limit Reached', 'status' => 'limit_reached']);
+            exit;
         }
-        
-        $updateData['toggle_enabled'] = $isTurningOn;
+        $updates['toggle_activation_count'] = $activations + 1;
     }
-    if (isset($payload['rate_limit'])) {
-        $updateData['rate_limit'] = (int)$payload['rate_limit'];
+    // Reset attempt_count logic
+    if ($resetCounter) {
+        $updates['attempt_count'] = 0;
     }
-    if (isset($payload['reset_counter']) && $payload['reset_counter'] === true) {
-        $updateData['attempt_count'] = 0;
-    }
-
-    if (!empty($updateData)) {
-        $updateData['updated_at'] = new \Google\Cloud\Core\Timestamp(new \DateTime());
-        $docRef->set($updateData, ['merge' => true]);
-    }
-
-    echo json_encode(['status' => 'success', 'message' => 'Sub-account updated successfully']);
-
-} catch (\Exception $e) {
+    // Apply updates
+    $docRef->set($updates, ['merge' => true]);
+    echo json_encode(['status' => 'success']);
+} catch (Exception $e) {
     http_response_code(500);
-    echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
+    echo json_encode(['error' => 'Update failed: ' . $e->getMessage()]);
 }
