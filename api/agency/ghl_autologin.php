@@ -24,7 +24,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
-    echo json_encode(['status' => 'error', 'message' => 'Method not allowed']);
+    echo json_encode(['success' => false, 'error' => 'Method not allowed']);
     exit;
 }
 
@@ -33,7 +33,7 @@ $companyId = trim($input['company_id'] ?? '');
 
 if (empty($companyId)) {
     http_response_code(400);
-    echo json_encode(['status' => 'error', 'message' => 'company_id is required']);
+    echo json_encode(['success' => false, 'error' => 'company_id is required']);
     exit;
 }
 
@@ -57,8 +57,8 @@ try {
     }
 
     if (!$userDoc) {
-        http_response_code(404);
-        echo json_encode(['status' => 'error', 'error' => 'No agency account is linked to this GoHighLevel company.']);
+        http_response_code(401);
+        echo json_encode(['success' => false, 'error' => 'No agency account found for this GHL Company ID. Please register first.']);
         exit;
     }
 
@@ -71,14 +71,14 @@ try {
         exit;
     }
 
-    // Build token payload (8-hour expiry for iframe sessions)
+    // Build token payload (7-day expiry for iframe sessions)
     $tokenPayload = [
         'uid'        => $userDoc->id(),
         'email'      => $userData['email'] ?? '',
         'role'       => 'agency',
         'company_id' => $companyId,
         'iat'        => time(),
-        'exp'        => time() + (60 * 60 * 8), // 8h
+        'exp'        => time() + (60 * 60 * 24 * 7), // 7 days
     ];
 
     if (!empty($userData['agency_id'])) {
@@ -97,6 +97,7 @@ try {
     ], ['merge' => true]);
 
     echo json_encode([
+        'success'    => true,
         'token'      => $token,
         'role'       => 'agency',
         'company_id' => $companyId,
