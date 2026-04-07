@@ -13,16 +13,25 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     echo json_encode(['error' => 'Method not allowed']);
     exit;
 }
+
+$webhookSecret = $_SERVER['HTTP_X_WEBHOOK_SECRET'] ?? '';
+if ($webhookSecret !== 'f7RkQ2pL9zV3tX8cB1nS4yW6') {
+    http_response_code(401);
+    echo json_encode(['error' => 'Unauthorized']);
+    exit;
+}
+
 $agencyId = $_SERVER['HTTP_X_AGENCY_ID'] ?? '';
 if (!$agencyId) {
     http_response_code(400);
     echo json_encode(['error' => 'Missing X-Agency-ID header.']);
     exit;
 }
+
 try {
     $db = get_firestore();
     
-    // 1. Get Agency Token
+    // 1. Get Agency Token from ghl_tokens
     $agencyDoc = $db->collection('ghl_tokens')->document($agencyId)->snapshot();
     if (!$agencyDoc->exists()) {
         http_response_code(404);
@@ -32,6 +41,7 @@ try {
     
     $agencyData = $agencyDoc->data();
     $accessToken = $agencyData['access_token'] ?? '';
+    $agencyName = $agencyData['agency_name'] ?? 'Unnamed Agency';
     
     if (!$accessToken) {
         http_response_code(401);
@@ -60,8 +70,8 @@ try {
     $apiData = json_decode($response, true);
     $ghlLocations = $apiData['locations'] ?? [];
 
-    // 3. Fetch existing NOLA configs from Firestore for this company
-    $results = $db->collection('ghl_tokens')->where('companyId', '=', $agencyId)->documents();
+    // 3. Fetch existing configs from agency_subaccounts
+    $results = $db->collection('agency_subaccounts')->where('agency_id', '=', $agencyId)->documents();
     $dbConfigs = [];
     foreach ($results as $doc) {
         if ($doc->exists()) {
@@ -71,20 +81,30 @@ try {
         }
     }
     
-    // 4. Merge API Locations with DB Configs
+    // 4. Merge API Locations, Auto-Sync, and return
     $subaccounts = [];
     foreach ($ghlLocations as $loc) {
         $locId = $loc['id'];
+        $locName = $loc['name'] ?? 'Unnamed Location';
         $config = $dbConfigs[$locId] ?? [];
         
-        $subaccounts[] = [
+        $subaccountData = [
             'location_id'             => $locId,
-            'location_name'           => $loc['name'] ?? 'Unnamed Location',
+            'location_name'           => $locName,
+            'agency_id'               => $agencyId,
+            'agency_name'             => $agencyName,
             'toggle_enabled'          => (bool)($config['toggle_enabled'] ?? false),
             'rate_limit'              => (int)($config['rate_limit'] ?? 5),
             'attempt_count'           => (int)($config['attempt_count'] ?? 0),
             'toggle_activation_count' => (int)($config['toggle_activation_count'] ?? 0)
         ];
+        
+        // Auto-sync into agency_subaccounts if missing or if names have changed
+        if (empty($config) || ($config['agency_name'] ?? '') !== $agencyName || ($config['location_name'] ?? '') !== $locName) {
+            $db->collection('agency_subaccounts')->document($locId)->set($subaccountData, ['merge' => true]);
+        }
+        
+        $subaccounts[] = $subaccountData;
     }
     
     echo json_encode([

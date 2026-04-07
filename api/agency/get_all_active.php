@@ -12,6 +12,13 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     exit;
 }
 
+$webhookSecret = $_SERVER['HTTP_X_WEBHOOK_SECRET'] ?? '';
+if ($webhookSecret !== 'f7RkQ2pL9zV3tX8cB1nS4yW6') {
+    http_response_code(401);
+    echo json_encode(['error' => 'Unauthorized']);
+    exit;
+}
+
 require_once __DIR__ . '/../webhook/firestore_client.php';
 $db = get_firestore();
 

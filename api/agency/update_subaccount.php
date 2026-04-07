@@ -13,6 +13,14 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     echo json_encode(['error' => 'Method not allowed']);
     exit;
 }
+
+$webhookSecret = $_SERVER['HTTP_X_WEBHOOK_SECRET'] ?? '';
+if ($webhookSecret !== 'f7RkQ2pL9zV3tX8cB1nS4yW6') {
+    http_response_code(401);
+    echo json_encode(['error' => 'Unauthorized']);
+    exit;
+}
+
 $agencyId = $_SERVER['HTTP_X_AGENCY_ID'] ?? '';
 if (!$agencyId) {
     http_response_code(400);
@@ -30,10 +38,10 @@ try {
     $db = get_firestore();
     
     // Validate that the location actually belongs to this agency
-    $docRef = $db->collection('ghl_tokens')->document($locationId);
+    $docRef = $db->collection('agency_subaccounts')->document($locationId);
     $snapshot = $docRef->snapshot();
     
-    if (!$snapshot->exists() || trim($snapshot->data()['companyId'] ?? '') !== trim($agencyId)) {
+    if (!$snapshot->exists() || trim($snapshot->data()['agency_id'] ?? '') !== trim($agencyId)) {
         http_response_code(404);
         echo json_encode(['error' => 'Subaccount not found for this agency.']);
         exit;
