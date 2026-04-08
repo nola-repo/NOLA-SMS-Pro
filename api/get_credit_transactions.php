@@ -26,7 +26,9 @@ try {
     }
 
     $locId = get_ghl_location_id();
-    $accountId = $locId ?: 'default';
+    // ROBUST PREFIX HANDLING: Must match CreditManager's ghl_ prefixing logic
+    $accountId = $locId ? ('ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId)) : 'default';
+
     $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 50;
     
     // Query credit_transactions for this account, sorted by newest first
