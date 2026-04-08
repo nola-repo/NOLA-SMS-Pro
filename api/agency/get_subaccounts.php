@@ -14,19 +14,8 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     exit;
 }
 
-$webhookSecret = $_SERVER['HTTP_X_WEBHOOK_SECRET'] ?? '';
-if ($webhookSecret !== 'f7RkQ2pL9zV3tX8cB1nS4yW6') {
-    http_response_code(401);
-    echo json_encode(['error' => 'Unauthorized']);
-    exit;
-}
-
-$agencyId = $_SERVER['HTTP_X_AGENCY_ID'] ?? '';
-if (!$agencyId) {
-    http_response_code(400);
-    echo json_encode(['error' => 'Missing X-Agency-ID header.']);
-    exit;
-}
+require_once __DIR__ . '/auth_helper.php';
+$agencyId = validate_agency_request();
 
 try {
     $db = get_firestore();

@@ -70,6 +70,7 @@
     RewriteRule ^api/agency/get_subaccounts/?$ /api/agency/get_subaccounts.php [NC,L,QSA]
     RewriteRule ^api/agency/update_subaccount/?$ /api/agency/update_subaccount.php [NC,L,QSA]
     RewriteRule ^api/agency/check_installs/?$ /api/agency/check_installs.php [NC,L,QSA]
+    RewriteRule ^api/agency/ghl_sso_decrypt/?$ /api/agency/ghl_sso_decrypt.php [NC,L,QSA]
 
     # ── Generic API endpoints ───────────────────────────────────────────
     # /api/messages -> /api/messages.php

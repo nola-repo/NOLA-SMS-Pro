@@ -177,92 +177,76 @@ $customApiKey = $intData['nola_pro_api_key'] ?? ($intData['semaphore_api_key'] ?
 $freeUsageCount = $intData['free_usage_count'] ?? 0;
 $freeCreditsTotal = $intData['free_credits_total'] ?? 10;
 
-// Sender selection (same three-tier logic as send_sms.php)
-$SEMAPHORE_API_KEY = $config['SEMAPHORE_API_KEY'];
-$SEMAPHORE_URL = $config['SEMAPHORE_URL'];
-$SENDER_IDS = $config['SENDER_IDS'];
+// ── Three-Tier Sender + Credit Logic ────────────────────────────────────────
+$usingCustomSender = false;
+$usingFreeCredits = false;
 
 if ($approvedSenderId && $customApiKey) {
+    // ✅ Tier 1: Custom sender (approved sender ID + custom API key) — no system credit deduction
     $sender = $approvedSenderId;
     $activeApiKey = $customApiKey;
     $usingCustomSender = true;
-}
-else {
+} else {
+    // ✅ Tier 2 or 3: Use system sender + system API key
     $sender = $SENDER_IDS[0] ?? 'NOLASMSPro';
     $activeApiKey = $SEMAPHORE_API_KEY;
     $usingCustomSender = false;
-}
 
-// ── Agency myCRMSIM Routing Check ──────────────────────────────────────────
-$useMyCrmSim = false;
-if ($locationId) {
-    if (!isset($db)) {
-        $db = get_firestore();
-    }
-    $agencySubRef = $db->collection('agency_subaccounts')->document($locationId);
-    $agencySubSnap = $agencySubRef->snapshot();
-    if ($agencySubSnap->exists()) {
-        $agencySubData = $agencySubSnap->data();
-        if (!empty($agencySubData['toggle_enabled'])) {
-            $today = date('Y-m-d');
-            $lastReset = $agencySubData['last_reset_date'] ?? '';
-            $attempt_count = $agencySubData['attempt_count'] ?? 0;
-            $rate_limit = $agencySubData['rate_limit'] ?? 0;
-
-            // Daily Reset Logic
-            if ($lastReset !== $today) {
-                $attempt_count = 0;
-                $agencySubRef->set([
-                    'attempt_count' => 0,
-                    'last_reset_date' => $today
-                ], ['merge' => true]);
-            }
-
-            if ($attempt_count < $rate_limit) {
-                $useMyCrmSim = true;
-                // --- FIX 1: Atomic Increment to prevent race conditions ---
-                $agencySubRef->set([
-                    'attempt_count' => \Google\Cloud\Firestore\FieldValue::increment(1)
-                ], ['merge' => true]);
-            } else {
-                http_response_code(403);
-                echo json_encode(['success' => false, 'error' => 'rate_limit_exceeded', 'message' => "Agency subaccount daily rate limit exceeded ($rate_limit)."]);
-                exit;
-            }
-        }
+    // Determine if this send falls within the free trial quota
+    if ($freeUsageCount + $required_credits <= $freeCreditsTotal) {
+        $usingFreeCredits = true; // Tier 2: still within free trial
     }
 }
 
-// ── Credit Deduction ────────────────────────────────────────────────────────
-$creditManager = new CreditManager();
-$required_credits = CreditManager::calculateRequiredCredits($message, 1);
+// ── Agency myCRMSIM Routing Check (already handled above) ──────────────────
 
-// --- FIX 2: Only deduct credits if NOT using myCRMSIM (Smart Billing) ---
+// ── Credit Deduction & Trial Logging ────────────────────────────────────────
+// --- Only deduct/track if NOT using myCRMSIM or Custom Sender ---
 if (!$useMyCrmSim && !$usingCustomSender) {
-    try {
-        $creditManager->deduct_credits(
-            $locationId,
-            $required_credits,
-            $messageId ?? ('ghl_prov_' . bin2hex(random_bytes(4))),
-            "GHL Provider SMS to {$normalizedPhone}"
-        );
-    }
-    catch (\Exception $e) {
-        if ($e->getMessage() === 'Insufficient credits.') {
-            http_response_code(402);
-            echo json_encode([
-                'success' => false,
-                'error' => 'insufficient_credits',
-                'message' => 'Insufficient credits. Please top up your NOLA SMS Pro credits.',
-            ]);
+    if ($usingFreeCredits) {
+        // Tier 2: Free Trial -> Increment free usage counter, do NOT deduct paid balance
+        $intRef->set([
+            'free_usage_count' => $freeUsageCount + $required_credits,
+            'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+        ], ['merge' => true]);
+
+        // LOGGING: Record trial usage in transaction history for visibility (amount 0)
+        try {
+            $creditManager->record_trial_usage(
+                $locationId,
+                $required_credits,
+                $messageId ?? ('ghl_prov_trial_' . bin2hex(random_bytes(4))),
+                "Free trial GHL provider message"
+            );
+        } catch (\Exception $e) {
+            error_log("[ghl_provider] Trial logging failed: " . $e->getMessage());
         }
-        else {
-            http_response_code(500);
-            echo json_encode(['success' => false, 'error' => 'Credit deduction failed: ' . $e->getMessage()]);
+    } else {
+        // Tier 3: Paid Usage -> Deduct actual paid credits
+        try {
+            $creditManager->deduct_credits(
+                $locationId,
+                $required_credits,
+                $messageId ?? ('ghl_prov_' . bin2hex(random_bytes(4))),
+                "GHL Provider SMS to {$normalizedPhone}"
+            );
+        } catch (\Exception $e) {
+            if ($e->getMessage() === 'Insufficient credits.') {
+                http_response_code(402);
+                echo json_encode([
+                    'success' => false,
+                    'error' => 'insufficient_credits',
+                    'message' => 'Insufficient credits. Please top up your NOLA SMS Pro credits.',
+                ]);
+            } else {
+                http_response_code(500);
+                echo json_encode(['success' => false, 'error' => 'Credit deduction failed: ' . $e->getMessage()]);
+            }
+            exit;
         }
-        exit;
     }
 }
+
 
 $myCrmSimSuccess = false;
 if ($useMyCrmSim) {

@@ -22,16 +22,11 @@ if (!$companyId) {
     exit;
 }
 
-$webhookSecret = $_SERVER['HTTP_X_WEBHOOK_SECRET'] ?? '';
-if ($webhookSecret !== 'f7RkQ2pL9zV3tX8cB1nS4yW6') {
-    http_response_code(401);
-    echo json_encode(['error' => 'Unauthorized']);
-    exit;
-}
+require_once __DIR__ . '/auth_helper.php';
+$agencyId = validate_agency_request();
 
-// Ensure the requested company_id belongs to the authenticated agency owner (if provided)
-$agencyId = $_SERVER['HTTP_X_AGENCY_ID'] ?? '';
-if ($agencyId && $agencyId !== $companyId) {
+// Ensure the requested company_id belongs to the authenticated agency owner
+if ($agencyId !== $companyId) {
     http_response_code(403);
     echo json_encode(['error' => 'Forbidden']);
     exit;

@@ -211,6 +211,8 @@ try {
         'success' => true,
         'account_id' => $locId,
         'credit_balance' => $creditBalance,
+        'free_usage_count' => (int)($data['free_usage_count'] ?? 0),
+        'free_credits_total' => (int)($data['free_credits_total'] ?? 0),
         'currency' => $currency,
         'created_at' => $createdAt,
         'updated_at' => $updatedAt,

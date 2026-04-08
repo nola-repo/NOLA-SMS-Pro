@@ -82,8 +82,18 @@ try {
     ];
 
     // Add role-specific identifiers
-    if ($role === 'agency' && !empty($userData['agency_id'])) {
-        $tokenPayload['agency_id'] = $userData['agency_id'];
+    if ($role === 'agency') {
+        if (!empty($userData['agency_id'])) {
+            $tokenPayload['agency_id'] = $userData['agency_id'];
+        }
+        // Include company_id in token so agency endpoints can scope data
+        // without requiring the frontend to send X-Agency-ID headers separately
+        if (!empty($userData['company_id'])) {
+            $tokenPayload['company_id'] = $userData['company_id'];
+        } elseif (!empty($userData['agency_id'])) {
+            // Fallback: treat agency_id as company_id for legacy records
+            $tokenPayload['company_id'] = $userData['agency_id'];
+        }
     }
     if ($role === 'user' && !empty($userData['location_id'])) {
         $tokenPayload['location_id'] = $userData['location_id'];

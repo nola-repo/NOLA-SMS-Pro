@@ -260,50 +260,64 @@ if ($locId) {
     }
 }
 
-// ── Credit Deduction ────────────────────────────────────────────────────────
-// --- FIX 2: Only deduct credits if NOT using myCRMSIM (Smart Billing) ---
+// ── Credit Deduction & Trial ────────────────────────────────────────────────
+// --- FIX 2: Only deduct/track credits if NOT using myCRMSIM or Custom Sender ---
 if (!$useMyCrmSim && !$usingCustomSender) {
-    try {
-        $creditManager->deduct_credits(
-            $account_id,
-            $required_credits,
-            $batch_id ?? ('single_' . bin2hex(random_bytes(4))),
-            "SMS sent to $num_recipients recipients"
-        );
-    }
-    catch (\Exception $e) {
-        if ($e->getMessage() === "Insufficient credits.") {
-            // Both free trial exhausted AND paid credits insufficient → hard block
-            http_response_code(403);
-            echo json_encode([
-                "status" => "error",
-                "message" => "Insufficient credits to send SMS. Please top up your credits.",
-                "error" => "insufficient_credits"
-            ]);
-        }
-        else {
-            http_response_code(500);
-            echo json_encode(["status" => "error", "message" => "Credit deduction failed: " . $e->getMessage()]);
-        }
-        exit;
-    }
-
-    // Increment free usage counter only if this send was within the free quota (Tier 2)
     if ($usingFreeCredits) {
+        // Tier 2: Free Trial -> Increment free usage counter, do NOT deduct paid balance
         $intRef->set([
             'free_usage_count' => $freeUsageCount + $num_recipients,
             'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
         ], ['merge' => true]);
-    }
 
-    // ── Low Balance Alert ──────────────────────────────────────────────────
-    try {
-        require_once __DIR__ . '/../services/NotificationService.php';
-        $newBalance = $creditManager->get_balance($account_id);
-        NotificationService::checkLowBalance($db, $locId, $newBalance);
-    }
-    catch (\Throwable $e) {
-        error_log('[LowBalanceAlert] ' . $e->getMessage());
+        // LOGGING: Record trial usage in transaction history for visibility (amount 0)
+        try {
+            $creditManager->record_trial_usage(
+                $account_id,
+                $required_credits,
+                $batch_id ?? ('trial_' . bin2hex(random_bytes(4))),
+                "Free trial message to $num_recipients recipients"
+            );
+        } catch (\Exception $e) {
+            error_log("Trial logging failed: " . $e->getMessage());
+            // We don't exit here since the free counter was already updated
+        }
+    } else {
+        // Tier 3: Paid Usage -> Deduct actual paid credits
+        try {
+            $creditManager->deduct_credits(
+                $account_id,
+                $required_credits,
+                $batch_id ?? ('single_' . bin2hex(random_bytes(4))),
+                "SMS sent to $num_recipients recipients"
+            );
+        }
+        catch (\Exception $e) {
+            if ($e->getMessage() === "Insufficient credits.") {
+                // Both free trial exhausted AND paid credits insufficient → hard block
+                http_response_code(403);
+                echo json_encode([
+                    "status" => "error",
+                    "message" => "Insufficient credits to send SMS. Please top up your credits.",
+                    "error" => "insufficient_credits"
+                ]);
+            }
+            else {
+                http_response_code(500);
+                echo json_encode(["status" => "error", "message" => "Credit deduction failed: " . $e->getMessage()]);
+            }
+            exit;
+        }
+
+        // ── Low Balance Alert ──────────────────────────────────────────────────
+        try {
+            require_once __DIR__ . '/../services/NotificationService.php';
+            $newBalance = $creditManager->get_balance($account_id);
+            NotificationService::checkLowBalance($db, $locId, $newBalance);
+        }
+        catch (\Throwable $e) {
+            error_log('[LowBalanceAlert] ' . $e->getMessage());
+        }
     }
 }
 

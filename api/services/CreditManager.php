@@ -188,6 +188,38 @@ class CreditManager
     }
 
     /**
+     * Records a zero-balance transaction for free trial usage.
+     * This provides visibility in the transaction history without affecting the paid balance.
+     */
+    public function record_trial_usage(string $account_id, int $amount, string $reference_id, string $description): bool
+    {
+        $accountRef = $this->get_account_ref($account_id);
+        $transactionRef = $this->db->collection('credit_transactions')->newDocument();
+
+        $now = new \DateTimeImmutable();
+        $ts = new \Google\Cloud\Core\Timestamp($now);
+
+        // Simple batch to create the transaction record
+        $batch = $this->db->batch();
+
+        $batch->create($transactionRef, [
+            'transaction_id' => $transactionRef->id(),
+            'account_id' => $accountRef->id(),
+            'type' => 'free_trial',
+            'amount' => 0, // No paid credit deduction
+            'free_usage_applied' => $amount, // Tracks how many trial credits were used
+            'reference_id' => $reference_id,
+            'description' => $description,
+            'created_at' => $ts
+        ]);
+
+        $batch->commit();
+        
+        return true;
+    }
+
+
+    /**
      * Helper to get the correct account reference based on account_id.
      * Uses 'integrations' collection with 'ghl_' prefix for GHL locations.
      */
