@@ -38,21 +38,23 @@ class CreditManager
         // GSM-7 basic character set + extension
         $gsm7_basic = '@£$¥èéùìòÇ' . "\n" . 'Øø' . "\r" . 'ÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !"#¤%&\'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà';
         $gsm7_extension = '^{}\\[]~|€';
-        
+
         $is_unicode = false;
         $gsm7_length = 0;
-        
+
         // Check if message is mb_string compatible, otherwise use strlen
         $len = mb_strlen($message, 'UTF-8');
-        
+
         for ($i = 0; $i < $len; $i++) {
             $char = mb_substr($message, $i, 1, 'UTF-8');
-            
+
             if (mb_strpos($gsm7_basic, $char, 0, 'UTF-8') !== false) {
                 $gsm7_length += 1;
-            } elseif (mb_strpos($gsm7_extension, $char, 0, 'UTF-8') !== false) {
+            }
+            elseif (mb_strpos($gsm7_extension, $char, 0, 'UTF-8') !== false) {
                 $gsm7_length += 2; // Extended characters count as 2
-            } else {
+            }
+            else {
                 $is_unicode = true;
                 break;
             }
@@ -62,14 +64,17 @@ class CreditManager
             // Unicode limits
             if ($len <= 70) {
                 $segments = 1;
-            } else {
+            }
+            else {
                 $segments = ceil($len / 67);
             }
-        } else {
+        }
+        else {
             // GSM-7 limits
             if ($gsm7_length <= 160) {
                 $segments = 1;
-            } else {
+            }
+            else {
                 $segments = ceil($gsm7_length / 153);
             }
         }
@@ -125,7 +130,7 @@ class CreditManager
         ]);
 
         $batch->commit();
-        
+
         return true;
     }
 
@@ -214,7 +219,7 @@ class CreditManager
         ]);
 
         $batch->commit();
-        
+
         return true;
     }
 
@@ -237,12 +242,12 @@ class CreditManager
         if ($account_id === 'default' || empty($account_id)) {
             return $this->db->collection('accounts')->document('default');
         }
-        
+
         // Ensure ghl_ prefix
-        $docId = (strpos($account_id, 'ghl_') === 0) 
-            ? $account_id 
+        $docId = (strpos($account_id, 'ghl_') === 0)
+            ? $account_id
             : 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $account_id);
-            
+
         return $this->db->collection('integrations')->document($docId);
     }
 }
