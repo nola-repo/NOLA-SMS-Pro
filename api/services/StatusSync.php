@@ -9,207 +9,168 @@ class StatusSync
      * Designed to be stateless and Cloud Run compatible.
      * 
      * @param \Google\Cloud\Firestore\FirestoreClient $db Firestore client instance
-     * @param string $apiKey Semaphore API key
+     * @param string $systemApiKey Semaphore API key
      * @return int Number of messages successfully updated
      */
-    public static function runSync($db, $apiKey)
+    public static function runSync($db, $systemApiKey)
     {
         $updatedCount = 0;
         $startTime = time();
         $maxExecutionTime = 240; // 4 minutes safety limit
+        $apiKeyCache = [];
 
         try {
-            // Find all SMS logs with status Queued or Pending (Try both cases)
-            // Optimization: Limit to 50 per run and order by date_created (FIFO)
+            // Find all SMS logs in a non-final state
             $query = $db->collection('sms_logs')
-                ->where('status', 'in', ['Queued', 'Pending', 'queued', 'pending', 'Sending', 'sending'])
-                ->orderBy('date_created', 'asc')
-                ->limit(50);
+                ->where('status', 'in', ['Sending', 'Queued', 'Pending', 'queued', 'pending', 'sending'])
+                ->limit(100);
 
             $documents = $query->documents();
-            
-            error_log("[StatusSync] Starting sync session (Limit: 50 messages, Order: Oldest First)");
+            error_log("[StatusSync] Starting sync session (Limit: 100)");
 
-            // Loop through all pending/queued messages
             foreach ($documents as $doc) {
-                // Safety: Check if we are approaching the 5-minute cron interval
                 if (time() - $startTime > $maxExecutionTime) {
-                    error_log("[StatusSync] Reached 4-minute safety limit. Stopping current session to prevent cron overlap.");
+                    error_log("[StatusSync] Approaching timeout. Stopping.");
                     break;
                 }
 
-                if (!$doc->exists()) {
-                    continue;
-                }
+                if (!$doc->exists()) continue;
 
                 $data = $doc->data();
-                $messageId = $data['message_id'] ?? null;
+                $messageId = (string)($data['message_id'] ?? '');
+                $locId = $data['location_id'] ?? '';
+                $currentStatus = $data['status'] ?? '';
 
-                if (!$messageId) {
+                if (!$messageId) continue;
+
+                // ── API Key Selection ──────────────────────────────────────
+                $activeApiKey = $systemApiKey;
+                if ($locId) {
+                    if (!isset($apiKeyCache[$locId])) {
+                        try {
+                            $intDoc = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
+                            $snap = $db->collection('integrations')->document($intDoc)->snapshot();
+                            if ($snap->exists()) {
+                                $idat = $snap->data();
+                                $activeApiKey = $idat['nola_pro_api_key'] ?? ($idat['semaphore_api_key'] ?? $systemApiKey);
+                            }
+                        } catch (\Exception $e) {
+                            error_log("[StatusSync] Error fetching key for $locId: " . $e->getMessage());
+                        }
+                        $apiKeyCache[$locId] = $activeApiKey;
+                    }
+                    $activeApiKey = $apiKeyCache[$locId];
+                }
+
+                // ── Expiration Filter (3 Days) ─────────────────────────────
+                $now = time();
+                $dateCreated = self::parseTs($data['date_created'] ?? $data['created_at'] ?? null);
+                if ($dateCreated && ($now - $dateCreated > 259200)) {
+                    self::finalize($db, $doc, $messageId, 'Failed', 'Status check timeout (3 days)');
+                    $updatedCount++;
                     continue;
                 }
 
-                // Expiration Filter: Mark as "Expired" if older than 3 days (prevent infinite polling of stuck messages)
-                $now = time();
-                $dateCreated = null;
-                if (isset($data['date_created'])) {
-                    $dateCreated = $data['date_created'] instanceof \Google\Cloud\Core\Timestamp 
-                        ? $data['date_created']->get()->getTimestamp() 
-                        : strtotime((string)$data['date_created']);
-                } elseif (isset($data['created_at'])) {
-                    $dateCreated = $data['created_at'] instanceof \Google\Cloud\Core\Timestamp 
-                        ? $data['created_at']->get()->getTimestamp() 
-                        : strtotime((string)$data['created_at']);
-                }
-
-                if ($dateCreated && ($now - $dateCreated > 259200)) { // 3 days in seconds
-                    $doc->reference()->update([
-                        ['path' => 'status', 'value' => 'Failed'],
-                        ['path' => 'updated_at', 'value' => new \Google\Cloud\Core\Timestamp(new \DateTime())],
-                    ]);
-                    
-                    try {
-                        $db->collection('messages')->document($messageId)->update([
-                            ['path' => 'status', 'value' => 'Failed'],
-                        ]);
-                    } catch (\Exception $e) {}
-                    
-                    error_log("[StatusSync] Message ID $messageId is older than 3 days. Marked as Expired to save API quota.");
-                    continue; // Skip the Semaphore API call
-                }
-
-                // Call Semaphore API to get the latest status
-                $url = "https://api.semaphore.co/api/v4/messages/$messageId?apikey=$apiKey";
-
+                // ── Semaphore API Call ────────────────────────────────
+                $url = "https://api.semaphore.co/api/v4/messages/$messageId?apikey=$activeApiKey";
                 $ch = curl_init($url);
                 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
                 curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-
-                $response = curl_exec($ch);
+                $resp = curl_exec($ch);
                 $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-
-                if (curl_errno($ch)) {
-                    error_log("[StatusSync] cURL error for message ID $messageId: " . curl_error($ch));
-                    curl_close($ch);
-                    continue; // Skip this iteration, try again next cron run
-                }
                 curl_close($ch);
 
-                if ($httpCode !== 200) {
-                    if ($httpCode !== 404) {
-                        error_log("[StatusSync] Semaphore API returned HTTP $httpCode for message ID $messageId. response: " . $response);
+                if ($httpCode === 404) {
+                    $retries = ($data['sync_retries'] ?? 0) + 1;
+                    if ($retries >= 3) {
+                        self::finalize($db, $doc, $messageId, 'Failed', 'Message not found on provider after retries');
+                        $updatedCount++;
+                    } else {
+                        $doc->reference()->update([
+                            ['path' => 'sync_retries', 'value' => $retries],
+                            ['path' => 'updated_at', 'value' => new \Google\Cloud\Core\Timestamp(new \DateTime())]
+                        ]);
                     }
                     continue;
                 }
 
-                if ($response !== false) {
-                    $decoded = json_decode($response, true);
-
-                    // Ensure the response is valid and contains status
+                if ($httpCode === 200 && $resp) {
+                    $decoded = json_decode($resp, true);
                     if ($decoded && is_array($decoded) && isset($decoded[0]['status'])) {
-                        $rawNewStatus = $decoded[0]['status'];
+                        $rawStatus = strtolower($decoded[0]['status']);
                         
-                        // Strict Status Mapping
-                        $statusMap = [
-                            'queued'    => 'Sending',
-                            'pending'   => 'Sending',
-                            'sending'   => 'Sending',
-                            'sent'      => 'Sent',
-                            'success'   => 'Sent',
-                            'delivered' => 'Sent',
-                            'failed'    => 'Failed',
-                            'expired'   => 'Failed'
-                        ];
-                        $newStatus = $statusMap[strtolower($rawNewStatus)] ?? ucfirst($rawNewStatus);
-
-                        // Only update if the status is an upgrade (e.g., Sending -> Sent)
-                        if (self::shouldUpdateStatus($data['status'], $newStatus)) {
-
-                            // 1. Update the 'sms_logs' collection
-                            $doc->reference()->update([
-                                ['path' => 'status', 'value' => $newStatus],
-                                ['path' => 'updated_at', 'value' => new \Google\Cloud\Core\Timestamp(new \DateTime())],
-                            ]);
-
-                            // 2. Update the main UI 'messages' collection
-                            // The document ID in 'messages' collection is the Semaphore messageId (string)
-                            $messageRef = $db->collection('messages')->document($messageId);
-                            try {
-                                $messageRef->update([
-                                    ['path' => 'status', 'value' => $newStatus],
-                                ]);
-                            }
-                            catch (\Exception $e) {
-                                // Log the error if the 'messages' document doesn't exist, but don't crash
-                                error_log("[StatusSync] Failed to update status in 'messages' collection for ID $messageId: " . $e->getMessage());
-                            }
-
-                            $updatedCount++;
-                            error_log("[StatusSync] Successfully updated message ID $messageId to status: $newStatus");
-
-                            // ── Delivery Report Notification ──────────────────────────
-                            if ($newStatus === 'Sent' || $newStatus === 'Failed') {
-                                try {
-                                    $msgLocId = $data['location_id'] ?? null;
-                                    if ($msgLocId) {
-                                        require_once __DIR__ . '/NotificationService.php';
-                                        \NotificationService::notifyDeliveryStatus(
-                                            $db, $msgLocId, $messageId, $newStatus,
-                                            $data['number'] ?? $data['numbers'][0] ?? 'unknown'
-                                        );
-                                    }
-                                } catch (\Throwable $e) {
-                                    error_log('[DeliveryReport] ' . $e->getMessage());
-                                }
-                            }
+                        // Strict 3-state Mapping
+                        $newStatus = 'Sending';
+                        if (in_array($rawStatus, ['sent', 'success', 'delivered'])) {
+                            $newStatus = 'Sent';
+                        } elseif (in_array($rawStatus, ['failed', 'expired', 'rejected', 'undelivered'])) {
+                            $newStatus = 'Failed';
                         }
-                    }
-                    else {
-                        error_log("[StatusSync] Empty or unexpected response format for message ID $messageId: " . $response);
+
+                        if (self::isUpgrade($currentStatus, $newStatus)) {
+                            self::finalize($db, $doc, $messageId, $newStatus);
+                            $updatedCount++;
+                            error_log("[StatusSync] $messageId: $currentStatus -> $newStatus (raw: $rawStatus)");
+                        } else {
+                            $doc->reference()->update([
+                                ['path' => 'updated_at', 'value' => new \Google\Cloud\Core\Timestamp(new \DateTime())]
+                            ]);
+                        }
                     }
                 }
 
-                // Respect Semaphore Rate Limits: 30 calls per minute (1 every 2 seconds)
-                usleep(2000000); // 2 seconds delay
+                usleep(500000); 
             }
-        }
-        catch (\Exception $e) {
-            // Log any critical errors (like Firestore connection issues)
-            error_log("[StatusSync] Critical error during sync: " . $e->getMessage());
+        } catch (\Exception $e) {
+            error_log("[StatusSync] Critical error: " . $e->getMessage());
         }
 
         return $updatedCount;
     }
 
-    /**
-     * Prevents status downgrades (e.g. Sent -> Pending)
-     */
-    private static function shouldUpdateStatus($current, $new)
-    {
-        $statusMap = [
-            'queued'    => 'Sending',
-            'pending'   => 'Sending',
-            'sending'   => 'Sending',
-            'sent'      => 'Sent',
-            'success'   => 'Sent',
-            'delivered' => 'Sent',
-            'failed'    => 'Failed',
-            'expired'   => 'Failed'
-        ];
+    private static function parseTs($ts) {
+        if (!$ts) return null;
+        if ($ts instanceof \Google\Cloud\Core\Timestamp) return $ts->get()->getTimestamp();
+        return is_numeric($ts) ? (int)$ts : strtotime((string)$ts);
+    }
+
+    private static function finalize($db, $doc, $messageId, $status, $reason = null) {
+        $ts = new \Google\Cloud\Core\Timestamp(new \DateTime());
+        $updates = [['path' => 'status', 'value' => $status], ['path' => 'updated_at', 'value' => $ts]];
+        if ($reason) $updates[] = ['path' => 'error_reason', 'value' => $reason];
         
-        $c = $statusMap[strtolower($current)] ?? ucfirst($current);
-        $n = $statusMap[strtolower($new)] ?? ucfirst($new);
+        $doc->reference()->update($updates);
+        try {
+            $db->collection('messages')->document($messageId)->update($updates);
+        } catch (\Exception $e) {}
 
-        $statusPriority = [
-            'Sending'   => 1,
-            'Sent'      => 2,
-            'Failed'    => 3
+        if ($status === 'Sent' || $status === 'Failed') {
+            try {
+                $data = $doc->data();
+                $locId = $data['location_id'] ?? null;
+                if ($locId) {
+                    require_once __DIR__ . '/NotificationService.php';
+                    \NotificationService::notifyDeliveryStatus($db, $locId, $messageId, $status, $data['number'] ?? 'unknown');
+                }
+            } catch (\Exception $e) {}
+        }
+    }
+
+    private static function isUpgrade($curr, $new) {
+        $priority = [
+            'Queued' => 1, 'Pending' => 1, 'Sending' => 1,
+            'queued' => 1, 'pending' => 1, 'sending' => 1,
+            'Sent' => 2, 'Failed' => 2
         ];
+        $pCurr = $priority[$curr] ?? 0;
+        $pNew = $priority[$new] ?? 0;
 
-        $newPriority = $statusPriority[$n] ?? 0;
-        $oldPriority = $statusPriority[$c] ?? 0;
+        // 1. Progression (In-Process -> Resolved)
+        if ($pNew > $pCurr) return true;
 
-        // Condition: New priority must be >= old priority, AND status must actually be different
-        return ($newPriority >= $oldPriority) && ($n !== $c);
+        // 2. Legacy Cleanup (Pending/Queued -> Sending)
+        if ($pCurr === 1 && $pNew === 1 && $curr !== 'Sending' && $new === 'Sending') return true;
+
+        return false;
     }
 }
