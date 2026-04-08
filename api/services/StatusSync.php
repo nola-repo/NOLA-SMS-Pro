@@ -23,6 +23,7 @@ class StatusSync
             // Find all SMS logs in a non-final state
             $query = $db->collection('sms_logs')
                 ->where('status', 'in', ['Sending', 'Queued', 'Pending', 'queued', 'pending', 'sending'])
+                ->orderBy('date_created', 'asc')
                 ->limit(100);
 
             $documents = $query->documents();
