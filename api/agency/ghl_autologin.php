@@ -1,116 +1,93 @@
 <?php
-
 /**
- * GHL Agency Auto-Login
+ * POST /api/agency/ghl_autologin
+ * GHL Iframe Auto-Login.
  *
- * Called by the Agency frontend when it detects a companyId in the GHL iframe URL.
- * Looks up the agency user by company_id and returns a signed JWT — no password needed.
+ * Called by the Agency frontend when it detects a companyId in the iframe URL.
+ * Looks up the agency account linked to that company_id and issues a JWT
+ * WITHOUT requiring email/password — GHL context is the implicit auth.
  *
- * Usage: POST /api/agency/ghl_autologin
- * Body:  { "company_id": "ABC123" }
+ * Payload:  { "company_id": "ABC123" }
+ * Response: { token, role, company_id, user: {firstName,lastName,email} }
  */
-
-ini_set('display_errors', 0);
-ini_set('display_startup_errors', 0);
-error_reporting(E_ALL);
 
 require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
-
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(200);
-    exit;
-}
+require __DIR__ . '/../webhook/firestore_client.php';
+require_once __DIR__ . '/../jwt_helper.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
-    echo json_encode(['success' => false, 'error' => 'Method not allowed']);
+    echo json_encode(['error' => 'Method not allowed']);
     exit;
 }
 
-$input = json_decode(file_get_contents('php://input'), true);
+$input     = json_decode(file_get_contents('php://input'), true);
 $companyId = trim($input['company_id'] ?? '');
 
-if (empty($companyId)) {
+if (!$companyId) {
     http_response_code(400);
-    echo json_encode(['success' => false, 'error' => 'company_id is required']);
+    echo json_encode(['error' => 'company_id is required.']);
     exit;
 }
 
-require_once __DIR__ . '/../webhook/firestore_client.php';
-$db = get_firestore();
+$jwtSecret = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
 
 try {
-    // Query users collection for an agency with this company_id
-    $query = $db->collection('users')
-        ->where('role', '=', 'agency')
-        ->where('company_id', '=', $companyId)
-        ->limit(1);
-    $documents = $query->documents();
+    $db = get_firestore();
 
-    $userDoc = null;
-    foreach ($documents as $doc) {
+    // ── Find the agency account linked to this company_id ────────────────────
+    $results = $db->collection('users')
+        ->where('role',       '=', 'agency')
+        ->where('company_id', '=', $companyId)
+        ->limit(1)
+        ->documents();
+
+    $userId   = null;
+    $userData = null;
+    foreach ($results as $doc) {
         if ($doc->exists()) {
-            $userDoc = $doc;
+            $userId   = $doc->id();
+            $userData = $doc->data();
             break;
         }
     }
 
-    if (!$userDoc) {
-        http_response_code(401);
-        echo json_encode(['success' => false, 'error' => 'No agency account found for this GHL Company ID. Please register first.']);
+    if (!$userData) {
+        http_response_code(404);
+        echo json_encode([
+            'error' => 'No agency account is linked to this GoHighLevel company. '
+                     . 'Register and connect your GHL account first.',
+        ]);
         exit;
     }
 
-    $userData = $userDoc->data();
-
-    // Check if account is active
-    if (isset($userData['active']) && !$userData['active']) {
+    if (empty($userData['active'])) {
         http_response_code(403);
-        echo json_encode(['status' => 'error', 'error' => 'This agency account has been deactivated.']);
+        echo json_encode(['error' => 'This agency account has been deactivated.']);
         exit;
     }
 
-    // Build token payload (7-day expiry for iframe sessions)
-    $tokenPayload = [
-        'uid'        => $userDoc->id(),
+    // ── Sign JWT (8 h) ────────────────────────────────────────────────────────
+    $token = jwt_sign([
+        'sub'        => $userId,
         'email'      => $userData['email'] ?? '',
         'role'       => 'agency',
         'company_id' => $companyId,
-        'iat'        => time(),
-        'exp'        => time() + (60 * 60 * 24 * 7), // 7 days
-    ];
-
-    if (!empty($userData['agency_id'])) {
-        $tokenPayload['agency_id'] = $userData['agency_id'];
-    }
-
-    // Sign the token with HMAC-SHA256 (same scheme as login.php)
-    $secret = getenv('AUTH_TOKEN_SECRET') ?: 'nola-sms-pro-auth-secret-2026';
-    $payloadB64 = rtrim(strtr(base64_encode(json_encode($tokenPayload)), '+/', '-_'), '=');
-    $signature  = rtrim(strtr(base64_encode(hash_hmac('sha256', $payloadB64, $secret, true)), '+/', '-_'), '=');
-    $token = $payloadB64 . '.' . $signature;
-
-    // Update last login timestamp
-    $userDoc->reference()->set([
-        'last_login_at' => new \Google\Cloud\Core\Timestamp(new DateTimeImmutable()),
-    ], ['merge' => true]);
+    ], $jwtSecret, 28800);
 
     echo json_encode([
-        'success'    => true,
         'token'      => $token,
         'role'       => 'agency',
         'company_id' => $companyId,
         'user'       => [
-            'firstName'              => $userData['firstName'] ?? '',
-            'lastName'               => $userData['lastName'] ?? '',
-            'email'                  => $userData['email'] ?? '',
-            'max_active_subaccounts' => $userData['max_active_subaccounts'] ?? 3,
+            'firstName' => $userData['firstName'] ?? '',
+            'lastName'  => $userData['lastName']  ?? '',
+            'email'     => $userData['email']      ?? '',
         ],
     ]);
 
 } catch (Exception $e) {
-    error_log('ghl_autologin error: ' . $e->getMessage());
     http_response_code(500);
-    echo json_encode(['status' => 'error', 'message' => 'Internal server error']);
+    echo json_encode(['error' => 'Auto-login failed: ' . $e->getMessage()]);
 }

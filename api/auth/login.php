@@ -1,130 +1,99 @@
 <?php
-
 /**
- * Shared Login Endpoint
+ * POST /api/auth/login
+ * Email + password login for Agency and User accounts.
+ * Returns a signed JWT with role, company_id / location_id.
  *
- * Authenticates both Agency and User personas via email/password.
- * Returns a signed token and the user's role for frontend routing.
- *
- * Usage: POST /api/auth/login
- * Body:  { "email": "...", "password": "..." }
+ * Response 200: { token, role, company_id, location_id, user: {firstName,lastName,email} }
  */
 
 require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
+require __DIR__ . '/../webhook/firestore_client.php';
+require_once __DIR__ . '/../jwt_helper.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
-    echo json_encode(['status' => 'error', 'message' => 'Method not allowed']);
+    echo json_encode(['error' => 'Method not allowed']);
     exit;
 }
 
-$input = json_decode(file_get_contents('php://input'), true);
-$email    = trim($input['email'] ?? '');
+$input    = json_decode(file_get_contents('php://input'), true);
+$email    = strtolower(trim($input['email']    ?? ''));
 $password = $input['password'] ?? '';
 
-if (empty($email) || empty($password)) {
+if (!$email || !$password) {
     http_response_code(400);
-    echo json_encode(['status' => 'error', 'message' => 'Email and password are required']);
+    echo json_encode(['error' => 'Email and password are required.']);
     exit;
 }
 
-// Normalize email to lowercase
-$email = strtolower($email);
-
-require_once __DIR__ . '/../webhook/firestore_client.php';
-$db = get_firestore();
+$jwtSecret = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
 
 try {
-    // Query the users collection by email
-    $query = $db->collection('users')->where('email', '=', $email)->limit(1);
-    $documents = $query->documents();
+    $db = get_firestore();
 
-    $userDoc = null;
-    foreach ($documents as $doc) {
+    // ── Find user by email ───────────────────────────────────────────────────
+    $results = $db->collection('users')
+        ->where('email', '=', $email)
+        ->limit(1)
+        ->documents();
+
+    $userId   = null;
+    $userData = null;
+    foreach ($results as $doc) {
         if ($doc->exists()) {
-            $userDoc = $doc;
+            $userId   = $doc->id();
+            $userData = $doc->data();
             break;
         }
     }
 
-    if (!$userDoc) {
+    if (!$userData) {
         http_response_code(401);
-        echo json_encode(['status' => 'error', 'message' => 'Invalid email or password']);
+        echo json_encode(['error' => 'Invalid email or password.']);
         exit;
     }
 
-    $userData = $userDoc->data();
-
-    // Check if account is active
-    if (isset($userData['active']) && !$userData['active']) {
-        http_response_code(403);
-        echo json_encode(['status' => 'error', 'message' => 'Account is deactivated']);
-        exit;
-    }
-
-    // Verify password
+    // ── Verify password ──────────────────────────────────────────────────────
     $storedHash = $userData['password_hash'] ?? '';
     if (!password_verify($password, $storedHash)) {
         http_response_code(401);
-        echo json_encode(['status' => 'error', 'message' => 'Invalid email or password']);
+        echo json_encode(['error' => 'Invalid email or password.']);
         exit;
     }
 
-    // Build token payload
-    $role = $userData['role'] ?? 'user';
-    $tokenPayload = [
-        'uid'  => $userDoc->id(),
-        'email' => $email,
-        'role'  => $role,
-        'iat'   => time(),
-        'exp'   => time() + (60 * 60 * 24 * 7), // 7-day expiry
-    ];
-
-    // Add role-specific identifiers
-    if ($role === 'agency') {
-        if (!empty($userData['agency_id'])) {
-            $tokenPayload['agency_id'] = $userData['agency_id'];
-        }
-        // Include company_id in token so agency endpoints can scope data
-        // without requiring the frontend to send X-Agency-ID headers separately
-        if (!empty($userData['company_id'])) {
-            $tokenPayload['company_id'] = $userData['company_id'];
-        } elseif (!empty($userData['agency_id'])) {
-            // Fallback: treat agency_id as company_id for legacy records
-            $tokenPayload['company_id'] = $userData['agency_id'];
-        }
-    }
-    if ($role === 'user' && !empty($userData['location_id'])) {
-        $tokenPayload['location_id'] = $userData['location_id'];
+    if (empty($userData['active'])) {
+        http_response_code(403);
+        echo json_encode(['error' => 'Your account has been deactivated.']);
+        exit;
     }
 
-    // Sign the token with HMAC-SHA256
-    $secret = getenv('AUTH_TOKEN_SECRET') ?: 'nola-sms-pro-auth-secret-2026';
-    $payloadB64 = rtrim(strtr(base64_encode(json_encode($tokenPayload)), '+/', '-_'), '=');
-    $signature  = rtrim(strtr(base64_encode(hash_hmac('sha256', $payloadB64, $secret, true)), '+/', '-_'), '=');
-    $token = $payloadB64 . '.' . $signature;
+    $role      = $userData['role']       ?? 'user';
+    $companyId = $userData['company_id'] ?? null;
+    $locationId= $userData['active_location_id'] ?? null;
 
-    // Update last login timestamp
-    $userDoc->reference()->set([
-        'last_login_at' => new \Google\Cloud\Core\Timestamp(new DateTimeImmutable()),
-    ], ['merge' => true]);
+    // ── Sign JWT ─────────────────────────────────────────────────────────────
+    $token = jwt_sign([
+        'sub'        => $userId,
+        'email'      => $email,
+        'role'       => $role,
+        'company_id' => $companyId,
+    ], $jwtSecret, 28800); // 8 hours
 
     echo json_encode([
         'token'       => $token,
         'role'        => $role,
-        'company_id'  => $userData['company_id'] ?? $userData['agency_id'] ?? null,
-        'location_id' => $role === 'user' ? ($userData['active_location_id'] ?? $userData['location_id'] ?? null) : null,
+        'company_id'  => $companyId,
+        'location_id' => $locationId,
         'user'        => [
-            'firstName'   => $userData['firstName'] ?? '',
-            'lastName'    => $userData['lastName'] ?? '',
-            'email'       => $email,
-            'max_active_subaccounts' => $role === 'agency' ? ($userData['max_active_subaccounts'] ?? 3) : null
+            'firstName' => $userData['firstName'] ?? '',
+            'lastName'  => $userData['lastName']  ?? '',
+            'email'     => $email,
         ],
     ]);
 
 } catch (Exception $e) {
-    error_log('Login endpoint error: ' . $e->getMessage());
     http_response_code(500);
-    echo json_encode(['status' => 'error', 'message' => 'Internal server error']);
+    echo json_encode(['error' => 'Login failed: ' . $e->getMessage()]);
 }

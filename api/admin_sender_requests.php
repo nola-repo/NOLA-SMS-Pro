@@ -19,9 +19,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
     foreach ($messages as $doc) {
         if ($doc->exists()) {
             $data = $doc->data();
-            $ts = isset($data['date_created']) && $data['date_created'] instanceof \Google\Cloud\Core\Timestamp
-                ? $data['date_created']->get()->format('c') : null;
-
+            $ts = isset($data['date_created']) && $data['date_created'] instanceof \Google\Cloud\Core\Timestamp 
+                  ? $data['date_created']->get()->format('c') : null;
+            
             $unifiedLogs[] = array_merge($data, [
                 'id' => $doc->id(),
                 'type' => 'message',
@@ -35,9 +35,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
     foreach ($requests as $doc) {
         if ($doc->exists()) {
             $data = $doc->data();
-            $ts = isset($data['created_at']) && $data['created_at'] instanceof \Google\Cloud\Core\Timestamp
-                ? $data['created_at']->get()->format('c') : null;
-
+            $ts = isset($data['created_at']) && $data['created_at'] instanceof \Google\Cloud\Core\Timestamp 
+                  ? $data['created_at']->get()->format('c') : null;
+            
             $unifiedLogs[] = array_merge($data, [
                 'id' => $doc->id(),
                 'type' => 'sender_request',
@@ -51,9 +51,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
     foreach ($purchases as $doc) {
         if ($doc->exists()) {
             $data = $doc->data();
-            $ts = isset($data['created_at']) && $data['created_at'] instanceof \Google\Cloud\Core\Timestamp
-                ? $data['created_at']->get()->format('c') : null;
-
+            $ts = isset($data['created_at']) && $data['created_at'] instanceof \Google\Cloud\Core\Timestamp 
+                  ? $data['created_at']->get()->format('c') : null;
+            
             $unifiedLogs[] = array_merge($data, [
                 'id' => $doc->id(),
                 'type' => 'credit_purchase',
@@ -63,7 +63,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
     }
 
     // Sort combined array by timestamp descending
-    usort($unifiedLogs, function ($a, $b) {
+    usort($unifiedLogs, function($a, $b) {
         $timeA = strtotime($a['timestamp'] ?? '1970-01-01');
         $timeB = strtotime($b['timestamp'] ?? '1970-01-01');
         return $timeB - $timeA;
@@ -103,30 +103,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // 1. Action: manage_sender (Update existing)
     if (isset($payload['action']) && $payload['action'] === 'manage_sender') {
         $locId = $payload['location_id'] ?? null;
-        $senderId = $payload['sender_id'] ?? null;
-        $apiKey = $payload['api_key'] ?? null;
-
-        if (!$locId || !$senderId || !$apiKey) {
-            http_response_code(400);
-            echo json_encode(['status' => 'error', 'message' => 'Missing fields']);
-            exit;
-        }
-
-        $docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
-        $db->collection('integrations')->document($docId)->set([
-            'approved_sender_id' => $senderId,
-            'nola_pro_api_key' => $apiKey,
-            'semaphore_api_key' => $apiKey, // for backward compat
-            'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
-        ], ['merge' => true]);
-
-        echo json_encode(['status' => 'success', 'message' => 'Sender configuration updated successfully.']);
-        exit;
-    }
-
-    // 2. Action: revoke_sender (Clear/Delete)
-    if (isset($payload['action']) && $payload['action'] === 'revoke_sender') {
-        $locId = $payload['location_id'] ?? null;
 
         if (!$locId) {
             http_response_code(400);
@@ -135,23 +111,63 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
-        $db->collection('integrations')->document($docId)->set([
-            'approved_sender_id' => null, // Set to null to clear
-            'nola_pro_api_key' => null,
-            'semaphore_api_key' => null,
-            'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
-        ], ['merge' => true]);
+        $docRef = $db->collection('integrations')->document($docId);
+        $oldBalance = 0;
+        $snap = $docRef->snapshot();
+        if ($snap->exists()) {
+            $oldBalance = (int)($snap->data()['credit_balance'] ?? 0);
+        }
 
-        echo json_encode(['status' => 'success', 'message' => 'Sender ID has been revoked.']);
+        $updateData = [
+            'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
+        ];
+
+        if (isset($payload['sender_id'])) {
+            $updateData['approved_sender_id'] = $payload['sender_id'];
+        }
+        if (isset($payload['api_key']) && !empty($payload['api_key'])) {
+            $updateData['nola_pro_api_key']   = $payload['api_key'];
+            $updateData['semaphore_api_key']  = $payload['api_key'];
+        }
+        if (isset($payload['credit_balance'])) {
+            $updateData['credit_balance'] = (int)$payload['credit_balance'];
+        }
+        if (isset($payload['free_credits_total'])) {
+            $updateData['free_credits_total'] = (int)$payload['free_credits_total'];
+        }
+
+        $docRef->set($updateData, ['merge' => true]);
+
+        if (isset($payload['credit_balance'])) {
+            $newBalance = (int)$payload['credit_balance'];
+            $delta = $newBalance - $oldBalance;
+
+            // Only log if there was an actual change
+            if ($delta !== 0) {
+                $logId = 'adj_' . uniqid();
+                $db->collection('credit_transactions')->document($logId)->set([
+                    'id' => $logId,
+                    'location_id' => $locId,
+                    'amount' => $delta, // Log the difference (+5, -2, etc)
+                    'type' => 'admin_adjustment',
+                    'description' => "Manual credit adjustment by System Admin (Applied " . ($delta > 0 ? "+" : "") . $delta . " credits)",
+                    'created_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+                ]);
+            }
+        }
+
+        echo json_encode(['status' => 'success', 'message' => 'Account configuration updated successfully.']);
         exit;
     }
+
+
 
     $requestId = $payload['request_id'] ?? null;
     $status = $payload['status'] ?? null; // 'approved' or 'rejected'
     $apiKey = $payload['api_key'] ?? null;
     $note = $payload['note'] ?? null;
 
-    if (!$requestId || !in_array($status, ['approved', 'rejected', 'delete'])) {
+    if (!$requestId || !in_array($status, ['approved', 'rejected', 'revoked', 'deleted'])) {
         http_response_code(400);
         echo json_encode(['status' => 'error', 'message' => 'Missing or invalid request_id or status']);
         exit;
@@ -160,7 +176,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // 1. Update the request status
     $requestRef = $db->collection('sender_id_requests')->document($requestId);
     $reqSnapshot = $requestRef->snapshot();
-
+    
     if (!$reqSnapshot->exists()) {
         http_response_code(404);
         echo json_encode(['status' => 'error', 'message' => 'Request not found']);
@@ -178,33 +194,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $requestRef->set($updateData, ['merge' => true]);
 
-    if ($status === 'delete') {
-        $requestRef->delete();
-        echo json_encode(['status' => 'success', 'message' => 'Request deleted successfully.']);
-        exit;
-    }
-
     // 2. If approved, update the account mapping
     if ($status === 'approved') {
-        // Format Doc ID for integrations
+        // ... approved logic ...
         $docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
         $accountRef = $db->collection('integrations')->document($docId);
-
-        // Fetch location name for better record keeping
+        
         $locationName = 'Unknown';
-        $tokenSnap = $db->collection('ghl_tokens')->document((string)$locId)->snapshot();
-        if ($tokenSnap->exists()) {
-            $locationName = $tokenSnap->data()['location_name'] ?? 'Unknown';
+        $intSnap = $db->collection('integrations')->document($docId)->snapshot();
+        if ($intSnap->exists()) {
+            $locationName = $intSnap->data()['location_name'] ?? 'Unknown';
         }
 
         $accountRef->set([
             'location_id' => $locId,
             'location_name' => $locationName,
             'approved_sender_id' => $reqData['requested_id'],
-            'nola_pro_api_key' => $apiKey, // Manual assignment by boss
-            'semaphore_api_key' => $apiKey, // Alias for backward compatibility
+            'nola_pro_api_key' => $apiKey, 
+            'semaphore_api_key' => $apiKey,
             'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
         ], ['merge' => true]);
+    } elseif ($status === 'revoked') {
+        // Clear the sender ID from the account mapping
+        $docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
+        $accountRef = $db->collection('integrations')->document($docId);
+        
+        $accountRef->set([
+            'approved_sender_id' => null,
+            'nola_pro_api_key'   => null,
+            'semaphore_api_key'  => null,
+            'updated_at'         => new \Google\Cloud\Core\Timestamp(new \DateTime())
+        ], ['merge' => true]);
+    } elseif ($status === 'deleted') {
+        // Physical deletion of the request document
+        $requestRef->delete();
+        echo json_encode(['status' => 'success', 'message' => "Request deleted successfully."]);
+        exit;
     }
 
     echo json_encode(['status' => 'success', 'message' => "Request $status and account updated."]);
@@ -212,35 +237,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'accounts') {
-    $config = require __DIR__ . '/webhook/config.php';
-    $systemApiKey = $config['SEMAPHORE_API_KEY'] ?? null;
-    
     $results = [];
 
-    // 1. Fetch all tokens (Master list of installations)
-    $tokens = $db->collection('ghl_tokens')->documents();
-
-    // 2. Fetch all integrations (For credit balances and sender IDs)
+    // 1. Fetch all integrations (Master list)
     $integrationsRaw = $db->collection('integrations')->documents();
-    $integrationMap = [];
+
     foreach ($integrationsRaw as $intDoc) {
-        $integrationMap[$intDoc->id()] = $intDoc->data();
-    }
+        $intData = $intDoc->data();
+        $intDocId = $intDoc->id();
+        $locId = $intData['location_id'] ?? str_replace('ghl_', '', $intDocId);
 
-    foreach ($tokens as $tokenDoc) {
-        $locId = $tokenDoc->id();
-        $tokenData = $tokenDoc->data();
+        if ($locId === 'ghl') continue; // Skip misconfigured docs
 
-        // Skip the master 'ghl' settings document if it accidentally exists in this collection
-        if ($locId === 'ghl')
-            continue;
+        $locationName = $intData['location_name'] ?? '';
 
-        $locationName = $tokenData['location_name'] ?? '';
-
-        // --- THE FIX: Fetch missing location name using GHL API ---
+        // --- Fetch missing location name using GHL API ---
         if (empty(trim($locationName))) {
-            $accessToken = $tokenData['access_token'] ?? '';
-
+            $accessToken = $intData['access_token'] ?? '';
+            
             if ($accessToken) {
                 try {
                     $locationUrl = 'https://services.leadconnectorhq.com/locations/' . $locId;
@@ -259,35 +273,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
                         $locData = json_decode($locResponse, true);
                         if (!empty($locData['location']['name'])) {
                             $locationName = $locData['location']['name'];
-
-                            // Save back to Firestore so we don't query it again
-                            $db->collection('ghl_tokens')->document($locId)->set([
+                            
+                            // Save back to integrations so we don't query it again
+                            $db->collection('integrations')->document($intDocId)->set([
                                 'location_name' => $locationName
                             ], ['merge' => true]);
-
-                            // Sync name to integrations collection if it exists
-                            $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
-                            if (isset($integrationMap[$intDocId])) {
-                                $db->collection('integrations')->document($intDocId)->set([
-                                    'location_name' => $locationName
-                                ], ['merge' => true]);
-                            }
                         }
                     }
-                }
-                catch (Exception $e) {
+                } catch (Exception $e) {
                     error_log("Failed to fetch location name for $locId: " . $e->getMessage());
                 }
             }
         }
-
+        
         if (empty(trim($locationName))) {
             $locationName = 'Unknown Location';
         }
-
-        // 3. Merge with integrations data for the UI
-        $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
-        $intData = $integrationMap[$intDocId] ?? [];
 
         $results[] = [
             'id' => $intDocId, // Expected by frontend mapping
@@ -297,7 +298,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
                 'approved_sender_id' => $intData['approved_sender_id'] ?? null,
                 'nola_pro_api_key'   => $intData['nola_pro_api_key'] ?? null,
                 'api_key'            => $intData['api_key'] ?? null,
-                'semaphore_api_key'  => $intData['semaphore_api_key'] ?? $intData['nola_pro_api_key'] ?? $intData['api_key'] ?? $systemApiKey,
+                'semaphore_api_key'  => $intData['semaphore_api_key'] ?? null,
                 'credit_balance'     => (int)($intData['credit_balance'] ?? 0),
                 'free_usage_count'   => (int)($intData['free_usage_count'] ?? 0),
                 'free_credits_total' => (int)($intData['free_credits_total'] ?? 10)

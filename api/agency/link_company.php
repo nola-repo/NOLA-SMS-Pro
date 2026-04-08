@@ -1,96 +1,88 @@
 <?php
-
 /**
- * Link GHL Company ID
+ * POST /api/agency/link_company
+ * Links a GHL company_id to an authenticated agency account.
+ * Called after manual entry or after GHL OAuth completes during registration.
  *
- * Allows an authenticated agency user to link their GHL Company ID
- * without a full re-login. The frontend "Connect GHL Account" step calls this.
- *
- * Usage: POST /api/agency/link_company.php
- * Headers:
- *   Authorization: Bearer <jwt_token>
- *   X-Webhook-Secret: f7RkQ2pL9zV3tX8cB1nS4yW6
- *   Content-Type: application/json
- * Body: { "company_id": "GHL_COMPANY_123", "company_name": "Acme Agency" }
+ * Headers: Authorization: Bearer <token>
+ * Payload: { "company_id": "ABC123" }
+ * Response 200: { status: "success" }
  */
-
-ini_set('display_errors', 0);
-ini_set('display_startup_errors', 0);
-error_reporting(E_ALL);
 
 require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
-
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(200);
-    exit;
-}
+require __DIR__ . '/../webhook/firestore_client.php';
+require_once __DIR__ . '/../jwt_helper.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
-    echo json_encode(['success' => false, 'error' => 'Method not allowed']);
+    echo json_encode(['error' => 'Method not allowed']);
     exit;
 }
 
-require_once __DIR__ . '/../auth_helpers.php';
-require_once __DIR__ . '/../webhook/firestore_client.php';
+// ── Verify JWT ────────────────────────────────────────────────────────────────
+$jwtSecret = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
 
-// 1. Validate API key
-validate_api_request();
+$authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
+if (!$authHeader) {
+    $headers = function_exists('getallheaders') ? getallheaders() : [];
+    foreach ($headers as $k => $v) {
+        if (strcasecmp($k, 'Authorization') === 0) { $authHeader = $v; break; }
+    }
+}
 
-// 2. Validate JWT — extract user identity
-$tokenPayload = validate_jwt();
-$uid   = $tokenPayload['uid'] ?? null;
-$role  = $tokenPayload['role'] ?? '';
+$bearerToken = '';
+if (preg_match('/Bearer\s+(.+)/i', $authHeader, $m)) {
+    $bearerToken = $m[1];
+}
 
-if (!$uid) {
+if (!$bearerToken) {
     http_response_code(401);
-    echo json_encode(['success' => false, 'error' => 'Invalid or expired token.']);
+    echo json_encode(['error' => 'Authorization token required.']);
     exit;
 }
 
-// 3. Read and validate company_id from body
-$input = json_decode(file_get_contents('php://input'), true);
-$companyId   = trim($input['company_id'] ?? '');
-$companyName = trim($input['company_name'] ?? '');
+$claims = jwt_verify($bearerToken, $jwtSecret);
+if (!$claims) {
+    http_response_code(401);
+    echo json_encode(['error' => 'Invalid or expired token.']);
+    exit;
+}
 
-if (empty($companyId)) {
-    http_response_code(422);
-    echo json_encode(['success' => false, 'error' => 'company_id is required.']);
+if (($claims['role'] ?? '') !== 'agency') {
+    http_response_code(403);
+    echo json_encode(['error' => 'Only agency accounts can link a company.']);
+    exit;
+}
+
+$userId = $claims['sub'] ?? null;
+if (!$userId) {
+    http_response_code(401);
+    echo json_encode(['error' => 'Token missing user ID.']);
+    exit;
+}
+
+// ── Read payload ──────────────────────────────────────────────────────────────
+$input     = json_decode(file_get_contents('php://input'), true);
+$companyId = trim($input['company_id'] ?? '');
+
+if (!$companyId) {
+    http_response_code(400);
+    echo json_encode(['error' => 'company_id is required.']);
     exit;
 }
 
 try {
-    $db = get_firestore();
+    $db  = get_firestore();
+    $now = new DateTimeImmutable();
 
-    // 4. Find user document by UID
-    $userRef = $db->collection('users')->document($uid);
-    $userSnap = $userRef->snapshot();
+    $db->collection('users')
+        ->document($userId)
+        ->set(['company_id' => $companyId, 'updatedAt' => new \Google\Cloud\Core\Timestamp($now)], ['merge' => true]);
 
-    if (!$userSnap->exists()) {
-        http_response_code(404);
-        echo json_encode(['success' => false, 'error' => 'User not found.']);
-        exit;
-    }
-
-    // 5. Update user document with company_id (and company_name if provided)
-    $updateData = [
-        'company_id'  => $companyId,
-        'updated_at'  => new \Google\Cloud\Core\Timestamp(new DateTimeImmutable()),
-    ];
-    if (!empty($companyName)) {
-        $updateData['company_name'] = $companyName;
-    }
-    $userRef->set($updateData, ['merge' => true]);
-
-    echo json_encode([
-        'success'      => true,
-        'company_id'   => $companyId,
-        'company_name' => $companyName ?: null,
-    ]);
+    echo json_encode(['status' => 'success', 'company_id' => $companyId]);
 
 } catch (Exception $e) {
-    error_log('link_company error: ' . $e->getMessage());
     http_response_code(500);
-    echo json_encode(['success' => false, 'error' => 'Internal server error.']);
+    echo json_encode(['error' => 'Failed to link company: ' . $e->getMessage()]);
 }

@@ -11,4 +11,18 @@ api/webhook/last_payload.json
 .env
 config.local.php
 api/webhook/nola-sms-pro-*.json
- frontend/
+
+# Frontend Dependencies and Builds
+**/node_modules/
+**/dist/
+**/.nuxt/
+**/.output/
+**/npm-debug.log*
+**/yarn-debug.log*
+**/yarn-error.log*
+
+# Backups and Temporary Files
+frontend_old/
+temp_*/
+.DS_Store
+Thumbs.db

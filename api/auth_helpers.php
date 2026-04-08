@@ -68,13 +68,15 @@ function get_ghl_location_id(): ?string
 
 /**
  * Validates the JWT from the Authorization: Bearer header.
- * Uses the same HMAC-SHA256 signing scheme as login.php.
+ * Uses the centralized jwt_helper.php library.
  *
- * @return array  Decoded token payload (uid, email, role, …)
+ * @return array  Decoded token payload (sub, email, role, …)
  * @exit          Sends 401 JSON and exits on failure
  */
 function validate_jwt(): array
 {
+    require_once __DIR__ . '/jwt_helper.php';
+
     // --- Extract the Bearer token ---
     $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
     if (!$authHeader) {
@@ -95,40 +97,11 @@ function validate_jwt(): array
     }
 
     $token = substr($authHeader, 7); // strip "Bearer "
+    $secret = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
 
-    // --- Split into payload.signature ---
-    $parts = explode('.', $token, 2);
-    if (count($parts) !== 2) {
-        header('Content-Type: application/json');
-        http_response_code(401);
-        echo json_encode(['success' => false, 'error' => 'Invalid or expired token.']);
-        exit;
-    }
+    $payload = jwt_verify($token, $secret);
 
-    [$payloadB64, $signature] = $parts;
-
-    // --- Verify HMAC-SHA256 signature ---
-    $secret = getenv('AUTH_TOKEN_SECRET') ?: 'nola-sms-pro-auth-secret-2026';
-    $expectedSig = rtrim(strtr(base64_encode(hash_hmac('sha256', $payloadB64, $secret, true)), '+/', '-_'), '=');
-
-    if (!hash_equals($expectedSig, $signature)) {
-        header('Content-Type: application/json');
-        http_response_code(401);
-        echo json_encode(['success' => false, 'error' => 'Invalid or expired token.']);
-        exit;
-    }
-
-    // --- Decode payload ---
-    $payload = json_decode(base64_decode(strtr($payloadB64, '-_', '+/')), true);
-    if (!is_array($payload)) {
-        header('Content-Type: application/json');
-        http_response_code(401);
-        echo json_encode(['success' => false, 'error' => 'Invalid or expired token.']);
-        exit;
-    }
-
-    // --- Check expiry ---
-    if (isset($payload['exp']) && $payload['exp'] < time()) {
+    if (!$payload) {
         header('Content-Type: application/json');
         http_response_code(401);
         echo json_encode(['success' => false, 'error' => 'Invalid or expired token.']);
