@@ -177,6 +177,9 @@ $customApiKey = $intData['nola_pro_api_key'] ?? ($intData['semaphore_api_key'] ?
 $freeUsageCount = $intData['free_usage_count'] ?? 0;
 $freeCreditsTotal = $intData['free_credits_total'] ?? 10;
 
+// ── Normalize account_id for CreditManager ──────────────────────────────────
+$account_id = $locationId ?: 'default';
+
 // ── Three-Tier Sender + Credit Logic ────────────────────────────────────────
 $usingCustomSender = false;
 $usingFreeCredits = false;
@@ -192,8 +195,8 @@ if ($approvedSenderId && $customApiKey) {
     $activeApiKey = $SEMAPHORE_API_KEY;
     $usingCustomSender = false;
 
-    // Determine if this send falls within the free trial quota
-    if ($freeUsageCount + $required_credits <= $freeCreditsTotal) {
+    // Check free trial quota (always 1 recipient for provider sends)
+    if ($freeUsageCount + 1 <= $freeCreditsTotal) {
         $usingFreeCredits = true; // Tier 2: still within free trial
     }
 }
@@ -225,7 +228,7 @@ if (!$useMyCrmSim && !$usingCustomSender) {
         // Tier 3: Paid Usage -> Deduct actual paid credits
         try {
             $creditManager->deduct_credits(
-                $locationId,
+                $account_id,
                 $required_credits,
                 $messageId ?? ('ghl_prov_' . bin2hex(random_bytes(4))),
                 "GHL Provider SMS to {$normalizedPhone}"
@@ -297,12 +300,27 @@ if (!$useMyCrmSim || !$myCrmSimSuccess) {
     // If this is a fallback send, we MUST deduct credits now because we skipped it earlier
     if ($useMyCrmSim && !$myCrmSimSuccess) {
         try {
-            $creditManager->deduct_credits(
-                $locationId,
-                $required_credits,
-                $messageId ?? ('ghl_prov_' . bin2hex(random_bytes(4))),
-                "Semaphore Fallback SMS to {$normalizedPhone}"
-            );
+            if (!$usingCustomSender) {
+                if ($usingFreeCredits) {
+                    $intRef->set([
+                        'free_usage_count' => $freeUsageCount + 1,
+                        'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+                    ], ['merge' => true]);
+                    $creditManager->record_trial_usage(
+                        $account_id,
+                        $required_credits,
+                        $messageId ?? ('ghl_prov_trial_' . bin2hex(random_bytes(4))),
+                        "Free trial fallback message"
+                    );
+                } else {
+                    $creditManager->deduct_credits(
+                        $account_id,
+                        $required_credits,
+                        $messageId ?? ('ghl_prov_' . bin2hex(random_bytes(4))),
+                        "Semaphore Fallback SMS to {$normalizedPhone}"
+                    );
+                }
+            }
         } catch (\Exception $e) {
             error_log("[Fallback] Credit deduction failed: " . $e->getMessage());
         }
@@ -334,7 +352,7 @@ if ($smsStatus !== 200 || empty($smsResult)) {
     if (!$usingCustomSender) {
         try {
             $creditManager->add_credits(
-                $locationId,
+                $account_id,
                 $required_credits,
                 $messageId ?? 'refund_ghl_prov',
                 'Refund — SMS failed to send',

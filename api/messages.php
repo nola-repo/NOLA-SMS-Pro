@@ -109,11 +109,14 @@ $out = [
     'offset' => $offset,
 ];
 
-// Helper to map backend pending/queued to UI Sent to prevent flickering
+// Strictly map statuses for the UI as requested
 $mapStatus = function($s) {
     if (!$s) return null;
     $l = strtolower($s);
-    return ($l === 'pending' || $l === 'queued') ? 'Sent' : $s;
+    if (in_array($l, ['queued', 'pending', 'sending'])) return 'Sending';
+    if (in_array($l, ['sent', 'success', 'delivered'])) return 'Sent';
+    if (in_array($l, ['failed', 'expired'])) return 'Failed';
+    return ucfirst($l);
 };
 
 try {

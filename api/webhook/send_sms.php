@@ -379,12 +379,28 @@ if (!$useMyCrmSim || !$myCrmSimSuccess) {
     // If this is a fallback send, we MUST deduct credits now because we skipped it earlier
     if ($useMyCrmSim && !$myCrmSimSuccess) {
         try {
-            $creditManager->deduct_credits(
-                $account_id,
-                $required_credits,
-                $batch_id ?? ('single_' . bin2hex(random_bytes(4))),
-                "Semaphore Fallback SMS to $num_recipients recipients"
-            );
+            if (!$usingCustomSender) {
+                if ($usingFreeCredits) {
+                    // Log trial logic for fallback
+                    $intRef->set([
+                        'free_usage_count' => $freeUsageCount + $num_recipients,
+                        'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+                    ], ['merge' => true]);
+                    $creditManager->record_trial_usage(
+                        $account_id,
+                        $required_credits,
+                        $batch_id ?? ('trial_' . bin2hex(random_bytes(4))),
+                        "Free trial fallback message to $num_recipients recipients"
+                    );
+                } else {
+                    $creditManager->deduct_credits(
+                        $account_id,
+                        $required_credits,
+                        $batch_id ?? ('single_' . bin2hex(random_bytes(4))),
+                        "Semaphore Fallback SMS to $num_recipients recipients"
+                    );
+                }
+            }
         } catch (\Exception $e) {
             error_log("[Fallback] Credit deduction failed: " . $e->getMessage());
             // Fail silently or handle as needed

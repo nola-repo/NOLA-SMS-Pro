@@ -22,7 +22,7 @@ class StatusSync
             // Find all SMS logs with status Queued or Pending (Try both cases)
             // Optimization: Limit to 50 per run and order by date_created (FIFO)
             $query = $db->collection('sms_logs')
-                ->where('status', 'in', ['Queued', 'Pending', 'queued', 'pending'])
+                ->where('status', 'in', ['Queued', 'Pending', 'queued', 'pending', 'Sending', 'sending'])
                 ->orderBy('date_created', 'asc')
                 ->limit(50);
 
@@ -64,13 +64,13 @@ class StatusSync
 
                 if ($dateCreated && ($now - $dateCreated > 259200)) { // 3 days in seconds
                     $doc->reference()->update([
-                        ['path' => 'status', 'value' => 'Expired'],
+                        ['path' => 'status', 'value' => 'Failed'],
                         ['path' => 'updated_at', 'value' => new \Google\Cloud\Core\Timestamp(new \DateTime())],
                     ]);
                     
                     try {
                         $db->collection('messages')->document($messageId)->update([
-                            ['path' => 'status', 'value' => 'Expired'],
+                            ['path' => 'status', 'value' => 'Failed'],
                         ]);
                     } catch (\Exception $e) {}
                     
@@ -107,9 +107,22 @@ class StatusSync
 
                     // Ensure the response is valid and contains status
                     if ($decoded && is_array($decoded) && isset($decoded[0]['status'])) {
-                        $newStatus = $decoded[0]['status'];
+                        $rawNewStatus = $decoded[0]['status'];
+                        
+                        // Strict Status Mapping
+                        $statusMap = [
+                            'queued'    => 'Sending',
+                            'pending'   => 'Sending',
+                            'sending'   => 'Sending',
+                            'sent'      => 'Sent',
+                            'success'   => 'Sent',
+                            'delivered' => 'Sent',
+                            'failed'    => 'Failed',
+                            'expired'   => 'Failed'
+                        ];
+                        $newStatus = $statusMap[strtolower($rawNewStatus)] ?? ucfirst($rawNewStatus);
 
-                        // Only update if the status is an upgrade (e.g., Pending -> Sent)
+                        // Only update if the status is an upgrade (e.g., Sending -> Sent)
                         if (self::shouldUpdateStatus($data['status'], $newStatus)) {
 
                             // 1. Update the 'sms_logs' collection
@@ -135,7 +148,7 @@ class StatusSync
                             error_log("[StatusSync] Successfully updated message ID $messageId to status: $newStatus");
 
                             // ── Delivery Report Notification ──────────────────────────
-                            if (in_array($newStatus, ['Delivered', 'Failed', 'delivered', 'failed'])) {
+                            if ($newStatus === 'Sent' || $newStatus === 'Failed') {
                                 try {
                                     $msgLocId = $data['location_id'] ?? null;
                                     if ($msgLocId) {
@@ -173,25 +186,30 @@ class StatusSync
      */
     private static function shouldUpdateStatus($current, $new)
     {
+        $statusMap = [
+            'queued'    => 'Sending',
+            'pending'   => 'Sending',
+            'sending'   => 'Sending',
+            'sent'      => 'Sent',
+            'success'   => 'Sent',
+            'delivered' => 'Sent',
+            'failed'    => 'Failed',
+            'expired'   => 'Failed'
+        ];
+        
+        $c = $statusMap[strtolower($current)] ?? ucfirst($current);
+        $n = $statusMap[strtolower($new)] ?? ucfirst($new);
+
         $statusPriority = [
-            'Queued'    => 1,
-            'queued'    => 1,
-            'Pending'   => 2,
-            'pending'   => 2,
-            'Sent'      => 3,
-            'sent'      => 3,
-            'Delivered' => 4,
-            'delivered' => 4,
-            'Failed'    => 4,
-            'failed'    => 4,
-            'Expired'   => 4,
-            'expired'   => 4
+            'Sending'   => 1,
+            'Sent'      => 2,
+            'Failed'    => 3
         ];
 
-        $newPriority = $statusPriority[$new] ?? 0;
-        $oldPriority = $statusPriority[$current] ?? 0;
+        $newPriority = $statusPriority[$n] ?? 0;
+        $oldPriority = $statusPriority[$c] ?? 0;
 
         // Condition: New priority must be >= old priority, AND status must actually be different
-        return ($newPriority >= $oldPriority) && ($new !== $current);
+        return ($newPriority >= $oldPriority) && ($n !== $c);
     }
 }
