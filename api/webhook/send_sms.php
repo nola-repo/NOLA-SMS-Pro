@@ -184,41 +184,30 @@ $freeCreditsTotal = $intData['free_credits_total'] ?? 10;
 $requestedSender = $customData['sendername'] ?? $payload['sendername'] ?? $data['sendername'] ??
     $customData['sender_name'] ?? $payload['sender_name'] ?? $data['sender_name'] ?? null;
 
-// ── Three-Tier Sender + Credit Logic ────────────────────────────────────────
-// Tier 1: Custom sender (approved sender ID + custom API key) — no system credit deduction
-// Tier 2: Free trial active (system sender, free quota not exhausted) — increment free counter + deduct paid
-// Tier 3: Paid fallback (system sender, free quota exhausted) — deduct paid credits only
-// ❌ Hard 403 only when BOTH free trial exhausted AND paid credits insufficient
+// ── Credit & Sender Selection Logic ─────────────────────────────────────────
+// Delivery selection (who sends the SMS) vs Charging selection (how it's paid for)
 
+// 1. Delivery Selection (Carrier/Provider)
 $usingCustomSender = false;
-$usingFreeCredits = false;
+$activeApiKey = $SEMAPHORE_API_KEY;
+$sender = $SENDER_IDS[0] ?? "";
 
-if ($approvedSenderId && $customApiKey && $requestedSender === $approvedSenderId) {
-    // ✅ Tier 1: User explicitly selected their approved custom sender → use custom key
+if ($approvedSenderId && $customApiKey && ($requestedSender === $approvedSenderId || empty($requestedSender))) {
+    // Custom Sender: Use customer's API key and approved sender name
     $sender = $approvedSenderId;
     $activeApiKey = $customApiKey;
     $usingCustomSender = true;
-}
-elseif ($approvedSenderId && $customApiKey && empty($requestedSender)) {
-    // ✅ Tier 1: No sender specified (e.g. webhook call) → default to approved sender
-    $sender = $approvedSenderId;
-    $activeApiKey = $customApiKey;
-    $usingCustomSender = true;
-}
-else {
-    // ✅ Tier 2 or 3: Use system sender + system API key
-    $sender = $requestedSender ?? ($SENDER_IDS[0] ?? "");
-    if (!in_array($sender, $SENDER_IDS)) {
-        $sender = $SENDER_IDS[0];
+} else {
+    // System Sender: Use system API key and selected/default sender name
+    if ($requestedSender && in_array($requestedSender, $SENDER_IDS)) {
+        $sender = $requestedSender;
     }
-    $activeApiKey = $SEMAPHORE_API_KEY;
+}
 
-    // Determine if this send falls within the free trial quota
-    if ($freeUsageCount + $num_recipients <= $freeCreditsTotal) {
-        $usingFreeCredits = true; // Tier 2: still within free trial
-    }
-// If free quota IS exhausted → Tier 3: fall through to paid credits (no block here)
-}
+// 2. Charging Logic (Quota vs Paid)
+// Charging depends ONLY on trial quota (free_usage_count), NOT on carrier choice.
+$usingFreeCredits = ($freeUsageCount + $num_recipients <= $freeCreditsTotal);
+
 
 $creditManager = new CreditManager();
 $account_id = $locId ?: 'default';
@@ -261,9 +250,10 @@ if ($locId) {
 }
 
 // ── Credit Deduction & Trial ────────────────────────────────────────────────
-// --- FIX 2: Only deduct/track credits if NOT using myCRMSIM or Custom Sender ---
-if (!$useMyCrmSim && !$usingCustomSender) {
+// Credits are charged if NOT using myCRMSIM (hardware bypass)
+if (!$useMyCrmSim) {
     if ($usingFreeCredits) {
+
         // Tier 2: Free Trial -> Increment free usage counter, do NOT deduct paid balance
         $intRef->set([
             'free_usage_count' => $freeUsageCount + $num_recipients,
@@ -379,8 +369,7 @@ if (!$useMyCrmSim || !$myCrmSimSuccess) {
     // If this is a fallback send, we MUST deduct credits now because we skipped it earlier
     if ($useMyCrmSim && !$myCrmSimSuccess) {
         try {
-            if (!$usingCustomSender) {
-                if ($usingFreeCredits) {
+            if ($usingFreeCredits) {
                     // Log trial logic for fallback
                     $intRef->set([
                         'free_usage_count' => $freeUsageCount + $num_recipients,
@@ -400,7 +389,6 @@ if (!$useMyCrmSim || !$myCrmSimSuccess) {
                         "Semaphore Fallback SMS to $num_recipients recipients"
                     );
                 }
-            }
         } catch (\Exception $e) {
             error_log("[Fallback] Credit deduction failed: " . $e->getMessage());
             // Fail silently or handle as needed

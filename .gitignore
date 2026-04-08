@@ -22,6 +22,7 @@ api/webhook/nola-sms-pro-*.json
 **/yarn-error.log*
 
 # Backups and Temporary Files
+vendor/
 frontend_old/
 temp_*/
 .DS_Store
