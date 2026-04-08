@@ -212,6 +212,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'accounts') {
+    $config = require __DIR__ . '/webhook/config.php';
+    $systemApiKey = $config['SEMAPHORE_API_KEY'] ?? null;
+    
     $results = [];
 
     // 1. Fetch all tokens (Master list of installations)
@@ -292,8 +295,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
                 'location_id' => $locId,
                 'location_name' => $locationName,
                 'approved_sender_id' => $intData['approved_sender_id'] ?? null,
-                'credit_balance' => (int)($intData['credit_balance'] ?? 0),
-                'free_usage_count' => (int)($intData['free_usage_count'] ?? 0)
+                'nola_pro_api_key'   => $intData['nola_pro_api_key'] ?? null,
+                'api_key'            => $intData['api_key'] ?? null,
+                'semaphore_api_key'  => $intData['semaphore_api_key'] ?? $intData['nola_pro_api_key'] ?? $intData['api_key'] ?? $systemApiKey,
+                'credit_balance'     => (int)($intData['credit_balance'] ?? 0),
+                'free_usage_count'   => (int)($intData['free_usage_count'] ?? 0),
+                'free_credits_total' => (int)($intData['free_credits_total'] ?? 10)
             ]
         ];
     }
