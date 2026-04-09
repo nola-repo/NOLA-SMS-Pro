@@ -270,11 +270,12 @@ if (!$useMyCrmSim) {
 
         // LOGGING: Record trial usage in transaction history for visibility (amount 0)
         try {
+            $desc = "SMS Message to " . ($num_recipients === 1 ? $validNumbers[0] : "$num_recipients recipient(s)");
             $creditManager->record_trial_usage(
                 $account_id,
                 $required_credits,
                 $batch_id ?? ('trial_' . bin2hex(random_bytes(4))),
-                "Free trial message to $num_recipients recipients"
+                $desc
             );
         } catch (\Exception $e) {
             error_log("Trial logging failed: " . $e->getMessage());
@@ -283,11 +284,12 @@ if (!$useMyCrmSim) {
     } else {
         // Tier 3: Paid Usage -> Deduct actual paid credits
         try {
+            $desc = "SMS Message to " . ($num_recipients === 1 ? $validNumbers[0] : "$num_recipients recipient(s)");
             $creditManager->deduct_credits(
                 $account_id,
                 $required_credits,
                 $batch_id ?? ('single_' . bin2hex(random_bytes(4))),
-                "SMS sent to $num_recipients recipients"
+                $desc
             );
         }
         catch (\Exception $e) {
@@ -383,18 +385,20 @@ if (!$useMyCrmSim || !$myCrmSimSuccess) {
                         'free_usage_count' => $freeUsageCount + $num_recipients,
                         'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
                     ], ['merge' => true]);
+                    $desc = "SMS Message to " . ($num_recipients === 1 ? $validNumbers[0] : "$num_recipients recipient(s)");
                     $creditManager->record_trial_usage(
                         $account_id,
                         $required_credits,
                         $batch_id ?? ('trial_' . bin2hex(random_bytes(4))),
-                        "Free trial fallback message to $num_recipients recipients"
+                        $desc
                     );
                 } else {
+                    $desc = "SMS Message to " . ($num_recipients === 1 ? $validNumbers[0] : "$num_recipients recipient(s)");
                     $creditManager->deduct_credits(
                         $account_id,
                         $required_credits,
                         $batch_id ?? ('single_' . bin2hex(random_bytes(4))),
-                        "Semaphore Fallback SMS to $num_recipients recipients"
+                        $desc
                     );
                 }
         } catch (\Exception $e) {

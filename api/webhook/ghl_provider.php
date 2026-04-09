@@ -215,11 +215,12 @@ if (!$useMyCrmSim && !$usingCustomSender) {
 
         // LOGGING: Record trial usage in transaction history for visibility (amount 0)
         try {
+            $desc = "SMS Message to {$normalizedPhone}";
             $creditManager->record_trial_usage(
                 $locationId,
                 $required_credits,
                 $messageId ?? ('ghl_prov_trial_' . bin2hex(random_bytes(4))),
-                "Free trial GHL provider message"
+                $desc
             );
         } catch (\Exception $e) {
             error_log("[ghl_provider] Trial logging failed: " . $e->getMessage());
@@ -227,11 +228,12 @@ if (!$useMyCrmSim && !$usingCustomSender) {
     } else {
         // Tier 3: Paid Usage -> Deduct actual paid credits
         try {
+            $desc = "SMS Message to {$normalizedPhone}";
             $creditManager->deduct_credits(
                 $account_id,
                 $required_credits,
                 $messageId ?? ('ghl_prov_' . bin2hex(random_bytes(4))),
-                "GHL Provider SMS to {$normalizedPhone}"
+                $desc
             );
         } catch (\Exception $e) {
             if ($e->getMessage() === 'Insufficient credits.') {
@@ -306,18 +308,20 @@ if (!$useMyCrmSim || !$myCrmSimSuccess) {
                         'free_usage_count' => $freeUsageCount + 1,
                         'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
                     ], ['merge' => true]);
+                    $desc = "SMS Message to {$normalizedPhone}";
                     $creditManager->record_trial_usage(
                         $account_id,
                         $required_credits,
                         $messageId ?? ('ghl_prov_trial_' . bin2hex(random_bytes(4))),
-                        "Free trial fallback message"
+                        $desc
                     );
                 } else {
+                    $desc = "SMS Message to {$normalizedPhone}";
                     $creditManager->deduct_credits(
                         $account_id,
                         $required_credits,
                         $messageId ?? ('ghl_prov_' . bin2hex(random_bytes(4))),
-                        "Semaphore Fallback SMS to {$normalizedPhone}"
+                        $desc
                     );
                 }
             }
