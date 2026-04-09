@@ -215,41 +215,56 @@ try {
     $query = $creditsRef->where('account_id', '=', $docId)
                         ->where('created_at', '>=', new \Google\Cloud\Core\Timestamp($startOfMonth));
     
-    $statsDocs = $query->documents();
-    $sentToday = 0;
-    $creditsUsedToday = 0;
-    $creditsUsedMonth = 0;
+    $statsDocs = [];
+    try {
+        $statsDocs = $query->documents();
+    } catch (\Throwable $e) {
+        // If Firestore throws a Missing Index error, catch it here cleanly
+        $stats = [
+            'sent_today' => 0,
+            'credits_used_today' => 0,
+            'credits_used_month' => 0,
+            'error' => 'Stats query failed. Likely missing Firestore index. See message string.',
+            'message' => $e->getMessage()
+        ];
+    }
 
-    foreach ($statsDocs as $txDoc) {
-        if (!$txDoc->exists()) continue;
-        $tx = $txDoc->data();
-        
-        if (($tx['type'] ?? '') === 'deduction') {
-            $amt = abs((int)($tx['amount'] ?? 0));
-            $freeApplied = (int)($tx['free_usage_applied'] ?? 0);
+    if (empty($stats)) {
+        $sentToday = 0;
+        $creditsUsedToday = 0;
+        $creditsUsedMonth = 0;
+
+        foreach ($statsDocs as $txDoc) {
+            if (!$txDoc->exists()) continue;
+            $tx = $txDoc->data();
             
-            // All tx here are at least this month
-            $creditsUsedMonth += $amt;
-            
-            $createdAtTs = $tx['created_at'] ?? null;
-            if ($createdAtTs && $createdAtTs instanceof \Google\Cloud\Core\Timestamp) {
-                $dt = $createdAtTs->get();
+            if (($tx['type'] ?? '') === 'deduction') {
+                $amt = abs((int)($tx['amount'] ?? 0));
+                $freeApplied = (int)($tx['free_usage_applied'] ?? 0);
                 
-                // Compare explicitly to start of today using timestamp or date formatting
-                // get() returns a DateTime object (or DateTimeImmutable)
-                if ($dt->getTimestamp() >= $startOfToday->getTimestamp()) {
-                    $creditsUsedToday += $amt;
-                    $sentToday += ($amt + $freeApplied);
+                // All tx here are at least this month
+                $creditsUsedMonth += $amt;
+                
+                $createdAtTs = $tx['created_at'] ?? null;
+                if ($createdAtTs && $createdAtTs instanceof \Google\Cloud\Core\Timestamp) {
+                    $dt = $createdAtTs->get();
+                    
+                    // Compare explicitly to start of today using timestamp or date formatting
+                    // get() returns a DateTime object (or DateTimeImmutable)
+                    if ($dt->getTimestamp() >= $startOfToday->getTimestamp()) {
+                        $creditsUsedToday += $amt;
+                        $sentToday += ($amt + $freeApplied);
+                    }
                 }
             }
         }
+        
+        $stats = [
+            'sent_today' => $sentToday,
+            'credits_used_today' => $creditsUsedToday,
+            'credits_used_month' => $creditsUsedMonth
+        ];
     }
-    
-    $stats = [
-        'sent_today' => $sentToday,
-        'credits_used_today' => $creditsUsedToday,
-        'credits_used_month' => $creditsUsedMonth
-    ];
     // -----------------------
 
     echo json_encode([

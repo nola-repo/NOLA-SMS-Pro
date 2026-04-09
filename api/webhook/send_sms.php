@@ -131,6 +131,14 @@ $message = $customData['message'] ?? $payload['message'] ?? $data['message'] ?? 
 if ($message) {
     $message = strip_tags($message);
     $message = html_entity_decode($message);
+    
+    // Sanitize smart unicode punctuation to GSM-7 equivalents to prevent UCS-2 segment limits
+    $message = str_replace(
+        ['‘', '’', '“', '”', '–', '—', '…', '`', '´'],
+        ["'", "'", '"', '"', '-', '-', '...', "'", "'"],
+        $message
+    );
+
     $message = preg_replace('/\s+/', ' ', $message);
     $message = trim($message);
 }

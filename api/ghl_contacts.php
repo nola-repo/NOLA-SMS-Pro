@@ -177,7 +177,7 @@ if (!$GHL_LOCATION_ID || !$GHL_API_TOKEN) {
 /**
  * Execute a cURL request with automatic retry on 401.
  */
-function executeGHLRequest($url, $method, $headers, $payload = null, $db, &$integration)
+function executeGHLRequest($url, $method, $headers, $payload, $db, &$integration)
 {
     $attempt = 1;
     while ($attempt <= 2) {
