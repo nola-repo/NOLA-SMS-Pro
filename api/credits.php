@@ -207,6 +207,51 @@ try {
         $updatedAt = $createdAt;
     }
 
+    // --- Calculate Stats ---
+    $startOfMonth = new \DateTimeImmutable('first day of this month 00:00:00');
+    $startOfToday = new \DateTimeImmutable('today 00:00:00');
+
+    $creditsRef = $db->collection('credit_transactions');
+    $query = $creditsRef->where('account_id', '=', $docId)
+                        ->where('created_at', '>=', new \Google\Cloud\Core\Timestamp($startOfMonth));
+    
+    $statsDocs = $query->documents();
+    $sentToday = 0;
+    $creditsUsedToday = 0;
+    $creditsUsedMonth = 0;
+
+    foreach ($statsDocs as $txDoc) {
+        if (!$txDoc->exists()) continue;
+        $tx = $txDoc->data();
+        
+        if (($tx['type'] ?? '') === 'deduction') {
+            $amt = abs((int)($tx['amount'] ?? 0));
+            $freeApplied = (int)($tx['free_usage_applied'] ?? 0);
+            
+            // All tx here are at least this month
+            $creditsUsedMonth += $amt;
+            
+            $createdAtTs = $tx['created_at'] ?? null;
+            if ($createdAtTs && $createdAtTs instanceof \Google\Cloud\Core\Timestamp) {
+                $dt = $createdAtTs->get();
+                
+                // Compare explicitly to start of today using timestamp or date formatting
+                // get() returns a DateTime object (or DateTimeImmutable)
+                if ($dt->getTimestamp() >= $startOfToday->getTimestamp()) {
+                    $creditsUsedToday += $amt;
+                    $sentToday += ($amt + $freeApplied);
+                }
+            }
+        }
+    }
+    
+    $stats = [
+        'sent_today' => $sentToday,
+        'credits_used_today' => $creditsUsedToday,
+        'credits_used_month' => $creditsUsedMonth
+    ];
+    // -----------------------
+
     echo json_encode([
         'success' => true,
         'account_id' => $locId,
@@ -216,6 +261,7 @@ try {
         'currency' => $currency,
         'created_at' => $createdAt,
         'updated_at' => $updatedAt,
+        'stats' => $stats
     ], JSON_PRETTY_PRINT);
 }
 catch (\Throwable $e) {

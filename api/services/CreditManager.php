@@ -210,7 +210,7 @@ class CreditManager
         $batch->create($transactionRef, [
             'transaction_id' => $transactionRef->id(),
             'account_id' => $accountRef->id(),
-            'type' => 'free_trial',
+            'type' => 'deduction',
             'amount' => 0, // No paid credit deduction
             'free_usage_applied' => $amount, // Tracks how many trial credits were used
             'reference_id' => $reference_id,
