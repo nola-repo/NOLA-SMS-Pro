@@ -237,8 +237,8 @@ class GhlClient
         // 1. Identify which app are we refreshing (Sub-account vs Agency)
         $ghlApps = [
             'subaccount' => [
-                'clientId'     => getenv('GHL_CLIENT_ID') ?: '6999da2b8f278296d95f7274-mmn30t4f',
-                'clientSecret' => getenv('GHL_CLIENT_SECRET') ?: 'f9de7ccf-8bb9-4bc2-8956-621817dd861a',
+                'clientId'     => getenv('GHL_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3',
+                'clientSecret' => getenv('GHL_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322',
             ],
             'agency' => [
                 'clientId'     => '69cb813b4b007d172f7e7a35-mneicksx',
@@ -262,8 +262,8 @@ class GhlClient
 
         // Fallback to legacy env vars if appId is missing or not found in map
         if (!$clientId || !$clientSecret) {
-            $clientId     = getenv('GHL_CLIENT_ID') ?: '6999da2b8f278296d95f7274-mmn30t4f';
-            $clientSecret = getenv('GHL_CLIENT_SECRET') ?: 'f9de7ccf-8bb9-4bc2-8956-621817dd861a';
+            $clientId     = getenv('GHL_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3';
+            $clientSecret = getenv('GHL_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322';
         }
 
         $refreshToken = $this->integration['refresh_token'] ?? null;

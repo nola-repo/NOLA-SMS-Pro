@@ -34,3 +34,11 @@ In this latest update, we have completely **unified** the terminology. The UI, D
 
 ### Why this is better:
 We updated the background synchronizer to be **API-Key Aware**. This means messages actually resolve to "Sent" much faster and more reliably than before. You don't have to "pretend" a message is sent anymore—you can wait for the real "Sent" status from the DB.
+
+## 🌟 Agency App Installation Updates (April 9)
+We have updated the GHL Client IDs and Client Secrets across the backend to the newly provided credentials.
+
+### Changes Needed on Your Side:
+1. **Update Subaccount Install Link**: The GHL App Client ID has been updated. In your frontend repository (`agency/src/pages/Subaccounts.tsx` around line 563), please update the hardcoded installation URL to use the new Client ID `69d31f33b3071b25dbcc5656-mnqxvtt3` and the new version ID `69d31f33b3071b25dbcc5656`. If there are any other `.env` variables or files where the app Client ID is specified, please update them as well!
+2. **Billing Status Updates**: The `GET /api/credits.php?action=status` endpoint has been upgraded. It now returns a `stats` object containing `sent_today`, `credits_used_today`, and `credits_used_month` directly from the database calculation. You no longer need to calculate this dynamically on the client-side!
+3. **Free Trial Handling**: Trial sms charges are now logged as `type=deduction` but with `amount=0`. Your UI logic should naturally be able to check for this `amount=0` condition to print things like "-1 free trial".

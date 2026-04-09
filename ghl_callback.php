@@ -444,7 +444,7 @@ function render_error(string $message, array $details = []): void
         $details_html = "<pre class=\"error-pre\">{$json}</pre>";
     }
 
-    $reinstall_url = 'https://marketplace.leadconnectorhq.com/oauth/chooselocation?response_type=code&redirect_uri=https%3A%2F%2Fsmspro-api.nolacrm.io%2Foauth%2Fcallback&client_id=6999da2b8f278296d95f7274-mmn30t4f&scope=locations.readonly+workflows.readonly+conversations%2Fmessage.readonly+conversations.readonly+conversations.write+contacts.readonly+contacts.write+conversations%2Fmessage.write&version_id=6999da2b8f278296d95f7274';
+    $reinstall_url = 'https://marketplace.leadconnectorhq.com/oauth/chooselocation?response_type=code&redirect_uri=https%3A%2F%2Fsmspro-api.nolacrm.io%2Foauth%2Fcallback&client_id=69d31f33b3071b25dbcc5656-mnqxvtt3&scope=locations.readonly+workflows.readonly+conversations%2Fmessage.readonly+conversations.readonly+conversations.write+contacts.readonly+contacts.write+conversations%2Fmessage.write&version_id=69d31f33b3071b25dbcc5656';
 
     $body = <<<HTML
         <div class="error-icon" style="margin: 0 auto 32px;">
@@ -466,8 +466,8 @@ HTML;
 // We now support both the legacy Sub-account app and the new Agency-level app.
 $ghlApps = [
     'subaccount' => [
-        'clientId' => getenv('GHL_CLIENT_ID') ?: '6999da2b8f278296d95f7274-mmn30t4f',
-        'clientSecret' => getenv('GHL_CLIENT_SECRET') ?: 'f9de7ccf-8bb9-4bc2-8956-621817dd861a',
+        'clientId' => getenv('GHL_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3',
+        'clientSecret' => getenv('GHL_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322',
     ],
     'agency' => [
         'clientId' => '69cb813b4b007d172f7e7a35-mneicksx',

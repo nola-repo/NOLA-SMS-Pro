@@ -62,8 +62,8 @@ function getGHLIntegration($db, $locationId = null)
  */
 function refreshGHLToken($db, &$integration)
 {
-    $clientId = getenv('GHL_CLIENT_ID');
-    $clientSecret = getenv('GHL_CLIENT_SECRET');
+    $clientId = getenv('GHL_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3';
+    $clientSecret = getenv('GHL_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322';
     $refreshToken = $integration['refresh_token'] ?? null;
     $docId = $integration['firestore_doc_id'] ?? 'ghl';
 
