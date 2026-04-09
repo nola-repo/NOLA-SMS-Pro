@@ -77,6 +77,14 @@ try {
         $locName = $loc['name'] ?? 'Unnamed Location';
         $config = $dbConfigs[$locId] ?? [];
         
+        // Fetch credit_balance from integrations collection
+        $creditBalance = 0;
+        $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
+        $intSnap = $db->collection('integrations')->document($intDocId)->snapshot();
+        if ($intSnap->exists()) {
+            $creditBalance = (int)($intSnap->data()['credit_balance'] ?? 0);
+        }
+
         $subaccountData = [
             'location_id'             => $locId,
             'location_name'           => $locName,
@@ -85,7 +93,8 @@ try {
             'toggle_enabled'          => (bool)($config['toggle_enabled'] ?? false),
             'rate_limit'              => (int)($config['rate_limit'] ?? 5),
             'attempt_count'           => (int)($config['attempt_count'] ?? 0),
-            'toggle_activation_count' => (int)($config['toggle_activation_count'] ?? 0)
+            'toggle_activation_count' => (int)($config['toggle_activation_count'] ?? 0),
+            'credit_balance'          => $creditBalance
         ];
         
         // Auto-sync into agency_subaccounts if missing or if names have changed

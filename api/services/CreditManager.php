@@ -110,28 +110,40 @@ class CreditManager
         $now = new \DateTimeImmutable();
         $ts = new Timestamp($now);
 
-        // Lock-free atomic batch to prevent concurrency aborts during bulk workflows
-        $batch = $this->db->batch();
+        $result = $this->db->runTransaction(function ($transaction) use ($accountRef, $transactionRef, $amount, $reference_id, $description, $ts) {
+            $snapshot = $transaction->snapshot($accountRef);
+            $current_balance = 0;
 
-        $batch->set($accountRef, [
-            'credit_balance' => \Google\Cloud\Firestore\FieldValue::increment(-$amount),
-            'updated_at' => $ts
-        ], ['merge' => true]);
+            if ($snapshot->exists()) {
+                $current_balance = (int)($snapshot->data()['credit_balance'] ?? 0);
+            }
 
-        $batch->create($transactionRef, [
-            'transaction_id' => $transactionRef->id(),
-            'account_id' => $accountRef->id(),
-            'type' => 'deduction',
-            'amount' => -$amount,
-            // With async increment, balance_after is not strictly accurate in logs, but safe
-            'reference_id' => $reference_id,
-            'description' => $description,
-            'created_at' => $ts
-        ]);
+            if ($current_balance < $amount) {
+                throw new \Exception("Insufficient credits.");
+            }
 
-        $batch->commit();
+            $new_balance = $current_balance - $amount;
 
-        return true;
+            $transaction->set($accountRef, [
+                'credit_balance' => $new_balance,
+                'updated_at' => $ts
+            ], ['merge' => true]);
+
+            $transaction->create($transactionRef, [
+                'transaction_id' => $transactionRef->id(),
+                'account_id' => $accountRef->id(),
+                'type' => 'deduction',
+                'amount' => -$amount,
+                'balance_after' => $new_balance,
+                'reference_id' => $reference_id,
+                'description' => $description,
+                'created_at' => $ts
+            ]);
+
+            return $new_balance;
+        });
+
+        return $result;
     }
 
     public function add_credits($account_id, $amount, $reference_id, $description, $type = 'top_up')
@@ -204,6 +216,13 @@ class CreditManager
         $now = new \DateTimeImmutable();
         $ts = new \Google\Cloud\Core\Timestamp($now);
 
+        // Read current paid balance (trial usage does NOT change it)
+        $currentBalance = 0;
+        $snap = $accountRef->snapshot();
+        if ($snap->exists()) {
+            $currentBalance = (int)($snap->data()['credit_balance'] ?? 0);
+        }
+
         // Simple batch to create the transaction record
         $batch = $this->db->batch();
 
@@ -212,6 +231,7 @@ class CreditManager
             'account_id' => $accountRef->id(),
             'type' => 'deduction',
             'amount' => 0, // No paid credit deduction
+            'balance_after' => $currentBalance, // Paid balance unchanged
             'free_usage_applied' => $amount, // Tracks how many trial credits were used
             'reference_id' => $reference_id,
             'description' => $description,

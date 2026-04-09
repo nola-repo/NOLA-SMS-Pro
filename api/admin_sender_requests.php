@@ -147,8 +147,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $logId = 'adj_' . uniqid();
                 $db->collection('credit_transactions')->document($logId)->set([
                     'id' => $logId,
+                    'account_id' => $docId,
                     'location_id' => $locId,
                     'amount' => $delta, // Log the difference (+5, -2, etc)
+                    'balance_after' => $newBalance,
                     'type' => 'admin_adjustment',
                     'description' => "Manual credit adjustment by System Admin (Applied " . ($delta > 0 ? "+" : "") . $delta . " credits)",
                     'created_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
