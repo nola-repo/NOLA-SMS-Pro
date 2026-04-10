@@ -38,26 +38,28 @@ try {
         exit;
     }
 
-    // 2. Fetch Locations from GHL
-    $ch = curl_init('https://services.leadconnectorhq.com/locations/search?companyId=' . urlencode($agencyId) . '&limit=100');
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        'Authorization: Bearer ' . $accessToken,
-        'Version: 2021-07-28',
-        'Accept: application/json'
-    ]);
+    // 2. Fetch Locations from ghl_tokens
+    $subaccountQuery = $db->collection('ghl_tokens')->where('companyId', '=', $agencyId)->documents();
+    $ghlLocations = [];
     
-    $response = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-    
-    if ($httpCode !== 200) {
-        $errorResponse = json_decode($response, true);
-        throw new Exception("GHL API Error ({$httpCode}): " . ($errorResponse['message'] ?? $response));
+    foreach ($subaccountQuery as $doc) {
+        if ($doc->exists()) {
+            $data = $doc->data();
+            // exclude the agency's own token document
+            $isLocation = isset($data['locationId']) || isset($data['location_id']) || ($data['appType'] ?? '') !== 'agency';
+            
+            if ($isLocation && ($data['appType'] ?? '') !== 'agency') {
+                $locId = $data['locationId'] ?? $data['location_id'] ?? $doc->id();
+                // Exclude the agency document itself in case appType is missing
+                if ($locId !== $agencyId) {
+                    $ghlLocations[] = [
+                        'id' => $locId,
+                        'name' => $data['location_name'] ?? $data['name'] ?? 'Unnamed Location'
+                    ];
+                }
+            }
+        }
     }
-    
-    $apiData = json_decode($response, true);
-    $ghlLocations = $apiData['locations'] ?? [];
 
     // 3. Fetch existing configs from agency_subaccounts
     $results = $db->collection('agency_subaccounts')->where('agency_id', '=', $agencyId)->documents();

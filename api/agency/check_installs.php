@@ -42,10 +42,12 @@ try {
     foreach ($results as $doc) {
         if ($doc->exists()) {
             $data = $doc->data();
-            $locId = $data['locationId'] ?? $doc->id();
+            $locId = $data['locationId'] ?? $data['location_id'] ?? $doc->id();
             
-            // The agency-level token itself has companyId as document ID, we want to exclude that one
-            if ($locId && $locId !== $companyId && !in_array($locId, $installedLocations)) {
+            // Exclude the agency-level token itself
+            $isAgency = ($data['appType'] ?? '') === 'agency' || $locId === $companyId;
+            
+            if (!$isAgency && $locId && !in_array($locId, $installedLocations)) {
                 $installedLocations[] = $locId;
             }
         }

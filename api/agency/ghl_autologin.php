@@ -54,12 +54,16 @@ try {
     }
 
     if (!$userData) {
-        http_response_code(404);
-        echo json_encode([
-            'error' => 'No agency account is linked to this GoHighLevel company. '
-                     . 'Register and connect your GHL account first.',
-        ]);
-        exit;
+        // Automatically create a new user document on the fly
+        $userData = [
+            'role'       => 'agency',
+            'company_id' => $companyId,
+            'createdAt'  => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+            'active'     => true,
+        ];
+        // Insert into firestore and get the auto-generated ID
+        $newUserRef = $db->collection('users')->add($userData);
+        $userId = $newUserRef->id();
     }
 
     if (empty($userData['active'])) {
