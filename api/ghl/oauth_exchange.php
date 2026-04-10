@@ -29,13 +29,13 @@ $redirectUri = $payload['redirect_uri'] ?? '';
 // We now support both the legacy Sub-account app and the new Agency-level app.
 $ghlApps = [
     'subaccount' => [
-        'clientId' => getenv('GHL_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3',
-        'clientSecret' => getenv('GHL_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322',
+        'clientId' => getenv('GHL_CLIENT_ID') ?: '6999da2b8f278296d95f7274-mm9wv8se',
+        'clientSecret' => getenv('GHL_CLIENT_SECRET') ?: 'dfc4380f-b132-49b3-824b-02e14f55ee78',
         'userType' => 'Location'
     ],
     'agency' => [
-        'clientId' => getenv('GHL_AGENCY_CLIENT_ID') ?: '69cb813b4b007d172f7e7a35-mneicksx',
-        'clientSecret' => getenv('GHL_AGENCY_CLIENT_SECRET') ?: 'f2c52910-fa01-47b1-9cf7-d812464fe2ad',
+        'clientId' => getenv('GHL_AGENCY_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3',
+        'clientSecret' => getenv('GHL_AGENCY_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322',
         'userType' => 'Company'
     ]
 ];

@@ -248,6 +248,16 @@ function transformGHLContact(array $contact): array
 try {
     // ── GET — fetch contacts (shadow-refactored to use GhlClient) ───────
     if ($method === 'GET') {
+        require_once __DIR__ . '/services/Cache.php';
+        $cache = new Cache('data');
+        $cacheKey = 'contacts_' . $locationHeader;
+
+        $cachedResponse = $cache->get($cacheKey, 300); // 5 minutes cache
+        if ($cachedResponse) {
+            echo json_encode($cachedResponse, JSON_PRETTY_PRINT);
+            exit;
+        }
+
         require_once __DIR__ . '/services/GhlClient.php';
         $client = new GhlClient($db, $locationHeader);
         $resp = $client->request('GET', '/contacts/?locationId=' . urlencode($GHL_LOCATION_ID) . '&limit=100');
@@ -271,6 +281,9 @@ try {
             array_map('transformGHLContact', $contacts),
             fn($c) => !empty($c['phone'])
         ));
+
+        // Save to cache
+        $cache->set($cacheKey, $transformed);
 
         echo json_encode($transformed, JSON_PRETTY_PRINT);
         exit;

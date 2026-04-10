@@ -19,6 +19,16 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
 require_once __DIR__ . '/auth_helper.php';
 $agencyId = validate_agency_request();
 
+require_once __DIR__ . '/../services/Cache.php';
+$cache = new Cache('data');
+$cacheKey = 'subaccounts_' . $agencyId;
+
+$cachedResponse = $cache->get($cacheKey, 600); // 10 minutes cache
+if ($cachedResponse) {
+    echo json_encode($cachedResponse);
+    exit;
+}
+
 try {
     $db = get_firestore();
 
@@ -96,10 +106,14 @@ try {
         $subaccounts[] = $subaccountData;
     }
 
-    echo json_encode([
+    $response = [
         'status'      => 'success',
         'subaccounts' => $subaccounts
-    ]);
+    ];
+
+    $cache->set($cacheKey, $response);
+
+    echo json_encode($response);
 
 } catch (\Throwable $e) {
     $msg = $e->getMessage();

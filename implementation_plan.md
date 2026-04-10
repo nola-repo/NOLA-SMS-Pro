@@ -5,6 +5,12 @@ This plan integrates the GHL Create Conversation API so that SMS Pro can create 
 ## User Review Required
 
 > [!IMPORTANT]
+> **New Client ID Detected**: Your installer is using Client ID `69d31f33b3071b25dbcc5656-mnmlq8zj`, but the backend was configured for `mnqxvtt3`. I need the **Client Secret** for the `mnmlq8zj` app to update the backend exchange logic.
+
+> [!IMPORTANT]
+> **GHL Custom Menu Link Configuration**: The error "Could not detect GHL Company ID" happens because the GHL custom menu link is not passing the required parameters. Please ensure your GHL Custom Menu Link settings have **"Append URL parameters"** enabled, or that the URL includes `?company_id={{company.id}}&location_id={{location.id}}`.
+
+> [!IMPORTANT]
 > **Zero-Downtime "Shadow Integration"**: Phase 1 extracts the existing token/retry logic from [ghl_contacts.php](file:///c:/Users/User/nola-sms-pro/NOLA-SMS-Pro-Backend/api/ghl_contacts.php) into a reusable `GhlClient.php`. We validate it by shadow-refactoring one existing endpoint (contact fetch) before using it for the new conversation feature.
 
 > [!WARNING]

@@ -141,17 +141,15 @@ class GhlClient
      */
     private function loadIntegration(string $locationId): ?array
     {
-        $cacheDir = __DIR__ . '/../cache/tokens';
-        $cacheFile = $cacheDir . '/token_' . preg_replace('/[^a-zA-Z0-9_\-]/', '', $locationId) . '.json';
-        $cacheTTL = 300; // 5 minutes cache
+        require_once __DIR__ . '/Cache.php';
+        $cache = new Cache('tokens');
+        $cacheKey = 'token_' . $locationId;
+        $cacheTTL = 3600; // Increase token cache to 1 hour (refreshes still happen on 401)
 
         // 1. Check local file cache first (reduce Firestore reads)
-        if (file_exists($cacheFile) && (time() - filemtime($cacheFile) < $cacheTTL)) {
-            $cachedData = json_decode(file_get_contents($cacheFile), true);
-            if ($cachedData && is_array($cachedData)) {
-                // error_log("GhlClient: Using cached token for location {$locationId}");
-                return $cachedData;
-            }
+        $cachedData = $cache->get($cacheKey, $cacheTTL);
+        if ($cachedData) {
+            return $cachedData;
         }
 
         // 2. Not in cache? Hit Firestore (Primary: doc ID = raw locationId)
@@ -177,10 +175,7 @@ class GhlClient
 
         // 3. Save to cache if found
         if ($data) {
-            if (!is_dir($cacheDir)) {
-                @mkdir($cacheDir, 0755, true);
-            }
-            file_put_contents($cacheFile, json_encode($data));
+            $cache->set($cacheKey, $data);
             return $data;
         }
 
@@ -192,11 +187,9 @@ class GhlClient
      */
     public function clearCache(): void
     {
-        $cacheDir = __DIR__ . '/../cache/tokens';
-        $cacheFile = $cacheDir . '/token_' . preg_replace('/[^a-zA-Z0-9_\-]/', '', $this->locationId) . '.json';
-        if (file_exists($cacheFile)) {
-            @unlink($cacheFile);
-        }
+        require_once __DIR__ . '/Cache.php';
+        $cache = new Cache('tokens');
+        $cache->delete('token_' . $this->locationId);
     }
 
     /**
