@@ -605,6 +605,19 @@ try {
 
     $db->collection('ghl_tokens')->document((string)$id)->set($tokenPayload, ['merge' => true]);
 
+    // 2. Register the subaccount in ghl_tokens for the Agency Dashboard to track
+    if ($userType === 'Location') {
+        $db->collection('ghl_tokens')->document((string)$id)->set([
+            'location_id' => $id,
+            'location_name' => $displayName,
+            'companyId' => $data['companyId'] ?? '',
+            'userType' => $data['userType'] ?? 'Location',
+            'is_live' => true,
+            'toggle_enabled' => true,
+            'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+        ], ['merge' => true]);
+    }
+
     if ($userType === 'Location') {
         // 2. Provision Credits for new sub-account users
         $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$id);

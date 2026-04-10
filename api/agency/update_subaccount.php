@@ -37,7 +37,7 @@ try {
     }
     $currentData = $snapshot->data();
     
-    $toggleEnabled = isset($input['toggle_enabled']) ? (bool)$input['toggle_enabled'] : ($currentData['toggle_enabled'] ?? false);
+    $toggleEnabled = isset($input['toggle_enabled']) ? (bool)$input['toggle_enabled'] : ($currentData['toggle_enabled'] ?? true);
     $rateLimit = isset($input['rate_limit']) ? (int)$input['rate_limit'] : ($currentData['rate_limit'] ?? 5);
     $resetCounter = isset($input['reset_counter']) ? (bool)$input['reset_counter'] : false;
     

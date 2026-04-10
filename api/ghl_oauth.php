@@ -120,6 +120,17 @@ if ($http_status == 200 && is_array($result) && isset($result['access_token'])) 
             'created_at' => new \Google\Cloud\Core\Timestamp($now)
         ], ['merge' => true]);
 
+        // Also register in ghl_tokens for Agency Dashboard install verification
+        $db->collection('ghl_tokens')->document($locationId)->set([
+            'location_id' => $locationId,
+            'location_name' => $locationName,
+            'companyId' => $result['companyId'] ?? '',
+            'userType' => $result['userType'] ?? 'Location',
+            'is_live' => true,
+            'toggle_enabled' => true,
+            'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+        ], ['merge' => true]);
+
         echo json_encode([
             "status" => "success",
             "locationId" => $locationId,

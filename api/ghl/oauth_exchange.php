@@ -26,36 +26,72 @@ if (!is_array($payload) || empty($payload['code'])) {
 $code = $payload['code'];
 $redirectUri = $payload['redirect_uri'] ?? '';
 
-// Use Environment Variables
-$clientId = getenv('GHL_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3';
-$clientSecret = getenv('GHL_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322';
+// We now support both the legacy Sub-account app and the new Agency-level app.
+$ghlApps = [
+    'subaccount' => [
+        'clientId' => getenv('GHL_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3',
+        'clientSecret' => getenv('GHL_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322',
+        'userType' => 'Location'
+    ],
+    'agency' => [
+        'clientId' => getenv('GHL_AGENCY_CLIENT_ID') ?: '69cb813b4b007d172f7e7a35-mneicksx',
+        'clientSecret' => getenv('GHL_AGENCY_CLIENT_SECRET') ?: 'f2c52910-fa01-47b1-9cf7-d812464fe2ad',
+        'userType' => 'Company'
+    ]
+];
 
-if (!$clientId || !$clientSecret) {
-    http_response_code(500);
-    echo json_encode(['success' => false, 'error' => 'GHL credentials not configured on server.']);
-    exit;
+$data = null;
+$http_status = 0;
+$usedAppType = '';
+$response = '';
+
+foreach ($ghlApps as $appType => $config) {
+    if (!$config['clientId'] || !$config['clientSecret'])
+        continue;
+
+    $ch = curl_init('https://services.leadconnectorhq.com/oauth/token');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query([
+        'client_id' => $config['clientId'],
+        'client_secret' => $config['clientSecret'],
+        'grant_type' => 'authorization_code',
+        'code' => $code,
+        'user_type' => $config['userType'],
+        'redirect_uri' => $redirectUri,
+    ]));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        "Content-Type: application/x-www-form-urlencoded",
+        "Accept: application/json",
+        "Version: 2021-07-28"
+    ]);
+
+    $response = curl_exec($ch);
+    $http_status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($response === false) {
+        continue; // Try next set of credentials
+    }
+
+    $responseData = json_decode($response, true);
+    if ($http_status == 200 && is_array($responseData) && isset($responseData['access_token'])) {
+        $result = $responseData;
+        $data = $responseData;
+        $usedAppType = $appType;
+        break; // Success!
+    }
 }
 
-$postData = http_build_query([
-    'client_id' => $clientId,
-    'client_secret' => $clientSecret,
-    'grant_type' => 'authorization_code',
-    'code' => $code,
-    'redirect_uri' => $redirectUri
-]);
-
-$ch = curl_init('https://services.leadconnectorhq.com/oauth/token');
-curl_setopt($ch, CURLOPT_POST, true);
-curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-curl_setopt($ch, CURLOPT_HTTPHEADER, [
-    "Content-Type: application/x-www-form-urlencoded",
-    "Accept: application/json",
-    "Version: 2021-07-28"
-]);
-curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
-
-$response = curl_exec($ch);
-$http_status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+if (!$data) {
+    http_response_code($http_status ?: 400);
+    echo json_encode([
+        "success" => false, 
+        "error" => "Failed to exchange token. Tried both Sub-account and Agency credentials.",
+        "ghl_response" => json_decode($response, true) ?: $response
+    ]);
+    exit;
+}
 
 if ($response === false) {
     http_response_code(500);
@@ -118,6 +154,9 @@ if ($http_status == 200 && is_array($result) && isset($result['access_token'])) 
                 'scope' => $result['scope'] ?? '',
                 'company_id' => $companyId,
                 'company_name' => $companyName,
+                'appType' => $usedAppType,
+                'appId' => $ghlApps[$usedAppType]['clientId'],
+                'userType' => $ghlApps[$usedAppType]['userType'],
                 'updated_at' => new \Google\Cloud\Core\Timestamp($now),
                 'created_at' => new \Google\Cloud\Core\Timestamp($now)
             ], ['merge' => true]);

@@ -182,6 +182,21 @@ $intRef = $db->collection('integrations')->document($intDocId);
 $intSnap = $intRef->snapshot();
 $intData = $intSnap->exists() ? $intSnap->data() : [];
 
+// ── Check Agency Toggle ───────────────────────────────────────────────────
+$tokenRef = $db->collection('ghl_tokens')->document($locId);
+$tokenSnap = $tokenRef->snapshot();
+$tokenData = $tokenSnap->exists() ? $tokenSnap->data() : [];
+$toggleEnabled = isset($tokenData['toggle_enabled']) ? (bool)$tokenData['toggle_enabled'] : true;
+
+if (!$toggleEnabled) {
+    http_response_code(403);
+    echo json_encode([
+        'status' => 'error',
+        'message' => 'SMS sending is currently disabled for this account. Please contact your agency.'
+    ]);
+    exit;
+}
+
 $approvedSenderId = $intData['approved_sender_id'] ?? null;
 // Support legacy semaphore_api_key but prefer the new nola_pro_api_key
 $customApiKey = $intData['nola_pro_api_key'] ?? ($intData['semaphore_api_key'] ?? null);

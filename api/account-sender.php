@@ -42,7 +42,13 @@ try {
                 'nola_pro_api_key' => $data['nola_pro_api_key'] ?? ($data['semaphore_api_key'] ?? null),
                 'free_usage_count' => $data['free_usage_count'] ?? 0,
                 'free_credits_total' => $data['free_credits_total'] ?? 10,
-                'system_default_sender' => 'NOLASMSPro'
+                'system_default_sender' => 'NOLASMSPro',
+                'toggle_enabled' => (function() use ($db, $locId) {
+                    $tokenRef = $db->collection('ghl_tokens')->document($locId);
+                    $tokenSnap = $tokenRef->snapshot();
+                    $tokenData = $tokenSnap->exists() ? $tokenSnap->data() : [];
+                    return isset($tokenData['toggle_enabled']) ? (bool)$tokenData['toggle_enabled'] : true;
+                })()
             ]
         ]);
         exit;

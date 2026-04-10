@@ -81,7 +81,7 @@ try {
             'location_name'           => $locName,
             'agency_id'               => $agencyId,
             'agency_name'             => $agencyName,
-            'toggle_enabled'          => (bool)($config['toggle_enabled'] ?? false),
+            'toggle_enabled'          => isset($config['toggle_enabled']) ? (bool)$config['toggle_enabled'] : true,
             'rate_limit'              => (int)($config['rate_limit'] ?? 5),
             'attempt_count'           => (int)($config['attempt_count'] ?? 0),
             'toggle_activation_count' => (int)($config['toggle_activation_count'] ?? 0),

@@ -26,10 +26,12 @@ $input     = json_decode(file_get_contents('php://input'), true);
 $companyId = trim($input['company_id'] ?? '');
 
 if (!$companyId) {
+    error_log('[GHL_AUTOLOGIN] Attempted auto-login without company_id.');
     http_response_code(400);
     echo json_encode(['error' => 'company_id is required.']);
     exit;
 }
+error_log('[GHL_AUTOLOGIN] Attempting auto-login for company_id: ' . $companyId);
 
 $jwtSecret = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
 
@@ -54,16 +56,20 @@ try {
     }
 
     if (!$userData) {
+        error_log('[GHL_AUTOLOGIN] No existing agency user found for company_id: ' . $companyId . '. Creating new user doc on the fly.');
         // Automatically create a new user document on the fly
         $userData = [
             'role'       => 'agency',
             'company_id' => $companyId,
             'createdAt'  => new \Google\Cloud\Core\Timestamp(new \DateTime()),
             'active'     => true,
+            'email'      => 'agency_' . $companyId . '@ghl.nolasmspro pro.com' // Placeholder email
         ];
         // Insert into firestore and get the auto-generated ID
         $newUserRef = $db->collection('users')->add($userData);
         $userId = $newUserRef->id();
+    } else {
+        error_log('[GHL_AUTOLOGIN] Found existing agency user for company_id: ' . $companyId . ' (User ID: ' . $userId . ')');
     }
 
     if (empty($userData['active'])) {
