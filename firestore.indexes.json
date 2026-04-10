@@ -11,9 +11,47 @@
         {
           "fieldPath": "created_at",
           "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "contacts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "location_id",
+          "order": "DESCENDING"
         },
         {
-          "fieldPath": "__name__",
+          "fieldPath": "created_at",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "conversations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "location_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "last_message_at",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "conversations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "location_id",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "last_message_at",
           "order": "DESCENDING"
         }
       ]
@@ -29,10 +67,6 @@
         {
           "fieldPath": "last_message_at",
           "order": "DESCENDING"
-        },
-        {
-          "fieldPath": "__name__",
-          "order": "DESCENDING"
         }
       ]
     },
@@ -41,15 +75,11 @@
       "queryScope": "COLLECTION",
       "fields": [
         {
-          "fieldPath": "location_id",
+          "fieldPath": "owner_uid",
           "order": "ASCENDING"
         },
         {
-          "fieldPath": "last_message_at",
-          "order": "DESCENDING"
-        },
-        {
-          "fieldPath": "__name__",
+          "fieldPath": "last_at",
           "order": "DESCENDING"
         }
       ]
@@ -64,28 +94,34 @@
         },
         {
           "fieldPath": "created_at",
-          "order": "DESCENDING"
-        },
-        {
-          "fieldPath": "__name__",
-          "order": "DESCENDING"
+          "order": "ASCENDING"
         }
       ]
     },
     {
-      "collectionGroup": "messages",
+      "collectionGroup": "credit_transactions",
       "queryScope": "COLLECTION",
       "fields": [
         {
-          "fieldPath": "location_id",
+          "fieldPath": "account_id",
           "order": "ASCENDING"
         },
         {
           "fieldPath": "created_at",
           "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "inbound_messages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "location_id",
+          "order": "ASCENDING"
         },
         {
-          "fieldPath": "__name__",
+          "fieldPath": "date_received",
           "order": "DESCENDING"
         }
       ]
@@ -95,42 +131,16 @@
       "queryScope": "COLLECTION",
       "fields": [
         {
-          "fieldPath": "location_id",
-          "order": "ASCENDING"
-        },
-        {
           "fieldPath": "conversation_id",
           "order": "ASCENDING"
         },
         {
-          "fieldPath": "created_at",
-          "order": "DESCENDING"
-        },
-        {
-          "fieldPath": "__name__",
-          "order": "DESCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "messages",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "location_id",
+          "fieldPath": "owner_uid",
           "order": "ASCENDING"
         },
         {
-          "fieldPath": "conversation_id",
+          "fieldPath": "created_at_ms",
           "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "date_created",
-          "order": "DESCENDING"
-        },
-        {
-          "fieldPath": "__name__",
-          "order": "DESCENDING"
         }
       ]
     },
@@ -149,9 +159,23 @@
         {
           "fieldPath": "date_created",
           "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "messages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "location_id",
+          "order": "ASCENDING"
         },
         {
-          "fieldPath": "__name__",
+          "fieldPath": "conversation_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "created_at",
           "order": "DESCENDING"
         }
       ]
@@ -165,16 +189,12 @@
           "order": "ASCENDING"
         },
         {
-          "fieldPath": "recipient_key",
+          "fieldPath": "conversation_id",
           "order": "ASCENDING"
         },
         {
           "fieldPath": "date_created",
           "order": "DESCENDING"
-        },
-        {
-          "fieldPath": "__name__",
-          "order": "DESCENDING"
         }
       ]
     },
@@ -184,54 +204,28 @@
       "fields": [
         {
           "fieldPath": "location_id",
-          "order": "ASCENDING"
+          "order": "DESCENDING"
         },
+        {
+          "fieldPath": "created_at",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "messages",
+      "queryScope": "COLLECTION",
+      "fields": [
         {
           "fieldPath": "number",
           "order": "ASCENDING"
         },
         {
-          "fieldPath": "date_created",
-          "order": "DESCENDING"
-        },
-        {
-          "fieldPath": "__name__",
-          "order": "DESCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "messages",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "location_id",
+          "fieldPath": "owner_uid",
           "order": "ASCENDING"
         },
         {
-          "fieldPath": "date_created",
-          "order": "DESCENDING"
-        },
-        {
-          "fieldPath": "__name__",
-          "order": "DESCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "inbound_messages",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "location_id",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "date_received",
-          "order": "DESCENDING"
-        },
-        {
-          "fieldPath": "__name__",
+          "fieldPath": "created_at_ms",
           "order": "DESCENDING"
         }
       ]
@@ -246,10 +240,6 @@
         },
         {
           "fieldPath": "date_created",
-          "order": "DESCENDING"
-        },
-        {
-          "fieldPath": "__name__",
           "order": "DESCENDING"
         }
       ]
@@ -269,31 +259,32 @@
         {
           "fieldPath": "date_created",
           "order": "DESCENDING"
-        },
-        {
-          "fieldPath": "__name__",
-          "order": "DESCENDING"
         }
       ]
     },
     {
-      "collectionGroup": "sender_requests",
+      "collectionGroup": "sms_logs",
       "queryScope": "COLLECTION",
       "fields": [
         {
-          "fieldPath": "location_id",
+          "fieldPath": "status",
           "order": "ASCENDING"
         },
         {
-          "fieldPath": "created_at",
-          "order": "DESCENDING"
-        },
-        {
-          "fieldPath": "__name__",
-          "order": "DESCENDING"
+          "fieldPath": "date_created",
+          "order": "ASCENDING"
         }
       ]
     }
   ],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    {
+      "collectionGroup": "ghl_tokens",
+      "fieldPath": "companyId",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "DESCENDING", "queryScope": "COLLECTION" }
+      ]
+    }
+  ]
 }

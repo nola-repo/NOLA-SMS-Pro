@@ -241,8 +241,8 @@ class GhlClient
                 'clientSecret' => getenv('GHL_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322',
             ],
             'agency' => [
-                'clientId'     => '69cb813b4b007d172f7e7a35-mneicksx',
-                'clientSecret' => 'f2c52910-fa01-47b1-9cf7-d812464fe2ad',
+                'clientId'     => getenv('GHL_AGENCY_CLIENT_ID') ?: '69cb813b4b007d172f7e7a35-mneicksx',
+                'clientSecret' => getenv('GHL_AGENCY_CLIENT_SECRET') ?: 'f2c52910-fa01-47b1-9cf7-d812464fe2ad',
             ]
         ];
 

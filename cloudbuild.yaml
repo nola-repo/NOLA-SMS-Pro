@@ -29,6 +29,8 @@ steps:
       - 'asia-southeast1'
       - '--platform'
       - 'managed'
+      - '--min-instances'
+      - '1'
 
 images:
   - 'gcr.io/$PROJECT_ID/sms-api:latest'

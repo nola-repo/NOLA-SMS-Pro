@@ -28,9 +28,9 @@ if (!is_array($payload) || empty($payload['code'])) {
 $code = $payload['code'];
 $redirectUri = $payload['redirectUri'] ?? '';
 
-// User Provided Credentials
-$clientId = getenv('GHL_AGENCY_CLIENT_ID') ?: getenv('GHL_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3';
-$clientSecret = getenv('GHL_AGENCY_CLIENT_SECRET') ?: getenv('GHL_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322';
+// Agency App Credentials — do NOT fall back to GHL_CLIENT_ID (that's the Subaccount app)
+$clientId = getenv('GHL_AGENCY_CLIENT_ID') ?: '69cb813b4b007d172f7e7a35-mneicksx';
+$clientSecret = getenv('GHL_AGENCY_CLIENT_SECRET') ?: 'f2c52910-fa01-47b1-9cf7-d812464fe2ad';
 
 if (!$clientId || !$clientSecret) {
     http_response_code(500);
@@ -82,6 +82,8 @@ if ($http_status == 200 && is_array($result) && isset($result['access_token'])) 
             ->document($companyId)
             ->set([
                 'appType' => 'agency',
+                'appId' => $clientId,
+                'userType' => 'Company',
                 'companyId' => $companyId,
                 'access_token' => $result['access_token'],
                 'refresh_token' => $result['refresh_token'],
