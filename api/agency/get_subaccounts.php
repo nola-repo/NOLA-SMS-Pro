@@ -111,6 +111,7 @@ try {
     ]);
 
 } catch (Exception $e) {
+    file_put_contents(__DIR__ . '/api_error.log', date('Y-m-d H:i:s') . " - Fetch failed: " . $e->getMessage() . "\n", FILE_APPEND);
     http_response_code(500);
     echo json_encode(['error' => 'Fetch failed: ' . $e->getMessage()]);
 }
