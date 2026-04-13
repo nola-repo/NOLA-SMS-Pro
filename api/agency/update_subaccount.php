@@ -63,6 +63,17 @@ try {
     }
     // Apply updates
     $docRef->set($updates, ['merge' => true]);
+
+    // ── Mirror toggle_enabled into ghl_tokens (enforcement layer) ──────────────
+    $tokenRef = $db->collection('ghl_tokens')->document($locationId);
+    $tokenSnap = $tokenRef->snapshot();
+    if ($tokenSnap->exists()) {
+        $tokenRef->set([
+            'toggle_enabled' => $toggleEnabled,
+            'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTimeImmutable())
+        ], ['merge' => true]);
+    }
+
     echo json_encode(['status' => 'success']);
 } catch (Exception $e) {
     http_response_code(500);

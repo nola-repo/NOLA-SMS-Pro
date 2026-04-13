@@ -74,7 +74,8 @@ try {
 
         if (count($batch) < $limit) {
             $hasMore = false;
-        } else {
+        }
+        else {
             $skip += $limit;
         }
     }
@@ -85,28 +86,29 @@ try {
     // 4. Upsert into agency_subaccounts
     foreach ($allLocations as $loc) {
         $locId = $loc['id'] ?? null;
-        if (!$locId) continue;
+        if (!$locId)
+            continue;
 
         $docRef = $db->collection('agency_subaccounts')->document($locId);
         $snapshot = $docRef->snapshot();
 
         $updateData = [
             'agency_id' => $agency_id,
-            'name'      => $loc['name'] ?? 'Unnamed Location',
-            'email'     => $loc['email'] ?? '',
-            'phone'     => $loc['phone'] ?? '',
-            'address'   => $loc['address'] ?? '',
-            'city'      => $loc['city'] ?? '',
-            'country'   => $loc['country'] ?? '',
-            'updated_at'=> $now
+            'name' => $loc['name'] ?? 'Unnamed Location',
+            'email' => $loc['email'] ?? '',
+            'phone' => $loc['phone'] ?? '',
+            'address' => $loc['address'] ?? '',
+            'city' => $loc['city'] ?? '',
+            'country' => $loc['country'] ?? '',
+            'updated_at' => $now
         ];
 
         if (!$snapshot->exists()) {
             // New sub-account: set defaults
-            $updateData['toggle_enabled'] = false;
-            $updateData['rate_limit']     = 100;
-            $updateData['attempt_count']  = 0;
-            $updateData['created_at']     = $now;
+            $updateData['toggle_enabled'] = true;
+            $updateData['rate_limit'] = 100;
+            $updateData['attempt_count'] = 0;
+            $updateData['created_at'] = $now;
         }
 
         $docRef->set($updateData, ['merge' => true]);
@@ -114,12 +116,13 @@ try {
     }
 
     echo json_encode([
-        'status' => 'success', 
+        'status' => 'success',
         'message' => "Synced $syncedCount locations for agency $agency_id",
         'count' => $syncedCount
     ]);
 
-} catch (\Exception $e) {
+}
+catch (\Exception $e) {
     http_response_code(500);
     echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
 }

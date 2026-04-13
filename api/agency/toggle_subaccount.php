@@ -66,6 +66,16 @@ $updateData = [
 
 $docRef->set($updateData, ['merge' => true]);
 
+// ── Mirror toggle_enabled into ghl_tokens (enforcement layer) ──────────────
+$tokenRef = $db->collection('ghl_tokens')->document($subaccount_id);
+$tokenSnap = $tokenRef->snapshot();
+if ($tokenSnap->exists()) {
+    $tokenRef->set([
+        'toggle_enabled' => $enabled,
+        'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTimeImmutable())
+    ], ['merge' => true]);
+}
+
 echo json_encode([
     'status' => 'success',
     'subaccount_id' => $subaccount_id,

@@ -162,6 +162,24 @@ if ($dedupSnap->exists()) {
     }
 }
 
+// ── Check Agency Toggle ─────────────────────────────────────────────────────
+if (!isset($db)) {
+    $db = get_firestore();
+}
+$tokenRef  = $db->collection('ghl_tokens')->document($locationId);
+$tokenSnap = $tokenRef->snapshot();
+$tokenData = $tokenSnap->exists() ? $tokenSnap->data() : [];
+$toggleEnabled = isset($tokenData['toggle_enabled']) ? (bool)$tokenData['toggle_enabled'] : true;
+
+if (!$toggleEnabled) {
+    http_response_code(403);
+    echo json_encode([
+        'success' => false,
+        'error'   => 'SMS sending is currently disabled for this account. Please contact your agency.'
+    ]);
+    exit;
+}
+
 // ── Load Integration Config ─────────────────────────────────────────────────
 if (!isset($db)) {
     $db = get_firestore();
