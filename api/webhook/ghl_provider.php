@@ -36,6 +36,10 @@ require __DIR__ . '/firestore_client.php';
 require __DIR__ . '/../auth_helpers.php';
 require __DIR__ . '/../services/CreditManager.php';
 
+$SEMAPHORE_API_KEY = $config['SEMAPHORE_API_KEY'];
+$SEMAPHORE_URL     = $config['SEMAPHORE_URL'];
+$SENDER_IDS        = $config['SENDER_IDS'];
+
 // ── Authentication ──────────────────────────────────────────────────────────
 // GHL Conversation Provider may NOT send X-Webhook-Secret.
 // We do a soft check: if the header IS present it must be valid.
@@ -198,6 +202,40 @@ $freeCreditsTotal = $intData['free_credits_total'] ?? 10;
 // ── Normalize account_id for CreditManager ──────────────────────────────────
 $account_id = $locationId ?: 'default';
 
+// ── Calculate required credits (always 1 recipient for provider sends) ────────
+$required_credits = CreditManager::calculateRequiredCredits($message, 1);
+
+// ── Instantiate CreditManager ─────────────────────────────────────────────────
+$creditManager = new CreditManager();
+
+// ── Agency myCRMSIM Routing Check ─────────────────────────────────────────────
+$useMyCrmSim = false;
+$agencySubRef  = $db->collection('agency_subaccounts')->document($locationId);
+$agencySubSnap = $agencySubRef->snapshot();
+if ($agencySubSnap->exists()) {
+    $agencySubData = $agencySubSnap->data();
+    if (!empty($agencySubData['toggle_enabled'])) {
+        $today         = date('Y-m-d');
+        $lastReset     = $agencySubData['last_reset_date'] ?? '';
+        $attempt_count = $agencySubData['attempt_count']  ?? 0;
+        $rate_limit    = $agencySubData['rate_limit']     ?? 0;
+
+        if ($lastReset !== $today) {
+            $attempt_count = 0;
+            $agencySubRef->set(['attempt_count' => 0, 'last_reset_date' => $today], ['merge' => true]);
+        }
+
+        if ($attempt_count < $rate_limit) {
+            $useMyCrmSim = true;
+            $agencySubRef->set(['attempt_count' => \Google\Cloud\Firestore\FieldValue::increment(1)], ['merge' => true]);
+        } else {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'error' => "Agency subaccount daily rate limit exceeded ({$rate_limit})." ]);
+            exit;
+        }
+    }
+}
+
 // ── Three-Tier Sender + Credit Logic ────────────────────────────────────────
 $usingCustomSender = false;
 $usingFreeCredits = false;
@@ -218,8 +256,6 @@ if ($approvedSenderId && $customApiKey) {
         $usingFreeCredits = true; // Tier 2: still within free trial
     }
 }
-
-// ── Agency myCRMSIM Routing Check (already handled above) ──────────────────
 
 // ── Credit Deduction & Trial Logging ────────────────────────────────────────
 // --- Only deduct/track if NOT using myCRMSIM or Custom Sender ---
