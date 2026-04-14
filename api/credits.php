@@ -21,26 +21,26 @@ try {
         $json = file_get_contents('php://input');
         $jsonPayload = json_decode($json, true) ?? [];
         $formPayload = $_POST ?? [];
-        
+
         // Merge payloads, prioritizing JSON but allowing form fields as fallback
         $payload = array_merge($formPayload, $jsonPayload);
 
         // ALWAYS log the payload for webhook debugging
         $headers = function_exists('getallheaders') ? getallheaders() : [];
         $debugMsg = date('[Y-m-d H:i:s] ') . "Method: $method\nHeaders: " . json_encode($headers) . "\nPayload: " . json_encode($payload) . "\n\n";
-        
+
         // Try multiple log locations
         file_put_contents(__DIR__ . '/credits_debug.log', $debugMsg, FILE_APPEND);
         @file_put_contents('/tmp/credits_debug.log', $debugMsg, FILE_APPEND);
         error_log("Credits API Debug: " . $debugMsg);
 
         $action = trim(strtolower($payload['action'] ?? $payload['Action'] ?? ''));
-        
+
         // Extra robust check for nested customData (GHL sometimes nests these)
         if (empty($action) && isset($payload['customData']) && is_array($payload['customData'])) {
             $action = trim(strtolower($payload['customData']['action'] ?? $payload['customData']['Action'] ?? ''));
         }
-        
+
         // Robust amount extraction
         $amountValue = $payload['amount'] ?? $payload['Amount'] ?? $payload['credits'] ?? $payload['Credits'] ?? 0;
         $amount = (int)$amountValue;
@@ -50,10 +50,10 @@ try {
             $amountValue = $payload['customData']['amount'] ?? $payload['customData']['Amount'] ?? 0;
             $amount = (int)$amountValue;
         }
-        
-        $reference   = $payload['reference'] ?? $payload['Reference'] ?? 'api_update';
+
+        $reference = $payload['reference'] ?? $payload['Reference'] ?? 'api_update';
         $description = $payload['description'] ?? $payload['Description'] ?? 'Balance updated via API';
-        
+
         if ($amount <= 0) {
             // Log the failure to help troubleshoot
             $logMsg = date('[Y-m-d H:i:s] ') . "Invalid Amount Failure. Payload: " . json_encode($payload) . " | Raw Amount: " . var_export($amountValue, true) . "\n";
@@ -61,7 +61,7 @@ try {
 
             http_response_code(400);
             echo json_encode([
-                'success' => false, 
+                'success' => false,
                 'error' => 'Invalid amount',
                 'received_amount' => $amountValue,
                 'suggestion' => 'Ensure "amount" is sent as a positive integer in the request body.'
@@ -72,20 +72,20 @@ try {
         require_once __DIR__ . '/services/CreditManager.php';
         $creditManager = new CreditManager();
         $locId = get_ghl_location_id();
-        
+
         // Robust check for location_id in the payload (for webhooks/automations)
         if (!$locId) {
-            $locId = $payload['company_name'] ?? $payload['companyName'] ?? 
-                     $payload['location_id'] ?? $payload['locationId'] ?? $payload['location'] ?? 
-                     $payload['business.name'] ?? $payload['business_name'] ?? null;
+            $locId = $payload['company_name'] ?? $payload['companyName'] ??
+                $payload['location_id'] ?? $payload['locationId'] ?? $payload['location'] ??
+                $payload['business.name'] ?? $payload['business_name'] ?? null;
         }
-        
+
         // Extra robust check for nested customData (GHL sometimes nests these)
         if (empty($locId) || is_array($locId)) {
-            $nestedLocId = $payload['customData']['company_name'] ?? $payload['customData']['companyName'] ?? 
-                            $payload['customData']['location_id'] ?? $payload['customData']['locationId'] ?? 
-                            $payload['customData']['location'] ?? $payload['customData']['business.name'] ?? 
-                            $payload['customData']['business_name'] ?? null;
+            $nestedLocId = $payload['customData']['company_name'] ?? $payload['customData']['companyName'] ??
+                $payload['customData']['location_id'] ?? $payload['customData']['locationId'] ??
+                $payload['customData']['location'] ?? $payload['customData']['business.name'] ??
+                $payload['customData']['business_name'] ?? null;
             if ($nestedLocId && !is_array($nestedLocId)) {
                 $locId = $nestedLocId;
             }
@@ -107,7 +107,7 @@ try {
         }
 
         $accountId = $locId ?: 'default';
-        
+
         // Ensure accountId is a string if it's not 'default'
         if ($accountId !== 'default') {
             if (is_array($accountId)) {
@@ -118,16 +118,18 @@ try {
 
         if ($action === 'add') {
             $newBalance = $creditManager->add_credits($accountId, $amount, $reference, $description);
-        } elseif ($action === 'deduct') {
+        }
+        elseif ($action === 'deduct') {
             $newBalance = $creditManager->deduct_credits($accountId, $amount, $reference, $description);
-        } else {
+        }
+        else {
             // Log the failure to help troubleshoot
             $logMsg = date('[Y-m-d H:i:s] ') . "Invalid Action Failure. Payload: " . json_encode($payload) . " | Raw Action: " . var_export($action, true) . "\n";
             file_put_contents(__DIR__ . '/credits_error.log', $logMsg, FILE_APPEND);
 
             http_response_code(400);
             echo json_encode([
-                'success' => false, 
+                'success' => false,
                 'error' => 'Invalid action. Use "add" or "deduct".',
                 'received_action' => $action,
                 'suggestion' => 'Ensure "action" is set to "add" or "deduct" exactly.'
@@ -152,7 +154,7 @@ try {
         echo json_encode(['success' => false, 'error' => 'Missing location_id']);
         exit;
     }
-    
+
     $docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
     $docRef = $db->collection('integrations')->document($docId);
 
@@ -174,22 +176,22 @@ try {
                     $now = new \DateTimeImmutable();
                     $docRef->set([
                         'credit_balance' => $accBal,
-                        'updated_at'     => new \Google\Cloud\Core\Timestamp($now),
+                        'updated_at' => new \Google\Cloud\Core\Timestamp($now),
                     ], ['merge' => true]);
                     $accountsRef->set([
                         'credit_balance' => 0,
-                        'migrated_to'    => $docId,
-                        'updated_at'     => new \Google\Cloud\Core\Timestamp($now),
+                        'migrated_to' => $docId,
+                        'updated_at' => new \Google\Cloud\Core\Timestamp($now),
                     ], ['merge' => true]);
                 }
             }
         }
 
-        $updatedAt = isset($data['updated_at']) && $data['updated_at'] instanceof \Google\Cloud\Core\Timestamp 
-            ? $data['updated_at']->get()->format('Y-m-d H:i:s') 
+        $updatedAt = isset($data['updated_at']) && $data['updated_at'] instanceof \Google\Cloud\Core\Timestamp
+            ? $data['updated_at']->get()->format('Y-m-d H:i:s')
             : null;
-        $createdAt = isset($data['created_at']) && $data['created_at'] instanceof \Google\Cloud\Core\Timestamp 
-            ? $data['created_at']->get()->format('Y-m-d H:i:s') 
+        $createdAt = isset($data['created_at']) && $data['created_at'] instanceof \Google\Cloud\Core\Timestamp
+            ? $data['created_at']->get()->format('Y-m-d H:i:s')
             : null;
     }
     else {
@@ -213,12 +215,13 @@ try {
 
     $creditsRef = $db->collection('credit_transactions');
     $query = $creditsRef->where('account_id', '=', $docId)
-                        ->where('created_at', '>=', new \Google\Cloud\Core\Timestamp($startOfMonth));
-    
+        ->where('created_at', '>=', new \Google\Cloud\Core\Timestamp($startOfMonth));
+
     $statsDocs = [];
     try {
         $statsDocs = $query->documents();
-    } catch (\Throwable $e) {
+    }
+    catch (\Throwable $e) {
         // If Firestore throws a Missing Index error, catch it here cleanly
         $stats = [
             'sent_today' => 0,
@@ -235,20 +238,21 @@ try {
         $creditsUsedMonth = 0;
 
         foreach ($statsDocs as $txDoc) {
-            if (!$txDoc->exists()) continue;
+            if (!$txDoc->exists())
+                continue;
             $tx = $txDoc->data();
-            
+
             if (($tx['type'] ?? '') === 'deduction') {
                 $amt = abs((int)($tx['amount'] ?? 0));
                 $freeApplied = (int)($tx['free_usage_applied'] ?? 0);
-                
+
                 // All tx here are at least this month
                 $creditsUsedMonth += $amt;
-                
+
                 $createdAtTs = $tx['created_at'] ?? null;
                 if ($createdAtTs && $createdAtTs instanceof \Google\Cloud\Core\Timestamp) {
                     $dt = $createdAtTs->get();
-                    
+
                     // Compare explicitly to start of today using timestamp or date formatting
                     // get() returns a DateTime object (or DateTimeImmutable)
                     if ($dt->getTimestamp() >= $startOfToday->getTimestamp()) {
@@ -258,7 +262,7 @@ try {
                 }
             }
         }
-        
+
         $stats = [
             'sent_today' => $sentToday,
             'credits_used_today' => $creditsUsedToday,
