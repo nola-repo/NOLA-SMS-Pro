@@ -66,11 +66,11 @@
     RewriteRule ^api/auth/register/?$ /api/auth/register.php [NC,L,QSA]
     RewriteRule ^api/auth/login/?$    /api/auth/login.php    [NC,L,QSA]
     RewriteRule ^api/agency/ghl_autologin/?$ /api/agency/ghl_autologin.php [NC,L,QSA]
+    RewriteRule ^api/agency/ghl_sso_decrypt/?$ /api/agency/ghl_sso_decrypt.php [NC,L,QSA]
     RewriteRule ^api/agency/link_company/?$ /api/agency/link_company.php [NC,L,QSA]
     RewriteRule ^api/agency/get_subaccounts/?$ /api/agency/get_subaccounts.php [NC,L,QSA]
     RewriteRule ^api/agency/update_subaccount/?$ /api/agency/update_subaccount.php [NC,L,QSA]
     RewriteRule ^api/agency/check_installs/?$ /api/agency/check_installs.php [NC,L,QSA]
-    RewriteRule ^api/agency/ghl_sso_decrypt/?$ /api/agency/ghl_sso_decrypt.php [NC,L,QSA]
 
     # ── Generic API endpoints ───────────────────────────────────────────
     # /api/messages -> /api/messages.php

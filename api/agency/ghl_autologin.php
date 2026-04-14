@@ -56,14 +56,24 @@ try {
     }
 
     if (!$userData) {
-        error_log('[GHL_AUTOLOGIN] No existing agency user found for company_id: ' . $companyId . '. Creating new user doc on the fly.');
+        error_log('[GHL_AUTOLOGIN] No existing agency user found for company_id: ' . $companyId . '. Verifying ghl_tokens...');
+
+        $tokenDoc = $db->collection('ghl_tokens')->document($companyId)->snapshot();
+        if (!$tokenDoc->exists() || ($tokenDoc->data()['appType'] ?? '') !== 'agency') {
+            error_log('[GHL_AUTOLOGIN] Company is not a registered agency in ghl_tokens.');
+            http_response_code(404);
+            echo json_encode(['error' => 'No agency account is linked to this GHL company. Please install the Agency App first.']);
+            exit;
+        }
+
+        error_log('[GHL_AUTOLOGIN] Validation passed. Creating new user doc on the fly.');
         // Automatically create a new user document on the fly
         $userData = [
             'role'       => 'agency',
             'company_id' => $companyId,
             'createdAt'  => new \Google\Cloud\Core\Timestamp(new \DateTime()),
             'active'     => true,
-            'email'      => 'agency_' . $companyId . '@ghl.nolasmspro pro.com' // Placeholder email
+            'email'      => 'agency_' . $companyId . '@ghl.nolasmspro.com' // Placeholder email
         ];
         // Insert into firestore and get the auto-generated ID
         $newUserRef = $db->collection('users')->add($userData);
