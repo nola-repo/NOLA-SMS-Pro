@@ -571,7 +571,14 @@ catch (Exception $e) {
 }
 
 $displayNameSafe = $displayName ? htmlspecialchars($displayName, ENT_QUOTES, 'UTF-8') : ($userType === 'Company' ? 'Your Agency' : 'Your Sub-Account');
-$dashboardUrl = 'https://app.nolacrm.io/v2/' . ($userType === 'Company' ? 'agency' : 'location') . '/' . $idSafe . '/custom-page-link/69a642aae76974824fd39bb6';
+// ── Dashboard URL: point back INSIDE GHL (app.leadconnectorhq.com) ────────────
+// Agency install  → Agency Panel custom menu link (flat format, no location segment)
+// Location install → Subaccount NOLA SMS Pro custom menu link
+if ($userType === 'Company') {
+    $dashboardUrl = 'https://app.leadconnectorhq.com/custom-page-link/69d3212eb3071ba8a0cd0b51';
+} else {
+    $dashboardUrl = 'https://app.leadconnectorhq.com/v2/location/' . $idSafe . '/custom-page-link/69a642aae76974824fd39bb6';
+}
 
 // ─── Save Tokens & Metadata to Firestore ──────────────────────────────────────
 $db = get_firestore();
