@@ -29,8 +29,8 @@ $code = $payload['code'];
 $redirectUri = $payload['redirectUri'] ?? '';
 
 // Agency App Credentials — do NOT fall back to GHL_CLIENT_ID (that's the Subaccount app)
-$clientId = getenv('GHL_AGENCY_CLIENT_ID') ?: '69cb813b4b007d172f7e7a35-mneicksx';
-$clientSecret = getenv('GHL_AGENCY_CLIENT_SECRET') ?: 'f2c52910-fa01-47b1-9cf7-d812464fe2ad';
+$clientId = getenv('GHL_AGENCY_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3';
+$clientSecret = getenv('GHL_AGENCY_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322';
 
 if (!$clientId || !$clientSecret) {
     http_response_code(500);
