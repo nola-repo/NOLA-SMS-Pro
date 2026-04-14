@@ -92,17 +92,20 @@ if ($http_status == 200 && is_array($result) && isset($result['access_token'])) 
                 'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
             ]);
 
-        // Find the NOLA users document where role == "agency" to update/merge company_id
-        // NOTE: the requirement states: 'Find the NOLA users document where role == "agency" and update/merge it: { "company_id": "{companyId}" }'
-        $usersQuery = $db->collection('users')->where('role', '=', 'agency')->documents();
-        foreach ($usersQuery as $userDoc) {
+        // 2. Update the user document associated with this specifically linked company_id
+        // We only update if a user ALREADY exists for this ID. If not, ghl_autologin.php
+        // will handle creating the user securely when they first open the iframe.
+        $userResults = $db->collection('users')
+            ->where('role', '=', 'agency')
+            ->where('company_id', '=', $companyId)
+            ->limit(1)
+            ->documents();
+
+        foreach ($userResults as $userDoc) {
             if ($userDoc->exists()) {
-                $userData = $userDoc->data();
-                // We'll update the first one we find that either matches or just any if none matching,
-                // Or maybe just the first one? Requirements implies singular agency app user doc.
                 $db->collection('users')
                     ->document($userDoc->id())
-                    ->set(['company_id' => $companyId], ['merge' => true]);
+                    ->set(['company_id' => $companyId, 'updatedAt' => new \Google\Cloud\Core\Timestamp(new \DateTime())], ['merge' => true]);
                 break;
             }
         }
