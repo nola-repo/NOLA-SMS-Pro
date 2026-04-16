@@ -5,6 +5,11 @@ namespace Nola\Services;
 class StatusSync
 {
     /**
+     * @var GhlSyncService[] Cache of GHL sync services per location
+     */
+    private static $ghlSyncServices = [];
+
+    /**
      * Syncs SMS statuses from Semaphore API to Firestore.
      * Designed to be stateless and Cloud Run compatible.
      * 
@@ -72,7 +77,10 @@ class StatusSync
                     continue;
                 }
 
+
+
                 // ── Semaphore API Call ────────────────────────────────
+
                 $url = "https://api.semaphore.co/api/v4/messages/$messageId?apikey=$activeApiKey";
                 $ch = curl_init($url);
                 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -152,6 +160,21 @@ class StatusSync
                 if ($locId) {
                     require_once __DIR__ . '/NotificationService.php';
                     \NotificationService::notifyDeliveryStatus($db, $locId, $messageId, $status, $data['number'] ?? 'unknown');
+
+                    // ── GHL Status Sync ─────────────────────────────────────
+                    try {
+                        require_once __DIR__ . '/GhlSyncService.php';
+                        if (!isset(self::$ghlSyncServices[$locId])) {
+                            self::$ghlSyncServices[$locId] = new GhlSyncService($db, $locId);
+                        }
+                        
+                        $ghlMessageId = $data['ghl_message_id'] ?? null;
+                        if ($ghlMessageId) {
+                            self::$ghlSyncServices[$locId]->syncMessageStatus($ghlMessageId, $status);
+                        }
+                    } catch (\Exception $e) {
+                        error_log("[StatusSync] GHL Status Sync failed: " . $e->getMessage());
+                    }
                 }
             } catch (\Exception $e) {}
         }

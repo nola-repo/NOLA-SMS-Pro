@@ -12,6 +12,8 @@ require __DIR__ . '/firestore_client.php';
 require __DIR__ . '/../auth_helpers.php';
 require __DIR__ . '/../services/CreditManager.php';
 require __DIR__ . '/../services/GhlClient.php';
+require_once __DIR__ . '/../services/GhlSyncService.php';
+
 
 $SEMAPHORE_API_KEY = $config['SEMAPHORE_API_KEY'];
 $SEMAPHORE_URL = $config['SEMAPHORE_URL'];
@@ -267,22 +269,10 @@ $usingFreeCredits = ($freeUsageCount + $num_recipients <= $freeCreditsTotal);
 $creditManager = new CreditManager();
 $account_id = $locId ?: 'default';
 
-// ── Agency myCRMSIM Routing Check ──────────────────────────────────────────
-$useMyCrmSim = false;
-if ($locId) {
-    $agencySubRef = $db->collection('agency_subaccounts')->document($locId);
-    $agencySubSnap = $agencySubRef->snapshot();
-    if ($agencySubSnap->exists()) {
-        $agencySubData = $agencySubSnap->data();
-        if (!empty($agencySubData['toggle_enabled'])) {
-            $useMyCrmSim = true;
-        }
-    }
-}
+
 
 // ── Credit Deduction & Trial ────────────────────────────────────────────────
-// Credits are charged if NOT using myCRMSIM (hardware bypass)
-if (!$useMyCrmSim) {
+if (true) {
     if ($usingFreeCredits) {
 
         // Tier 2: Free Trial -> Increment free usage counter, do NOT deduct paid balance
@@ -344,120 +334,38 @@ if (!$useMyCrmSim) {
     }
 }
 
-/* |-------------------------------------------------------------------------- | SEND SMS (BATCHED) |-------------------------------------------------------------------------- */
 $chunks = array_chunk($validNumbers, 500);
 $all_results = [];
 $total_status = 200;
 
-$myCrmSimSuccess = false;
-if ($useMyCrmSim) {
-    // ── Send via myCRMSIM ───────────────────────────────────────────────────
-    $myCrmSimToken = $config['MYCRMSIM_API_KEY'] ?? '';
-    $myCrmSimUrl = $config['MYCRMSIM_URL'] ?? 'https://r6bszuuso6.execute-api.ap-southeast-2.amazonaws.com/prod/webhook';
+foreach ($chunks as $chunk) {
+    $sms_data = [
+        "apikey" => $activeApiKey,
+        "number" => implode(',', $chunk),
+        "message" => $message,
+        "sendername" => $sender
+    ];
+    log_sms("SEMAPHORE_REQUEST_CHUNK", ["chunk_size" => count($chunk)]);
 
-    foreach ($validNumbers as $num) {
-        $msgId = 'mycrmsim_' . bin2hex(random_bytes(6));
-        $sms_data = [
-            "location_id" => $locId,
-            "message_id" => $msgId,
-            "channel" => "SMS",
-            "phone" => $num,
-            "message" => $message
-        ];
+    $ch = curl_init($SEMAPHORE_URL);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ["Content-Type: application/json"]);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($sms_data));
 
-        $ch = curl_init($myCrmSimUrl);
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            "Content-Type: application/json",
-            "Authorization: Bearer " . $myCrmSimToken
-        ]);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($sms_data));
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5); 
-        curl_setopt($ch, CURLOPT_TIMEOUT, 5); 
-        $response = curl_exec($ch);
-        $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-        
-        if ($status == 200 || $status == 201) {
-            $myCrmSimSuccess = true;
-            $all_results[] = [
-                'message_id' => $msgId,
-                'number' => $num,
-                'status' => 'Queued',
-                'network' => 'myCRMSIM'
-            ];
-        } else {
-            error_log("[myCRMSIM] Hardware API failed for $num (Status: $status). Falling back to Semaphore.");
-            // If one fails, we fall back the entire remaining set to Semaphore to ensure delivery
-            $myCrmSimSuccess = false;
-            break; 
-        }
+    $response = curl_exec($ch);
+    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    if ($status != 200) {
+        $total_status = $status;
+    }
+    $result = json_decode($response, true);
+    log_sms("SEMAPHORE_RESPONSE_CHUNK", $result);
+
+    if (is_array($result)) {
+        $all_results = array_merge($all_results, $result);
     }
 }
 
-if (!$useMyCrmSim || !$myCrmSimSuccess) {
-    // ── Send via Semaphore (Default or Fallback) ────────────────────────────
-    
-    // If this is a fallback send, we MUST deduct credits now because we skipped it earlier
-    if ($useMyCrmSim && !$myCrmSimSuccess) {
-        try {
-            if ($usingFreeCredits) {
-                    // Log trial logic for fallback
-                    $intRef->set([
-                        'free_usage_count' => $freeUsageCount + $num_recipients,
-                        'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
-                    ], ['merge' => true]);
-                    $desc = "SMS Message to " . ($num_recipients === 1 ? $validNumbers[0] : "$num_recipients recipient(s)");
-                    $creditManager->record_trial_usage(
-                        $account_id,
-                        $required_credits,
-                        $batch_id ?? ('trial_' . bin2hex(random_bytes(4))),
-                        $desc
-                    );
-                } else {
-                    $desc = "SMS Message to " . ($num_recipients === 1 ? $validNumbers[0] : "$num_recipients recipient(s)");
-                    $creditManager->deduct_credits(
-                        $account_id,
-                        $required_credits,
-                        $batch_id ?? ('single_' . bin2hex(random_bytes(4))),
-                        $desc
-                    );
-                }
-        } catch (\Exception $e) {
-            error_log("[Fallback] Credit deduction failed: " . $e->getMessage());
-            // Fail silently or handle as needed
-        }
-    }
-
-    foreach ($chunks as $chunk) {
-        $sms_data = [
-            "apikey" => $activeApiKey,
-            "number" => implode(',', $chunk),
-            "message" => $message,
-            "sendername" => $sender
-        ];
-        log_sms("SEMAPHORE_REQUEST_CHUNK", ["chunk_size" => count($chunk)]);
-
-        $ch = curl_init($SEMAPHORE_URL);
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, ["Content-Type: application/json"]);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($sms_data));
-
-        $response = curl_exec($ch);
-        $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        if ($status != 200) {
-            $total_status = $status;
-        }
-        $result = json_decode($response, true);
-        log_sms("SEMAPHORE_RESPONSE_CHUNK", $result);
-
-        if (is_array($result)) {
-            $all_results = array_merge($all_results, $result);
-        }
-    }
-}
 
 /* |-------------------------------------------------------------------------- | SAVE FIRESTORE |-------------------------------------------------------------------------- */
 if (!empty($all_results)) {
@@ -552,117 +460,15 @@ if (!empty($all_results)) {
         ->set($convData, ['merge' => true]);
 
     // ── GHL Bidirectional Sync (Best-Effort) ─────────────────────────────────
-    // Post the outbound message to GHL Conversations so it appears in the GHL
-    // Conversation Tab. Only for direct (single-recipient) messages.
-    // This NEVER blocks the SMS send — all errors are swallowed and logged.
     if (!$isBulk && $locId) {
         try {
-            $ghlClient = new GhlClient($db, $locId);
-
-            // ── Step 1: Resolve GHL Conversation ID ──────────────────────────
-            $ghlConvId = null;
-            $resolvedContactId = $contactId;
-
-            // Check Firestore conversation doc first (avoids extra GHL API calls)
-            $convSnap = $db->collection('conversations')->document($conversation_id)->snapshot();
-            if ($convSnap->exists()) {
-                $ghlConvId = $convSnap->data()['ghl_conversation_id'] ?? null;
-                if (!$resolvedContactId) {
-                    $resolvedContactId = $convSnap->data()['ghl_contact_id'] ?? null;
-                }
-            }
-
-            // If no cached conv ID, find/create it on GHL using the contactId
-            if (!$ghlConvId) {
-                // If contactId wasn't passed by frontend/workflow, search GHL by phone
-                if (!$resolvedContactId) {
-                    $searchPhoneUrl = '/contacts/?locationId=' . urlencode($locId) . '&query=' . urlencode($validNumbers[0]);
-                    $phoneSearchResp = $ghlClient->request('GET', $searchPhoneUrl, null, '2021-07-28');
-                    $phoneSearchData = json_decode($phoneSearchResp['body'], true);
-
-                    if (!empty($phoneSearchData['contacts'][0]['id'])) {
-                        $resolvedContactId = $phoneSearchData['contacts'][0]['id'];
-                    }
-                }
-
-                if ($resolvedContactId) {
-                    $ghlConvResp = $ghlClient->request(
-                        'POST',
-                        '/conversations/',
-                        json_encode(['locationId' => $locId, 'contactId' => $resolvedContactId]),
-                        '2021-04-15'
-                    );
-                    $ghlConvData = json_decode($ghlConvResp['body'], true);
-
-                    if ($ghlConvResp['status'] === 400 && str_contains($ghlConvResp['body'], 'already exists')) {
-                        // Search for the existing conversation
-                        $searchResp = $ghlClient->request(
-                            'GET',
-                            '/conversations/search?contactId=' . urlencode($resolvedContactId) . '&locationId=' . urlencode($locId),
-                            null,
-                            '2021-04-15'
-                        );
-                        $searchData = json_decode($searchResp['body'], true);
-                        $ghlConvId = $searchData['conversations'][0]['id'] ?? null;
-                    }
-                    else {
-                        $ghlConvId = $ghlConvData['conversation']['id'] ?? $ghlConvData['id'] ?? null;
-                    }
-
-                    // Cache in Firestore for future sends
-                    if ($ghlConvId) {
-                        $db->collection('conversations')->document($conversation_id)->set([
-                            'ghl_conversation_id' => $ghlConvId,
-                            'ghl_contact_id' => $resolvedContactId,
-                        ], ['merge' => true]);
-                    }
-                }
-            }
-
-            // ── Step 2: Post message to GHL Conversation ─────────────────────
-            if ($ghlConvId) {
-                // Write a deduplication flag to Firestore BEFORE syncing to GHL.
-                // When GHL receives this payload, it will attempt to route it to ghl_provider.php.
-                // The provider will check this flag and safely skip sending a duplicate SMS via Semaphore.
-                $dedupKey = md5($locId . $validNumbers[0] . $message);
-                $db->collection('ghl_sync_dedup')->document($dedupKey)->set([
-                    'timestamp' => time(),
-                    'source' => 'send_sms_sync'
-                ]);
-
-                $msgSyncResp = $ghlClient->request(
-                    'POST',
-                    '/conversations/messages',
-                    json_encode([
-                    'type' => 'SMS',
-                    'contactId' => $resolvedContactId,
-                    'conversationId' => $ghlConvId,
-                    'locationId' => $locId,
-                    'message' => $message,
-                    // Removed direction since POST /conversations/messages is implicitly outbound
-                ]),
-                    '2021-04-15'
-                );
-
-                // Debug log to a temp file that we can read later
-                $logContent = date('Y-m-d H:i:s') . " - {$locId} - Sync Resp: " . json_encode($msgSyncResp) . "\n";
-                file_put_contents(sys_get_temp_dir() . '/ghl_sync_debug.log', $logContent, FILE_APPEND);
-
-                error_log("[GHL Sync] Posted message to GHL conv {$ghlConvId} for location {$locId}");
-            }
-            else {
-                $logContent = date('Y-m-d H:i:s') . " - {$locId} - Skipped Sync: No conv ID resolved\n";
-                file_put_contents(sys_get_temp_dir() . '/ghl_sync_debug.log', $logContent, FILE_APPEND);
-                error_log("[GHL Sync] Skipped — no ghl_conversation_id resolved for {$conversation_id}");
-            }
-        }
-        catch (\Throwable $e) {
-            $logContent = date('Y-m-d H:i:s') . " - ERROR: " . $e->getMessage() . "\n";
-            file_put_contents(sys_get_temp_dir() . '/ghl_sync_debug.log', $logContent, FILE_APPEND);
-            // Never block SMS delivery due to GHL sync failure
+            $ghlSync = new \Nola\Services\GhlSyncService($db, $locId);
+            $ghlSync->syncOutboundMessage($validNumbers[0], $message, $contactId);
+        } catch (\Throwable $e) {
             error_log('[GHL Sync] Failed (non-fatal): ' . $e->getMessage());
         }
     }
+
 // ── End GHL Sync ──────────────────────────────────────────────────────────
 }
 

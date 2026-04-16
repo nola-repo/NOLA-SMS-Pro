@@ -208,33 +208,7 @@ $required_credits = CreditManager::calculateRequiredCredits($message, 1);
 // ── Instantiate CreditManager ─────────────────────────────────────────────────
 $creditManager = new CreditManager();
 
-// ── Agency myCRMSIM Routing Check ─────────────────────────────────────────────
-$useMyCrmSim = false;
-$agencySubRef  = $db->collection('agency_subaccounts')->document($locationId);
-$agencySubSnap = $agencySubRef->snapshot();
-if ($agencySubSnap->exists()) {
-    $agencySubData = $agencySubSnap->data();
-    if (!empty($agencySubData['toggle_enabled'])) {
-        $today         = date('Y-m-d');
-        $lastReset     = $agencySubData['last_reset_date'] ?? '';
-        $attempt_count = $agencySubData['attempt_count']  ?? 0;
-        $rate_limit    = $agencySubData['rate_limit']     ?? 0;
 
-        if ($lastReset !== $today) {
-            $attempt_count = 0;
-            $agencySubRef->set(['attempt_count' => 0, 'last_reset_date' => $today], ['merge' => true]);
-        }
-
-        if ($attempt_count < $rate_limit) {
-            $useMyCrmSim = true;
-            $agencySubRef->set(['attempt_count' => \Google\Cloud\Firestore\FieldValue::increment(1)], ['merge' => true]);
-        } else {
-            http_response_code(403);
-            echo json_encode(['success' => false, 'error' => "Agency subaccount daily rate limit exceeded ({$rate_limit})." ]);
-            exit;
-        }
-    }
-}
 
 // ── Three-Tier Sender + Credit Logic ────────────────────────────────────────
 $usingCustomSender = false;
@@ -258,8 +232,8 @@ if ($approvedSenderId && $customApiKey) {
 }
 
 // ── Credit Deduction & Trial Logging ────────────────────────────────────────
-// --- Only deduct/track if NOT using myCRMSIM or Custom Sender ---
-if (!$useMyCrmSim && !$usingCustomSender) {
+// --- Only deduct/track if NOT using a Custom Sender ---
+if (!$usingCustomSender) {
     if ($usingFreeCredits) {
         // Tier 2: Free Trial -> Increment free usage counter, do NOT deduct paid balance
         $intRef->set([
@@ -307,83 +281,7 @@ if (!$useMyCrmSim && !$usingCustomSender) {
 }
 
 
-$myCrmSimSuccess = false;
-if ($useMyCrmSim) {
-    // ── Send via myCRMSIM ───────────────────────────────────────────────────
-    $myCrmSimToken = $config['MYCRMSIM_API_KEY'] ?? '';
-    $myCrmSimUrl = $config['MYCRMSIM_URL'] ?? 'https://r6bszuuso6.execute-api.ap-southeast-2.amazonaws.com/prod/webhook';
-
-    $storedMsgId = $messageId ?? uniqid('ghl_prov_');
-    $smsData = [
-        "location_id" => $locationId,
-        "message_id" => $storedMsgId,
-        "channel" => "SMS",
-        "phone" => $normalizedPhone,
-        "message" => $message
-    ];
-
-    $ch = curl_init($myCrmSimUrl);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        'Content-Type: application/json',
-        'Authorization: Bearer ' . $myCrmSimToken
-    ]);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($smsData));
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5); 
-    curl_setopt($ch, CURLOPT_TIMEOUT, 5); 
-
-    $smsResponse = curl_exec($ch);
-    $smsStatus   = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-    
-    // --- FIX 3: Hardware Fallover Logic ---
-    if ($smsStatus == 200 || $smsStatus == 201) {
-        $myCrmSimSuccess = true;
-        $smsResult = [
-            'message_id' => 'mycrmsim_' . bin2hex(random_bytes(6)),
-            'status' => 'Queued'
-        ];
-    } else {
-        error_log("[myCRMSIM] Hardware API failed (Status: $smsStatus). Falling back to Semaphore.");
-        $myCrmSimSuccess = false;
-    }
-}
-
-if (!$useMyCrmSim || !$myCrmSimSuccess) {
-    // ── Send SMS via Semaphore (Default or Fallback) ────────────────────────
-    
-    // If this is a fallback send, we MUST deduct credits now because we skipped it earlier
-    if ($useMyCrmSim && !$myCrmSimSuccess) {
-        try {
-            if (!$usingCustomSender) {
-                if ($usingFreeCredits) {
-                    $intRef->set([
-                        'free_usage_count' => $freeUsageCount + 1,
-                        'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
-                    ], ['merge' => true]);
-                    $desc = "SMS Message to {$normalizedPhone}";
-                    $creditManager->record_trial_usage(
-                        $account_id,
-                        $required_credits,
-                        $messageId ?? ('ghl_prov_trial_' . bin2hex(random_bytes(4))),
-                        $desc
-                    );
-                } else {
-                    $desc = "SMS Message to {$normalizedPhone}";
-                    $creditManager->deduct_credits(
-                        $account_id,
-                        $required_credits,
-                        $messageId ?? ('ghl_prov_' . bin2hex(random_bytes(4))),
-                        $desc
-                    );
-                }
-            }
-        } catch (\Exception $e) {
-            error_log("[Fallback] Credit deduction failed: " . $e->getMessage());
-        }
-    }
-
+    // ── Send SMS via Semaphore (System Default) ────────────────────────
     $smsData = [
         'apikey' => $activeApiKey,
         'number' => $normalizedPhone,
@@ -403,7 +301,7 @@ if (!$useMyCrmSim || !$myCrmSimSuccess) {
 
     $smsResult = json_decode($smsResponse, true);
     error_log('[ghl_provider] Semaphore response: ' . $smsResponse);
-}
+
 
 if ($smsStatus !== 200 || empty($smsResult)) {
     // Refund credits if SMS failed and we deducted

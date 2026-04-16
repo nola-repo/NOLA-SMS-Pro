@@ -3,6 +3,7 @@ require_once __DIR__ . '/../cors.php';
 
 $config = require __DIR__ . '/config.php';
 require __DIR__ . '/firestore_client.php';
+require_once __DIR__ . '/../services/GhlSyncService.php';
 
 $raw = file_get_contents('php://input');
 $data = json_decode($raw, true);
@@ -74,6 +75,14 @@ foreach ($matchingConvs as $matching) {
         'type' => 'direct',
         'members' => [$senderNumber]
     ], ['merge' => true]);
+
+    // 3. Sync to GHL (Best-Effort)
+    try {
+        $ghlSync = new \Nola\Services\GhlSyncService($db, $locId);
+        $ghlSync->syncInboundMessage($senderNumber, $message);
+    } catch (\Throwable $e) {
+        error_log("[receive_sms] GHL Sync failed: " . $e->getMessage());
+    }
 
     $processed[] = $locId;
 }
