@@ -227,36 +227,17 @@ class GhlClient
      */
     private function refreshToken(): void
     {
-        // 1. Identify which app are we refreshing (Sub-account vs Agency)
-        $ghlApps = [
-            'subaccount' => [
-                'clientId'     => getenv('GHL_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3',
-                'clientSecret' => getenv('GHL_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322',
-            ],
-            'agency' => [
-                'clientId'     => getenv('GHL_AGENCY_CLIENT_ID') ?: '69cb813b4b007d172f7e7a35-mneicksx',
-                'clientSecret' => getenv('GHL_AGENCY_CLIENT_SECRET') ?: 'f2c52910-fa01-47b1-9cf7-d812464fe2ad',
-            ]
-        ];
-
-        $appId = $this->integration['appId'] ?? null;
-        $clientId = null;
-        $clientSecret = null;
-
-        if ($appId) {
-            foreach ($ghlApps as $app) {
-                if ($app['clientId'] === $appId) {
-                    $clientId = $app['clientId'];
-                    $clientSecret = $app['clientSecret'];
-                    break;
-                }
-            }
-        }
-
-        // Fallback to legacy env vars if appId is missing or not found in map
-        if (!$clientId || !$clientSecret) {
-            $clientId     = getenv('GHL_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3';
-            $clientSecret = getenv('GHL_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322';
+        // Retrieve the client_id that generated this token
+        $storedClientId = $this->integration['client_id'] ?? $this->integration['appId'] ?? null;
+        
+        // Choose the correct credentials
+        if ($storedClientId === (getenv('GHL_AGENCY_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3')) {
+            $clientId = getenv('GHL_AGENCY_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3';
+            $clientSecret = getenv('GHL_AGENCY_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322';
+        } else {
+            // Default to User App for legacy/unknown tokens
+            $clientId = getenv('GHL_USER_CLIENT_ID') ?: '6999da2b8f278296d95f7274-mm9wv85e';
+            $clientSecret = getenv('GHL_USER_CLIENT_SECRET') ?: 'dfc4380f-b132-49b3-824b-02e14f55ee78';
         }
 
         $refreshToken = $this->integration['refresh_token'] ?? null;

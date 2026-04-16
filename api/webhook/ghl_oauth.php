@@ -31,8 +31,14 @@ $code = $payload['code'];
 $redirectUri = $payload['redirectUri'] ?? '';
 
 // User Provided Credentials (from Cloud Run Env)
-$clientId = getenv('GHL_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3';
-$clientSecret = getenv('GHL_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322';
+$appType = $_GET['app_type'] ?? 'user';
+if ($appType === 'agency') {
+    $clientId = getenv('GHL_AGENCY_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3';
+    $clientSecret = getenv('GHL_AGENCY_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322';
+} else {
+    $clientId = getenv('GHL_USER_CLIENT_ID') ?: '6999da2b8f278296d95f7274-mm9wv85e';
+    $clientSecret = getenv('GHL_USER_CLIENT_SECRET') ?: 'dfc4380f-b132-49b3-824b-02e14f55ee78';
+}
 
 if (!$clientId || !$clientSecret) {
     http_response_code(500);
@@ -93,6 +99,7 @@ if ($http_status == 200 && is_array($result) && isset($result['access_token'])) 
             'userType' => $result['userType'] ?? 'Location',
             'companyId' => $result['companyId'] ?? '',
             'userId' => $result['userId'] ?? '',
+            'client_id' => $clientId,
             'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
         ]);
 
