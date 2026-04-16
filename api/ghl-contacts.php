@@ -26,26 +26,6 @@ header('Content-Type: application/json');
 require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/services/GhlClient.php';
 
-function handle_ghl_error($status, $body) {
-    if ($status >= 400) {
-        http_response_code($status);
-        $errorJson = json_decode($body, true);
-        if (!is_array($errorJson)) {
-            $errorJson = ['error' => $body];
-        }
-        
-        $errMsg = $errorJson['error_description'] ?? $errorJson['message'] ?? $errorJson['error'] ?? $errorJson['details'] ?? 'Unknown GHL Error';
-        error_log(sprintf("[ghl-contacts] Failed with %d: %s", $status, is_array($errMsg) ? json_encode($errMsg) : $errMsg));
-        
-        if ($status === 401) {
-            $errorJson['reauth_required'] = true;
-        }
-        
-        echo json_encode($errorJson);
-        exit;
-    }
-}
-
 // ── 1. Read & validate locationId ─────────────────────────────────────────────
 
 $locationId = $_GET['locationId'] ?? $_GET['location_id'] ?? null;
@@ -64,8 +44,8 @@ try {
     $ghlClient = new GhlClient($db, (string)$locationId);
 } catch (\Exception $e) {
     error_log("[ghl-contacts] Client initialization failed: " . $e->getMessage());
-    http_response_code(401);
-    echo json_encode(['error' => $e->getMessage(), 'reauth_required' => true]);
+    http_response_code(404);
+    echo json_encode(['error' => $e->getMessage()]);
     exit;
 }
 
@@ -84,7 +64,9 @@ if ($method === 'GET') {
 
         if ($resp['status'] >= 400) {
             if (!empty($allContacts)) break;
-            handle_ghl_error($resp['status'], $resp['body']);
+            http_response_code($resp['status']);
+            echo $resp['body'];
+            exit;
         }
 
         $data = json_decode($resp['body'], true);
@@ -135,7 +117,9 @@ if ($method === 'POST') {
     $resp = $ghlClient->request('POST', '/contacts/', json_encode($ghlBody));
 
     if ($resp['status'] >= 400) {
-        handle_ghl_error($resp['status'], $resp['body']);
+        http_response_code($resp['status']);
+        echo $resp['body'];
+        exit;
     }
 
     $data = json_decode($resp['body'], true);
@@ -174,7 +158,9 @@ if ($method === 'PUT') {
     $resp = $ghlClient->request('PUT', "/contacts/{$contactId}", json_encode($ghlBody));
 
     if ($resp['status'] >= 400) {
-        handle_ghl_error($resp['status'], $resp['body']);
+        http_response_code($resp['status']);
+        echo $resp['body'];
+        exit;
     }
 
     $data = json_decode($resp['body'], true);
@@ -201,7 +187,9 @@ if ($method === 'DELETE') {
     $resp = $ghlClient->request('DELETE', "/contacts/{$contactId}");
 
     if ($resp['status'] >= 400) {
-        handle_ghl_error($resp['status'], $resp['body']);
+        http_response_code($resp['status']);
+        echo $resp['body'];
+        exit;
     }
 
     echo json_encode(['success' => $resp['status'] === 200 || $resp['status'] === 204]);
