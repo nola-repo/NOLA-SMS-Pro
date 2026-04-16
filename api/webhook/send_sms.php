@@ -182,11 +182,15 @@ $intRef = $db->collection('integrations')->document($intDocId);
 $intSnap = $intRef->snapshot();
 $intData = $intSnap->exists() ? $intSnap->data() : [];
 
-// ── Check Agency Toggle ───────────────────────────────────────────────────
+// ── Check Agency Toggle & Rate Limits ─────────────────────────────────────
 $tokenRef = $db->collection('ghl_tokens')->document($locId);
 $tokenSnap = $tokenRef->snapshot();
 $tokenData = $tokenSnap->exists() ? $tokenSnap->data() : [];
+
 $toggleEnabled = isset($tokenData['toggle_enabled']) ? (bool)$tokenData['toggle_enabled'] : true;
+$rateLimit = isset($tokenData['rate_limit']) ? (int)$tokenData['rate_limit'] : 0;
+$attemptCount = isset($tokenData['attempt_count']) ? (int)$tokenData['attempt_count'] : 0;
+$lastReset = $tokenData['last_reset_date'] ?? '';
 
 if (!$toggleEnabled) {
     http_response_code(403);
@@ -195,6 +199,34 @@ if (!$toggleEnabled) {
         'message' => 'SMS sending is currently disabled for this account. Please contact your agency.'
     ]);
     exit;
+}
+
+$today = date('Y-m-d');
+// Daily Reset Logic applied to ghl_tokens
+if ($lastReset !== $today) {
+    $attemptCount = 0;
+    $tokenRef->set([
+        'attempt_count' => 0,
+        'last_reset_date' => $today
+    ], ['merge' => true]);
+}
+
+// Block if limit reached
+if ($rateLimit > 0 && $attemptCount >= $rateLimit) {
+    http_response_code(403);
+    echo json_encode([
+        "status" => "error", 
+        "error"  => "rate_limit_reached",
+        "message" => "Agency subaccount credit limit exceeded ($rateLimit)."
+    ]);
+    exit;
+}
+
+// Atomically reserve an attempt
+if ($rateLimit > 0 || isset($tokenData['rate_limit'])) {
+    $tokenRef->set([
+        'attempt_count' => \Google\Cloud\Firestore\FieldValue::increment(1)
+    ], ['merge' => true]);
 }
 
 $approvedSenderId = $intData['approved_sender_id'] ?? null;
@@ -243,31 +275,7 @@ if ($locId) {
     if ($agencySubSnap->exists()) {
         $agencySubData = $agencySubSnap->data();
         if (!empty($agencySubData['toggle_enabled'])) {
-            $today = date('Y-m-d');
-            $lastReset = $agencySubData['last_reset_date'] ?? '';
-            $attempt_count = $agencySubData['attempt_count'] ?? 0;
-            $rate_limit = $agencySubData['rate_limit'] ?? 0;
-
-            // Daily Reset Logic
-            if ($lastReset !== $today) {
-                $attempt_count = 0;
-                $agencySubRef->set([
-                    'attempt_count' => 0,
-                    'last_reset_date' => $today
-                ], ['merge' => true]);
-            }
-
-            if ($attempt_count < $rate_limit) {
-                $useMyCrmSim = true;
-                // --- FIX 1: Atomic Increment to prevent race conditions ---
-                $agencySubRef->set([
-                    'attempt_count' => \Google\Cloud\Firestore\FieldValue::increment(1)
-                ], ['merge' => true]);
-            } else {
-                http_response_code(403);
-                echo json_encode(["status" => "error", "message" => "Agency subaccount daily rate limit exceeded ($rate_limit)."]);
-                exit;
-            }
+            $useMyCrmSim = true;
         }
     }
 }

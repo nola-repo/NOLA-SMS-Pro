@@ -35,11 +35,16 @@ try {
         echo json_encode(['error' => 'Subaccount not found for this agency.']);
         exit;
     }
-    $currentData = $snapshot->data();
+    $tokenRef = $db->collection('ghl_tokens')->document($locationId);
+    $tokenSnap = $tokenRef->snapshot();
+    $tokenData = $tokenSnap->exists() ? $tokenSnap->data() : [];
     
-    $toggleEnabled = isset($input['toggle_enabled']) ? (bool)$input['toggle_enabled'] : ($currentData['toggle_enabled'] ?? true);
-    $rateLimit = isset($input['rate_limit']) ? (int)$input['rate_limit'] : ($currentData['rate_limit'] ?? 5);
+    $toggleEnabled = isset($input['toggle_enabled']) ? (bool)$input['toggle_enabled'] : ($tokenData['toggle_enabled'] ?? true);
+    $rateLimit = isset($input['rate_limit']) ? (int)$input['rate_limit'] : ($tokenData['rate_limit'] ?? 5);
     $resetCounter = isset($input['reset_counter']) ? (bool)$input['reset_counter'] : false;
+    
+    $activations = (int)($tokenData['toggle_activation_count'] ?? 0);
+    $attemptCount = (int)($tokenData['attempt_count'] ?? 0);
     
     $updates = [
         'toggle_enabled' => $toggleEnabled,
@@ -48,33 +53,38 @@ try {
     ];
     
     // Enforce 3 max activations for "toggle_enabled"
-    if ($toggleEnabled && !($currentData['toggle_enabled'] ?? false)) {
-        $activations = (int)($currentData['toggle_activation_count'] ?? 0);
+    if ($toggleEnabled && !($tokenData['toggle_enabled'] ?? false)) {
         if ($activations >= 3) {
             http_response_code(403);
             echo json_encode(['error' => 'Activation Limit Reached', 'status' => 'limit_reached']);
             exit;
         }
-        $updates['toggle_activation_count'] = $activations + 1;
+        $activations++;
+        $updates['toggle_activation_count'] = $activations;
     }
+    
     // Reset attempt_count logic
     if ($resetCounter) {
+        $attemptCount = 0;
         $updates['attempt_count'] = 0;
     }
-    // Apply updates
+
+    $updates['toggle_activation_count'] = $activations;
+    $updates['attempt_count'] = $attemptCount;
+
+    // Apply updates to ghl_tokens first (primary)
+    $tokenRef->set($updates, ['merge' => true]);
+
+    // Apply updates to legacy agency_subaccounts
     $docRef->set($updates, ['merge' => true]);
 
-    // ── Mirror toggle_enabled into ghl_tokens (enforcement layer) ──────────────
-    $tokenRef = $db->collection('ghl_tokens')->document($locationId);
-    $tokenSnap = $tokenRef->snapshot();
-    if ($tokenSnap->exists()) {
-        $tokenRef->set([
-            'toggle_enabled' => $toggleEnabled,
-            'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTimeImmutable())
-        ], ['merge' => true]);
-    }
-
-    echo json_encode(['status' => 'success']);
+    echo json_encode([
+        'status' => 'success',
+        'toggle_enabled' => $toggleEnabled,
+        'rate_limit' => $rateLimit,
+        'attempt_count' => $attemptCount,
+        'toggle_activation_count' => $activations
+    ]);
 } catch (Exception $e) {
     http_response_code(500);
     echo json_encode(['error' => 'Update failed: ' . $e->getMessage()]);
