@@ -298,21 +298,38 @@ if (true) {
         // Tier 3: Paid Usage -> Deduct actual paid credits
         try {
             $desc = "SMS Message to " . ($num_recipients === 1 ? $validNumbers[0] : "$num_recipients recipient(s)");
-            $creditManager->deduct_credits(
-                $account_id,
-                $required_credits,
-                $batch_id ?? ('single_' . bin2hex(random_bytes(4))),
-                $desc
-            );
+            
+            $agencyDoc = $db->collection('agency_subaccounts')->document($locId)->snapshot();
+            $agency_id = $agencyDoc->exists() ? ($agencyDoc->data()['agency_id'] ?? null) : null;
+            
+            if ($agency_id) {
+                $creditManager->deduct_both_wallets(
+                    $agency_id,
+                    $account_id,
+                    $required_credits,
+                    $batch_id ?? ('single_' . bin2hex(random_bytes(4))),
+                    $desc
+                );
+            } else {
+                $creditManager->deduct_credits(
+                    $account_id,
+                    $required_credits,
+                    $batch_id ?? ('single_' . bin2hex(random_bytes(4))),
+                    $desc
+                );
+            }
         }
         catch (\Exception $e) {
-            if ($e->getMessage() === "Insufficient credits.") {
+            $errData = json_decode($e->getMessage(), true) ?: null;
+            if (($errData && isset($errData['error']) && $errData['error'] === 'insufficient_credits') || $e->getMessage() === "Insufficient credits.") {
                 // Both free trial exhausted AND paid credits insufficient → hard block
                 http_response_code(403);
                 echo json_encode([
                     "status" => "error",
-                    "message" => "Insufficient credits to send SMS. Please top up your credits.",
-                    "error" => "insufficient_credits"
+                    "message" => "Insufficient credits to send SMS.",
+                    "error" => "insufficient_credits",
+                    "agency_balance" => $errData['agency_balance'] ?? null,
+                    "subaccount_balance" => $errData['subaccount_balance'] ?? null
                 ]);
             }
             else {

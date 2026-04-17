@@ -92,6 +92,99 @@ class CreditManager
         return 0;
     }
 
+    public function get_agency_balance($agency_id)
+    {
+        $docRef = $this->get_agency_ref($agency_id);
+        $snapshot = $docRef->snapshot();
+        if ($snapshot->exists()) {
+            return (int)($snapshot->data()['balance'] ?? 0);
+        }
+        return 0;
+    }
+
+    public function deduct_both_wallets($agency_id, $location_id, $amount, $reference_id, $description)
+    {
+        if ($amount <= 0) {
+            return true;
+        }
+
+        $agencyRef = $this->get_agency_ref($agency_id);
+        $subaccountRef = $this->get_account_ref($location_id);
+        $transactionRefAgency = $this->db->collection('credit_transactions')->newDocument();
+        $transactionRefSub = $this->db->collection('credit_transactions')->newDocument();
+
+        $now = new \DateTimeImmutable();
+        $ts = new Timestamp($now);
+
+        $result = $this->db->runTransaction(function ($transaction) use ($agencyRef, $subaccountRef, $transactionRefAgency, $transactionRefSub, $amount, $reference_id, $description, $ts) {
+            $snapAgency = $transaction->snapshot($agencyRef);
+            $snapSub = $transaction->snapshot($subaccountRef);
+
+            $agency_balance = $snapAgency->exists() ? (int)($snapAgency->data()['balance'] ?? 0) : 0;
+            $sub_balance = $snapSub->exists() ? (int)($snapSub->data()['credit_balance'] ?? 0) : 0;
+
+            if ($agency_balance < $amount || $sub_balance < $amount) {
+                // Return payload mapping out errors
+                return [
+                    'success' => false,
+                    'error' => 'insufficient_credits',
+                    'agency_balance' => $agency_balance,
+                    'subaccount_balance' => $sub_balance
+                ];
+            }
+
+            $new_agency_balance = $agency_balance - $amount;
+            $new_sub_balance = $sub_balance - $amount;
+
+            // Deduct agency
+            $transaction->set($agencyRef, [
+                'balance' => $new_agency_balance,
+                'updated_at' => $ts
+            ], ['merge' => true]);
+
+            // Deduct subaccount
+            $transaction->set($subaccountRef, [
+                'credit_balance' => $new_sub_balance,
+                'updated_at' => $ts
+            ], ['merge' => true]);
+
+            // Agency transaction log
+            $transaction->create($transactionRefAgency, [
+                'transaction_id' => $transactionRefAgency->id(),
+                'account_id' => $agencyRef->id(),
+                'wallet_scope' => 'agency',
+                'type' => 'deduction',
+                'amount' => -$amount,
+                'balance_after' => $new_agency_balance,
+                'reference_id' => $reference_id,
+                'description' => $description,
+                'created_at' => $ts
+            ]);
+
+            // Subaccount transaction log
+            $transaction->create($transactionRefSub, [
+                'transaction_id' => $transactionRefSub->id(),
+                'account_id' => $subaccountRef->id(),
+                'wallet_scope' => 'subaccount',
+                'type' => 'deduction',
+                'amount' => -$amount,
+                'balance_after' => $new_sub_balance,
+                'reference_id' => $reference_id,
+                'description' => $description,
+                'created_at' => $ts
+            ]);
+
+            return ['success' => true];
+        });
+
+        if (is_array($result) && !($result['success'] ?? false)) {
+            // Re-throw so caller can catch it and act
+            throw new \Exception(json_encode($result));
+        }
+
+        return $result;
+    }
+
     public function deduct_credits($account_id, $amount, $reference_id, $description)
     {
         if ($amount <= 0) {
@@ -132,6 +225,7 @@ class CreditManager
             $transaction->create($transactionRef, [
                 'transaction_id' => $transactionRef->id(),
                 'account_id' => $accountRef->id(),
+                'wallet_scope' => 'subaccount',
                 'type' => 'deduction',
                 'amount' => -$amount,
                 'balance_after' => $new_balance,
@@ -146,26 +240,28 @@ class CreditManager
         return $result;
     }
 
-    public function add_credits($account_id, $amount, $reference_id, $description, $type = 'top_up')
+    public function add_credits($account_id, $amount, $reference_id, $description, $type = 'top_up', $wallet_scope = 'subaccount')
     {
         if ($amount <= 0) {
             return true;
         }
 
-        $accountRef = $this->get_account_ref($account_id);
+        $accountRef = $wallet_scope === 'agency' ? $this->get_agency_ref($account_id) : $this->get_account_ref($account_id);
         $transactionRef = $this->db->collection('credit_transactions')->newDocument();
 
         $now = new \DateTimeImmutable();
         $ts = new Timestamp($now);
 
-        $result = $this->db->runTransaction(function ($transaction) use ($accountRef, $transactionRef, $amount, $reference_id, $description, $type, $ts) {
+        $result = $this->db->runTransaction(function ($transaction) use ($accountRef, $transactionRef, $amount, $reference_id, $description, $type, $wallet_scope, $ts) {
             $snapshot = $transaction->snapshot($accountRef);
             $current_balance = 0;
             $currency = 'PHP';
+            
+            $balanceKey = $wallet_scope === 'agency' ? 'balance' : 'credit_balance';
 
             if ($snapshot->exists()) {
                 $data = $snapshot->data();
-                $current_balance = (int)($data['credit_balance'] ?? 0);
+                $current_balance = (int)($data[$balanceKey] ?? 0);
                 if (isset($data['currency'])) {
                     $currency = $data['currency'];
                 }
@@ -174,13 +270,15 @@ class CreditManager
             $new_balance = $current_balance + $amount;
 
             $accountData = [
-                'credit_balance' => $new_balance,
+                $balanceKey => $new_balance,
                 'updated_at' => $ts
             ];
 
             if (!$snapshot->exists()) {
                 $accountData['created_at'] = $ts;
-                $accountData['currency'] = $currency;
+                if ($wallet_scope === 'subaccount') {
+                    $accountData['currency'] = $currency;
+                }
                 $transaction->set($accountRef, $accountData);
             }
             else {
@@ -190,6 +288,7 @@ class CreditManager
             $transaction->create($transactionRef, [
                 'transaction_id' => $transactionRef->id(),
                 'account_id' => $accountRef->id(),
+                'wallet_scope' => $wallet_scope,
                 'type' => $type,
                 'amount' => $amount,
                 'balance_after' => $new_balance,
@@ -229,6 +328,7 @@ class CreditManager
         $batch->create($transactionRef, [
             'transaction_id' => $transactionRef->id(),
             'account_id' => $accountRef->id(),
+            'wallet_scope' => 'subaccount',
             'type' => 'deduction',
             'amount' => 0, // No paid credit deduction
             'balance_after' => $currentBalance, // Paid balance unchanged
@@ -269,5 +369,11 @@ class CreditManager
             : 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $account_id);
 
         return $this->db->collection('integrations')->document($docId);
+    }
+    
+    private function get_agency_ref($agency_id)
+    {
+        $agency_id = trim((string)$agency_id);
+        return $this->db->collection('agency_wallet')->document($agency_id);
     }
 }

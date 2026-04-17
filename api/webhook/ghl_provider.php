@@ -257,19 +257,36 @@ if (!$usingCustomSender) {
         // Tier 3: Paid Usage -> Deduct actual paid credits
         try {
             $desc = "SMS Message to {$normalizedPhone}";
-            $creditManager->deduct_credits(
-                $account_id,
-                $required_credits,
-                $messageId ?? ('ghl_prov_' . bin2hex(random_bytes(4))),
-                $desc
-            );
+
+            $agencyDoc = $db->collection('agency_subaccounts')->document($locationId)->snapshot();
+            $agency_id = $agencyDoc->exists() ? ($agencyDoc->data()['agency_id'] ?? null) : null;
+            
+            if ($agency_id) {
+                $creditManager->deduct_both_wallets(
+                    $agency_id,
+                    $account_id,
+                    $required_credits,
+                    $messageId ?? ('ghl_prov_' . bin2hex(random_bytes(4))),
+                    $desc
+                );
+            } else {
+                $creditManager->deduct_credits(
+                    $account_id,
+                    $required_credits,
+                    $messageId ?? ('ghl_prov_' . bin2hex(random_bytes(4))),
+                    $desc
+                );
+            }
         } catch (\Exception $e) {
-            if ($e->getMessage() === 'Insufficient credits.') {
+            $errData = json_decode($e->getMessage(), true) ?: null;
+            if (($errData && isset($errData['error']) && $errData['error'] === 'insufficient_credits') || $e->getMessage() === 'Insufficient credits.') {
                 http_response_code(402);
                 echo json_encode([
                     'success' => false,
                     'error' => 'insufficient_credits',
-                    'message' => 'Insufficient credits. Please top up your NOLA SMS Pro credits.',
+                    'message' => 'Insufficient credits.',
+                    'agency_balance' => $errData['agency_balance'] ?? null,
+                    'subaccount_balance' => $errData['subaccount_balance'] ?? null
                 ]);
             } else {
                 http_response_code(500);
