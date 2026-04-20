@@ -175,24 +175,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $transaction->create($txRefAgency, [
                     'transaction_id' => $txRefAgency->id(),
-                    'account_id' => $agencyWalletRef->id(),
-                    'wallet_scope' => 'agency',
-                    'type' => 'request_approved',
-                    'amount' => -$amount,
-                    'balance_after' => $new_agency_balance,
-                    'description' => 'Approved credit request',
-                    'created_at' => $ts
+                    'account_id'     => $agencyWalletRef->id(),
+                    'wallet_scope'   => 'agency',
+                    'type'           => 'credit_distribution',
+                    'deducted_from'  => 'agency',
+                    'amount'         => -$amount,
+                    'balance_after'  => $new_agency_balance,
+                    'description'    => 'Approved credit request',
+                    'created_at'     => $ts,
                 ]);
 
                 $transaction->create($txRefSub, [
                     'transaction_id' => $txRefSub->id(),
-                    'account_id' => $subaccountRef->id(),
-                    'wallet_scope' => 'subaccount',
-                    'type' => 'request_approved',
-                    'amount' => $amount,
-                    'balance_after' => $new_sub_balance,
-                    'description' => 'Approved credit request',
-                    'created_at' => $ts
+                    'account_id'     => $subaccountRef->id(),
+                    'wallet_scope'   => 'subaccount',
+                    'type'           => 'request_approved',
+                    'deducted_from'  => 'agency',
+                    'amount'         => $amount,
+                    'balance_after'  => $new_sub_balance,
+                    'description'    => 'Approved credit request',
+                    'created_at'     => $ts,
                 ]);
 
                 return [

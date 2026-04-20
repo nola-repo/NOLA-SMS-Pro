@@ -24,6 +24,13 @@ Use this base for all endpoints below (no trailing slash).
 | POST | `/api/contacts` | `X-Webhook-Secret` | Create contact. Body: `{ "name", "phone", "email" }`. |
 | GET  | `/api/credits`  | `X-Webhook-Secret` | Get current credit balance for the default account. |
 | GET  | `/api/get_credit_transactions` | `X-Webhook-Secret` | Fetch credit ledger array. Query: `account_id` (defaults to 'default'), `limit`. |
+| GET  | `/api/billing/agency_wallet.php` | `Bearer JWT` | Fetch agency wallet config and balance. Query: `agency_id`. |
+| POST | `/api/billing/agency_wallet.php` | `Bearer JWT` | Agency wallet POST actions (e.g., `gift`, `set_auto_recharge`). |
+| GET  | `/api/billing/subaccount_wallet.php` | `Bearer JWT` | Fetch subaccount wallet config and balance. Query: `location_id`. |
+| POST | `/api/billing/subaccount_wallet.php` | `Bearer JWT` | Subaccount wallet POST actions (e.g., `request_credits`, `set_auto_recharge`). |
+| GET  | `/api/billing/credit_requests.php` | `Bearer JWT` | List subaccount credit requests. Query: `agency_id`, `status`. |
+| POST | `/api/billing/credit_requests.php` | `Bearer JWT` | Process credit requests (e.g., `approve`, `deny`). |
+| GET  | `/api/billing/transactions.php` | `Bearer JWT` | Paged fetch of `credit_transactions`. Query: `scope`, `page`. |
 | GET  | `/oauth/callback` | None | GHL OAuth callback. GHL redirects here with `?code=...` (optional `&state=locationId`). Writes tokens to Firestore `ghl_tokens/{locationId}`. Each subaccount/location gets its own doc. |
 
 ---
@@ -54,8 +61,20 @@ Use this base for all endpoints below (no trailing slash).
 - **Credit balance:**  
   `https://smspro-api.nolacrm.io/api/credits`
 
-- **Credit transactions:**  
+- **Credit transactions (legacy):**  
   `https://smspro-api.nolacrm.io/api/get_credit_transactions`
+
+- **Agency Wallet Endpoint:**  
+  `https://smspro-api.nolacrm.io/api/billing/agency_wallet.php`
+
+- **Subaccount Wallet Endpoint:**  
+  `https://smspro-api.nolacrm.io/api/billing/subaccount_wallet.php`
+
+- **Credit Requests Endpoint:**  
+  `https://smspro-api.nolacrm.io/api/billing/credit_requests.php`
+
+- **Credit Transactions List (Billing system):**  
+  `https://smspro-api.nolacrm.io/api/billing/transactions.php`
 
 - **GHL OAuth redirect (set in Marketplace):**  
   `https://smspro-api.nolacrm.io/oauth/callback`
@@ -103,5 +122,9 @@ Project ID in code: `nola-sms-pro`. For `messages` queries by `conversation_id` 
 | Message history | `https://smspro-api.nolacrm.io/api/messages` |
 | Contacts (list/create) | `https://smspro-api.nolacrm.io/api/contacts` |
 | Credit balance | `https://smspro-api.nolacrm.io/api/credits` |
-| Credit transactions | `https://smspro-api.nolacrm.io/api/get_credit_transactions` |
-| GHL OAuth callback | `https://smspro-api.nolacrm.io/oauth/callback` |
+| Credit transactions (legacy) | `https://smspro-api.nolacrm.io/api/get_credit_transactions` |
+| Agency Wallet API            | `https://smspro-api.nolacrm.io/api/billing/agency_wallet.php` |
+| Subaccount Wallet API        | `https://smspro-api.nolacrm.io/api/billing/subaccount_wallet.php` |
+| Credit Requests API          | `https://smspro-api.nolacrm.io/api/billing/credit_requests.php` |
+| Scoped Transactions Log      | `https://smspro-api.nolacrm.io/api/billing/transactions.php` |
+| GHL OAuth callback           | `https://smspro-api.nolacrm.io/oauth/callback` |

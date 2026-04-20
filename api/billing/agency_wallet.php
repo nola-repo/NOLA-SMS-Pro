@@ -71,11 +71,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $data = $snapshot->exists() ? $snapshot->data() : [];
     
     echo json_encode([
-        'balance' => $data['balance'] ?? 0,
-        'auto_recharge_enabled' => $data['auto_recharge_enabled'] ?? false,
-        'auto_recharge_amount' => $data['auto_recharge_amount'] ?? 500,
-        'auto_recharge_threshold' => $data['auto_recharge_threshold'] ?? 100,
-        'updated_at' => isset($data['updated_at']) ? $data['updated_at']->get()->format('Y-m-d\TH:i:s\Z') : null
+        'balance'                    => $data['balance'] ?? 0,
+        'auto_recharge_enabled'      => $data['auto_recharge_enabled'] ?? false,
+        'auto_recharge_amount'       => $data['auto_recharge_amount'] ?? 500,
+        'auto_recharge_threshold'    => $data['auto_recharge_threshold'] ?? 100,
+        'enforce_master_balance_lock' => $data['enforce_master_balance_lock'] ?? false,
+        'updated_at'                 => isset($data['updated_at']) ? $data['updated_at']->get()->format('Y-m-d\TH:i:s\Z') : null,
     ]);
     exit;
 }
@@ -90,6 +91,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'auto_recharge_enabled' => $enabled,
             'auto_recharge_amount'  => $amount,
             'auto_recharge_threshold' => $threshold,
+            'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
+        ], ['merge' => true]);
+
+        echo json_encode(['success' => true]);
+        exit;
+    }
+
+    if ($action === 'set_master_lock') {
+        $enabled = isset($input['enabled']) ? (bool)$input['enabled'] : false;
+
+        $agencyWalletRef->set([
+            'enforce_master_balance_lock' => $enabled,
             'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
         ], ['merge' => true]);
 
@@ -150,13 +163,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $transaction->create($txRefAgency, [
                     'transaction_id' => $txRefAgency->id(),
-                    'account_id' => $agencyWalletRef->id(),
-                    'wallet_scope' => 'agency',
-                    'type' => 'gift_sent',
-                    'amount' => -$amount,
-                    'balance_after' => $new_agency_balance,
-                    'description' => $note,
-                    'created_at' => $ts
+                    'account_id'     => $agencyWalletRef->id(),
+                    'wallet_scope'   => 'agency',
+                    'type'           => 'credit_distribution',
+                    'deducted_from'  => 'agency',
+                    'amount'         => -$amount,
+                    'balance_after'  => $new_agency_balance,
+                    'description'    => $note,
+                    'created_at'     => $ts,
                 ]);
 
                 $transaction->create($txRefSub, [

@@ -102,6 +102,111 @@ class CreditManager
         return 0;
     }
 
+    /**
+     * PRIMARY SMS DEDUCTION METHOD — Single-Deduction Architecture.
+     *
+     * Deducts ONLY from the subaccount wallet (integrations/{location_id}.credit_balance).
+     * The agency wallet is NEVER touched here.
+     *
+     * Logs one credit_transactions entry with full profit-tracking metadata.
+     *
+     * @param string $location_id   Subaccount location ID (with or without ghl_ prefix)
+     * @param string $agency_id     Agency ID (stored in log for reporting only)
+     * @param int    $amount        Credits to deduct (usually 1 per SMS segment)
+     * @param string $reference_id  Batch ID or reference string
+     * @param string $description   Human-readable description (e.g. "SMS to +639...")  
+     * @param float  $provider_cost Actual cost to us from the provider
+     * @param float  $charged       What we bill the client per credit
+     * @param string $provider      Provider name (e.g. 'telnyx', 'semaphore')
+     * @return array ['success'=>true, 'balance_after'=>int] or throws on failure
+     */
+    public function deduct_subaccount_only(
+        string $location_id,
+        string $agency_id,
+        int    $amount,
+        string $reference_id,
+        string $description,
+        float  $provider_cost = 0.02,
+        float  $charged       = 0.05,
+        string $provider      = 'semaphore'
+    ): array {
+        if ($amount <= 0) {
+            return ['success' => true, 'balance_after' => $this->get_balance($location_id)];
+        }
+
+        $subaccountRef  = $this->get_account_ref($location_id);
+        $transactionRef = $this->db->collection('credit_transactions')->newDocument();
+
+        $now = new \DateTimeImmutable();
+        $ts  = new Timestamp($now);
+
+        $profit = round($charged - $provider_cost, 4);
+
+        $result = $this->db->runTransaction(function ($transaction) use (
+            $subaccountRef, $transactionRef, $amount, $reference_id, $description,
+            $agency_id, $provider_cost, $charged, $profit, $provider, $ts
+        ) {
+            $snap            = $transaction->snapshot($subaccountRef);
+            $current_balance = $snap->exists() ? (int)($snap->data()['credit_balance'] ?? 0) : 0;
+
+            if ($current_balance < $amount) {
+                return [
+                    'success'             => false,
+                    'error'               => 'insufficient_credits',
+                    'subaccount_balance'  => $current_balance,
+                ];
+            }
+
+            $new_balance = $current_balance - $amount;
+
+            $transaction->set($subaccountRef, [
+                'credit_balance' => $new_balance,
+                'updated_at'     => $ts,
+            ], ['merge' => true]);
+
+            $transaction->create($transactionRef, [
+                'transaction_id' => $transactionRef->id(),
+                'account_id'     => $subaccountRef->id(),
+                'agency_id'      => $agency_id,
+                'wallet_scope'   => 'subaccount',
+                'type'           => 'sms_usage',
+                'deducted_from'  => 'subaccount',
+                'amount'         => -$amount,
+                'balance_after'  => $new_balance,
+                'provider_cost'  => $provider_cost,
+                'charged'        => $charged,
+                'profit'         => $profit,
+                'provider'       => $provider,
+                'reference_id'   => $reference_id,
+                'description'    => $description,
+                'created_at'     => $ts,
+            ]);
+
+            return ['success' => true, 'balance_after' => $new_balance];
+        });
+
+        if (is_array($result) && !($result['success'] ?? false)) {
+            throw new \Exception(json_encode($result));
+        }
+
+        return $result;
+    }
+
+    /**
+     * Returns whether the agency has enforce_master_balance_lock enabled.
+     * When true, SMS sends are blocked if the agency wallet balance is 0.
+     */
+    public function get_agency_master_lock(string $agency_id): bool
+    {
+        if (empty($agency_id)) return false;
+        $snap = $this->get_agency_ref($agency_id)->snapshot();
+        return $snap->exists() ? (bool)($snap->data()['enforce_master_balance_lock'] ?? false) : false;
+    }
+
+    /**
+     * @deprecated Use deduct_subaccount_only() for SMS sends.
+     * Kept for backward compatibility. Deducts from BOTH agency and subaccount wallets.
+     */
     public function deduct_both_wallets($agency_id, $location_id, $amount, $reference_id, $description)
     {
         if ($amount <= 0) {
@@ -124,7 +229,6 @@ class CreditManager
             $sub_balance = $snapSub->exists() ? (int)($snapSub->data()['credit_balance'] ?? 0) : 0;
 
             if ($agency_balance < $amount || $sub_balance < $amount) {
-                // Return payload mapping out errors
                 return [
                     'success' => false,
                     'error' => 'insufficient_credits',
@@ -136,19 +240,16 @@ class CreditManager
             $new_agency_balance = $agency_balance - $amount;
             $new_sub_balance = $sub_balance - $amount;
 
-            // Deduct agency
             $transaction->set($agencyRef, [
                 'balance' => $new_agency_balance,
                 'updated_at' => $ts
             ], ['merge' => true]);
 
-            // Deduct subaccount
             $transaction->set($subaccountRef, [
                 'credit_balance' => $new_sub_balance,
                 'updated_at' => $ts
             ], ['merge' => true]);
 
-            // Agency transaction log
             $transaction->create($transactionRefAgency, [
                 'transaction_id' => $transactionRefAgency->id(),
                 'account_id' => $agencyRef->id(),
@@ -161,7 +262,6 @@ class CreditManager
                 'created_at' => $ts
             ]);
 
-            // Subaccount transaction log
             $transaction->create($transactionRefSub, [
                 'transaction_id' => $transactionRefSub->id(),
                 'account_id' => $subaccountRef->id(),
@@ -178,7 +278,6 @@ class CreditManager
         });
 
         if (is_array($result) && !($result['success'] ?? false)) {
-            // Re-throw so caller can catch it and act
             throw new \Exception(json_encode($result));
         }
 
