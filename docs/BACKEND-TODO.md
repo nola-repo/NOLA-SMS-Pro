@@ -18,8 +18,13 @@
 
 ---
 
-## ⚙️ Infra / Core
-- [ ] `api/billing/webhook_payment.php` — new file for payment provider callbacks
-- [ ] Firestore indexes — `credit_transactions` + `users.role`
-- [ ] Pricing config — move provider_cost / charged out of hardcode in `send_sms.php`
-- [ ] GCP Cloud Scheduler job registration
+---
+ 
+ ## ⚙️ Infra / Core
+ - [ ] `api/billing/webhook_payment.php` — new file for payment provider callbacks
+ - [ ] Firestore indexes — `credit_transactions` + `users.role`
+ - [ ] Pricing config — move provider_cost / charged out of hardcode in `send_sms.php`
+ - [ ] GCP Cloud Scheduler job registration
+ - [ ] **CORS Maintenance**
+     - [ ] Monitor production for "duplicate header" errors after redeploy
+     - [ ] Audit all future `.php` endpoints to ensure `cors.php` is included

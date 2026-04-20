@@ -97,3 +97,16 @@ These endpoints handle the core routing of outbound and inbound messages, direct
 - **Method:** `GET`
 - **What it processes:** 
   Orchestrated by Google Cloud Scheduler to run periodically. It scrapes `sms_logs` for any messages stuck in `Queued` or `Sending`, hits the Semaphore status API for updates, and updates the Firestore records to `Delivered` or `Failed`.
+---
+ 
+ ## 📁 4. Troubleshooting & CORS
+ Since this API is accessed via a cross-origin frontend (`agency.nolasmspro.com`), it relies on proper CORS preflight handling.
+ 
+ ### 4.1. Verify CORS Preflight (OPTIONS)
+ To verify that the server is responding correctly to browsers, create an `OPTIONS` request in Postman:
+ - **URL:** Any API endpoint (e.g., `https://smspro-api.nolacrm.io/api/billing/agency_wallet.php`)
+ - **Method:** `OPTIONS`
+ - **Headers:**
+     - `Origin: https://agency.nolasmspro.com`
+     - `Access-Control-Request-Method: GET`
+ - **Expected Result:** `204 No Content` with `Access-Control-Allow-Origin: https://agency.nolasmspro.com` (and NO duplicate headers).

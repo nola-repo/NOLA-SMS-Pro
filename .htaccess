@@ -96,19 +96,12 @@
 
 </IfModule>
 
-# ── CORS headers (Apache level) ──────────────────────────────────────
-# "Header always set" ensures headers are present even on 204/4xx/5xx responses.
-# We mirror the incoming Origin header to satisfy CORS requirements for credentials.
-<IfModule mod_headers.c>
-    # If the Origin header is present, mirror it back
-    SetEnvIf Origin "(.+)" HAS_ORIGIN
-    Header always set Access-Control-Allow-Origin "%{Origin}i" env=HAS_ORIGIN
-    
-    Header always set Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE, PATCH"
-    Header always set Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Webhook-Secret, X-GHL-Location-ID, X-GHL-LocationID, X-Agency-ID"
-    Header always set Access-Control-Allow-Credentials "true"
-    Header always set Access-Control-Max-Age "86400"
-</IfModule>
+# ── CORS headers ─────────────────────────────────────────────────────
+# CORS headers are handled dynamically by api/cors.php (PHP layer).
+# We avoid setting them here (in mod_headers) to prevent duplicate
+# Access-Control-Allow-Origin headers, which browsers reject.
+# Preflight (OPTIONS) requests are allowed to fall through to PHP.
+
 
 # Ensure PHP files are executed
 <FilesMatch "\.php$">
