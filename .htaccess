@@ -6,11 +6,12 @@
 
     Options -MultiViews
 
-    # ── CORS: Handle OPTIONS preflight at Apache level ───────────────
-    # Browsers send OPTIONS before POST with custom headers.
-    # Apache must respond 204 before PHP even runs.
-    RewriteCond %{REQUEST_METHOD} OPTIONS [NC]
-    RewriteRule ^ - [R=204,L]
+    # ── CORS: OPTIONS preflight ────────────────────────────────────────
+    # OPTIONS requests fall through to the PHP file matched by the rewrite
+    # rules below. Every PHP endpoint includes cors.php which returns 204
+    # with proper CORS headers. The mod_headers block at the bottom of
+    # this file is a safety net that ensures CORS headers are always present.
+
 
     # If the request is for an existing file or directory, serve it directly
     RewriteCond %{REQUEST_FILENAME} -f [OR]
@@ -95,9 +96,19 @@
 
 </IfModule>
 
-# CORS headers are handled by api/cors.php (PHP layer).
-# Keeping them here too causes duplicate Access-Control-Allow-Origin headers.
-# <IfModule mod_headers.c> block intentionally removed.
+# ── CORS headers (Apache level) ──────────────────────────────────────
+# "Header always set" ensures headers are present even on 204/4xx/5xx responses.
+# We mirror the incoming Origin header to satisfy CORS requirements for credentials.
+<IfModule mod_headers.c>
+    # If the Origin header is present, mirror it back
+    SetEnvIf Origin "(.+)" HAS_ORIGIN
+    Header always set Access-Control-Allow-Origin "%{Origin}i" env=HAS_ORIGIN
+    
+    Header always set Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE, PATCH"
+    Header always set Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Webhook-Secret, X-GHL-Location-ID, X-GHL-LocationID, X-Agency-ID"
+    Header always set Access-Control-Allow-Credentials "true"
+    Header always set Access-Control-Max-Age "86400"
+</IfModule>
 
 # Ensure PHP files are executed
 <FilesMatch "\.php$">
