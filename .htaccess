@@ -95,16 +95,9 @@
 
 </IfModule>
 
-# ── CORS headers for ALL responses ──────────────────────────────────
-<IfModule mod_headers.c>
-    SetEnvIf Origin "^(.*)$" ORIGIN_SUB_DOMAIN=$1
-    Header always set Access-Control-Allow-Origin "%{ORIGIN_SUB_DOMAIN}e" env=ORIGIN_SUB_DOMAIN
-    Header always set Access-Control-Allow-Origin "*" env=!ORIGIN_SUB_DOMAIN
-    Header always set Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE, PATCH"
-    Header always set Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Webhook-Secret, X-GHL-Location-ID, X-GHL-LocationID, X-Agency-ID"
-    Header always set Access-Control-Allow-Credentials "true"
-    Header always set Access-Control-Max-Age "86400"
-</IfModule>
+# CORS headers are handled by api/cors.php (PHP layer).
+# Keeping them here too causes duplicate Access-Control-Allow-Origin headers.
+# <IfModule mod_headers.c> block intentionally removed.
 
 # Ensure PHP files are executed
 <FilesMatch "\.php$">

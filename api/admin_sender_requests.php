@@ -162,7 +162,65 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
+    // 2. Action: manage_agency (Set credit_balance on a users doc by Firestore doc ID)
+    if (isset($payload['action']) && $payload['action'] === 'manage_agency') {
+        $userId    = $payload['user_id']        ?? null;  // Firestore document ID in `users`
+        $companyId = $payload['company_id']     ?? null;  // GHL company_id (optional)
+        $newBalance = isset($payload['credit_balance']) ? (int)$payload['credit_balance'] : null;
 
+        if (!$userId) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'Missing user_id']);
+            exit;
+        }
+
+        $userRef  = $db->collection('users')->document($userId);
+        $userSnap = $userRef->snapshot();
+
+        if (!$userSnap->exists()) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Agency user not found']);
+            exit;
+        }
+
+        $userData   = $userSnap->data();
+        $oldBalance = (int)($userData['credit_balance'] ?? 0);
+
+        $updateFields = [
+            'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+        ];
+
+        if ($newBalance !== null) {
+            $updateFields['credit_balance'] = $newBalance;
+        }
+        if ($companyId) {
+            $updateFields['company_id'] = $companyId;
+        }
+
+        $userRef->set($updateFields, ['merge' => true]);
+
+        // Log credit delta to credit_transactions
+        if ($newBalance !== null) {
+            $delta = $newBalance - $oldBalance;
+            if ($delta !== 0) {
+                $logId = 'agency_adj_' . uniqid();
+                $db->collection('credit_transactions')->document($logId)->set([
+                    'id'            => $logId,
+                    'account_id'    => $userId,
+                    'company_id'    => $companyId ?? ($userData['company_id'] ?? null),
+                    'wallet_scope'  => 'agency',
+                    'amount'        => $delta,
+                    'balance_after' => $newBalance,
+                    'type'          => 'admin_adjustment',
+                    'description'   => 'Admin agency credit adjustment (' . ($delta > 0 ? '+' : '') . $delta . ' credits)',
+                    'created_at'    => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+                ]);
+            }
+        }
+
+        echo json_encode(['status' => 'success', 'message' => 'Agency account updated successfully.']);
+        exit;
+    }
 
     $requestId = $payload['request_id'] ?? null;
     $status = $payload['status'] ?? null; // 'approved' or 'rejected'
@@ -235,6 +293,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     echo json_encode(['status' => 'success', 'message' => "Request $status and account updated."]);
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'agencies') {
+    $results = [];
+
+    $agencyDocs = $db->collection('users')
+        ->where('role', '==', 'agency')
+        ->documents();
+
+    foreach ($agencyDocs as $doc) {
+        if (!$doc->exists()) continue;
+        $data = $doc->data();
+
+        $createdAt = null;
+        if (isset($data['createdAt']) && $data['createdAt'] instanceof \Google\Cloud\Core\Timestamp) {
+            $createdAt = $data['createdAt']->get()->format('Y-m-d H:i:s');
+        } elseif (isset($data['created_at']) && $data['created_at'] instanceof \Google\Cloud\Core\Timestamp) {
+            $createdAt = $data['created_at']->get()->format('Y-m-d H:i:s');
+        }
+
+        $results[] = [
+            'id'         => $doc->id(),
+            'firstName'  => $data['firstName']  ?? $data['first_name']  ?? '',
+            'lastName'   => $data['lastName']   ?? $data['last_name']   ?? '',
+            'email'      => $data['email']       ?? '',
+            'phone'      => $data['phone']       ?? '',
+            'company_id' => $data['company_id']  ?? null,
+            'active'     => $data['active']      ?? true,
+            'createdAt'  => $createdAt,
+        ];
+    }
+
+    // Sort newest first
+    usort($results, function ($a, $b) {
+        return strcmp($b['createdAt'] ?? '', $a['createdAt'] ?? '');
+    });
+
+    echo json_encode(['status' => 'success', 'data' => $results]);
     exit;
 }
 

@@ -19,6 +19,17 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
 require_once __DIR__ . '/auth_helper.php';
 $agencyId = validate_agency_request();
 
+// Fallback: allow agency_id as a query param when header-based ID is absent
+if (!$agencyId) {
+    $agencyId = $_GET['agency_id'] ?? '';
+}
+
+if (!$agencyId) {
+    http_response_code(400);
+    echo json_encode(['error' => 'agency_id is required (via X-Agency-ID header or ?agency_id= query param)']);
+    exit;
+}
+
 require_once __DIR__ . '/../services/Cache.php';
 $cache = new Cache('data');
 $cacheKey = 'subaccounts_' . $agencyId;

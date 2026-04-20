@@ -3,44 +3,15 @@ require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 
 require_once __DIR__ . '/../webhook/firestore_client.php';
-require_once __DIR__ . '/../jwt_helper.php';
+require_once __DIR__ . '/../auth_helpers.php';
 require_once __DIR__ . '/../services/CreditManager.php';
 
-// Authentication & Validation (Similar to other agency endpoints)
-$authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
-if (!$authHeader) {
-    $headers = function_exists('getallheaders') ? getallheaders() : [];
-    foreach ($headers as $k => $v) {
-        if (strcasecmp($k, 'Authorization') === 0) { $authHeader = $v; break; }
-    }
-}
-$bearerToken = '';
-if (preg_match('/Bearer\s+(.+)/i', $authHeader, $m)) {
-    $bearerToken = $m[1];
-}
-
-$jwtSecret = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
-if (!$bearerToken) {
-    http_response_code(401);
-    echo json_encode(['error' => 'Authorization token required.']);
-    exit;
-}
-
-$claims = jwt_verify($bearerToken, $jwtSecret);
-if (!$claims) {
-    http_response_code(401);
-    echo json_encode(['error' => 'Invalid or expired token.']);
-    exit;
-}
-if (($claims['role'] ?? '') !== 'agency') {
-    http_response_code(403);
-    echo json_encode(['error' => 'Only agency accounts can access agency wallet.']);
-    exit;
-}
+// Authentication — accepts X-Webhook-Secret header (frontend billing requests)
+validate_api_request();
 
 $db = get_firestore();
 
-// Fetch agency_id. If missing in payload, try from token/user. 
+// Resolve agency_id from request params
 $agency_id = $_GET['agency_id'] ?? null;
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $input = json_decode(file_get_contents('php://input'), true);
@@ -50,18 +21,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_GET['action'] ?? '';
 }
 
-// Fallback to searching user record if agency_id not provided.
-if (!$agency_id) {
-    $userId = $claims['sub'] ?? null;
-    $userRef = $db->collection('users')->document($userId)->snapshot();
-    if ($userRef->exists()) {
-        $agency_id = $userRef->data()['company_id'] ?? null;
-    }
-}
-
 if (!$agency_id) {
     http_response_code(400);
-    echo json_encode(['error' => 'agency_id is required or user must have a linked company.']);
+    echo json_encode(['error' => 'agency_id is required.']);
     exit;
 }
 

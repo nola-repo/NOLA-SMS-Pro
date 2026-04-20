@@ -3,34 +3,10 @@ require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 
 require_once __DIR__ . '/../webhook/firestore_client.php';
-require_once __DIR__ . '/../jwt_helper.php';
+require_once __DIR__ . '/../auth_helpers.php';
 
-// Auth
-$authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
-if (!$authHeader) {
-    $headers = function_exists('getallheaders') ? getallheaders() : [];
-    foreach ($headers as $k => $v) {
-        if (strcasecmp($k, 'Authorization') === 0) { $authHeader = $v; break; }
-    }
-}
-$bearerToken = '';
-if (preg_match('/Bearer\s+(.+)/i', $authHeader, $m)) {
-    $bearerToken = $m[1];
-}
-
-if (!$bearerToken) {
-    http_response_code(401);
-    echo json_encode(['error' => 'Authorization token required.']);
-    exit;
-}
-
-$jwtSecret = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
-$claims = jwt_verify($bearerToken, $jwtSecret);
-if (!$claims) {
-    http_response_code(401);
-    echo json_encode(['error' => 'Invalid or expired token.']);
-    exit;
-}
+// Authentication — accepts X-Webhook-Secret header (frontend billing requests)
+validate_api_request();
 
 $db = get_firestore();
 

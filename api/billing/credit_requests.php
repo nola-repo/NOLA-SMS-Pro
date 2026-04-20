@@ -3,50 +3,17 @@ require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 
 require_once __DIR__ . '/../webhook/firestore_client.php';
-require_once __DIR__ . '/../jwt_helper.php';
+require_once __DIR__ . '/../auth_helpers.php';
 require_once __DIR__ . '/../services/CreditManager.php';
 
-// Auth
-$authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
-if (!$authHeader) {
-    $headers = function_exists('getallheaders') ? getallheaders() : [];
-    foreach ($headers as $k => $v) {
-        if (strcasecmp($k, 'Authorization') === 0) { $authHeader = $v; break; }
-    }
-}
-$bearerToken = '';
-if (preg_match('/Bearer\s+(.+)/i', $authHeader, $m)) {
-    $bearerToken = $m[1];
-}
-
-$jwtSecret = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
-if (!$bearerToken) {
-    http_response_code(401);
-    echo json_encode(['error' => 'Authorization token required.']);
-    exit;
-}
-
-$claims = jwt_verify($bearerToken, $jwtSecret);
-if (!$claims || ($claims['role'] ?? '') !== 'agency') {
-    http_response_code(403);
-    echo json_encode(['error' => 'Valid Agency token required.']);
-    exit;
-}
+// Authentication — accepts X-Webhook-Secret header (frontend billing requests)
+validate_api_request();
 
 $db = get_firestore();
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $agency_id = $_GET['agency_id'] ?? null;
     $status = $_GET['status'] ?? null;
-
-    if (!$agency_id) {
-        // Fallback to searching user record
-        $userId = $claims['sub'] ?? null;
-        $userRef = $db->collection('users')->document($userId)->snapshot();
-        if ($userRef->exists()) {
-            $agency_id = $userRef->data()['company_id'] ?? null;
-        }
-    }
 
     if (!$agency_id) {
         http_response_code(400);
@@ -113,7 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $agency_id = $requestData['agency_id'];
     $location_id = $requestData['location_id'];
     $amount = (int)($requestData['amount'] ?? 0);
-    $userId = $claims['sub'] ?? 'unknown_agency_user';
+    $userId = 'agency_webhook';
 
     if ($action === 'deny') {
         $requestRef->set([
