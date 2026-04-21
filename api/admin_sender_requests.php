@@ -299,8 +299,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'agencies') {
     $results = [];
 
-    $agencyDocs = $db->collection('users')
-        ->where('role', '==', 'agency')
+    // Source: ghl_tokens collection, filtered by appType == 'agency'
+    $agencyDocs = $db->collection('ghl_tokens')
+        ->where('appType', '==', 'agency')
         ->documents();
 
     foreach ($agencyDocs as $doc) {
@@ -314,15 +315,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
             $createdAt = $data['created_at']->get()->format('Y-m-d H:i:s');
         }
 
+        // company_id is the GHL companyId stored on the token document;
+        // fall back to the Firestore document ID if absent.
+        $companyId = $data['companyId'] ?? $data['company_id'] ?? $doc->id();
+
         $results[] = [
-            'id'         => $doc->id(),
-            'firstName'  => $data['firstName']  ?? $data['first_name']  ?? '',
-            'lastName'   => $data['lastName']   ?? $data['last_name']   ?? '',
-            'email'      => $data['email']       ?? '',
-            'phone'      => $data['phone']       ?? '',
-            'company_id' => $data['company_id']  ?? null,
-            'active'     => $data['active']      ?? true,
-            'createdAt'  => $createdAt,
+            'id'           => $doc->id(),
+            'company_name' => $data['companyName'] ?? $data['company_name'] ?? '',
+            'company_id'   => $companyId,
+            'active'       => $data['active'] ?? true,
+            'createdAt'    => $createdAt,
         ];
     }
 
