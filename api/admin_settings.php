@@ -6,7 +6,7 @@ require __DIR__ . '/webhook/firestore_client.php';
 
 $method = $_SERVER['REQUEST_METHOD'];
 $db = get_firestore();
-$configRef = $db->collection('admin_config')->document('global');
+$configRef = $db->collection('system_settings')->document('core');
 
 if ($method === 'GET') {
     try {

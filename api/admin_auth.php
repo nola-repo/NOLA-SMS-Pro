@@ -4,6 +4,7 @@ require_once __DIR__ . '/cors.php';
 header('Content-Type: application/json');
 
 require __DIR__ . '/webhook/firestore_client.php';
+require_once __DIR__ . '/jwt_helper.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
@@ -44,10 +45,18 @@ try {
     $storedHash = $adminData['password_hash'] ?? $adminData['hashed_password'] ?? '';
 
     if (password_verify($password, $storedHash)) {
+        // Generate JWT
+        $secret = getenv('JWT_SECRET') ?: 'nola-super-admin-secret';
+        $token = jwt_sign([
+            'username' => $username,
+            'role' => $adminData['role'] ?? 'admin'
+        ], $secret);
+
         // Successful login
         echo json_encode([
             'status' => 'success',
             'message' => 'Login successful',
+            'token' => $token,
             'user' => [
                 'username' => $username,
                 'role' => $adminData['role'] ?? 'admin'

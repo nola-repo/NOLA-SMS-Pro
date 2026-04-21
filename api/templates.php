@@ -4,7 +4,7 @@
  * templates.php — SMS Templates CRUD endpoint.
  *
  * All operations scoped by X-GHL-Location-ID header.
- * Firestore collection: templates
+ * Firestore collection: integrations/{locId}/templates
  */
 
 ini_set('display_errors', 0);
@@ -30,10 +30,11 @@ try {
         exit;
     }
 
+    $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string) $locId);
+
     // ── GET — list all templates for this location ──────────────────────
     if ($method === 'GET') {
-        $query = $db->collection('templates')
-            ->where('location_id', '==', $locId)
+        $query = $db->collection('integrations')->document($intDocId)->collection('templates')
             ->orderBy('updated_at', 'DESC')
             ->documents();
 
@@ -72,9 +73,8 @@ try {
         $now   = new \DateTimeImmutable();
         $docId = uniqid('tpl_', true);
 
-        $db->collection('templates')->document($docId)->set([
+        $db->collection('integrations')->document($intDocId)->collection('templates')->document($docId)->set([
             'id'          => $docId,
-            'location_id' => $locId,
             'name'        => $name,
             'content'     => $content,
             'created_at'  => new \Google\Cloud\Core\Timestamp($now),
@@ -112,19 +112,13 @@ try {
             exit;
         }
 
-        // Verify document exists and belongs to this location
-        $docRef = $db->collection('templates')->document($id);
+        // Verify document exists
+        $docRef = $db->collection('integrations')->document($intDocId)->collection('templates')->document($id);
         $snap   = $docRef->snapshot();
 
         if (!$snap->exists()) {
             http_response_code(404);
             echo json_encode(['success' => false, 'error' => 'Template not found']);
-            exit;
-        }
-
-        if (($snap->data()['location_id'] ?? '') !== $locId) {
-            http_response_code(403);
-            echo json_encode(['success' => false, 'error' => 'Permission denied']);
             exit;
         }
 
@@ -153,18 +147,12 @@ try {
             exit;
         }
 
-        $docRef = $db->collection('templates')->document($id);
+        $docRef = $db->collection('integrations')->document($intDocId)->collection('templates')->document($id);
         $snap   = $docRef->snapshot();
 
         if (!$snap->exists()) {
             http_response_code(404);
             echo json_encode(['success' => false, 'error' => 'Template not found']);
-            exit;
-        }
-
-        if (($snap->data()['location_id'] ?? '') !== $locId) {
-            http_response_code(403);
-            echo json_encode(['success' => false, 'error' => 'Permission denied']);
             exit;
         }
 

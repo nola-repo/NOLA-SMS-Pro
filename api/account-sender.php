@@ -38,6 +38,8 @@ try {
         echo json_encode([
             'status' => 'success',
             'data' => [
+                'sender_id' => $data['approved_sender_id'] ?? null,
+                'verified' => !empty($data['approved_sender_id']),
                 'approved_sender_id' => $data['approved_sender_id'] ?? null,
                 'nola_pro_api_key' => $data['nola_pro_api_key'] ?? ($data['semaphore_api_key'] ?? null),
                 'free_usage_count' => $data['free_usage_count'] ?? 0,

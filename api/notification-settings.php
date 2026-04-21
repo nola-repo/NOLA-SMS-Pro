@@ -6,7 +6,7 @@
  * GET  /api/notification-settings  — Retrieve preferences for this location
  * POST /api/notification-settings  — Upsert preferences for this location
  *
- * Firestore collection: notification_settings (doc ID = locationId)
+ * Firestore location: integrations/{locId}.notification_preferences
  */
 
 ini_set('display_errors', 0);
@@ -40,23 +40,26 @@ try {
         'marketingEmails'     => false,
     ];
 
-    $docRef = $db->collection('notification_settings')->document($locId);
+    $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string) $locId);
+    $docRef = $db->collection('integrations')->document($intDocId);
 
     // ── GET — read current preferences ──────────────────────────────────
     if ($method === 'GET') {
         $snap = $docRef->snapshot();
+        $prefs = $defaults;
 
         if ($snap->exists()) {
-            $d = $snap->data();
-            $prefs = [
-                'deliveryReports'     => (bool) ($d['delivery_reports_enabled'] ?? $defaults['deliveryReports']),
-                'lowBalanceAlert'     => (bool) ($d['low_balance_alert_enabled'] ?? $defaults['lowBalanceAlert']),
-                'lowBalanceThreshold' => (int)  ($d['low_balance_threshold'] ?? $defaults['lowBalanceThreshold']),
-                'marketingEmails'     => (bool) ($d['marketing_emails_enabled'] ?? $defaults['marketingEmails']),
-            ];
-        } else {
-            $prefs = $defaults;
-        }
+            $data = $snap->data();
+            if (isset($data['notification_preferences']) && is_array($data['notification_preferences'])) {
+                $d = $data['notification_preferences'];
+                $prefs = [
+                    'deliveryReports'     => (bool) ($d['delivery_reports_enabled'] ?? $defaults['deliveryReports']),
+                    'lowBalanceAlert'     => (bool) ($d['low_balance_alert_enabled'] ?? $defaults['lowBalanceAlert']),
+                    'lowBalanceThreshold' => (int)  ($d['low_balance_threshold'] ?? $defaults['lowBalanceThreshold']),
+                    'marketingEmails'     => (bool) ($d['marketing_emails_enabled'] ?? $defaults['marketingEmails']),
+                ];
+            }
+        } 
 
         echo json_encode($prefs);
         exit;
@@ -67,26 +70,26 @@ try {
         $input = json_decode(file_get_contents('php://input'), true) ?: [];
 
         $now = new \DateTimeImmutable();
-        $updateData = [
-            'location_id' => $locId,
-            'updated_at'  => new \Google\Cloud\Core\Timestamp($now),
-        ];
-
+        
+        $updatePrefs = [];
         // Map camelCase frontend keys → snake_case Firestore fields
         if (isset($input['deliveryReports'])) {
-            $updateData['delivery_reports_enabled'] = (bool) $input['deliveryReports'];
+            $updatePrefs['delivery_reports_enabled'] = (bool) $input['deliveryReports'];
         }
         if (isset($input['lowBalanceAlert'])) {
-            $updateData['low_balance_alert_enabled'] = (bool) $input['lowBalanceAlert'];
+            $updatePrefs['low_balance_alert_enabled'] = (bool) $input['lowBalanceAlert'];
         }
         if (isset($input['lowBalanceThreshold'])) {
-            $updateData['low_balance_threshold'] = max(0, (int) $input['lowBalanceThreshold']);
+            $updatePrefs['low_balance_threshold'] = max(0, (int) $input['lowBalanceThreshold']);
         }
         if (isset($input['marketingEmails'])) {
-            $updateData['marketing_emails_enabled'] = (bool) $input['marketingEmails'];
+            $updatePrefs['marketing_emails_enabled'] = (bool) $input['marketingEmails'];
         }
 
-        $docRef->set($updateData, ['merge' => true]);
+        $docRef->set([
+            'notification_preferences' => $updatePrefs,
+            'updated_at' => new \Google\Cloud\Core\Timestamp($now)
+        ], ['merge' => true]);
 
         echo json_encode([
             'success' => true,
