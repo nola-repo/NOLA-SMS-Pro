@@ -28,6 +28,7 @@ if (!$agency_id) {
 }
 
 $agencyWalletRef = $db->collection('agency_wallet')->document($agency_id);
+// GET: ?action=balance is accepted per spec — GET always returns the full wallet state
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $snapshot = $agencyWalletRef->snapshot();
     $data = $snapshot->exists() ? $snapshot->data() : [];
