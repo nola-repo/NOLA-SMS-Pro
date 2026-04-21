@@ -1,112 +1,109 @@
-# API Collections & Endpoints Guide
+# NOLA SMS Pro — Postman Collections Guide
 
-This document organizes the core NOLA SMS Pro endpoints into logical collections (Auth, Billing, SMS), making it easy to test via Postman or integrate into new frontends. It explains what each endpoint processes, required scopes/headers, and expected payloads.
+**Base URL:** `https://smspro-api.nolacrm.io`
 
----
-
-## 📁 1. Auth Collection
-These endpoints manage user and agency authentication, generating the JSON Web Tokens (JWT) required to securely access other APIs.
-
-### 1.1. Login
-- **URL:** `https://smspro-api.nolacrm.io/api/auth/login.php`
-- **Method:** `POST`
-- **Auth Required:** None
-- **What it processes:** 
-  Accepts an email and password, verifies them against the `users` Firestore collection, and generates an `HS256` signed JWT. This token encodes the user's ID (`sub`), role (e.g., `agency`), and `company_id`.
-- **Payload Example:**
-  ```json
-  {
-    "email": "admin@agency.com",
-    "password": "securepassword"
-  }
-  ```
-
-### 1.2. GHL OAuth Callback
-- **URL:** `https://smspro-api.nolacrm.io/oauth/callback`
-- **Method:** `GET`
-- **Auth Required:** None (Triggered by GoHighLevel)
-- **What it processes:** 
-  The redirect hook when an agency installs the NOLA application into a subaccount. It takes the `?code=` URL parameter passed by GHL, exchanges it for an Access/Refresh token pair, and writes those tokens into the `ghl_tokens/{locationId}` document to allow background sync.
+> **Tip:** Create a Postman Environment with variable `webhook_secret = f7RkQ2pL9zV3tX8cB1nS4yW6` and reference it as `{{webhook_secret}}` in all request headers.
 
 ---
 
-## 📁 2. Billing Collection
-These endpoints manage the dual-wallet system, allowing independent credit tracking for Agencies and their enclosed Subaccounts. All Billing endpoints require a valid JWT passed in the Authorization header.
+## Auth Types
 
-*Header requirement for all endpoints below: `Authorization: Bearer <your_jwt_token>`*
-
-### 2.1. Agency Wallet
-- **URL:** `https://smspro-api.nolacrm.io/api/billing/agency_wallet.php`
-- **GET Request:** Retrieves the current credit balance and auto-recharge settings for the agency. Automatically locates the `agency_id` based on the JWT claims.
-- **POST Request (Action: set_auto_recharge):**
-  Updates the `agency_wallet` document thresholds.
-  ```json
-  { "action": "set_auto_recharge", "enabled": true, "amount": 500, "threshold": 100 }
-  ```
-
-### 2.2. Subaccount Wallet
-- **URL:** `https://smspro-api.nolacrm.io/api/billing/subaccount_wallet.php`
-- **GET Request:** Retrieves the subaccount's specific `credit_balance` from the `integrations/{location_id}` document. Requires `?location_id=XYZ`.
-- **POST Request (Action: request_credits):**
-  Creates a new document in the `credit_requests` collection tagged as `pending`.
-  ```json
-  { "action": "request_credits", "location_id": "XYZ", "amount": 250, "note": "Low balance" }
-  ```
-
-### 2.3. Credit Requests
-- **URL:** `https://smspro-api.nolacrm.io/api/billing/credit_requests.php`
-- **GET Request:** Lists all pending/approved/denied requests for the agency. Pass `?agency_id=XYZ&status=pending`.
-- **POST Request (Action: approve):**
-  Executes an atomic dual-transaction. It deducts credits from the Agency Wallet, adds credits to the Subaccount Wallet, updates the request to `approved`, and writes two records to the `credit_transactions` ledger simultaneously. If the agency lacks funds, the entire transfer rolls back and returns a 400 error.
-  ```json
-  { "action": "approve", "request_id": "REQ_123" }
-  ```
-
-### 2.4. Transactions Ledger
-- **URL:** `https://smspro-api.nolacrm.io/api/billing/transactions.php`
-- **GET Request:** Provides paginated visibility into the `credit_transactions` collection. 
-  - **Scopes:** Pass `?scope=agency&agency_id=XYZ` to see top-ups and subaccount gifts. Pass `?scope=subaccount&location_id=XYZ` to see SMS deductions and received gifts.
+| Key | Header | Value |
+|-----|--------|-------|
+| Webhook Secret | `X-Webhook-Secret` | `f7RkQ2pL9zV3tX8cB1nS4yW6` |
 
 ---
 
-## 📁 3. SMS Collection
-These endpoints handle the core routing of outbound and inbound messages, directly interfacing with the Semaphore API and GoHighLevel.
+## 📁 Collection 1 — Auth
 
-*Header requirement for outbound hooks: `X-Webhook-Secret: <your_secret>`*
+| # | Method | URL | Auth | Body |
+|---|--------|-----|------|------|
+| 1.1 | POST | `/api/auth/login.php` | None | `{"email":"you@agency.com","password":"yourpass"}` |
+| 1.2 | POST | `/api/auth/register.php` | None | `{"email":"...","password":"...","name":"..."}` |
 
-### 3.1. Send SMS (Main Engine)
-- **URL:** `https://smspro-api.nolacrm.io/webhook/send_sms.php`
-- **Method:** `POST`
-- **What it processes:** 
-  Triggered by GHL Workflows or the Web UI. It reads the recipient numbers, deducts the exact required credits from *both* the Agency Wallet and the Subaccount Wallet (blocking the send if either wallet is empty), pushes the payload to Semaphore, and writes the status to the `messages` and `sms_logs` Firestore collections.
-
-### 3.2. GHL Provider (Chat Window)
-- **URL:** `https://smspro-api.nolacrm.io/webhook/ghl_provider.php`
-- **Method:** `POST`
-- **What it processes:** 
-  A specialized clone of `send_sms` customized strictly for the GHL "Custom Conversation Provider" payload format. Triggered when someone types directly into the GHL interactive SMS chat bubble. Uses identically enforced dual-deduction limits.
-
-### 3.3. Receive Inbound SMS
-- **URL:** `https://smspro-api.nolacrm.io/webhook/receive_sms.php`
-- **Method:** `POST`
-- **What it processes:** 
-  The webhook endpoint registered directly inside the Semaphore Developer Portal. When a client replies to a text, Semaphore pushes the reply here. The script writes to `inbound_messages` and uses the GHL API to inject the reply back into the correct contact's Conversation tab.
-
-### 3.4. Retrieve Delivery Status (Cron)
-- **URL:** `https://smspro-api.nolacrm.io/webhook/retrieve_status.php`
-- **Method:** `GET`
-- **What it processes:** 
-  Orchestrated by Google Cloud Scheduler to run periodically. It scrapes `sms_logs` for any messages stuck in `Queued` or `Sending`, hits the Semaphore status API for updates, and updates the Firestore records to `Delivered` or `Failed`.
 ---
- 
- ## 📁 4. Troubleshooting & CORS
- Since this API is accessed via a cross-origin frontend (`agency.nolasmspro.com`), it relies on proper CORS preflight handling.
- 
- ### 4.1. Verify CORS Preflight (OPTIONS)
- To verify that the server is responding correctly to browsers, create an `OPTIONS` request in Postman:
- - **URL:** Any API endpoint (e.g., `https://smspro-api.nolacrm.io/api/billing/agency_wallet.php`)
- - **Method:** `OPTIONS`
- - **Headers:**
-     - `Origin: https://agency.nolasmspro.com`
-     - `Access-Control-Request-Method: GET`
- - **Expected Result:** `204 No Content` with `Access-Control-Allow-Origin: https://agency.nolasmspro.com` (and NO duplicate headers).
+
+## 📁 Collection 2 — Agency Billing
+
+**Header for all:** `X-Webhook-Secret: {{webhook_secret}}`
+
+### Agency Wallet (`/api/billing/agency_wallet.php`)
+
+| # | Method | Params / Body | Description |
+|---|--------|---------------|-------------|
+| 2.1 | GET | `?agency_id=X&action=balance` | Fetch agency wallet balance + settings |
+| 2.2 | POST | `{"action":"set_auto_recharge","agency_id":"X","enabled":true,"amount":500,"threshold":100}` | Update auto-recharge settings |
+| 2.3 | POST | `{"action":"set_master_lock","agency_id":"X","enabled":false}` | Toggle master balance lock |
+| 2.4 | POST | `{"action":"gift","agency_id":"X","location_id":"abc12345","amount":100,"note":"Monthly allocation"}` | Transfer credits to a subaccount (atomic) |
+
+### Subaccount Wallet (`/api/billing/subaccount_wallet.php`)
+
+| # | Method | Params / Body | Description |
+|---|--------|---------------|-------------|
+| 2.5 | GET | `?location_id=X` | Fetch subaccount credit balance + settings |
+| 2.6 | POST | `{"action":"set_auto_recharge","location_id":"X","enabled":true,"amount":250,"threshold":25}` | Update subaccount auto-recharge |
+| 2.7 | POST | `{"action":"request_credits","location_id":"X","amount":250,"note":"Low balance"}` | Submit a credit request to agency |
+
+### Credit Requests (`/api/billing/credit_requests.php`)
+
+| # | Method | Params / Body | Description |
+|---|--------|---------------|-------------|
+| 2.8 | GET | `?agency_id=X&status=pending` | List credit requests (status: `pending`, `approved`, `denied`) |
+| 2.9 | POST | `{"action":"approve","request_id":"REQ_DOC_ID"}` | Approve request — atomic transfer + dual tx log |
+| 2.10 | POST | `{"action":"deny","request_id":"REQ_DOC_ID"}` | Deny a pending request |
+
+### Transactions Ledger (`/api/billing/transactions.php`)
+
+| # | Method | Params | Description |
+|---|--------|--------|-------------|
+| 2.11 | GET | `?scope=agency&agency_id=X&page=1` | Agency-scoped transaction history |
+| 2.12 | GET | `?scope=subaccount&location_id=X&month=2026-04&page=1` | Subaccount-scoped history, optional month filter `YYYY-MM` |
+
+---
+
+## 📁 Collection 3 — SMS / Webhooks
+
+**Header:** `X-Webhook-Secret: {{webhook_secret}}`
+
+| # | Method | URL | Auth | Description |
+|---|--------|-----|------|-------------|
+| 3.1 | POST | `/webhook/send_sms.php` | Required | Main outbound SMS engine (GHL Workflow / Web UI) |
+| 3.2 | POST | `/webhook/ghl_provider.php` | Required | GHL Custom Conversation Provider (chat bubble sends) |
+| 3.3 | POST | `/webhook/receive_sms.php` | None | Semaphore inbound SMS callback |
+| 3.4 | GET  | `/webhook/retrieve_status.php` | None | Cron: pull delivery status updates from Semaphore |
+
+---
+
+## 📁 Collection 4 — General API
+
+**Header:** `X-Webhook-Secret: {{webhook_secret}}`
+
+| # | Method | URL | Params / Body | Description |
+|---|--------|-----|---------------|-------------|
+| 4.1 | GET | `/api/messages.php` | `?direction=all&limit=50&offset=0` | Message history |
+| 4.2 | GET | `/api/conversations.php` | `?limit=20&offset=0` | Conversation sidebar list |
+| 4.3 | GET | `/api/contacts.php` | `?limit=50&offset=0` | List contacts |
+| 4.4 | POST | `/api/contacts.php` | `{"name":"John","phone":"09171234567","email":"j@x.com"}` | Create contact |
+| 4.5 | GET | `/api/credits.php` | — | Legacy global credit balance |
+
+---
+
+## 📁 Collection 5 — Agency Management
+
+**Header:** `X-Webhook-Secret: {{webhook_secret}}`
+
+| # | Method | URL | Params / Body | Description |
+|---|--------|-----|---------------|-------------|
+| 5.1 | GET | `/api/agency/get_subaccounts.php` | `?agency_id=X` | List subaccounts for an agency |
+| 5.2 | GET | `/api/agency/check_installs.php` | `?agency_id=X` | Check GHL install status per subaccount |
+| 5.3 | POST | `/api/agency/toggle_subaccount.php` | `{"location_id":"X","active":true}` | Enable / disable a subaccount |
+| 5.4 | POST | `/api/agency/sync_locations.php` | `{"agency_id":"X"}` | Sync GHL locations into Firestore |
+
+---
+
+## 📁 Collection 6 — CORS / Health Checks
+
+| # | Method | URL | Headers | Expected Response |
+|---|--------|-----|---------|-------------------|
+| 6.1 | OPTIONS | `/api/billing/agency_wallet.php` | `Origin: https://agency.nolasmspro.com`, `Access-Control-Request-Method: GET` | `204 No Content` |
+| 6.2 | GET | `/api/billing/agency_wallet.php` | `X-Webhook-Secret: wrong` | `401 {"status":"error","message":"Unauthorized Access"}` |

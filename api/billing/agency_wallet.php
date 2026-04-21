@@ -31,15 +31,30 @@ $agencyWalletRef = $db->collection('agency_wallet')->document($agency_id);
 // GET: ?action=balance is accepted per spec — GET always returns the full wallet state
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $snapshot = $agencyWalletRef->snapshot();
-    $data = $snapshot->exists() ? $snapshot->data() : [];
-    
+    $docFound = $snapshot->exists();
+    $data = $docFound ? $snapshot->data() : [];
+
+    // Serialize raw fields for debug (convert Timestamps to strings)
+    $rawFields = [];
+    foreach ($data as $k => $v) {
+        $rawFields[$k] = ($v instanceof \Google\Cloud\Core\Timestamp)
+            ? $v->get()->format('Y-m-d\TH:i:s\Z')
+            : $v;
+    }
+
     echo json_encode([
-        'balance'                    => $data['balance'] ?? 0,
-        'auto_recharge_enabled'      => $data['auto_recharge_enabled'] ?? false,
-        'auto_recharge_amount'       => $data['auto_recharge_amount'] ?? 500,
-        'auto_recharge_threshold'    => $data['auto_recharge_threshold'] ?? 100,
+        'balance'                     => $data['balance'] ?? 0,
+        'auto_recharge_enabled'       => $data['auto_recharge_enabled'] ?? false,
+        'auto_recharge_amount'        => $data['auto_recharge_amount'] ?? 500,
+        'auto_recharge_threshold'     => $data['auto_recharge_threshold'] ?? 100,
         'enforce_master_balance_lock' => $data['enforce_master_balance_lock'] ?? false,
-        'updated_at'                 => isset($data['updated_at']) ? $data['updated_at']->get()->format('Y-m-d\TH:i:s\Z') : null,
+        'updated_at'                  => isset($data['updated_at']) ? $data['updated_at']->get()->format('Y-m-d\TH:i:s\Z') : null,
+        // ── DEBUG: remove once field names are confirmed ───────────────
+        '_debug' => [
+            'doc_id'     => $agency_id,
+            'doc_found'  => $docFound,
+            'raw_fields' => $rawFields,
+        ],
     ]);
     exit;
 }
