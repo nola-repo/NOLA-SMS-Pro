@@ -522,8 +522,9 @@ if (count($validNumbers) > 3) {
 // GHL Legacy/Success response structure
 echo json_encode([
     "status" => $ghlStatus,
-    "message" => "SMS Executed: $summary",
-    "execution_log" => "SMS sent via NOLASMSPro: $summary. Credits: $required_credits. Status: $ghlStatus.",
+    "message" => "NOLA SMS Pro",
+    "execution_log" => "Workflow SMS sent via NOLASMSPro to $summary. Credits: $required_credits.",
+    "action_executed_from" => "Nola Web",
     "event_details" => [
         "recipients" => $validNumbers,
         "message_body" => $message,
@@ -534,7 +535,8 @@ echo json_encode([
     "output" => [
         "success" => ($total_status == 200),
         "summary" => $summary,
-        "credits" => $required_credits
+        "credits" => $required_credits,
+        "location_id" => $locId
     ],
     "debug_info" => [
         "location_id" => $locId,

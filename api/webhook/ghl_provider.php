@@ -213,22 +213,21 @@ $creditManager = new CreditManager();
 // ── Three-Tier Sender + Credit Logic ────────────────────────────────────────
 $usingCustomSender = false;
 $usingFreeCredits = false;
+$sender = $SENDER_IDS[0] ?? 'NOLASMSPro';
+$activeApiKey = $SEMAPHORE_API_KEY;
 
+// 1. Delivery Selection (Carrier)
 if ($approvedSenderId && $customApiKey) {
-    // Delivery: Use custom sender name and API key
     $sender = $approvedSenderId;
     $activeApiKey = $customApiKey;
-    
-    // Billing: Skip deduction only if it's a truly EXTERNAL API key.
-    if ($customApiKey !== $SEMAPHORE_API_KEY) {
-        $usingCustomSender = true;
-    }
-} else {
-    // ✅ Tier 2 or 3: Use system sender + system API key
-    $sender = $SENDER_IDS[0] ?? 'NOLASMSPro';
-    $activeApiKey = $SEMAPHORE_API_KEY;
-    $usingCustomSender = false;
+}
 
+// 2. Billing Selection (Who pays)
+// Billing: Skip deduction only if it's a truly EXTERNAL API key.
+// If it's our key or no custom key, check for free trial or deduct credits.
+if ($customApiKey && $customApiKey !== $SEMAPHORE_API_KEY) {
+    $usingCustomSender = true;
+} else {
     // Check free trial quota
     if ($freeUsageCount + $required_credits <= $freeCreditsTotal) {
         $usingFreeCredits = true; // Tier 2: still within free trial
@@ -389,13 +388,21 @@ $db->collection('conversations')->document($convId)->set([
 ], ['merge' => true]);
 
 // ── Success ─────────────────────────────────────────────────────────────────
+// ── Success ─────────────────────────────────────────────────────────────────
 echo json_encode([
     'success' => true,
     'status' => 'success',
-    'message' => 'SMS sent successfully',
-    'execution_log' => "SMS sent via GHL Provider: $message. Credits: $required_credits.",
-    'messageId' => $storedMsgId,
-    'conversation_id' => $convId,
-    'number' => $normalizedPhone,
-    'credits_used' => $required_credits,
+    'message' => 'NOLA SMS Pro',
+    'execution_log' => "NOLA Provider: SMS sent to $normalizedPhone. Credits: $required_credits.",
+    'action_executed_from' => 'Nola Web',
+    'data' => [
+        'messageId' => $storedMsgId,
+        'conversation_id' => $convId,
+        'number' => $normalizedPhone,
+        'credits_used' => $required_credits,
+        'location_id' => $locationId
+    ],
+    // Some GHL UI versions use these top-level keys
+    'message_body' => $message,
+    'sender' => $sender
 ]);
