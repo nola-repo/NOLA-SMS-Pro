@@ -250,10 +250,15 @@ $activeApiKey = $SEMAPHORE_API_KEY;
 $sender = $SENDER_IDS[0] ?? "";
 
 if ($approvedSenderId && $customApiKey && ($requestedSender === $approvedSenderId || empty($requestedSender))) {
-    // Custom Sender: Use customer's API key and approved sender name
+    // Delivery Selection: Use custom sender name and API key
     $sender = $approvedSenderId;
     $activeApiKey = $customApiKey;
-    $usingCustomSender = true;
+    
+    // Billing Policy: Skip deduction only if the API key is DIFFERENT from the system key.
+    // If they use our key in their config, they should still be charged NOLA credits.
+    if ($customApiKey !== $SEMAPHORE_API_KEY) {
+        $usingCustomSender = true;
+    }
 } else {
     // System Sender: Use system API key and selected/default sender name
     if ($requestedSender && in_array($requestedSender, $SENDER_IDS)) {
@@ -272,10 +277,11 @@ $account_id = $locId ?: 'default';
 
 
 // ── Credit Deduction & Trial ─────────────────────────────────────────────────
-// Architecture: Single-deduction. Only the subaccount wallet is deducted per SMS.
-// The agency wallet is a funding source only and is NEVER deducted during sends.
-// Exception: if enforce_master_balance_lock is enabled, sends are gated on agency balance > 0.
-if ($usingFreeCredits) {
+// Architecture: Single-deduction.
+// Skip deduction if using a CUSTOM API key (already handled by $usingCustomSender policy).
+if ($usingCustomSender) {
+    // No deduction needed, they pay the provider directly.
+} else if ($usingFreeCredits) {
     // Free Trial → increment counter only, no paid credit deduction
     $intRef->set([
         'free_usage_count' => $freeUsageCount + $required_credits,
@@ -513,15 +519,22 @@ if (count($validNumbers) > 3) {
     $summary = "Sent to " . count($validNumbers) . " recipients";
 }
 
+// GHL Legacy/Success response structure
 echo json_encode([
     "status" => $ghlStatus,
     "message" => "SMS Executed: $summary",
+    "execution_log" => "SMS sent via NOLASMSPro: $summary. Credits: $required_credits. Status: $ghlStatus.",
     "event_details" => [
         "recipients" => $validNumbers,
         "message_body" => $message,
         "credits_deducted" => $required_credits,
         "provider" => $sender,
         "balance_check" => "Success"
+    ],
+    "output" => [
+        "success" => ($total_status == 200),
+        "summary" => $summary,
+        "credits" => $required_credits
     ],
     "debug_info" => [
         "location_id" => $locId,

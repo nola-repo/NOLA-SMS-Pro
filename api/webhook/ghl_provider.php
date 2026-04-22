@@ -215,10 +215,14 @@ $usingCustomSender = false;
 $usingFreeCredits = false;
 
 if ($approvedSenderId && $customApiKey) {
-    // ✅ Tier 1: Custom sender (approved sender ID + custom API key) — no system credit deduction
+    // Delivery: Use custom sender name and API key
     $sender = $approvedSenderId;
     $activeApiKey = $customApiKey;
-    $usingCustomSender = true;
+    
+    // Billing: Skip deduction only if it's a truly EXTERNAL API key.
+    if ($customApiKey !== $SEMAPHORE_API_KEY) {
+        $usingCustomSender = true;
+    }
 } else {
     // ✅ Tier 2 or 3: Use system sender + system API key
     $sender = $SENDER_IDS[0] ?? 'NOLASMSPro';
@@ -387,7 +391,9 @@ $db->collection('conversations')->document($convId)->set([
 // ── Success ─────────────────────────────────────────────────────────────────
 echo json_encode([
     'success' => true,
+    'status' => 'success',
     'message' => 'SMS sent successfully',
+    'execution_log' => "SMS sent via GHL Provider: $message. Credits: $required_credits.",
     'messageId' => $storedMsgId,
     'conversation_id' => $convId,
     'number' => $normalizedPhone,

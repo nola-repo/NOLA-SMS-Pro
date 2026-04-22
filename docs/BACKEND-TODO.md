@@ -14,6 +14,7 @@
 - [x] Subaccount wallet — GET, set_auto_recharge, request_credits
 - [x] Transaction log — subaccount scope + month filter
 - [x] SMS send — single-deduction (subaccount only) + master lock gate
+- [x] Fix credit deduction: Workflows & Native SMS (ghl_provider.php)
 - [ ] Payment webhook — credit subaccount wallet on purchase
 
 ---
@@ -28,3 +29,10 @@
  - [ ] **CORS Maintenance**
      - [ ] Monitor production for "duplicate header" errors after redeploy
      - [ ] Audit all future `.php` endpoints to ensure `cors.php` is included
+
+---
+
+## 💬 Send SMS / GHL Sync
+- [x] Improve GHL Execution Logs (status/event_details response in send_sms.php)
+- [ ] Refine Native Sync metadata consistency across messages/sms_logs
+- [ ] Transition remaining deprecated deduction calls to deduct_subaccount_only()
