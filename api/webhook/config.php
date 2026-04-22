@@ -13,12 +13,12 @@ return [
         'NOLASMSPro',
     ],
 
-    // Sender names actually registered & approved on the NOLA master Semaphore account.
-    // Only names on this list may be used when routing through the master billing gateway.
-    // Subaccounts with their own API key can use any sender they have registered themselves.
+    // [DEPRECATED] — The master sender whitelist is now stored dynamically in Firestore
+    // at admin_config/master_senders.approved_senders (auto-managed by admin_sender_requests.php).
+    // This static config is kept only as fallback documentation. Both send_sms.php and
+    // ghl_provider.php now read from Firestore instead.
     'MASTER_APPROVED_SENDERS' => [
         'NOLASMSPro',
-        // Add more as Semaphore approves them on the master account, e.g.:
-        // 'NOLACRMIO',
+        'NOLA CRM',
     ],
 ];

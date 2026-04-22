@@ -18,7 +18,7 @@ require_once __DIR__ . '/../services/GhlSyncService.php';
 $SEMAPHORE_API_KEY = $config['SEMAPHORE_API_KEY'];
 $SEMAPHORE_URL = $config['SEMAPHORE_URL'];
 $SENDER_IDS = $config['SENDER_IDS'];
-$MASTER_APPROVED_SENDERS = $config['MASTER_APPROVED_SENDERS'] ?? ['NOLASMSPro'];
+// MASTER_APPROVED_SENDERS is now loaded dynamically from Firestore (see below after $db init)
 
 // --- Maintenance Mode Check ---
 $db_maintenance = get_firestore();
@@ -186,6 +186,15 @@ if (!$locId) {
 }
 
 $db = get_firestore();
+
+// ── Dynamic MASTER_APPROVED_SENDERS from Firestore ──────────────────────────
+// Replaces the old static config whitelist. Admin-approved senders are auto-added
+// to this Firestore doc by admin_sender_requests.php when a request is approved.
+$masterSendersSnap = $db->collection('admin_config')->document('master_senders')->snapshot();
+$MASTER_APPROVED_SENDERS = $masterSendersSnap->exists()
+    ? ($masterSendersSnap->data()['approved_senders'] ?? ['NOLASMSPro'])
+    : ['NOLASMSPro'];
+
 $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
 $intRef = $db->collection('integrations')->document($intDocId);
 $intSnap = $intRef->snapshot();

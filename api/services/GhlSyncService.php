@@ -33,23 +33,41 @@ class GhlSyncService
                 return ['success' => false, 'error' => 'Could not resolve GHL conversation or contact'];
             }
 
-            // Deduplication flag to prevent loops
-            $dedupKey = md5($this->locationId . $phone . $message);
+            // Deduplication flag to prevent loops (key format must match ghl_provider.php)
+            $dedupKey = md5($this->locationId . '_outbound_' . $phone . $message);
             $this->db->collection('ghl_sync_dedup')->document($dedupKey)->set([
                 'timestamp' => time(),
                 'source' => 'nola_outbound'
             ]);
 
+            // GHL API requires companyId on conversation message POST
+            $integration = $this->ghlClient->getIntegration();
+            $companyId   = $integration['companyId'] ?? $integration['hashed_companyId'] ?? '';
+
+            // Fallback: try ghl_tokens doc if integration data doesn't have companyId
+            if (empty($companyId)) {
+                $tokenSnap = $this->db->collection('ghl_tokens')->document($this->locationId)->snapshot();
+                if ($tokenSnap->exists()) {
+                    $tokenData = $tokenSnap->data();
+                    $companyId = $tokenData['companyId'] ?? $tokenData['company_id'] ?? '';
+                }
+            }
+
+            $body = [
+                'type'           => 'SMS',
+                'contactId'      => $resolvedContactId,
+                'conversationId' => $ghlConvId,
+                'locationId'     => $this->locationId,
+                'message'        => $message,
+            ];
+            if ($companyId) {
+                $body['companyId'] = $companyId;
+            }
+
             $resp = $this->ghlClient->request(
                 'POST',
                 '/conversations/messages',
-                json_encode([
-                    'type' => 'SMS',
-                    'contactId' => $resolvedContactId,
-                    'conversationId' => $ghlConvId,
-                    'locationId' => $this->locationId,
-                    'message' => $message,
-                ]),
+                json_encode($body),
                 '2021-04-15'
             );
 
@@ -72,16 +90,33 @@ class GhlSyncService
                 return ['success' => false, 'error' => 'Could not resolve GHL conversation or contact'];
             }
 
+            $integration = $this->ghlClient->getIntegration();
+            $companyId   = $integration['companyId'] ?? $integration['hashed_companyId'] ?? '';
+
+            // Fallback: try ghl_tokens doc if integration data doesn't have companyId
+            if (empty($companyId)) {
+                $tokenSnap = $this->db->collection('ghl_tokens')->document($this->locationId)->snapshot();
+                if ($tokenSnap->exists()) {
+                    $tokenData = $tokenSnap->data();
+                    $companyId = $tokenData['companyId'] ?? $tokenData['company_id'] ?? '';
+                }
+            }
+
+            $body = [
+                'type'           => 'SMS',
+                'contactId'      => $contactId,
+                'conversationId' => $ghlConvId,
+                'locationId'     => $this->locationId,
+                'message'        => $message,
+            ];
+            if ($companyId) {
+                $body['companyId'] = $companyId;
+            }
+
             $resp = $this->ghlClient->request(
                 'POST',
                 '/conversations/messages/inbound',
-                json_encode([
-                    'type' => 'SMS',
-                    'contactId' => $contactId,
-                    'conversationId' => $ghlConvId,
-                    'locationId' => $this->locationId,
-                    'message' => $message,
-                ]),
+                json_encode($body),
                 '2021-04-15'
             );
 

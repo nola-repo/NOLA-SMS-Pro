@@ -138,6 +138,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $docRef->set($updateData, ['merge' => true]);
 
+        // Auto-add sender to dynamic master whitelist when admin sets one directly
+        if (isset($payload['sender_id']) && !empty($payload['sender_id'])) {
+            $db->collection('admin_config')->document('master_senders')->set([
+                'approved_senders' => \Google\Cloud\Firestore\FieldValue::arrayUnion([$payload['sender_id']]),
+                'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+            ], ['merge' => true]);
+        }
+
         if (isset($payload['credit_balance'])) {
             $newBalance = (int)$payload['credit_balance'];
             $delta = $newBalance - $oldBalance;
@@ -274,6 +282,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'semaphore_api_key' => $apiKey,
             'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
         ], ['merge' => true]);
+
+        // ── Auto-add sender to dynamic master whitelist ─────────────────────────
+        // So send_sms.php and ghl_provider.php recognize it without config edits
+        $db->collection('admin_config')->document('master_senders')->set([
+            'approved_senders' => \Google\Cloud\Firestore\FieldValue::arrayUnion([$reqData['requested_id']]),
+            'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+        ], ['merge' => true]);
+
     } elseif ($status === 'revoked') {
         // Clear the sender ID from the account mapping
         $docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
@@ -285,6 +301,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'semaphore_api_key'  => null,
             'updated_at'         => new \Google\Cloud\Core\Timestamp(new \DateTime())
         ], ['merge' => true]);
+
+        // ── Remove sender from dynamic master whitelist ─────────────────────────
+        if (!empty($reqData['requested_id'])) {
+            $db->collection('admin_config')->document('master_senders')->set([
+                'approved_senders' => \Google\Cloud\Firestore\FieldValue::arrayRemove([$reqData['requested_id']]),
+                'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+            ], ['merge' => true]);
+        }
+
     } elseif ($status === 'deleted') {
         // Physical deletion of the request document
         $requestRef->delete();

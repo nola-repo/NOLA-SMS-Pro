@@ -36,9 +36,10 @@ require __DIR__ . '/firestore_client.php';
 require __DIR__ . '/../auth_helpers.php';
 require __DIR__ . '/../services/CreditManager.php';
 
-$SEMAPHORE_API_KEY = $config['SEMAPHORE_API_KEY'];
-$SEMAPHORE_URL     = $config['SEMAPHORE_URL'];
-$SENDER_IDS        = $config['SENDER_IDS'];
+$SEMAPHORE_API_KEY      = $config['SEMAPHORE_API_KEY'];
+$SEMAPHORE_URL          = $config['SEMAPHORE_URL'];
+$SENDER_IDS             = $config['SENDER_IDS'];
+// MASTER_APPROVED_SENDERS is now loaded dynamically from Firestore (see below after $db init)
 
 // ── Authentication ──────────────────────────────────────────────────────────
 // GHL Conversation Provider may NOT send X-Webhook-Secret.
@@ -145,15 +146,16 @@ if (!isset($db)) {
 // ── Deduplication Check ─────────────────────────────────────────────────────
 // If this webhook was triggered because send_sms.php synced a message 
 // back to GHL's Conversation API, we must skip sending to prevent a double-send loop.
-$dedupKey = md5($locationId . $normalizedPhone . $message);
+// Uses direction+content hash with a 120s window (increased from 30s to handle slow GHL echoes).
+$dedupKey = md5($locationId . '_outbound_' . $normalizedPhone . $message);
 $dedupRef = $db->collection('ghl_sync_dedup')->document($dedupKey);
 $dedupSnap = $dedupRef->snapshot();
 
 if ($dedupSnap->exists()) {
     $dedupData = $dedupSnap->data();
-    if (time() - $dedupData['timestamp'] < 30) {
+    if (time() - $dedupData['timestamp'] < 120) {
         // It's a sync loop! Acknowledge success to GHL without sending via Semaphore
-        error_log('[ghl_provider] Skipped sending message to ' . $normalizedPhone . ' (prevented double-send loop).');
+        error_log('[ghl_provider] Skipped sending message to ' . $normalizedPhone . ' (prevented double-send loop, age=' . (time() - $dedupData['timestamp']) . 's).');
 
         // Clean up the dedup flag to keep the database tidy
         $dedupRef->delete();
@@ -191,6 +193,12 @@ if (!isset($db)) {
     $db = get_firestore();
 }
 
+// ── Dynamic MASTER_APPROVED_SENDERS from Firestore ──────────────────────────
+$masterSendersSnap = $db->collection('admin_config')->document('master_senders')->snapshot();
+$MASTER_APPROVED_SENDERS = $masterSendersSnap->exists()
+    ? ($masterSendersSnap->data()['approved_senders'] ?? ['NOLASMSPro'])
+    : ['NOLASMSPro'];
+
 $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
 $intRef = $db->collection('integrations')->document($intDocId);
 $intSnap = $intRef->snapshot();
@@ -212,110 +220,115 @@ $creditManager = new CreditManager();
 
 
 
-// ── Three-Tier Sender + Credit Logic ────────────────────────────────────────
-$usingCustomSender = false;
-$usingFreeCredits = false;
-$sender = $SENDER_IDS[0] ?? 'NOLASMSPro';
-$activeApiKey = $SEMAPHORE_API_KEY;
+// ── Sender & Gateway Resolution (mirrors send_sms.php logic) ───────────────
+//
+// PATH A — Subaccount has its own (external) API key:
+//   → Route through their key. They own their sender registrations.
+//   → NOLA credits still deducted (no bypass), but free trial is skipped.
+//
+// PATH B — Using the NOLA master billing gateway:
+//   → Sender MUST be in MASTER_APPROVED_SENDERS or fall back to NOLASMSPro.
+//   → Free trial applies first, then paid deduction.
 
-// 1. Delivery Selection (Carrier & Sender)
-if ($approvedSenderId) {
-    $sender = $approvedSenderId;
-}
-if ($customApiKey) {
-    $activeApiKey = $customApiKey;
-}
+$usingOwnApiKey = false;
+$sender         = $SENDER_IDS[0] ?? 'NOLASMSPro';
+$activeApiKey   = $SEMAPHORE_API_KEY;
 
-// 2. Billing Selection (Who pays)
-// Billing: Skip deduction only if it's a truly EXTERNAL API key.
-$sysKey = trim((string)$SEMAPHORE_API_KEY);
-$userKey = trim((string)$customApiKey);
+$sysKey  = trim((string)$SEMAPHORE_API_KEY);
+$userKey = trim((string)($customApiKey ?? ''));
 
-if ($userKey && $userKey !== $sysKey) {
-    $usingCustomSender = true;
+if ($userKey !== '' && $userKey !== $sysKey) {
+    // ── PATH A: External API key ─────────────────────────────────────────────
+    $usingOwnApiKey = true;
+    $activeApiKey   = $customApiKey;
+    // Use their approved sender freely — they own their Semaphore account
+    $sender = !empty($approvedSenderId) ? $approvedSenderId : ($SENDER_IDS[0] ?? 'NOLASMSPro');
+
 } else {
-    // Check free trial quota
-    if ($freeUsageCount + $required_credits <= $freeCreditsTotal) {
-        $usingFreeCredits = true; // Tier 2: still within free trial
+    // ── PATH B: Master billing gateway ───────────────────────────────────────
+    // Only use a custom sender name if it's registered on our master account
+    $desiredSender = !empty($approvedSenderId) ? $approvedSenderId : null;
+    if ($desiredSender && in_array($desiredSender, $MASTER_APPROVED_SENDERS)) {
+        $sender = $desiredSender;
+    } else {
+        $sender = $SENDER_IDS[0] ?? 'NOLASMSPro';
+        if ($desiredSender) {
+            error_log("[ghl_provider] Sender '{$desiredSender}' not in MASTER_APPROVED_SENDERS for loc={$locationId}. Falling back to '{$sender}'.");
+        }
     }
 }
 
-// 3. Sender ID Logic
-// We trust the approved_sender_id from Firestore. If it fails at the gateway, 
-// the user will see the error in the execution logs.
-if ($approvedSenderId) {
-    $sender = $approvedSenderId;
-}
+// ── Charging Logic ───────────────────────────────────────────────────────────
+// Own-API-key users skip free trial but still consume NOLA credits.
+// Free trial only applies on the master gateway (PATH B).
+$usingFreeCredits = !$usingOwnApiKey && ($freeUsageCount + $required_credits <= $freeCreditsTotal);
 
-// ── Credit Deduction & Trial Logging ────────────────────────────────────────
-// --- Debug: Log the billing decision path ---
+// ── Debug: Log the billing decision path ────────────────────────────────────
 error_log("[ghl_provider] BILLING DECISION for loc={$locationId}: " . json_encode([
-    'usingCustomSender' => $usingCustomSender,
-    'usingFreeCredits' => $usingFreeCredits,
-    'freeUsageCount' => $freeUsageCount,
-    'freeCreditsTotal' => $freeCreditsTotal,
-    'required_credits' => $required_credits,
-    'account_id' => $account_id,
+    'usingOwnApiKey'       => $usingOwnApiKey,
+    'usingFreeCredits'     => $usingFreeCredits,
+    'freeUsageCount'       => $freeUsageCount,
+    'freeCreditsTotal'     => $freeCreditsTotal,
+    'required_credits'     => $required_credits,
+    'account_id'           => $account_id,
+    'sender'               => $sender,
     'customApiKey_present' => !empty($customApiKey),
-    'intDocId' => $intDocId,
-    'intSnap_exists' => $intSnap->exists(),
+    'intDocId'             => $intDocId,
+    'intSnap_exists'       => $intSnap->exists(),
 ]));
 
-// --- Only deduct/track if NOT using a Custom Sender ---
-if (!$usingCustomSender) {
-    if ($usingFreeCredits) {
-        error_log("[ghl_provider] BILLING PATH: FreeTrial for loc={$locationId}");
-        // Tier 2: Free Trial -> Increment free usage counter
-        $intRef->set([
-            'free_usage_count' => $freeUsageCount + $required_credits,
-            'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
-        ], ['merge' => true]);
+// ── Credit Deduction & Trial Logging ─────────────────────────────────────────
+if ($usingFreeCredits) {
+    error_log("[ghl_provider] BILLING PATH: FreeTrial for loc={$locationId}");
+    $intRef->set([
+        'free_usage_count' => $freeUsageCount + $required_credits,
+        'updated_at'       => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+    ], ['merge' => true]);
 
-        // LOGGING: Record trial usage
-        try {
-            $desc = "SMS (Trial) to {$normalizedPhone}";
-            $creditManager->record_trial_usage(
-                $locationId,
-                $required_credits,
-                $messageId ?? ('ghl_prov_trial_' . bin2hex(random_bytes(4))),
-                $desc
-            );
-        } catch (\Exception $e) {
-            error_log("[ghl_provider] Trial logging failed: " . $e->getMessage());
-        }
-    } else {
-        error_log("[ghl_provider] BILLING PATH: PaidDeduction for loc={$locationId}");
-        // Tier 3: Paid Usage -> Deduct subaccount credits
-        try {
-            $desc = "SMS to {$normalizedPhone}";
+    try {
+        $creditManager->record_trial_usage(
+            $locationId,
+            $required_credits,
+            $messageId ?? ('ghl_prov_trial_' . bin2hex(random_bytes(4))),
+            "SMS (Trial) to {$normalizedPhone}"
+        );
+    } catch (\Exception $e) {
+        error_log("[ghl_provider] Trial logging failed: " . $e->getMessage());
+    }
 
-            // Look up agency_id for log transparency
-            $agencyDoc = $db->collection('agency_subaccounts')->document($locationId)->snapshot();
-            $agency_id = $agencyDoc->exists() ? ($agencyDoc->data()['agency_id'] ?? '') : '';
-            
-            $creditManager->deduct_subaccount_only(
-                $account_id,
-                $agency_id,
-                $required_credits,
-                $messageId ?? ('ghl_prov_' . bin2hex(random_bytes(4))),
-                $desc
-            );
-        } catch (\Exception $e) {
-            $errData = json_decode($e->getMessage(), true) ?: null;
-            if ($errData && ($errData['error'] ?? '') === 'insufficient_credits') {
-                http_response_code(402);
-                echo json_encode([
-                    'success' => false,
-                    'error' => 'insufficient_credits',
-                    'message' => 'Your account has no credits. Please top up or request credits from your agency.',
-                    'subaccount_balance' => $errData['subaccount_balance'] ?? null,
-                ]);
-            } else {
-                http_response_code(500);
-                echo json_encode(['success' => false, 'error' => 'Credit deduction failed: ' . $e->getMessage()]);
-            }
-            exit;
+} else {
+    // Paid deduction — applies to ALL sends (PATH A and non-trial PATH B)
+    error_log("[ghl_provider] BILLING PATH: PaidDeduction for loc={$locationId}");
+    try {
+        $agencyDoc = $db->collection('agency_subaccounts')->document($locationId)->snapshot();
+        $agency_id = $agencyDoc->exists() ? ($agencyDoc->data()['agency_id'] ?? '') : '';
+        $provider  = $usingOwnApiKey ? 'semaphore_custom' : 'semaphore';
+
+        $creditManager->deduct_subaccount_only(
+            $account_id,
+            $agency_id,
+            $required_credits,
+            $messageId ?? ('ghl_prov_' . bin2hex(random_bytes(4))),
+            "SMS to {$normalizedPhone}",
+            0.02,
+            0.05,
+            $provider
+        );
+    } catch (\Exception $e) {
+        $errData = json_decode($e->getMessage(), true) ?: null;
+        if ($errData && ($errData['error'] ?? '') === 'insufficient_credits') {
+            http_response_code(402);
+            echo json_encode([
+                'success'            => false,
+                'error'              => 'insufficient_credits',
+                'message'            => 'Your account has no credits. Please top up or request credits from your agency.',
+                'subaccount_balance' => $errData['subaccount_balance'] ?? null,
+            ]);
+        } else {
+            http_response_code(500);
+            echo json_encode(['success' => false, 'error' => 'Credit deduction failed: ' . $e->getMessage()]);
         }
+        exit;
     }
 }
 
@@ -371,48 +384,53 @@ $convId = $locationId . '_conv_' . $normalizedPhone;
 $semMsg = is_array($smsResult) ? ($smsResult[0] ?? $smsResult) : [];
 $storedMsgId = (string)($semMsg['message_id'] ?? $messageId ?? uniqid('ghl_'));
 
+// Derive a display name — GHL provider doesn't always send contact name, fall back to phone
+$displayName = $payload['contactName'] ?? $payload['name'] ?? $normalizedPhone;
+
 $msgData = [
     'conversation_id' => $convId,
-    'location_id' => $locationId,
-    'number' => $normalizedPhone,
-    'message' => $message,
-    'direction' => 'outbound',
-    'sender_id' => $sender,
-    'status' => $semMsg['status'] ?? 'Queued',
-    'batch_id' => null,
-    'ghl_message_id' => $messageId,
-    'created_at' => $ts,
-    'date_created' => $ts,
-    'segments' => $required_credits,
-    'source' => 'ghl_provider',
+    'location_id'     => $locationId,
+    'number'          => $normalizedPhone,
+    'message'         => $message,
+    'direction'       => 'outbound',
+    'sender_id'       => $sender,
+    'status'          => $semMsg['status'] ?? 'Queued',
+    'batch_id'        => null,
+    'ghl_message_id'  => $messageId,
+    'created_at'      => $ts,
+    'date_created'    => $ts,
+    'segments'        => $required_credits,
+    'source'          => 'ghl_provider',
+    'name'            => $displayName,
 ];
 
 $db->collection('messages')->document($storedMsgId)->set($msgData, ['merge' => true]);
 
 $logData = [
-    'message_id' => $storedMsgId,
-    'location_id' => $locationId,
-    'numbers' => [$normalizedPhone],
-    'message' => $message,
-    'sender_id' => $sender,
-    'status' => $semMsg['status'] ?? 'Queued',
-    'date_created' => $ts,
-    'source' => 'ghl_provider',
-    'credits_used' => $required_credits,
+    'message_id'      => $storedMsgId,
+    'location_id'     => $locationId,
+    'numbers'         => [$normalizedPhone],
+    'message'         => $message,
+    'sender_id'       => $sender,
+    'status'          => $semMsg['status'] ?? 'Queued',
+    'date_created'    => $ts,
+    'source'          => 'ghl_provider',
+    'credits_used'    => $required_credits,
     'conversation_id' => $convId,
 ];
 
 $db->collection('sms_logs')->document($storedMsgId)->set($logData, ['merge' => true]);
 
 $db->collection('conversations')->document($convId)->set([
-    'id' => $convId,
-    'location_id' => $locationId,
-    'last_message' => $message,
+    'id'              => $convId,
+    'location_id'     => $locationId,
+    'last_message'    => $message,
     'last_message_at' => $ts,
-    'updated_at' => $ts,
-    'type' => 'direct',
-    'members' => [$normalizedPhone],
-    'ghl_contact_id' => $contactId,
+    'updated_at'      => $ts,
+    'type'            => 'direct',
+    'members'         => [$normalizedPhone],
+    'name'            => $displayName,   // Required by web UI sidebar
+    'ghl_contact_id'  => $contactId,
 ], ['merge' => true]);
 
 // ── Success ─────────────────────────────────────────────────────────────────
