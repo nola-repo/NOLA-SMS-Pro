@@ -246,14 +246,20 @@ if ($userKey !== '' && $userKey !== $sysKey) {
 
 } else {
     // ── PATH B: Master billing gateway ───────────────────────────────────────
-    // Only use a custom sender name if it's registered on our master account
-    $desiredSender = !empty($approvedSenderId) ? $approvedSenderId : null;
-    if ($desiredSender && in_array($desiredSender, $MASTER_APPROVED_SENDERS)) {
+    // If Admin has approved a custom sender for this subaccount, TRUST IT.
+    // Otherwise, check our master whitelist.
+    
+    if (!empty($approvedSenderId)) {
+        // Safe because it was approved by Admin in the dashboard
+        $sender = $approvedSenderId;
+    } elseif (!empty($desiredSender) && in_array($desiredSender, $MASTER_APPROVED_SENDERS)) {
+        // Check manually requested sender against whitelist
         $sender = $desiredSender;
     } else {
+        // Fallback to system default
         $sender = $SENDER_IDS[0] ?? 'NOLASMSPro';
-        if ($desiredSender) {
-            error_log("[ghl_provider] Sender '{$desiredSender}' not in MASTER_APPROVED_SENDERS for loc={$locationId}. Falling back to '{$sender}'.");
+        if (!empty($desiredSender) && $desiredSender !== $sender) {
+            error_log("[ghl_provider] Requested sender '{$desiredSender}' not approved and no subaccount sender exists. Falling back to '{$sender}'.");
         }
     }
 }

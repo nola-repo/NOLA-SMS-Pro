@@ -290,19 +290,20 @@ if ($userKey !== '' && $userKey !== $sysKey) {
 
 } else {
     // ── PATH B: Master billing gateway ──────────────────────────────────────
-    // Determine desired sender (approved_sender_id takes priority over requested)
-    $desiredSender = !empty($approvedSenderId) ? $approvedSenderId
-        : (!empty($requestedSender) ? $requestedSender : null);
-
-    if ($desiredSender && in_array($desiredSender, $MASTER_APPROVED_SENDERS)) {
-        // Sender is registered on the master Semaphore account — safe to use.
-        $sender = $desiredSender;
+    // If Admin has approved a custom sender for this subaccount, TRUST IT.
+    // Otherwise, check if the user's requested sender is in our master whitelist.
+    
+    if (!empty($approvedSenderId)) {
+        // Safe because it was approved by an Admin in the dashboard
+        $sender = $approvedSenderId;
+    } elseif (!empty($requestedSender) && in_array($requestedSender, $MASTER_APPROVED_SENDERS)) {
+        // User requested a specifically approved system name
+        $sender = $requestedSender;
     } else {
-        // Sender is NOT on the master approved list. Silently fall back to default
-        // to prevent Semaphore from rejecting the send with an error.
+        // Fallback to system default
         $sender = $SENDER_IDS[0] ?? 'NOLASMSPro';
-        if ($desiredSender) {
-            error_log("[send_sms] Sender '{$desiredSender}' not in MASTER_APPROVED_SENDERS for loc={$locId}. Falling back to '{$sender}'.");
+        if (!empty($requestedSender) && $requestedSender !== $sender) {
+            error_log("[send_sms] Requested sender '{$requestedSender}' not approved and no subaccount sender exists. Falling back to '{$sender}'.");
         }
     }
 }
