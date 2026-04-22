@@ -239,9 +239,23 @@ if ($userKey && $userKey !== $sysKey) {
 }
 
 // ── Credit Deduction & Trial Logging ────────────────────────────────────────
+// --- Debug: Log the billing decision path ---
+error_log("[ghl_provider] BILLING DECISION for loc={$locationId}: " . json_encode([
+    'usingCustomSender' => $usingCustomSender,
+    'usingFreeCredits' => $usingFreeCredits,
+    'freeUsageCount' => $freeUsageCount,
+    'freeCreditsTotal' => $freeCreditsTotal,
+    'required_credits' => $required_credits,
+    'account_id' => $account_id,
+    'customApiKey_present' => !empty($customApiKey),
+    'intDocId' => $intDocId,
+    'intSnap_exists' => $intSnap->exists(),
+]));
+
 // --- Only deduct/track if NOT using a Custom Sender ---
 if (!$usingCustomSender) {
     if ($usingFreeCredits) {
+        error_log("[ghl_provider] BILLING PATH: FreeTrial for loc={$locationId}");
         // Tier 2: Free Trial -> Increment free usage counter
         $intRef->set([
             'free_usage_count' => $freeUsageCount + $required_credits,
@@ -261,6 +275,7 @@ if (!$usingCustomSender) {
             error_log("[ghl_provider] Trial logging failed: " . $e->getMessage());
         }
     } else {
+        error_log("[ghl_provider] BILLING PATH: PaidDeduction for loc={$locationId}");
         // Tier 3: Paid Usage -> Deduct subaccount credits
         try {
             $desc = "SMS to {$normalizedPhone}";

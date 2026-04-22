@@ -276,19 +276,29 @@ if ($approvedSenderId && $customApiKey && ($requestedSender === $approvedSenderI
 
 // 2. Charging Logic (Quota vs Paid)
 // Charging depends ONLY on trial quota (free_usage_count), NOT on carrier choice.
-$usingFreeCredits = ($freeUsageCount + $num_recipients <= $freeCreditsTotal);
-
+// IMPORTANT: Compare with $required_credits (actual SMS segments), NOT $num_recipients.
+$usingFreeCredits = ($freeUsageCount + $required_credits <= $freeCreditsTotal);
 
 $creditManager = new CreditManager();
 $account_id = $locId ?: 'default';
 
-
+// ── Debug: Log the billing decision path ─────────────────────────────────────
+error_log("[send_sms] BILLING DECISION for loc={$locId}: " . json_encode([
+    'usingCustomSender' => $usingCustomSender,
+    'usingFreeCredits' => $usingFreeCredits,
+    'freeUsageCount' => $freeUsageCount,
+    'freeCreditsTotal' => $freeCreditsTotal,
+    'required_credits' => $required_credits,
+    'num_recipients' => $num_recipients,
+    'account_id' => $account_id,
+    'customApiKey_present' => !empty($customApiKey),
+]));
 
 // ── Credit Deduction & Trial ─────────────────────────────────────────────────
 // Architecture: Single-deduction.
 // Skip deduction if using a CUSTOM API key (already handled by $usingCustomSender policy).
 if ($usingCustomSender) {
-    // No deduction needed, they pay the provider directly.
+    error_log("[send_sms] BILLING PATH: CustomSender — skipping deduction for loc={$locId}");
 } else if ($usingFreeCredits) {
     // Free Trial → increment counter only, no paid credit deduction
     $intRef->set([

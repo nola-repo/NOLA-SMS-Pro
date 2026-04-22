@@ -36,19 +36,26 @@ This document tracks the phased development of the NOLA SMS Pro backend, includi
 ---
 
 ## 💬 Message Syncing & Deduction Reliability
-*Items in this section cover the core SMS dispatch logic and GHL sync consistency.*
 
-| Task | Category | Status |
+| Task | Phase | Status |
 | :--- | :--- | :--- |
-| **Fix Credit Deduction Policy**: Ensure system API keys in custom fields don't bypass billing | Deductions | **Completed** |
-| **Segment-Aware Trial Tracking**: Correctly count multi-segment messages in free trial | Deductions | **Completed** |
-| **GHL Execution Log Enhancement**: Detailed JSON response for Workflow visibility | Sync Architecture| **Completed** |
-| **Action Executed From Branding**: Standardize "Nola Web" source identification | Sync Architecture| **Completed** |
-| **Native Sync Consistency**: Ensure metadata matches between `messages` and `sms_logs` | Sync Architecture| Pending |
-| **Internal Deduction Debugging**: Add server-side logs to CreditManager for audit trails | Core Reliability | Pending |
+| **Phase 1: Core Accuracy & Billing Policy** | | |
+| Fix Credit Deduction Policy: Ensure system keys in custom fields don't bypass billing | Phase 1 | **Completed** |
+| Multi-Subaccount Deduction Fix: Resolved empty key bypass in `send_sms.php` | Phase 1 | **Completed** |
+| Segment-Aware Trial Tracking: Correctly count multi-segment messages in free trial | Phase 1 | **Completed** |
+| Flexible Location ID Resolution: Support for snake_case and camelCase payloads | Phase 1 | **Completed** |
+| **Phase 2: Dashboard Experience & Branding** | | |
+| GHL Execution Log Visibility: Detailed JSON response with `event_details` and aliases | Phase 2 | **Completed** |
+| Action Executed From Branding: Standardize "Nola Web" source identification | Phase 2 | **Completed** |
+| Response Globalization: Translate error messages for end-user visibility | Phase 2 | Pending |
+| **Phase 3: Integrity & Observability** | | |
+| Native Sync Consistency: Ensure metadata matches between `messages` and `sms_logs` | Phase 3 | Pending |
+| Internal Deduction Debugging: Add server-side logs to CreditManager for audit trails | Phase 3 | Pending |
+| Deduplication Stability: Prevent loops in Provider sync (refining `ghl_sync_dedup`) | Phase 3 | Pending |
 
 ---
 
 ## ⚙️ Infra / Maintenance
 - [ ] GCP Cloud Scheduler job registration for all automated tasks.
 - [ ] **CORS Maintenance**: Audit all future `.php` endpoints to ensure `cors.php` is included.
+- [ ] **API Security**: Centralize `validate_api_request()` logic across all webhook entries.
