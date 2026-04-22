@@ -8,8 +8,17 @@ return [
 
 
 
-    // Multiple Sender IDs (first = default when none sent)
+    // Default system sender ID (first entry is the fallback)
     'SENDER_IDS' => [
         'NOLASMSPro',
+    ],
+
+    // Sender names actually registered & approved on the NOLA master Semaphore account.
+    // Only names on this list may be used when routing through the master billing gateway.
+    // Subaccounts with their own API key can use any sender they have registered themselves.
+    'MASTER_APPROVED_SENDERS' => [
+        'NOLASMSPro',
+        // Add more as Semaphore approves them on the master account, e.g.:
+        // 'NOLACRMIO',
     ],
 ];

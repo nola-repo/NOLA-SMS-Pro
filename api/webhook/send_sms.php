@@ -18,6 +18,7 @@ require_once __DIR__ . '/../services/GhlSyncService.php';
 $SEMAPHORE_API_KEY = $config['SEMAPHORE_API_KEY'];
 $SEMAPHORE_URL = $config['SEMAPHORE_URL'];
 $SENDER_IDS = $config['SENDER_IDS'];
+$MASTER_APPROVED_SENDERS = $config['MASTER_APPROVED_SENDERS'] ?? ['NOLASMSPro'];
 
 // --- Maintenance Mode Check ---
 $db_maintenance = get_firestore();
@@ -247,38 +248,54 @@ $freeCreditsTotal = $intData['free_credits_total'] ?? 10;
 $requestedSender = $customData['sendername'] ?? $payload['sendername'] ?? $data['sendername'] ??
     $customData['sender_name'] ?? $payload['sender_name'] ?? $data['sender_name'] ?? null;
 
-// ── Credit & Sender Selection Logic ─────────────────────────────────────────
-// Delivery selection (who sends the SMS) vs Charging selection (how it's paid for)
+// ── Sender & Gateway Resolution (single authoritative block) ─────────────────
+//
+// PATH A — Subaccount has its own (external) API key:
+//   → Route through their key. They own their sender registrations.
+//   → Skip NOLA credit deduction ($usingCustomSender = true).
+//
+// PATH B — Using the NOLA master billing gateway:
+//   → NOLA credits apply. Sender MUST be in MASTER_APPROVED_SENDERS.
+//   → If the subaccount's approved sender is not on the master account,
+//     fall back to the default (NOLASMSPro) to guarantee delivery.
 
-// 1. Delivery Selection (Carrier/Provider)
 $usingCustomSender = false;
-$activeApiKey = $SEMAPHORE_API_KEY;
-$sender = $SENDER_IDS[0] ?? "";
+$activeApiKey      = $SEMAPHORE_API_KEY;       // Default: master gateway
+$sender            = $SENDER_IDS[0] ?? 'NOLASMSPro'; // Default: system sender
 
-// Delivery Selection: Sender Name
-if ($approvedSenderId && ($requestedSender === $approvedSenderId || empty($requestedSender))) {
-    $sender = $approvedSenderId;
-} else if ($requestedSender && in_array($requestedSender, $SENDER_IDS)) {
-    $sender = $requestedSender;
-}
+$sysKey  = trim((string)$SEMAPHORE_API_KEY);
+$userKey = trim((string)($customApiKey ?? ''));
 
-// Delivery Selection: API Key / Gateway
-if ($customApiKey) {
-    $activeApiKey = $customApiKey;
-    
-    // Billing Policy: Skip deduction only if the API key is truly EXTERNAL.
-    $sysKey = trim((string)$SEMAPHORE_API_KEY);
-    $userKey = trim((string)$customApiKey);
+if ($userKey !== '' && $userKey !== $sysKey) {
+    // ── PATH A: External API key ─────────────────────────────────────────────
+    $usingCustomSender = true;
+    $activeApiKey      = $customApiKey;
 
-    if ($userKey !== "" && $userKey !== $sysKey) {
-        $usingCustomSender = true;
+    // Use their approved sender, or the explicitly requested sender, or the system default.
+    if (!empty($approvedSenderId)) {
+        $sender = $approvedSenderId;
+    } elseif (!empty($requestedSender)) {
+        $sender = $requestedSender;
     }
-}
+    // else: $sender stays as the system default 'NOLASMSPro'
 
-// 3. Sender ID Logic
-// We trust the approved_sender_id from Firestore.
-if ($approvedSenderId && ($requestedSender === $approvedSenderId || empty($requestedSender))) {
-    $sender = $approvedSenderId;
+} else {
+    // ── PATH B: Master billing gateway ──────────────────────────────────────
+    // Determine desired sender (approved_sender_id takes priority over requested)
+    $desiredSender = !empty($approvedSenderId) ? $approvedSenderId
+        : (!empty($requestedSender) ? $requestedSender : null);
+
+    if ($desiredSender && in_array($desiredSender, $MASTER_APPROVED_SENDERS)) {
+        // Sender is registered on the master Semaphore account — safe to use.
+        $sender = $desiredSender;
+    } else {
+        // Sender is NOT on the master approved list. Silently fall back to default
+        // to prevent Semaphore from rejecting the send with an error.
+        $sender = $SENDER_IDS[0] ?? 'NOLASMSPro';
+        if ($desiredSender) {
+            error_log("[send_sms] Sender '{$desiredSender}' not in MASTER_APPROVED_SENDERS for loc={$locId}. Falling back to '{$sender}'.");
+        }
+    }
 }
 
 // 2. Charging Logic (Quota vs Paid)
