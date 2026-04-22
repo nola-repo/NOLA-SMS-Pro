@@ -275,14 +275,10 @@ if ($customApiKey) {
     }
 }
 
-// 3. Sender ID Validation
-// If using the Master API Key, we MUST use a Sender ID that is registered to our account.
-if (!$usingCustomSender) {
-    $defaultSender = $SENDER_IDS[0] ?? 'NOLASMSPro';
-    if ($sender !== $defaultSender && !in_array($sender, $SENDER_IDS)) {
-        error_log("[send_sms] Overriding custom sender '{$sender}' with '{$defaultSender}' because Master Key is in use and sender is not pre-approved.");
-        $sender = $defaultSender;
-    }
+// 3. Sender ID Logic
+// We trust the approved_sender_id from Firestore.
+if ($approvedSenderId && ($requestedSender === $approvedSenderId || empty($requestedSender))) {
+    $sender = $approvedSenderId;
 }
 
 // 2. Charging Logic (Quota vs Paid)
