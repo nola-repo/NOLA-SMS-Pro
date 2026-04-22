@@ -291,19 +291,22 @@ if ($userKey !== '' && $userKey !== $sysKey) {
 } else {
     // ── PATH B: Master billing gateway ──────────────────────────────────────
     // If Admin has approved a custom sender for this subaccount, TRUST IT.
-    // Otherwise, check if the user's requested sender is in our master whitelist.
+    error_log("[send_sms] Resolving Sender ID for Loc: {$locId} (requested: '{$requestedSender}')");
     
     if (!empty($approvedSenderId)) {
         // Safe because it was approved by an Admin in the dashboard
         $sender = $approvedSenderId;
+        error_log("[send_sms] Result: Using approved_sender_id '{$sender}' from Firestore.");
     } elseif (!empty($requestedSender) && in_array($requestedSender, $MASTER_APPROVED_SENDERS)) {
         // User requested a specifically approved system name
         $sender = $requestedSender;
+        error_log("[send_sms] Result: Using requested whitelist sender '{$sender}'.");
     } else {
         // Fallback to system default
         $sender = $SENDER_IDS[0] ?? 'NOLASMSPro';
+        error_log("[send_sms] Result: Fallback to '{$sender}' (approvedSenderId was empty, req='{$requestedSender}').");
         if (!empty($requestedSender) && $requestedSender !== $sender) {
-            error_log("[send_sms] Requested sender '{$requestedSender}' not approved and no subaccount sender exists. Falling back to '{$sender}'.");
+            error_log("[send_sms] Notice: Requested sender '{$requestedSender}' not approved and no subaccount sender exists.");
         }
     }
 }
@@ -582,8 +585,8 @@ if (count($validNumbers) > 3) {
 // GHL Legacy/Success response structure
 echo json_encode([
     "status" => $ghlStatus,
-    "message" => "NOLA SMS Pro",
-    "execution_log" => "Workflow SMS sent via NOLASMSPro to $summary. Credits: $required_credits.",
+    "message" => $sender,
+    "execution_log" => "Workflow SMS sent via $sender to $summary. Credits: $required_credits.",
     "action_executed_from" => "Nola Web",
     "event_details" => [
         "Status" => "Success",

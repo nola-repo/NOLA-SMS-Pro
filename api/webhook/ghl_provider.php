@@ -444,8 +444,8 @@ $db->collection('conversations')->document($convId)->set([
 echo json_encode([
     'success' => true,
     'status' => 'success',
-    'message' => 'NOLA SMS Pro',
-    'execution_log' => "NOLA Provider: SMS sent to $normalizedPhone. Credits: $required_credits.",
+    'message' => $sender,
+    'execution_log' => "NOLA Provider: SMS sent to $normalizedPhone via $sender. Credits: $required_credits.",
     'action_executed_from' => 'Nola Web',
     'event_details' => [
         'Status' => 'Success',

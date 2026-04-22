@@ -51,7 +51,10 @@ This document tracks the phased development of the NOLA SMS Pro backend, includi
 | **Phase 3: Integrity & Observability** | | |
 | Native Sync Consistency: Ensure metadata matches between `messages` and `sms_logs` | Phase 3 | Pending |
 | Internal Deduction Debugging: Add server-side logs to CreditManager for audit trails | Phase 3 | Pending |
-| Deduplication Stability: Prevent loops in Provider sync (refining `ghl_sync_dedup`) | Phase 3 | Pending |
+| **Deduplication Stability**: Prevent loops in Provider sync (Increased window to 120s + direction prefix) | Phase 3 | **Completed** |
+| **Dynamic Sender ID Resolution**: Trust Admin approvals in Firestore directly (Simplified resolution) | Phase 3 | **Completed** |
+| **GHL Feedback UI Fixes**: Replaced hardcoded "NOLA SMS Pro" with actual sender IDs in GHL response | Phase 3 | **Completed** |
+| **Firestore Master Whitelist**: Dynamic management of system-approved senders via Admin panel | Phase 3 | **Completed** |
 
 ---
 
