@@ -255,9 +255,15 @@ $usingCustomSender = false;
 $activeApiKey = $SEMAPHORE_API_KEY;
 $sender = $SENDER_IDS[0] ?? "";
 
-if ($approvedSenderId && $customApiKey && ($requestedSender === $approvedSenderId || empty($requestedSender))) {
-    // Delivery Selection: Use custom sender name and API key
+// Delivery Selection: Sender Name
+if ($approvedSenderId && ($requestedSender === $approvedSenderId || empty($requestedSender))) {
     $sender = $approvedSenderId;
+} else if ($requestedSender && in_array($requestedSender, $SENDER_IDS)) {
+    $sender = $requestedSender;
+}
+
+// Delivery Selection: API Key / Gateway
+if ($customApiKey) {
     $activeApiKey = $customApiKey;
     
     // Billing Policy: Skip deduction only if the API key is truly EXTERNAL.
@@ -266,11 +272,6 @@ if ($approvedSenderId && $customApiKey && ($requestedSender === $approvedSenderI
 
     if ($userKey !== "" && $userKey !== $sysKey) {
         $usingCustomSender = true;
-    }
-} else {
-    // System Sender: Use system API key and selected/default sender name
-    if ($requestedSender && in_array($requestedSender, $SENDER_IDS)) {
-        $sender = $requestedSender;
     }
 }
 

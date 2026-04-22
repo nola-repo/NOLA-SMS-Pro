@@ -218,9 +218,11 @@ $usingFreeCredits = false;
 $sender = $SENDER_IDS[0] ?? 'NOLASMSPro';
 $activeApiKey = $SEMAPHORE_API_KEY;
 
-// 1. Delivery Selection (Carrier)
-if ($approvedSenderId && $customApiKey) {
+// 1. Delivery Selection (Carrier & Sender)
+if ($approvedSenderId) {
     $sender = $approvedSenderId;
+}
+if ($customApiKey) {
     $activeApiKey = $customApiKey;
 }
 
