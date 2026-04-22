@@ -165,11 +165,17 @@ $required_credits = CreditManager::calculateRequiredCredits($message, $num_recip
 // only in the request body. So we check the header first, then fall back to the body.
 $locId = get_ghl_location_id();
 if (!$locId) {
-    // Fallback: read location_id from the JSON body (where GHL DOES replace {{location.id}})
-    $locId = $customData['location_id'] ?? $payload['location_id'] ?? $data['location_id'] ?? null;
-    // Sanitise: if it still looks like an un-replaced template, treat as missing
-    if ($locId && strpos((string)$locId, '{{') !== false) {
-        $locId = null;
+    // Fallback: read location_id from common GHL payload fields
+    $locId = $customData['location_id'] ?? $customData['locationId'] 
+        ?? $payload['location_id'] ?? $payload['locationId']
+        ?? $data['location_id'] ?? $data['locationId'] ?? null;
+    
+    // Clean and Sanitise
+    if ($locId) {
+        $locId = trim((string)$locId);
+        if (strpos($locId, '{{') !== false) {
+            $locId = null;
+        }
     }
 }
 if (!$locId) {
@@ -254,9 +260,11 @@ if ($approvedSenderId && $customApiKey && ($requestedSender === $approvedSenderI
     $sender = $approvedSenderId;
     $activeApiKey = $customApiKey;
     
-    // Billing Policy: Skip deduction only if the API key is DIFFERENT from the system key.
-    // If they use our key in their config, they should still be charged NOLA credits.
-    if ($customApiKey !== $SEMAPHORE_API_KEY) {
+    // Billing Policy: Skip deduction only if the API key is truly EXTERNAL.
+    $sysKey = trim((string)$SEMAPHORE_API_KEY);
+    $userKey = trim((string)$customApiKey);
+
+    if ($userKey !== "" && $userKey !== $sysKey) {
         $usingCustomSender = true;
     }
 } else {
@@ -526,11 +534,13 @@ echo json_encode([
     "execution_log" => "Workflow SMS sent via NOLASMSPro to $summary. Credits: $required_credits.",
     "action_executed_from" => "Nola Web",
     "event_details" => [
-        "recipients" => $validNumbers,
-        "message_body" => $message,
-        "credits_deducted" => $required_credits,
-        "provider" => $sender,
-        "balance_check" => "Success"
+        "Status" => "Success",
+        "Recipient(s)" => implode(', ', $validNumbers),
+        "SMS Message" => $message,
+        "Credits Used" => $required_credits,
+        "Sender ID" => $sender,
+        "Location ID" => $locId,
+        "Timestamp" => date('Y-m-d H:i:s')
     ],
     "output" => [
         "success" => ($total_status == 200),
@@ -541,6 +551,8 @@ echo json_encode([
     "debug_info" => [
         "location_id" => $locId,
         "ghl_sync_status" => isset($msgSyncResp) ? $msgSyncResp : "skipped",
-        "is_custom_provider" => $usingCustomSender
+        "is_custom_provider" => $usingCustomSender,
+        "is_free_trial" => $usingFreeCredits,
+        "used_credits" => $required_credits
     ]
 ]);

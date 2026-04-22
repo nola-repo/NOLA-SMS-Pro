@@ -68,6 +68,8 @@ if (!is_array($payload)) {
 error_log('[ghl_provider] Received payload: ' . $raw);
 
 $locationId = $payload['locationId'] ?? $payload['location_id'] ?? null;
+if ($locationId) $locationId = trim((string)$locationId);
+
 $contactId = $payload['contactId'] ?? $payload['contact_id'] ?? null;
 $phone = $payload['phone'] ?? null;
 $message = $payload['message'] ?? $payload['body'] ?? null;
@@ -224,8 +226,10 @@ if ($approvedSenderId && $customApiKey) {
 
 // 2. Billing Selection (Who pays)
 // Billing: Skip deduction only if it's a truly EXTERNAL API key.
-// If it's our key or no custom key, check for free trial or deduct credits.
-if ($customApiKey && $customApiKey !== $SEMAPHORE_API_KEY) {
+$sysKey = trim((string)$SEMAPHORE_API_KEY);
+$userKey = trim((string)$customApiKey);
+
+if ($userKey && $userKey !== $sysKey) {
     $usingCustomSender = true;
 } else {
     // Check free trial quota
@@ -395,6 +399,15 @@ echo json_encode([
     'message' => 'NOLA SMS Pro',
     'execution_log' => "NOLA Provider: SMS sent to $normalizedPhone. Credits: $required_credits.",
     'action_executed_from' => 'Nola Web',
+    'event_details' => [
+        'Status' => 'Success',
+        'Recipient' => $normalizedPhone,
+        'SMS Message' => $message,
+        'Credits Used' => $required_credits,
+        'Sender ID' => $sender,
+        'Location ID' => $locationId,
+        'Timestamp' => date('Y-m-d H:i:s')
+    ],
     'data' => [
         'messageId' => $storedMsgId,
         'conversation_id' => $convId,
