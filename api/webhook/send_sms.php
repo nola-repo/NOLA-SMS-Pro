@@ -298,36 +298,37 @@ if ($userKey !== '' && $userKey !== $sysKey) {
     }
 }
 
-// 2. Charging Logic (Quota vs Paid)
-// Charging depends ONLY on trial quota (free_usage_count), NOT on carrier choice.
-// IMPORTANT: Compare with $required_credits (actual SMS segments), NOT $num_recipients.
-$usingFreeCredits = ($freeUsageCount + $required_credits <= $freeCreditsTotal);
+// ── Charging Logic (Quota vs Paid) ───────────────────────────────────────────
+// Rules per handoff design:
+// - Subaccounts using the NOLA master gateway: free trial applies first, then paid.
+// - Subaccounts using their OWN API key (PATH A): skip free trial, go straight to paid.
+//   (They route their own SMS costs, but NOLA credits are ALWAYS deducted — no bypass.)
+// IMPORTANT: credit count uses $required_credits (actual SMS segments), NOT $num_recipients.
+
+// Free trial only applies on the master gateway (PATH B). Own-API-key senders skip it.
+$usingFreeCredits = !$usingCustomSender && ($freeUsageCount + $required_credits <= $freeCreditsTotal);
 
 $creditManager = new CreditManager();
 $account_id = $locId ?: 'default';
 
 // ── Debug: Log the billing decision path ─────────────────────────────────────
 error_log("[send_sms] BILLING DECISION for loc={$locId}: " . json_encode([
-    'usingCustomSender' => $usingCustomSender,
-    'usingFreeCredits' => $usingFreeCredits,
-    'freeUsageCount' => $freeUsageCount,
-    'freeCreditsTotal' => $freeCreditsTotal,
-    'required_credits' => $required_credits,
-    'num_recipients' => $num_recipients,
-    'account_id' => $account_id,
+    'usingOwnApiKey'    => $usingCustomSender,   // true = external Semaphore key
+    'usingFreeCredits'  => $usingFreeCredits,
+    'freeUsageCount'    => $freeUsageCount,
+    'freeCreditsTotal'  => $freeCreditsTotal,
+    'required_credits'  => $required_credits,
+    'num_recipients'    => $num_recipients,
+    'account_id'        => $account_id,
     'customApiKey_present' => !empty($customApiKey),
 ]));
 
-// ── Credit Deduction & Trial ─────────────────────────────────────────────────
-// Architecture: Single-deduction.
-// Skip deduction if using a CUSTOM API key (already handled by $usingCustomSender policy).
-if ($usingCustomSender) {
-    error_log("[send_sms] BILLING PATH: CustomSender — skipping deduction for loc={$locId}");
-} else if ($usingFreeCredits) {
-    // Free Trial → increment counter only, no paid credit deduction
+// ── Credit Deduction & Trial ──────────────────────────────────────────────────
+if ($usingFreeCredits) {
+    // Free Trial (PATH B only) → increment counter, no paid credit deduction
     $intRef->set([
         'free_usage_count' => $freeUsageCount + $required_credits,
-        'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+        'updated_at'       => new \Google\Cloud\Core\Timestamp(new \DateTime()),
     ], ['merge' => true]);
 
     try {
@@ -341,43 +342,50 @@ if ($usingCustomSender) {
     } catch (\Exception $e) {
         error_log("Trial logging failed: " . $e->getMessage());
     }
+
 } else {
-    // Paid send — look up agency_id for logging and lock check
+    // Paid deduction — applies to ALL sends (both PATH A and non-trial PATH B).
+    // Own-API-key users consume NOLA credits for platform usage; free trial is simply skipped.
+
+    // Resolve agency_id for logging and lock check
     $agencyDoc = $db->collection('agency_subaccounts')->document($locId)->snapshot();
     $agency_id = $agencyDoc->exists() ? ($agencyDoc->data()['agency_id'] ?? '') : '';
 
-    // ── 1. Subaccount balance pre-flight ────────────────────────────────
+    // ── 1. Subaccount balance pre-flight ────────────────────────────────────
     $subBalance = $creditManager->get_balance($account_id);
     if ($subBalance <= 0) {
         http_response_code(402);
         echo json_encode([
-            'status'              => 'error',
-            'error'               => 'insufficient_credits',
-            'message'             => 'Your account has no credits. Please top up or request credits from your agency.',
-            'subaccount_balance'  => $subBalance,
+            'status'             => 'error',
+            'error'              => 'insufficient_credits',
+            'message'            => 'Your account has no credits. Please top up or request credits from your agency.',
+            'subaccount_balance' => $subBalance,
         ]);
         exit;
     }
 
-    // ── 2. Optional master balance lock check ────────────────────────────
+    // ── 2. Optional master balance lock check ────────────────────────────────
     if ($agency_id && $creditManager->get_agency_master_lock($agency_id)) {
         $agencyBalance = $creditManager->get_agency_balance($agency_id);
         if ($agencyBalance <= 0) {
             http_response_code(402);
             echo json_encode([
-                'status'          => 'error',
-                'error'           => 'agency_master_lock',
-                'message'         => 'Sending is temporarily paused by your agency. Please contact your administrator.',
-                'agency_balance'  => $agencyBalance,
+                'status'         => 'error',
+                'error'          => 'agency_master_lock',
+                'message'        => 'Sending is temporarily paused by your agency. Please contact your administrator.',
+                'agency_balance' => $agencyBalance,
             ]);
             exit;
         }
     }
 
-    // ── 3. Deduct ONLY from subaccount wallet (atomic Firestore txn) ─────
+    // ── 3. Deduct from subaccount wallet (atomic Firestore txn) ─────────────
     try {
-        $desc = "SMS to " . ($num_recipients === 1 ? $validNumbers[0] : "$num_recipients recipient(s)");
+        $desc  = "SMS to " . ($num_recipients === 1 ? $validNumbers[0] : "$num_recipients recipient(s)");
         $refId = $batch_id ?? ('sms_' . bin2hex(random_bytes(4)));
+
+        // Tag own-API-key sends so the transaction log shows the correct provider
+        $provider = $usingCustomSender ? 'semaphore_custom' : 'semaphore';
 
         $creditManager->deduct_subaccount_only(
             $account_id,
@@ -385,9 +393,9 @@ if ($usingCustomSender) {
             $required_credits,
             $refId,
             $desc,
-            0.02,        // provider_cost
-            0.05,        // charged
-            'semaphore'  // provider
+            0.02,       // provider_cost
+            0.05,       // charged
+            $provider
         );
     } catch (\Exception $e) {
         $errData = json_decode($e->getMessage(), true) ?: null;
@@ -406,7 +414,7 @@ if ($usingCustomSender) {
         exit;
     }
 
-    // ── 4. Low Balance Alert ─────────────────────────────────────────────
+    // ── 4. Low Balance Alert ─────────────────────────────────────────────────
     try {
         require_once __DIR__ . '/../services/NotificationService.php';
         $newBalance = $creditManager->get_balance($account_id);
