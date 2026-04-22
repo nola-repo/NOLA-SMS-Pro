@@ -240,6 +240,16 @@ if ($userKey && $userKey !== $sysKey) {
     }
 }
 
+// 3. Sender ID Validation
+// If using the Master API Key, we MUST use a Sender ID that is registered to our account.
+if (!$usingCustomSender) {
+    $defaultSender = $SENDER_IDS[0] ?? 'NOLASMSPro';
+    if ($sender !== $defaultSender && !in_array($sender, $SENDER_IDS)) {
+        error_log("[ghl_provider] Overriding custom sender '{$sender}' with '{$defaultSender}' because Master Key is in use and sender is not pre-approved.");
+        $sender = $defaultSender;
+    }
+}
+
 // ── Credit Deduction & Trial Logging ────────────────────────────────────────
 // --- Debug: Log the billing decision path ---
 error_log("[ghl_provider] BILLING DECISION for loc={$locationId}: " . json_encode([
