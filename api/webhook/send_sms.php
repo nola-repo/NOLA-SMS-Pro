@@ -275,100 +275,96 @@ $account_id = $locId ?: 'default';
 // Architecture: Single-deduction. Only the subaccount wallet is deducted per SMS.
 // The agency wallet is a funding source only and is NEVER deducted during sends.
 // Exception: if enforce_master_balance_lock is enabled, sends are gated on agency balance > 0.
-if (true) {
-    if ($usingFreeCredits) {
+if ($usingFreeCredits) {
+    // Free Trial → increment counter only, no paid credit deduction
+    $intRef->set([
+        'free_usage_count' => $freeUsageCount + $required_credits,
+        'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+    ], ['merge' => true]);
 
-        // Free Trial → increment counter only, no paid credit deduction
-        $intRef->set([
-            'free_usage_count' => $freeUsageCount + $num_recipients,
-            'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
-        ], ['merge' => true]);
+    try {
+        $desc = "SMS (Trial) to " . ($num_recipients === 1 ? $validNumbers[0] : "$num_recipients recipient(s)");
+        $creditManager->record_trial_usage(
+            $account_id,
+            $required_credits,
+            $batch_id ?? ('trial_' . bin2hex(random_bytes(4))),
+            $desc
+        );
+    } catch (\Exception $e) {
+        error_log("Trial logging failed: " . $e->getMessage());
+    }
+} else {
+    // Paid send — look up agency_id for logging and lock check
+    $agencyDoc = $db->collection('agency_subaccounts')->document($locId)->snapshot();
+    $agency_id = $agencyDoc->exists() ? ($agencyDoc->data()['agency_id'] ?? '') : '';
 
-        try {
-            $desc = "SMS to " . ($num_recipients === 1 ? $validNumbers[0] : "$num_recipients recipient(s)");
-            $creditManager->record_trial_usage(
-                $account_id,
-                $required_credits,
-                $batch_id ?? ('trial_' . bin2hex(random_bytes(4))),
-                $desc
-            );
-        } catch (\Exception $e) {
-            error_log("Trial logging failed: " . $e->getMessage());
-        }
+    // ── 1. Subaccount balance pre-flight ────────────────────────────────
+    $subBalance = $creditManager->get_balance($account_id);
+    if ($subBalance <= 0) {
+        http_response_code(402);
+        echo json_encode([
+            'status'              => 'error',
+            'error'               => 'insufficient_credits',
+            'message'             => 'Your account has no credits. Please top up or request credits from your agency.',
+            'subaccount_balance'  => $subBalance,
+        ]);
+        exit;
+    }
 
-    } else {
-        // Paid send — look up agency_id for logging and lock check
-        $agencyDoc = $db->collection('agency_subaccounts')->document($locId)->snapshot();
-        $agency_id = $agencyDoc->exists() ? ($agencyDoc->data()['agency_id'] ?? '') : '';
-
-        // ── 1. Subaccount balance pre-flight ────────────────────────────────
-        $subBalance = $creditManager->get_balance($account_id);
-        if ($subBalance <= 0) {
+    // ── 2. Optional master balance lock check ────────────────────────────
+    if ($agency_id && $creditManager->get_agency_master_lock($agency_id)) {
+        $agencyBalance = $creditManager->get_agency_balance($agency_id);
+        if ($agencyBalance <= 0) {
             http_response_code(402);
             echo json_encode([
-                'status'              => 'error',
-                'error'               => 'insufficient_credits',
-                'message'             => 'Your account has no credits. Please top up or request credits from your agency.',
-                'subaccount_balance'  => $subBalance,
+                'status'          => 'error',
+                'error'           => 'agency_master_lock',
+                'message'         => 'Sending is temporarily paused by your agency. Please contact your administrator.',
+                'agency_balance'  => $agencyBalance,
             ]);
             exit;
         }
+    }
 
-        // ── 2. Optional master balance lock check ────────────────────────────
-        if ($agency_id && $creditManager->get_agency_master_lock($agency_id)) {
-            $agencyBalance = $creditManager->get_agency_balance($agency_id);
-            if ($agencyBalance <= 0) {
-                http_response_code(402);
-                echo json_encode([
-                    'status'          => 'error',
-                    'error'           => 'agency_master_lock',
-                    'message'         => 'Sending is temporarily paused by your agency. Please contact your administrator.',
-                    'agency_balance'  => $agencyBalance,
-                ]);
-                exit;
-            }
+    // ── 3. Deduct ONLY from subaccount wallet (atomic Firestore txn) ─────
+    try {
+        $desc = "SMS to " . ($num_recipients === 1 ? $validNumbers[0] : "$num_recipients recipient(s)");
+        $refId = $batch_id ?? ('sms_' . bin2hex(random_bytes(4)));
+
+        $creditManager->deduct_subaccount_only(
+            $account_id,
+            $agency_id,
+            $required_credits,
+            $refId,
+            $desc,
+            0.02,        // provider_cost
+            0.05,        // charged
+            'semaphore'  // provider
+        );
+    } catch (\Exception $e) {
+        $errData = json_decode($e->getMessage(), true) ?: null;
+        if ($errData && ($errData['error'] ?? '') === 'insufficient_credits') {
+            http_response_code(402);
+            echo json_encode([
+                'status'             => 'error',
+                'error'              => 'insufficient_credits',
+                'message'            => 'Your account has no credits. Please top up or request credits from your agency.',
+                'subaccount_balance' => $errData['subaccount_balance'] ?? null,
+            ]);
+        } else {
+            http_response_code(500);
+            echo json_encode(['status' => 'error', 'message' => 'Credit deduction failed: ' . $e->getMessage()]);
         }
+        exit;
+    }
 
-        // ── 3. Deduct ONLY from subaccount wallet (atomic Firestore txn) ─────
-        try {
-            $desc = "SMS to " . ($num_recipients === 1 ? $validNumbers[0] : "$num_recipients recipient(s)");
-            $refId = $batch_id ?? ('sms_' . bin2hex(random_bytes(4)));
-
-            $creditManager->deduct_subaccount_only(
-                $account_id,
-                $agency_id,
-                $required_credits,
-                $refId,
-                $desc,
-                0.02,        // provider_cost — update to actual provider rate
-                0.05,        // charged — what the client is billed per credit
-                'semaphore'  // provider
-            );
-        } catch (\Exception $e) {
-            $errData = json_decode($e->getMessage(), true) ?: null;
-            if ($errData && ($errData['error'] ?? '') === 'insufficient_credits') {
-                http_response_code(402);
-                echo json_encode([
-                    'status'             => 'error',
-                    'error'              => 'insufficient_credits',
-                    'message'            => 'Your account has no credits. Please top up or request credits from your agency.',
-                    'subaccount_balance' => $errData['subaccount_balance'] ?? null,
-                ]);
-            } else {
-                http_response_code(500);
-                echo json_encode(['status' => 'error', 'message' => 'Credit deduction failed: ' . $e->getMessage()]);
-            }
-            exit;
-        }
-
-        // ── 4. Low Balance Alert ─────────────────────────────────────────────
-        try {
-            require_once __DIR__ . '/../services/NotificationService.php';
-            $newBalance = $creditManager->get_balance($account_id);
-            NotificationService::checkLowBalance($db, $locId, $newBalance);
-        } catch (\Throwable $e) {
-            error_log('[LowBalanceAlert] ' . $e->getMessage());
-        }
+    // ── 4. Low Balance Alert ─────────────────────────────────────────────
+    try {
+        require_once __DIR__ . '/../services/NotificationService.php';
+        $newBalance = $creditManager->get_balance($account_id);
+        NotificationService::checkLowBalance($db, $locId, $newBalance);
+    } catch (\Throwable $e) {
+        error_log('[LowBalanceAlert] ' . $e->getMessage());
     }
 }
 
@@ -510,19 +506,26 @@ if (!empty($all_results)) {
 // ── End GHL Sync ──────────────────────────────────────────────────────────
 }
 
+// GHL-friendly log structure
+$ghlStatus = $total_status == 200 ? "success" : "error";
+$summary = "Sent to " . implode(', ', $validNumbers);
+if (count($validNumbers) > 3) {
+    $summary = "Sent to " . count($validNumbers) . " recipients";
+}
+
 echo json_encode([
-    "status" => $total_status == 200 ? "success" : "partial_or_failed",
-    "numbers" => $validNumbers,
-    "message" => $message,
-    "sender" => $sender,
-    "batch_id" => $batch_id,
-    "credits_deducted" => $required_credits,
-    "response" => $all_results,
+    "status" => $ghlStatus,
+    "message" => "SMS Executed: $summary",
+    "event_details" => [
+        "recipients" => $validNumbers,
+        "message_body" => $message,
+        "credits_deducted" => $required_credits,
+        "provider" => $sender,
+        "balance_check" => "Success"
+    ],
     "debug_info" => [
         "location_id" => $locId,
-        "contact_id_resolved" => $resolvedContactId ?? "not_found",
         "ghl_sync_status" => isset($msgSyncResp) ? $msgSyncResp : "skipped",
-        "provider_selected" => $sender,
         "is_custom_provider" => $usingCustomSender
     ]
 ]);

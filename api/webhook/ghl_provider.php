@@ -225,8 +225,8 @@ if ($approvedSenderId && $customApiKey) {
     $activeApiKey = $SEMAPHORE_API_KEY;
     $usingCustomSender = false;
 
-    // Check free trial quota (always 1 recipient for provider sends)
-    if ($freeUsageCount + 1 <= $freeCreditsTotal) {
+    // Check free trial quota
+    if ($freeUsageCount + $required_credits <= $freeCreditsTotal) {
         $usingFreeCredits = true; // Tier 2: still within free trial
     }
 }
@@ -235,15 +235,15 @@ if ($approvedSenderId && $customApiKey) {
 // --- Only deduct/track if NOT using a Custom Sender ---
 if (!$usingCustomSender) {
     if ($usingFreeCredits) {
-        // Tier 2: Free Trial -> Increment free usage counter, do NOT deduct paid balance
+        // Tier 2: Free Trial -> Increment free usage counter
         $intRef->set([
             'free_usage_count' => $freeUsageCount + $required_credits,
             'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
         ], ['merge' => true]);
 
-        // LOGGING: Record trial usage in transaction history for visibility (amount 0)
+        // LOGGING: Record trial usage
         try {
-            $desc = "SMS Message to {$normalizedPhone}";
+            $desc = "SMS (Trial) to {$normalizedPhone}";
             $creditManager->record_trial_usage(
                 $locationId,
                 $required_credits,
@@ -254,39 +254,30 @@ if (!$usingCustomSender) {
             error_log("[ghl_provider] Trial logging failed: " . $e->getMessage());
         }
     } else {
-        // Tier 3: Paid Usage -> Deduct actual paid credits
+        // Tier 3: Paid Usage -> Deduct subaccount credits
         try {
-            $desc = "SMS Message to {$normalizedPhone}";
+            $desc = "SMS to {$normalizedPhone}";
 
+            // Look up agency_id for log transparency
             $agencyDoc = $db->collection('agency_subaccounts')->document($locationId)->snapshot();
-            $agency_id = $agencyDoc->exists() ? ($agencyDoc->data()['agency_id'] ?? null) : null;
+            $agency_id = $agencyDoc->exists() ? ($agencyDoc->data()['agency_id'] ?? '') : '';
             
-            if ($agency_id) {
-                $creditManager->deduct_both_wallets(
-                    $agency_id,
-                    $account_id,
-                    $required_credits,
-                    $messageId ?? ('ghl_prov_' . bin2hex(random_bytes(4))),
-                    $desc
-                );
-            } else {
-                $creditManager->deduct_credits(
-                    $account_id,
-                    $required_credits,
-                    $messageId ?? ('ghl_prov_' . bin2hex(random_bytes(4))),
-                    $desc
-                );
-            }
+            $creditManager->deduct_subaccount_only(
+                $account_id,
+                $agency_id,
+                $required_credits,
+                $messageId ?? ('ghl_prov_' . bin2hex(random_bytes(4))),
+                $desc
+            );
         } catch (\Exception $e) {
             $errData = json_decode($e->getMessage(), true) ?: null;
-            if (($errData && isset($errData['error']) && $errData['error'] === 'insufficient_credits') || $e->getMessage() === 'Insufficient credits.') {
+            if ($errData && ($errData['error'] ?? '') === 'insufficient_credits') {
                 http_response_code(402);
                 echo json_encode([
                     'success' => false,
                     'error' => 'insufficient_credits',
-                    'message' => 'Insufficient credits.',
-                    'agency_balance' => $errData['agency_balance'] ?? null,
-                    'subaccount_balance' => $errData['subaccount_balance'] ?? null
+                    'message' => 'Your account has no credits. Please top up or request credits from your agency.',
+                    'subaccount_balance' => $errData['subaccount_balance'] ?? null,
                 ]);
             } else {
                 http_response_code(500);
