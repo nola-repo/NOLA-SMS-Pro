@@ -365,6 +365,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'accounts') {
     $results = [];
 
+    // Pre-fetch all agencies to resolve names efficiently
+    $agenciesRaw = $db->collection('ghl_tokens')->where('appType', '==', 'agency')->documents();
+    $agencyMap = [];
+    foreach ($agenciesRaw as $agencyDocRaw) {
+        if ($agencyDocRaw->exists()) {
+            $agData = $agencyDocRaw->data();
+            $comp = $agData['companyId'] ?? $agData['company_id'] ?? $agencyDocRaw->id();
+            $agencyMap[$comp] = $agData['company_name'] ?? $agData['companyName'] ?? $agData['agency_name'] ?? 'Unknown Agency';
+        }
+    }
+
+    // Pre-fetch subaccount tokens to get companyId if missing from integrations
+    // (This avoids querying inside the loop)
+    $subTokenDocs = $db->collection('ghl_tokens')->documents();
+    $subCompanyMap = [];
+    foreach ($subTokenDocs as $subTDoc) {
+        if ($subTDoc->exists()) {
+            $subData = $subTDoc->data();
+            if (($subData['appType'] ?? '') !== 'agency') {
+                $locIdStr = $subData['locationId'] ?? $subData['location_id'] ?? $subTDoc->id();
+                $subCompStr = $subData['companyId'] ?? $subData['company_id'] ?? null;
+                if ($locIdStr && $subCompStr) {
+                    $subCompanyMap[$locIdStr] = $subCompStr;
+                }
+            }
+        }
+    }
+
     // 1. Fetch all integrations (Master list)
     $integrationsRaw = $db->collection('integrations')->documents();
 
@@ -416,11 +444,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
             $locationName = 'Unknown Location';
         }
 
+        $companyId = $intData['companyId'] ?? $intData['company_id'] ?? ($subCompanyMap[$locId] ?? '');
+        $agencyName = $companyId && isset($agencyMap[$companyId]) ? $agencyMap[$companyId] : 'No Agency';
+
         $results[] = [
             'id' => $intDocId, // Expected by frontend mapping
             'data' => [
                 'location_id' => $locId,
                 'location_name' => $locationName,
+                'company_id' => $companyId,
+                'agency_name' => $agencyName,
                 'approved_sender_id' => $intData['approved_sender_id'] ?? null,
                 'nola_pro_api_key'   => $intData['nola_pro_api_key'] ?? null,
                 'api_key'            => $intData['api_key'] ?? null,

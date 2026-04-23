@@ -62,3 +62,24 @@ This document tracks the phased development of the NOLA SMS Pro backend, includi
 - [ ] GCP Cloud Scheduler job registration for all automated tasks.
 - [ ] **CORS Maintenance**: Audit all future `.php` endpoints to ensure `cors.php` is included.
 - [ ] **API Security**: Centralize `validate_api_request()` logic across all webhook entries.
+
+---
+
+## 🤝 Frontend Handoffs & Integrations (2026-04-21)
+
+This section tracks alignments and verified fixes completed internally or by the frontend team.
+
+### Credit & Billing System Alignments
+
+| Feature | Phase | Status |
+| :--- | :--- | :--- |
+| **Agency Credits UI**: `get_subaccounts.php` includes `credit_balance` | Phase 2 | Completed |
+| **Agency Master Balance Lock (402)**: `send_sms.php` respects lock | Phase 1 | Completed |
+| **Agency Wallet Endpoint**: `agency_wallet.php` creation verified | Phase 2 | Completed |
+
+### Admin & Auth Fixes
+
+| Feature | Phase | Status |
+| :--- | :--- | :--- |
+| **Admin All Subaccounts**: `admin_sender_requests.php` includes agency data | Phase 4 | Completed |
+| **Admin Users 401 Fix**: Frontend updated to pass `X-Webhook-Secret` | Phase 4 | Completed |
