@@ -7,10 +7,36 @@ use Google\Cloud\Core\Timestamp;
 class CreditManager
 {
     private $db;
+    private $globalPricing = null;
 
     public function __construct()
     {
         $this->db = get_firestore();
+    }
+
+    public function get_global_pricing(): array
+    {
+        if ($this->globalPricing !== null) {
+            return $this->globalPricing;
+        }
+
+        $docRef = $this->db->collection('admin_config')->document('global_pricing');
+        $snapshot = $docRef->snapshot();
+        
+        if ($snapshot->exists()) {
+            $data = $snapshot->data();
+            $this->globalPricing = [
+                'provider_cost' => (float)($data['provider_cost'] ?? 0.02),
+                'charged'       => (float)($data['charged'] ?? 0.05)
+            ];
+        } else {
+            $this->globalPricing = [
+                'provider_cost' => 0.02,
+                'charged'       => 0.05
+            ];
+        }
+
+        return $this->globalPricing;
     }
 
     /**
@@ -126,10 +152,14 @@ class CreditManager
         int    $amount,
         string $reference_id,
         string $description,
-        float  $provider_cost = 0.02,
-        float  $charged       = 0.05,
+        ?float $provider_cost = null,
+        ?float $charged       = null,
         string $provider      = 'semaphore'
     ): array {
+        $pricing = $this->get_global_pricing();
+        $provider_cost = $provider_cost !== null ? $provider_cost : $pricing['provider_cost'];
+        $charged = $charged !== null ? $charged : $pricing['charged'];
+
         if ($amount <= 0) {
             return ['success' => true, 'balance_after' => $this->get_balance($location_id)];
         }

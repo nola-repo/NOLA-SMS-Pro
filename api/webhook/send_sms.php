@@ -406,8 +406,8 @@ if ($usingFreeCredits) {
             $required_credits,
             $refId,
             $desc,
-            0.02,       // provider_cost
-            0.05,       // charged
+            null,       // provider_cost (dynamic via CreditManager)
+            null,       // charged       (dynamic via CreditManager)
             $provider
         );
     } catch (\Exception $e) {

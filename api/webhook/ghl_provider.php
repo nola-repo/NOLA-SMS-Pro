@@ -42,22 +42,8 @@ $SENDER_IDS             = $config['SENDER_IDS'];
 // MASTER_APPROVED_SENDERS is now loaded dynamically from Firestore (see below after $db init)
 
 // ── Authentication ──────────────────────────────────────────────────────────
-// GHL Conversation Provider may NOT send X-Webhook-Secret.
-// We do a soft check: if the header IS present it must be valid.
-// If it is absent, we fall through to validate via locationId + stored tokens.
-$receivedSecret = $_SERVER['HTTP_X_WEBHOOK_SECRET'] ?? '';
-if (!$receivedSecret) {
-    $headers = function_exists('getallheaders') ? getallheaders() : [];
-    foreach ($headers as $key => $value) {
-        if (strcasecmp($key, 'X-Webhook-Secret') === 0) {
-            $receivedSecret = $value;
-            break;
-        }
-    }
-}
-
-$expectedSecret = getenv('WEBHOOK_SECRET') ?: 'f7RkQ2pL9zV3tX8cB1nS4yW6';
-$secretValid = $receivedSecret && hash_equals($expectedSecret, $receivedSecret);
+// Requires X-Webhook-Secret to be set in the GHL Developer Portal
+validate_api_request();
 
 // ── Parse Payload ───────────────────────────────────────────────────────────
 $raw = file_get_contents('php://input');
@@ -76,25 +62,6 @@ $phone = $payload['phone'] ?? null;
 $message = $payload['message'] ?? $payload['body'] ?? null;
 $messageId = $payload['messageId'] ?? $payload['message_id'] ?? null;
 $msgType = strtoupper($payload['type'] ?? 'SMS');
-
-// ── Token-based auth fallback ────────────────────────────────────────────────
-// If no secret was provided, verify the request is legitimate by checking
-// that we have a stored GHL token for this locationId.
-if (!$secretValid) {
-    if (!$locationId) {
-        http_response_code(401);
-        echo json_encode(['success' => false, 'error' => 'Unauthorized — no valid secret or location']);
-        exit;
-    }
-
-    $db = get_firestore();
-    $tokenSnap = $db->collection('ghl_tokens')->document($locationId)->snapshot();
-    if (!$tokenSnap->exists()) {
-        http_response_code(401);
-        echo json_encode(['success' => false, 'error' => 'Unauthorized — location not registered']);
-        exit;
-    }
-}
 
 // ── Validate Required Fields ────────────────────────────────────────────────
 if (!$locationId) {
@@ -316,8 +283,8 @@ if ($usingFreeCredits) {
             $required_credits,
             $messageId ?? ('ghl_prov_' . bin2hex(random_bytes(4))),
             "SMS to {$normalizedPhone}",
-            0.02,
-            0.05,
+            null,
+            null,
             $provider
         );
     } catch (\Exception $e) {

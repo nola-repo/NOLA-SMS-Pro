@@ -5,6 +5,10 @@ $config = require __DIR__ . '/config.php';
 require __DIR__ . '/firestore_client.php';
 require_once __DIR__ . '/../services/GhlSyncService.php';
 
+require_once __DIR__ . '/../auth_helpers.php';
+// Requires ?secret= to be appended to the webhook URL in Semaphore
+validate_api_request();
+
 $raw = file_get_contents('php://input');
 $data = json_decode($raw, true);
 

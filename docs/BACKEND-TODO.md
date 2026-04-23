@@ -25,7 +25,7 @@ This document tracks the phased development of the NOLA SMS Pro backend, includi
 | Unified Payment Webhook: handle Stripe/LemonSqueezy/Xendit callbacks | Phase 3 | Pending |
 | Cloud Scheduler: Register auto-recharge cron (every 15 min) | Phase 3 | Completed |
 | **Phase 4: Admin Controls & Configuration** | | |
-| Dynamic Pricing Config: Move cost/rates from code to Firestore `admin_config` | Phase 4 | In Progress |
+| Dynamic Pricing Config: Move cost/rates from code to Firestore `admin_config` | Phase 4 | Completed |
 | Global Pricing UI: Admin panel to adjust margins and provider rates | Phase 4 | In Progress |
 | Database Optimization: Composite indexes for transactions and performance | Phase 4 | In Progress |
 | **Phase 5: Notifications & Monitoring** | | |
@@ -60,8 +60,8 @@ This document tracks the phased development of the NOLA SMS Pro backend, includi
 
 ## ⚙️ Infra / Maintenance
 - [ ] GCP Cloud Scheduler job registration for all automated tasks.
-- [ ] **CORS Maintenance**: Audit all future `.php` endpoints to ensure `cors.php` is included.
-- [ ] **API Security**: Centralize `validate_api_request()` logic across all webhook entries.
+- [x] **CORS Maintenance**: Audit all future `.php` endpoints to ensure `cors.php` is included.
+- [x] **API Security**: Centralize `validate_api_request()` logic across all webhook entries.
 
 ---
 

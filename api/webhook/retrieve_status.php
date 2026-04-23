@@ -8,6 +8,10 @@
  */
 
 require_once __DIR__ . '/../cors.php';
+require_once __DIR__ . '/../auth_helpers.php';
+// Requires ?secret= appended to Cloud Scheduler URL
+validate_api_request();
+
 date_default_timezone_set('UTC');
 
 // 1. Replaced filesystem logging with standard error_log for Google Cloud Logging compatibility

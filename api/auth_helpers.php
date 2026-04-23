@@ -20,6 +20,11 @@ function validate_api_request(): void
         }
     }
 
+    // Fallback: Check Query String for Webhooks that don't support custom headers (e.g Semaphore, CRON)
+    if (!$receivedSecret) {
+        $receivedSecret = $_GET['secret'] ?? $_GET['token'] ?? '';
+    }
+
     // Use the value from CLOUD-RUN-SECRETS.md as fallback if env not set
     $expectedSecret = getenv('WEBHOOK_SECRET') ?: 'f7RkQ2pL9zV3tX8cB1nS4yW6';
 
