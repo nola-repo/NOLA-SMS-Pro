@@ -26,7 +26,7 @@ This document tracks the phased development of the NOLA SMS Pro backend, includi
 | Cloud Scheduler: Register auto-recharge cron (every 15 min) | Phase 3 | Completed |
 | **Phase 4: Admin Controls & Configuration** | | |
 | Dynamic Pricing Config: Move cost/rates from code to Firestore `admin_config` | Phase 4 | Completed |
-| Global Pricing UI: Admin panel to adjust margins and provider rates | Phase 4 | In Progress |
+| Global Pricing UI: Admin panel to adjust margins and provider rates | Phase 4 | Completed |
 | Database Optimization: Composite indexes for transactions and performance | Phase 4 | In Progress |
 | **Phase 5: Notifications & Monitoring** | | |
 | Low Balance Alerts: Automated Email/SMS notifications on threshold | Phase 5 | Pending |

@@ -107,3 +107,14 @@
 |---|--------|-----|---------|-------------------|
 | 6.1 | OPTIONS | `/api/billing/agency_wallet.php` | `Origin: https://agency.nolasmspro.com`, `Access-Control-Request-Method: GET` | `204 No Content` |
 | 6.2 | GET | `/api/billing/agency_wallet.php` | `X-Webhook-Secret: wrong` | `401 {"status":"error","message":"Unauthorized Access"}` |
+
+---
+
+## 📁 Collection 7 — Admin Settings
+
+**Header:** `X-Webhook-Secret: {{webhook_secret}}`
+
+| # | Method | URL | Params / Body | Description |
+|---|--------|-----|---------------|-------------|
+| 7.1 | GET | `/api/admin_settings.php` | — | Fetch core system settings and global pricing (`provider_cost`, `charged_rate`) |
+| 7.2 | POST | `/api/admin_settings.php` | `{"provider_cost": 0.02, "charged_rate": 0.05}` | Update system settings and/or global pricing |
