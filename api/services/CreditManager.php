@@ -154,7 +154,8 @@ class CreditManager
         string $description,
         ?float $provider_cost = null,
         ?float $charged       = null,
-        string $provider      = 'semaphore'
+        string $provider      = 'semaphore',
+        array  $metadata      = []
     ): array {
         $pricing = $this->get_global_pricing();
         $provider_cost = $provider_cost !== null ? $provider_cost : $pricing['provider_cost'];
@@ -174,7 +175,7 @@ class CreditManager
 
         $result = $this->db->runTransaction(function ($transaction) use (
             $subaccountRef, $transactionRef, $amount, $reference_id, $description,
-            $agency_id, $provider_cost, $charged, $profit, $provider, $ts
+            $agency_id, $provider_cost, $charged, $profit, $provider, $ts, $metadata
         ) {
             $snap            = $transaction->snapshot($subaccountRef);
             $current_balance = $snap->exists() ? (int)($snap->data()['credit_balance'] ?? 0) : 0;
@@ -194,7 +195,7 @@ class CreditManager
                 'updated_at'     => $ts,
             ], ['merge' => true]);
 
-            $transaction->create($transactionRef, [
+            $transactionPayload = array_merge([
                 'transaction_id' => $transactionRef->id(),
                 'account_id'     => $subaccountRef->id(),
                 'agency_id'      => $agency_id,
@@ -210,7 +211,9 @@ class CreditManager
                 'reference_id'   => $reference_id,
                 'description'    => $description,
                 'created_at'     => $ts,
-            ]);
+            ], $metadata);
+
+            $transaction->create($transactionRef, $transactionPayload);
 
             return ['success' => true, 'balance_after' => $new_balance];
         });
@@ -248,7 +251,8 @@ class CreditManager
         string $description,
         ?float $provider_cost = null,
         ?float $charged       = null,
-        string $provider      = 'semaphore'
+        string $provider      = 'semaphore',
+        array  $metadata      = []
     ): array {
         $pricing = $this->get_global_pricing();
         $provider_cost = $provider_cost !== null ? $provider_cost : $pricing['provider_cost'];
@@ -272,7 +276,7 @@ class CreditManager
         $result = $this->db->runTransaction(function ($transaction) use (
             $subaccountRef, $agencyRef, $transactionRefSub, $transactionRefAgency, 
             $subaccount_amount, $agency_amount, $reference_id, $description,
-            $agency_id, $location_id, $provider_cost, $charged, $profit, $provider, $ts
+            $agency_id, $location_id, $provider_cost, $charged, $profit, $provider, $ts, $metadata
         ) {
             $snapSub    = $transaction->snapshot($subaccountRef);
             $snapAgency = $transaction->snapshot($agencyRef);
@@ -303,7 +307,7 @@ class CreditManager
             ], ['merge' => true]);
 
             // Subaccount Transaction Log
-            $transaction->create($transactionRefSub, [
+            $transactionPayloadSub = array_merge([
                 'transaction_id' => $transactionRefSub->id(),
                 'account_id'     => $subaccountRef->id(),
                 'agency_id'      => $agency_id,
@@ -319,10 +323,12 @@ class CreditManager
                 'reference_id'   => $reference_id,
                 'description'    => $description,
                 'created_at'     => $ts,
-            ]);
+            ], $metadata);
+
+            $transaction->create($transactionRefSub, $transactionPayloadSub);
 
             // Agency Transaction Log
-            $transaction->create($transactionRefAgency, [
+            $transactionPayloadAgency = array_merge([
                 'transaction_id' => $transactionRefAgency->id(),
                 'account_id'     => $agency_id,
                 'target_account' => $subaccountRef->id(),
@@ -338,7 +344,9 @@ class CreditManager
                 'reference_id'   => $reference_id,
                 'description'    => $description . " (via " . $subaccountRef->id() . ")",
                 'created_at'     => $ts,
-            ]);
+            ], $metadata);
+
+            $transaction->create($transactionRefAgency, $transactionPayloadAgency);
 
             return ['success' => true, 'balance_after' => $new_sub_balance, 'agency_balance_after' => $new_agency_balance];
         });

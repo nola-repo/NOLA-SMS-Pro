@@ -280,6 +280,22 @@ if ($usingFreeCredits) {
         $refId = $messageId ?? ('ghl_prov_' . bin2hex(random_bytes(4)));
         $desc = "SMS to {$normalizedPhone}";
 
+        $txMetadata = [
+            'message_body'    => $message,
+            'chars'           => mb_strlen($message, 'UTF-8'),
+            'to_number'       => $normalizedPhone,
+            'subaccount_name' => $intData['location_name'] ?? 'Unknown Subaccount',
+            'agency_name'     => 'Unknown Agency'
+        ];
+        if ($agency_id) {
+            $agSnap = $db->collection('ghl_tokens')->document($agency_id)->snapshot();
+            if ($agSnap->exists() && !empty($agSnap->data()['agency_name'])) {
+                $txMetadata['agency_name'] = $agSnap->data()['agency_name'];
+            } elseif ($agSnap->exists() && !empty($agSnap->data()['company_name'])) {
+                $txMetadata['agency_name'] = $agSnap->data()['company_name'];
+            }
+        }
+
         if ($agency_id) {
             $creditManager->deduct_agency_and_subaccount(
                 $account_id,
@@ -290,7 +306,8 @@ if ($usingFreeCredits) {
                 $desc,
                 null,
                 null,
-                $provider
+                $provider,
+                $txMetadata
             );
         } else {
             $creditManager->deduct_subaccount_only(
@@ -301,7 +318,8 @@ if ($usingFreeCredits) {
                 $desc,
                 null,
                 null,
-                $provider
+                $provider,
+                $txMetadata
             );
         }
     } catch (\Exception $e) {

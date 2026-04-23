@@ -75,6 +75,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             'profit'         => $data['profit']          ?? null,
             'provider'       => $data['provider']        ?? null,
             'description'    => $data['description']     ?? '',
+            'message_body'   => $data['message_body']    ?? 'Unavailable',
+            'chars'          => $data['chars']           ?? 'Unavailable',
+            'to_number'      => $data['to_number']       ?? 'Unavailable',
+            'agency_name'    => $data['agency_name']     ?? 'Unavailable',
+            'subaccount_name'=> $data['subaccount_name'] ?? 'Unavailable',
             'timestamp'      => isset($data['created_at'])
                 ? $data['created_at']->get()->format('Y-m-d\TH:i:s\Z')
                 : '',
