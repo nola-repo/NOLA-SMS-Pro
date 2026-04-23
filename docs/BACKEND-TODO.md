@@ -55,6 +55,7 @@ This document tracks the phased development of the NOLA SMS Pro backend, includi
 | **Dynamic Sender ID Resolution**: Trust Admin approvals in Firestore directly (Simplified resolution) | Phase 3 | **Completed** |
 | **GHL Feedback UI Fixes**: Replaced hardcoded "NOLA SMS Pro" with actual sender IDs in GHL response | Phase 3 | **Completed** |
 | **Firestore Master Whitelist**: Dynamic management of system-approved senders via Admin panel | Phase 3 | **Completed** |
+| **Transactions Payload Enhancements**: Injected message_body, chars, to_number, agency_name, and subaccount_name into Firestore logging context | Phase 3 | **Completed** |
 
 ---
 
@@ -76,6 +77,8 @@ This section tracks alignments and verified fixes completed internally or by the
 | **Agency Credits UI**: `get_subaccounts.php` includes `credit_balance` | Phase 2 | Completed |
 | **Agency Master Balance Lock (402)**: `send_sms.php` respects lock | Phase 1 | Completed |
 | **Agency Wallet Endpoint**: `agency_wallet.php` creation verified | Phase 2 | Completed |
+| **Unified Admin Subaccounts Endpoint**: `admin_sender_requests.php` supports `company_id` scoping & enriched metadata | Phase 2 | Completed |
+| **Transactions Logic Enhancement**: `transactions.php` & `get_credit_transactions.php` natively support `month` parameter formatting | Phase 2 | Completed |
 
 ### Admin & Auth Fixes
 

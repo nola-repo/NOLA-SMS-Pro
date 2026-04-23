@@ -30,6 +30,14 @@ try {
     $accountId = $locId ? ('ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId)) : 'default';
 
     $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 50;
+
+    $month = $_GET['month'] ?? null;
+    $monthStart = null;
+    $monthEnd   = null;
+    if ($month && preg_match('/^\d{4}-\d{2}$/', $month)) {
+        $monthStart = \DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $month . '-01 00:00:00');
+        $monthEnd   = $monthStart->modify('first day of next month');
+    }
     
     // Query credit_transactions for this account, sorted by newest first
     $transactionsRef = $db->collection('credit_transactions');
@@ -44,9 +52,20 @@ try {
         if ($doc->exists()) {
             $data = $doc->data();
             
+            // Month filter
+            if ($monthStart !== null) {
+                $createdAt = $data['created_at'] ?? null;
+                if ($createdAt instanceof \Google\Cloud\Core\Timestamp) {
+                    $dt = $createdAt->get();
+                    if ($dt->getTimestamp() < $monthStart->getTimestamp() || $dt->getTimestamp() >= $monthEnd->getTimestamp()) {
+                        continue;
+                    }
+                }
+            }
+
             // Format timestamp if present
             if (isset($data['created_at']) && $data['created_at'] instanceof \Google\Cloud\Core\Timestamp) {
-                $data['created_at'] = $data['created_at']->formatAsString();
+                $data['created_at'] = $data['created_at']->get()->format('Y-m-d\TH:i:s\Z');
             }
             
             $transactions[] = $data;

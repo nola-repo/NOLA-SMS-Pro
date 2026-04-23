@@ -59,6 +59,8 @@
 | 2.11 | GET | `?scope=agency&agency_id=X&page=1` | Agency-scoped transaction history |
 | 2.12 | GET | `?scope=subaccount&location_id=X&month=2026-04&page=1` | Subaccount-scoped history, optional month filter `YYYY-MM` |
 
+> **Note:** Payload now natively outputs `message_body`, `chars`, `to_number`, `agency_name`, and `subaccount_name` mapping fields for objects where `type == sms_usage`.
+
 ---
 
 ## 📁 Collection 3 — SMS / Webhooks
@@ -85,6 +87,7 @@
 | 4.3 | GET | `/api/contacts.php` | `?limit=50&offset=0` | List contacts |
 | 4.4 | POST | `/api/contacts.php` | `{"name":"John","phone":"09171234567","email":"j@x.com"}` | Create contact |
 | 4.5 | GET | `/api/credits.php` | — | Legacy global credit balance |
+| 4.6 | GET | `/api/get_credit_transactions.php` | `?limit=50&month=2026-04` | Subaccount detailed credit history, optional `month` filter |
 
 ---
 
@@ -118,3 +121,4 @@
 |---|--------|-----|---------------|-------------|
 | 7.1 | GET | `/api/admin_settings.php` | — | Fetch core system settings and global pricing (`provider_cost`, `charged_rate`) |
 | 7.2 | POST | `/api/admin_settings.php` | `{"provider_cost": 0.02, "charged_rate": 0.05}` | Update system settings and/or global pricing |
+| 7.3 | GET | `/api/admin_sender_requests.php` | `?action=accounts&company_id=xyz` | Unified subaccount list (with optional company_id scoping and enriched token metadata) |

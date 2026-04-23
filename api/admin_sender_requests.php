@@ -376,18 +376,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
         }
     }
 
-    // Pre-fetch subaccount tokens to get companyId if missing from integrations
+    // Pre-fetch subaccount tokens to get companyId and settings
     // (This avoids querying inside the loop)
     $subTokenDocs = $db->collection('ghl_tokens')->documents();
+    $subTokenMap = [];
     $subCompanyMap = [];
     foreach ($subTokenDocs as $subTDoc) {
         if ($subTDoc->exists()) {
             $subData = $subTDoc->data();
             if (($subData['appType'] ?? '') !== 'agency') {
                 $locIdStr = $subData['locationId'] ?? $subData['location_id'] ?? $subTDoc->id();
-                $subCompStr = $subData['companyId'] ?? $subData['company_id'] ?? null;
-                if ($locIdStr && $subCompStr) {
-                    $subCompanyMap[$locIdStr] = $subCompStr;
+                if ($locIdStr) {
+                    $subTokenMap[$locIdStr] = $subData;
+                    $subCompStr = $subData['companyId'] ?? $subData['company_id'] ?? null;
+                    if ($subCompStr) {
+                        $subCompanyMap[$locIdStr] = $subCompStr;
+                    }
                 }
             }
         }
@@ -445,7 +449,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
         }
 
         $companyId = $intData['companyId'] ?? $intData['company_id'] ?? ($subCompanyMap[$locId] ?? '');
+
+        $filterCompanyId = $_GET['company_id'] ?? null;
+        if ($filterCompanyId && $companyId !== $filterCompanyId) {
+            continue;
+        }
+
         $agencyName = $companyId && isset($agencyMap[$companyId]) ? $agencyMap[$companyId] : 'No Agency';
+
+        $tokData = $subTokenMap[$locId] ?? [];
 
         $results[] = [
             'id' => $intDocId, // Expected by frontend mapping
@@ -460,7 +472,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
                 'semaphore_api_key'  => $intData['semaphore_api_key'] ?? null,
                 'credit_balance'     => (int)($intData['credit_balance'] ?? 0),
                 'free_usage_count'   => (int)($intData['free_usage_count'] ?? 0),
-                'free_credits_total' => (int)($intData['free_credits_total'] ?? 10)
+                'free_credits_total' => (int)($intData['free_credits_total'] ?? 10),
+                'toggle_enabled'     => isset($tokData['toggle_enabled']) ? (bool)$tokData['toggle_enabled'] : true,
+                'rate_limit'         => (int)($tokData['rate_limit'] ?? 0),
+                'attempt_count'      => (int)($tokData['attempt_count'] ?? 0),
+                'last_reset_date'    => $tokData['last_reset_date'] ?? ''
             ]
         ];
     }
