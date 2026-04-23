@@ -25,7 +25,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     if ($status && $status !== 'all') {
         $query = $query->where('status', '==', $status);
     }
-    
+
     // Using orderby requires a composite index, we will do it clientside or simple query mapping
     $docs = $query->documents();
     $requests = [];
@@ -43,7 +43,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         ];
     }
 
-    usort($requests, function($a, $b) {
+    usort($requests, function ($a, $b) {
         return strcmp($b['created_at'], $a['created_at']);
     });
 
@@ -88,7 +88,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'resolved_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
             'resolved_by' => $userId
         ], ['merge' => true]);
-        
+
         echo json_encode(['success' => true]);
         exit;
     }
@@ -97,10 +97,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $agencyWalletRef = $db->collection('agency_wallet')->document($agency_id);
         $docId = (strpos($location_id, 'ghl_') === 0) ? $location_id : 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $location_id);
         $subaccountRef = $db->collection('integrations')->document($docId);
-        
+
         $txRefAgency = $db->collection('credit_transactions')->newDocument();
         $txRefSub = $db->collection('credit_transactions')->newDocument();
-        
+
         $ts = new \Google\Cloud\Core\Timestamp(new \DateTime());
 
         try {
@@ -130,7 +130,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (!$snapSub->exists()) {
                     $subData['created_at'] = $ts;
                     $transaction->set($subaccountRef, $subData);
-                } else {
+                }
+                else {
                     $transaction->set($subaccountRef, $subData, ['merge' => true]);
                 }
 
@@ -142,32 +143,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $transaction->create($txRefAgency, [
                     'transaction_id' => $txRefAgency->id(),
-                    'account_id'     => $agencyWalletRef->id(),
-                    'wallet_scope'   => 'agency',
-                    'type'           => 'credit_distribution',
-                    'deducted_from'  => 'agency',
-                    'amount'         => -$amount,
-                    'balance_after'  => $new_agency_balance,
-                    'description'    => 'Approved credit request',
-                    'created_at'     => $ts,
+                    'account_id' => $agencyWalletRef->id(),
+                    'wallet_scope' => 'agency',
+                    'type' => 'credit_distribution',
+                    'deducted_from' => 'agency',
+                    'amount' => -$amount,
+                    'balance_after' => $new_agency_balance,
+                    'description' => 'Approved credit request',
+                    'created_at' => $ts,
                 ]);
 
                 $transaction->create($txRefSub, [
                     'transaction_id' => $txRefSub->id(),
-                    'account_id'     => $subaccountRef->id(),
-                    'wallet_scope'   => 'subaccount',
-                    'type'           => 'request_approved',
-                    'deducted_from'  => 'agency',
-                    'amount'         => $amount,
-                    'balance_after'  => $new_sub_balance,
-                    'description'    => 'Approved credit request',
-                    'created_at'     => $ts,
+                    'account_id' => $subaccountRef->id(),
+                    'wallet_scope' => 'subaccount',
+                    'type' => 'request_approved',
+                    'deducted_from' => 'agency',
+                    'amount' => $amount,
+                    'balance_after' => $new_sub_balance,
+                    'description' => 'Approved credit request',
+                    'created_at' => $ts,
                 ]);
 
                 return [
-                    'success' => true,
-                    'agency_balance' => $new_agency_balance,
-                    'subaccount_balance' => $new_sub_balance
+                'success' => true,
+                'agency_balance' => $new_agency_balance,
+                'subaccount_balance' => $new_sub_balance
                 ];
             });
 
@@ -175,7 +176,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 http_response_code(400);
             }
             echo json_encode($result);
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             http_response_code(500);
             echo json_encode(['success' => false, 'error' => $e->getMessage()]);
         }
