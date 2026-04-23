@@ -277,16 +277,33 @@ if ($usingFreeCredits) {
         $agency_id = $agencyDoc->exists() ? ($agencyDoc->data()['agency_id'] ?? '') : '';
         $provider  = $usingOwnApiKey ? 'semaphore_custom' : 'semaphore';
 
-        $creditManager->deduct_subaccount_only(
-            $account_id,
-            $agency_id,
-            $required_credits,
-            $messageId ?? ('ghl_prov_' . bin2hex(random_bytes(4))),
-            "SMS to {$normalizedPhone}",
-            null,
-            null,
-            $provider
-        );
+        $refId = $messageId ?? ('ghl_prov_' . bin2hex(random_bytes(4)));
+        $desc = "SMS to {$normalizedPhone}";
+
+        if ($agency_id) {
+            $creditManager->deduct_agency_and_subaccount(
+                $account_id,
+                $agency_id,
+                $required_credits,
+                $required_credits,
+                $refId,
+                $desc,
+                null,
+                null,
+                $provider
+            );
+        } else {
+            $creditManager->deduct_subaccount_only(
+                $account_id,
+                '',
+                $required_credits,
+                $refId,
+                $desc,
+                null,
+                null,
+                $provider
+            );
+        }
     } catch (\Exception $e) {
         $errData = json_decode($e->getMessage(), true) ?: null;
         if ($errData && ($errData['error'] ?? '') === 'insufficient_credits') {

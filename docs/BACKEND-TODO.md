@@ -11,7 +11,7 @@ This document tracks the phased development of the NOLA SMS Pro backend, includi
 | **Phase 1: Core Wallet Infrastructure** | | |
 | Firestore Setup: `agency_wallet`, `integrations.credit_balance`, `credit_requests` | Phase 1 | Completed |
 | CreditManager Service: Atomic `deduct`, `add`, and `transfer` logic | Phase 1 | Completed |
-| Single-Deduction Architecture: Refactoring SMS flow to charge subaccounts directly | Phase 1 | Completed |
+| Dual-Deduction Architecture: Atomically charge Subaccount and Agency wallets | Phase 1 | Completed |
 | Agency Master Lock: Ability to pause subaccount sending via agency-level gate | Phase 1 | Completed |
 | **Phase 2: Wallet Management APIs** | | |
 | Agency Wallet API: Balance retrieval and gift/transfer credits | Phase 2 | Completed |

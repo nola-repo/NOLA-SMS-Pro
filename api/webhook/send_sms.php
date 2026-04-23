@@ -400,16 +400,30 @@ if ($usingFreeCredits) {
         // Tag own-API-key sends so the transaction log shows the correct provider
         $provider = $usingCustomSender ? 'semaphore_custom' : 'semaphore';
 
-        $creditManager->deduct_subaccount_only(
-            $account_id,
-            $agency_id,
-            $required_credits,
-            $refId,
-            $desc,
-            null,       // provider_cost (dynamic via CreditManager)
-            null,       // charged       (dynamic via CreditManager)
-            $provider
-        );
+        if ($agency_id) {
+            $creditManager->deduct_agency_and_subaccount(
+                $account_id,
+                $agency_id,
+                $required_credits, // Subaccount retail credits
+                $required_credits, // Agency wholesale/cost credits
+                $refId,
+                $desc,
+                null,              // provider_cost (dynamic via CreditManager)
+                null,              // charged       (dynamic via CreditManager)
+                $provider
+            );
+        } else {
+            $creditManager->deduct_subaccount_only(
+                $account_id,
+                '',
+                $required_credits,
+                $refId,
+                $desc,
+                null,
+                null,
+                $provider
+            );
+        }
     } catch (\Exception $e) {
         $errData = json_decode($e->getMessage(), true) ?: null;
         if ($errData && ($errData['error'] ?? '') === 'insufficient_credits') {
