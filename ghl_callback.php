@@ -710,10 +710,10 @@ if ($userExists) {
             </div>
         </div>
         <h1>Welcome Back!</h1>
-        <p class="subtitle"><b>{\$displayNameSafe}</b> is already connected.</p>
+        <p class="subtitle"><b>{$displayNameSafe}</b> is already connected.</p>
         
         <div style="display: flex; flex-direction: column; gap: 16px; margin-bottom: 32px;">
-            <a href="{\$dashboardUrl}" class="btn-primary">Open Dashboard &rarr;</a>
+            <a href="{$dashboardUrl}" class="btn-primary">Open Dashboard &rarr;</a>
         </div>
 HTML;
     render_page('Welcome Back!', $body);
@@ -733,7 +733,7 @@ HTML;
         <h1 style="font-size: 24px;">Connected!</h1>
         <p class="subtitle" style="margin-bottom: 24px; font-size: 14px;">
             NOLA SMS Pro is linked to:<br>
-            <strong style="color: #111;">📍 {\$displayNameSafe}</strong>
+            <strong style="color: #111;">📍 {$displayNameSafe}</strong>
         </p>
 
         <div style="background: rgba(255,255,255,0.8); border-radius: 20px; padding: 24px; text-align: left; border: 1px solid rgba(0,0,0,0.05); margin-bottom: 24px;">
@@ -766,10 +766,10 @@ HTML;
             </div>
         </div>
         <h1>Success!</h1>
-        <p class="subtitle">Account created and linked to <b>{\$displayNameSafe}</b></p>
+        <p class="subtitle">Account created and linked to <b>{$displayNameSafe}</b></p>
         
         <div style="display: flex; flex-direction: column; gap: 16px; margin-bottom: 32px;">
-            <a href="{\$dashboardUrl}" class="btn-primary">Open Dashboard</a>
+            <a href="{$dashboardUrl}" class="btn-primary">Open Dashboard</a>
             <div class="sender-toggle" onclick="toggleModal('sender-modal')">Request Sender ID</div>
         </div>
 
@@ -791,8 +791,8 @@ HTML;
                 phone: document.getElementById('reg-phone').value.trim(),
                 email: document.getElementById('reg-email').value.trim(),
                 password: document.getElementById('reg-pass').value,
-                location_id: {\$locationIdJs},
-                company_id: {\$companyIdJs}
+                location_id: {$locationIdJs},
+                company_id: {$companyIdJs}
             };
             
             const res = await fetch(API_BASE + '/api/auth/register-from-install', {
