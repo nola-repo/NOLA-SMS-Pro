@@ -217,16 +217,23 @@ function update_integration_record($db, ?string $locationId, string $email, stri
 {
     if (!$locationId) return;
 
-    $intDocId       = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
-    $integrationRef = $db->collection('integrations')->document($intDocId);
+    $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
+    try {
+        // ── NEW: Only set owner if not already recorded ──
+        $snap = $db->collection('integrations')->document($intDocId)->snapshot();
+        if ($snap->exists() && !empty($snap->data()['owner_email'])) {
+            return; // First registrant is the permanent owner — don't overwrite
+        }
+        // ─────────────────────────────────────────────────
 
-    if ($integrationRef->snapshot()->exists()) {
-        $integrationRef->set([
+        $db->collection('integrations')->document($intDocId)->set([
             'owner_email' => $email,
             'owner_name'  => $fullName,
             'owner_phone' => $phone,
             'updated_at'  => new \Google\Cloud\Core\Timestamp($now),
         ], ['merge' => true]);
+    } catch (Exception $e) {
+        error_log("register_from_install: failed to update integration owner for $locationId: " . $e->getMessage());
     }
 }
 

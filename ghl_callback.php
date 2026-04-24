@@ -681,64 +681,7 @@ catch (Exception $e) {
     render_error('Callback authorized, but failed to save tokens: ' . $e->getMessage());
 }
 
-// ─── Check for existing users record ──────────────────────────────────────────
-$userExists = false;
-try {
-    $usersRef  = $db->collection('users');
-    $queryField = ($userType === 'Location') ? 'active_location_id' : 'company_id';
-    $userQuery  = $usersRef->where($queryField, '=', (string)$id)->limit(1)->documents();
-
-    foreach ($userQuery as $doc) {
-        if ($doc->exists()) {
-            $userData = $doc->data(); // Use $userData — not $data — to avoid shadowing OAuth response
-
-            // Only treat as "existing" when ALL required profile fields are present
-            $hasEmail = !empty($userData['email']);
-            $hasPhone = !empty($userData['phone']);
-            $hasName  = !empty($userData['firstName']) || !empty($userData['name']);
-            $hasPass  = !empty($userData['password_hash']);
-
-            error_log(sprintf(
-                '[GHL_CALLBACK] User check for %s=%s | email=%s phone=%s name=%s pass=%s → exists=%s',
-                $queryField, $id,
-                $hasEmail ? 'Y' : 'N',
-                $hasPhone ? 'Y' : 'N',
-                $hasName  ? 'Y' : 'N',
-                $hasPass  ? 'Y' : 'N',
-                ($hasEmail && $hasPhone && $hasName && $hasPass) ? 'true' : 'false'
-            ));
-
-            if ($hasEmail && $hasPhone && $hasName && $hasPass) {
-                $userExists = true;
-            }
-            break;
-        } else {
-            error_log("[GHL_CALLBACK] No users doc found for {$queryField}={$id} — will show registration form.");
-        }
-    }
-} catch (Exception $e) {
-    error_log("Failed to check existing user: " . $e->getMessage());
-}
-
 // ─── Render Page ───────────────────────────────────────────────────────
-if ($userExists) {
-    // Re-install / existing account view
-    $body = <<<HTML
-        <div class="success-ring">
-            <div class="success-icon">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-            </div>
-        </div>
-        <h1>Welcome Back!</h1>
-        <p class="subtitle"><b>{$displayNameSafe}</b> is already connected.</p>
-
-        <div style="display: flex; flex-direction: column; gap: 16px; margin-bottom: 32px;">
-            <a href="{$dashboardUrl}" class="btn-primary">Open Dashboard &rarr;</a>
-        </div>
-HTML;
-    render_page('Welcome Back!', $body);
-    exit;
-}
 
 // First-time install view
 $companyIdJs  = ($userType === 'Company') ? "'" . addslashes((string)$id) . "'" : 'null';
@@ -803,7 +746,65 @@ $formBody = <<<HTML
         <div onclick="toggleModal('how-modal')" class="tutorial-link">How it works &amp; Credits</div>
     </div>
 
+    <!-- Welcome Back: shown by JS if localStorage already has a matching session -->
+    <div id="welcome-back-view" style="display:none; text-align:center;">
+        <div class="success-ring">
+            <div class="success-icon">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+        </div>
+        <h1 id="wb-name">Welcome back!</h1>
+        <p class="subtitle"><b>{$displayNameSafe}</b> is already connected to your account.</p>
+
+        <div style="display:flex; flex-direction:column; gap:14px; margin-bottom:28px;">
+            <a href="{$dashboardUrl}" class="btn-primary">Open Dashboard &rarr;</a>
+        </div>
+
+        <p style="font-size:12px; color:#a1a1aa; margin-top:8px;">
+            Not you? 
+            <span onclick="showRegistrationForm()" 
+                  style="color:#2b83fa; font-weight:700; cursor:pointer;">
+                Register a different account
+            </span>
+        </p>
+    </div>
+
     <script>
+    // ── Client-side "Welcome Back" detection ─────────────────────────────────────
+    (function checkReturningUser() {
+        try {
+            const token   = localStorage.getItem('nola_token');
+            const rawUser = localStorage.getItem('nola_user');
+            if (!token || !rawUser) return; // No session — show the form
+
+            const profile = JSON.parse(rawUser);
+
+            // PHP injects these — the current install's IDs
+            const currentLocationId = {$locationIdJs};  // null for company installs
+            const currentCompanyId  = {$companyIdJs};   // null for location installs
+
+            // Check if this browser already registered for this exact location/company
+            const locationMatch = currentLocationId && profile.location_id === currentLocationId;
+            const companyMatch  = currentCompanyId  && profile.company_id  === currentCompanyId;
+
+            if (!locationMatch && !companyMatch) return; // Different account — show form
+
+            // Same location/company AND we have a token → this device already registered
+            const firstName = profile.firstName || 'there';
+            document.getElementById('registration-view').style.display = 'none';
+            document.getElementById('welcome-back-view').style.display  = 'block';
+            document.getElementById('wb-name').textContent = 'Welcome back, ' + firstName + '!';
+
+        } catch (e) {
+            // Silently fail — default to showing the form
+        }
+    })();
+
+    function showRegistrationForm() {
+        document.getElementById('welcome-back-view').style.display  = 'none';
+        document.getElementById('registration-view').style.display  = 'block';
+    }
+
     async function handleInstallRegister(e) {
         e.preventDefault();
         const btn    = document.getElementById('reg-submit-btn');
@@ -844,8 +845,24 @@ $formBody = <<<HTML
             if (data.token) {
                 localStorage.setItem('nola_token', data.token);
             }
+
             if (data.user) {
-                localStorage.setItem('nola_user', JSON.stringify(data.user));
+                const profile = {
+                    firstName:  data.user.firstName || '',
+                    lastName:   data.user.lastName  || '',
+                    email:      data.user.email     || '',
+                    phone:      data.user.phone     || '',
+                    location_id: data.location_id  || null,
+                    company_id:  data.company_id   || null,
+                };
+
+                // Always write nola_user (used for "Welcome Back" detection on next install)
+                localStorage.setItem('nola_user', JSON.stringify(profile));
+
+                // For agency installs, ALSO write nola_agency (used by agency portal pre-fill)
+                if (data.role === 'agency') {
+                    localStorage.setItem('nola_agency', JSON.stringify(profile));
+                }
             }
 
             // Show success card
