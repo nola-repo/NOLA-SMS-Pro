@@ -711,19 +711,20 @@ if ($userExists) {
         </div>
         <h1>Welcome Back!</h1>
         <p class="subtitle"><b>{$displayNameSafe}</b> is already connected.</p>
-        
+
         <div style="display: flex; flex-direction: column; gap: 16px; margin-bottom: 32px;">
             <a href="{$dashboardUrl}" class="btn-primary">Open Dashboard &rarr;</a>
         </div>
 HTML;
     render_page('Welcome Back!', $body);
     exit;
-} else {
-    // First-time install view
-    $companyIdJs = ($userType === 'Company') ? "'" . addslashes((string)$id) . "'" : 'null';
-    $locationIdJs = ($userType === 'Location') ? "'" . addslashes((string)$id) . "'" : 'null';
+}
 
-    $formBody = <<<HTML
+// First-time install view
+$companyIdJs  = ($userType === 'Company') ? "'" . addslashes((string)$id) . "'" : 'null';
+$locationIdJs = ($userType === 'Location') ? "'" . addslashes((string)$id) . "'" : 'null';
+
+$formBody = <<<HTML
     <div id="registration-view">
         <div class="success-ring" style="margin-bottom: 16px;">
             <div class="success-icon" style="width: 56px; height: 56px;">
@@ -733,27 +734,33 @@ HTML;
         <h1 style="font-size: 24px;">Connected!</h1>
         <p class="subtitle" style="margin-bottom: 24px; font-size: 14px;">
             NOLA SMS Pro is linked to:<br>
-            <strong style="color: #111;">📍 {$displayNameSafe}</strong>
+            <strong style="color: #111;">&#128205; {$displayNameSafe}</strong>
         </p>
 
         <div style="background: rgba(255,255,255,0.8); border-radius: 20px; padding: 24px; text-align: left; border: 1px solid rgba(0,0,0,0.05); margin-bottom: 24px;">
             <h3 style="font-size: 16px; font-weight: 800; color: #111; margin-bottom: 16px;">Complete Your Account</h3>
-            
+
             <form id="install-register-form" onsubmit="handleInstallRegister(event)">
-                <div id="register-error" class="hidden" style="color:#ef4444; font-size:12px; font-weight:600; margin-bottom:16px;"></div>
-                
+                <div id="register-error" class="hidden" style="color:#ef4444; font-size:12px; font-weight:600; background:#fef2f2; border:1px solid #fecaca; border-radius:10px; padding:10px; margin-bottom:16px;"></div>
+
                 <label>Full Name</label>
-                <input id="reg-name" type="text" placeholder="John Doe" required>
-                
+                <input id="reg-name" type="text" placeholder="John Doe" required autocomplete="name">
+
                 <label>Phone Number</label>
-                <input id="reg-phone" type="tel" placeholder="+1234567890" required>
-                
+                <input id="reg-phone" type="tel" placeholder="+1234567890" required autocomplete="tel">
+
                 <label>Email Address</label>
-                <input id="reg-email" type="email" placeholder="john@example.com" required>
-                
+                <input id="reg-email" type="email" placeholder="john@example.com" required autocomplete="email">
+
                 <label>Password</label>
-                <input id="reg-pass" type="password" placeholder="Min 8 characters" minlength="8" required>
-                
+                <input id="reg-pass" type="password" placeholder="Min 8 characters" minlength="8" required autocomplete="new-password">
+
+                <label style="margin-top: 4px;">Subaccount</label>
+                <input type="text" value="{$displayNameSafe}" readonly style="background:#f0f4f8; color:#6e6e73; cursor:default;">
+
+                <label>Location ID</label>
+                <input type="text" value="{$idSafe}" readonly style="background:#f0f4f8; color:#6e6e73; cursor:default; font-size:12px; font-family:monospace;">
+
                 <button type="submit" id="reg-submit-btn" class="btn-submit" style="margin-top: 8px;">Complete Setup &rarr;</button>
             </form>
         </div>
@@ -765,52 +772,66 @@ HTML;
                 <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
             </div>
         </div>
-        <h1>Success!</h1>
+        <h1>You're All Set!</h1>
         <p class="subtitle">Account created and linked to <b>{$displayNameSafe}</b></p>
-        
+
         <div style="display: flex; flex-direction: column; gap: 16px; margin-bottom: 32px;">
-            <a href="{$dashboardUrl}" class="btn-primary">Open Dashboard</a>
+            <a id="dashboard-btn" href="{$dashboardUrl}" class="btn-primary">Open Dashboard &rarr;</a>
             <div class="sender-toggle" onclick="toggleModal('sender-modal')">Request Sender ID</div>
         </div>
 
-        <div onclick="toggleModal('how-modal')" class="tutorial-link">How it works & Credits</div>
+        <div onclick="toggleModal('how-modal')" class="tutorial-link">How it works &amp; Credits</div>
     </div>
-    
+
     <script>
     async function handleInstallRegister(e) {
         e.preventDefault();
-        const btn = document.getElementById('reg-submit-btn');
+        const btn    = document.getElementById('reg-submit-btn');
         const errDiv = document.getElementById('register-error');
         btn.disabled = true;
-        btn.innerHTML = 'Setting up...';
+        btn.innerHTML = 'Setting up&hellip;';
         errDiv.classList.add('hidden');
-        
+
         try {
             const payload = {
-                full_name: document.getElementById('reg-name').value.trim(),
-                phone: document.getElementById('reg-phone').value.trim(),
-                email: document.getElementById('reg-email').value.trim(),
-                password: document.getElementById('reg-pass').value,
+                full_name:   document.getElementById('reg-name').value.trim(),
+                phone:       document.getElementById('reg-phone').value.trim(),
+                email:       document.getElementById('reg-email').value.trim(),
+                password:    document.getElementById('reg-pass').value,
                 location_id: {$locationIdJs},
-                company_id: {$companyIdJs}
+                company_id:  {$companyIdJs}
             };
-            
-            const res = await fetch(API_BASE + '/api/auth/register-from-install', {
-                method: 'POST',
+
+            // Client-side validation before hitting the network
+            const missing = [];
+            if (!payload.full_name) missing.push('Full Name');
+            if (!payload.phone)     missing.push('Phone Number');
+            if (!payload.email)     missing.push('Email Address');
+            if (!payload.password)  missing.push('Password');
+            if (missing.length) throw new Error('Please fill in: ' + missing.join(', '));
+            if (payload.password.length < 8) throw new Error('Password must be at least 8 characters.');
+
+            const res  = await fetch(API_BASE + '/api/auth/register-from-install', {
+                method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+                body:    JSON.stringify(payload)
             });
-            
+
             const data = await res.json();
-            
-            if (!res.ok) {
-                throw new Error(data.error || 'Registration failed');
+            if (!res.ok) throw new Error(data.error || 'Registration failed. Please try again.');
+
+            // Cache credentials so checkout + dashboard work without a second login call
+            if (data.token) {
+                localStorage.setItem('nola_token', data.token);
             }
-            
-            // Success
+            if (data.user) {
+                localStorage.setItem('nola_user', JSON.stringify(data.user));
+            }
+
+            // Show success card
             document.getElementById('registration-view').classList.add('hidden');
             document.getElementById('success-view').classList.remove('hidden');
-            
+
         } catch (err) {
             errDiv.textContent = err.message;
             errDiv.classList.remove('hidden');
@@ -821,5 +842,4 @@ HTML;
     </script>
 HTML;
 
-    render_page('Complete Setup', $formBody);
-}
+render_page('Complete Setup', $formBody);

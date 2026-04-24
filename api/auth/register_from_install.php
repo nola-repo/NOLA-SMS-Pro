@@ -2,11 +2,16 @@
 /**
  * POST /api/auth/register-from-install
  * Handles First-Run Registration from the GHL Marketplace installation callback.
+ *
+ * Validates all required fields individually and returns a JWT + user profile
+ * on both new (201) and existing-email-link (200) paths, so the install page
+ * can write to localStorage immediately (no second login call needed).
  */
 
 require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 require __DIR__ . '/../webhook/firestore_client.php';
+require_once __DIR__ . '/../jwt_helper.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
@@ -17,97 +22,117 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 $input = json_decode(file_get_contents('php://input'), true);
 
 $fullName   = trim($input['full_name'] ?? '');
-$phone      = trim($input['phone'] ?? '');
+$phone      = trim($input['phone']     ?? '');
 $email      = strtolower(trim($input['email'] ?? ''));
-$password   = $input['password'] ?? '';
+$password   = $input['password']    ?? '';
 $locationId = $input['location_id'] ?? null;
-$companyId  = $input['company_id'] ?? null;
+$companyId  = $input['company_id']  ?? null;
 
-if (!$fullName || !$phone || !$email || !$password) {
+// ── Per-field validation (return all errors at once) ─────────────────────────
+$errors = [];
+if (!$fullName)  $errors[] = 'Full name is required.';
+if (!$phone)     $errors[] = 'Phone number is required.';
+if (!$email)     $errors[] = 'Email address is required.';
+elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) $errors[] = 'A valid email address is required.';
+if (!$password)  $errors[] = 'Password is required.';
+elseif (strlen($password) < 8) $errors[] = 'Password must be at least 8 characters.';
+if (!$locationId && !$companyId) $errors[] = 'A location_id or company_id is required.';
+
+if (!empty($errors)) {
     http_response_code(422);
-    echo json_encode(['error' => 'All fields are required.']);
+    echo json_encode(['error' => implode(' ', $errors)]);
     exit;
 }
 
-if (strlen($password) < 8) {
-    http_response_code(422);
-    echo json_encode(['error' => 'Password must be at least 8 characters.']);
-    exit;
-}
-
-// Split full name
+// Split full name → firstName + lastName
 $nameParts = explode(' ', $fullName, 2);
 $firstName = $nameParts[0];
 $lastName  = $nameParts[1] ?? '';
 
+$jwtSecret       = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
+$isLocationLevel = !empty($locationId);
+
 try {
-    $db = get_firestore();
+    $db  = get_firestore();
     $now = new DateTimeImmutable();
 
-    // 1. Check if email already exists
-    $usersRef = $db->collection('users');
+    // ── 1. Check if email already exists ─────────────────────────────────────
+    $usersRef      = $db->collection('users');
     $existingQuery = $usersRef->where('email', '=', $email)->limit(1)->documents();
-    $existingDoc = null;
-    $existingUserId = null;
+    $existingDoc   = null;
+    $existingId    = null;
 
-    foreach ($existingQuery as $docSnap) {
-        if ($docSnap->exists()) {
-            $existingDoc = $docSnap->data();
-            $existingUserId = $docSnap->id();
+    foreach ($existingQuery as $snap) {
+        if ($snap->exists()) {
+            $existingDoc = $snap->data();
+            $existingId  = $snap->id();
             break;
         }
     }
 
-    $isLocationLevel = !empty($locationId);
-
+    // ── 2a. EXISTING ACCOUNT — link location / company ────────────────────────
     if ($existingDoc) {
-        // User exists
         $updates = ['updated_at' => new \Google\Cloud\Core\Timestamp($now)];
-        $linked = false;
-        
+
         if ($isLocationLevel) {
             $updates['active_location_id'] = $locationId;
-            if (($existingDoc['active_location_id'] ?? '') !== $locationId) {
-                // Link this new location to the existing account
-                $linked = true;
-            }
-        } else if (!empty($companyId)) {
+        } elseif (!empty($companyId)) {
             $updates['company_id'] = $companyId;
-            if (($existingDoc['company_id'] ?? '') !== $companyId) {
-                $linked = true;
-            }
         }
 
-        $usersRef->document($existingUserId)->set($updates, ['merge' => true]);
+        $usersRef->document($existingId)->set($updates, ['merge' => true]);
 
-        // Proceed to update integration record
+        // Sync integration record & GHL Custom Values
         update_integration_record($db, $locationId, $email, $fullName, $phone, $now);
+        _sync_owner_to_ghl($db, $locationId, $fullName, $email, $phone);
 
+        $role      = $existingDoc['role']       ?? 'user';
+        $linkedCo  = $existingDoc['company_id'] ?? $companyId ?? null;
+        $linkedLoc = $isLocationLevel ? $locationId : ($existingDoc['active_location_id'] ?? null);
+
+        $token = jwt_sign([
+            'sub'        => $existingId,
+            'email'      => $email,
+            'role'       => $role,
+            'company_id' => $linkedCo,
+        ], $jwtSecret, 28800); // 8 hours
+
+        http_response_code(200);
         echo json_encode([
-            'status' => 'linked',
-            'message' => 'Account already exists. Location linked.'
+            'status'      => 'linked',
+            'message'     => 'Account already exists. Location linked.',
+            'token'       => $token,
+            'role'        => $role,
+            'location_id' => $linkedLoc,
+            'company_id'  => $linkedCo,
+            'user' => [
+                'firstName'   => $existingDoc['firstName'] ?? $firstName,
+                'lastName'    => $existingDoc['lastName']  ?? $lastName,
+                'email'       => $email,
+                'phone'       => $existingDoc['phone']     ?? $phone,
+                'location_id' => $linkedLoc,
+            ],
         ]);
         exit;
     }
 
-    // 2. Create new user
-    $role = ($isLocationLevel) ? 'user' : 'agency';
+    // ── 2b. NEW ACCOUNT — create users document ───────────────────────────────
+    $role         = $isLocationLevel ? 'user' : 'agency';
     $passwordHash = password_hash($password, PASSWORD_BCRYPT);
-    
-    // We create a new doc ref
-    $newUserDoc = $usersRef->newDocument();
-    
+    $newUserDoc   = $usersRef->newDocument();
+
     $userData = [
-        'firstName' => $firstName,
-        'lastName' => $lastName,
-        'email' => $email,
-        'phone' => $phone,
+        'firstName'     => $firstName,
+        'lastName'      => $lastName,
+        'name'          => $fullName,    // legacy full-name field for older code paths
+        'email'         => $email,
+        'phone'         => $phone,
         'password_hash' => $passwordHash,
-        'role' => $role,
-        'active' => true,
-        'source' => 'marketplace_install',
-        'createdAt' => new \Google\Cloud\Core\Timestamp($now),
-        'updated_at' => new \Google\Cloud\Core\Timestamp($now)
+        'role'          => $role,
+        'active'        => true,
+        'source'        => 'marketplace_install',
+        'created_at'    => new \Google\Cloud\Core\Timestamp($now),
+        'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
     ];
 
     if ($isLocationLevel) {
@@ -115,24 +140,41 @@ try {
     }
     if (!empty($companyId)) {
         $userData['company_id'] = $companyId;
-        // Also if it's an agency register, agency_id might also be company_id for some backwards compat
         if ($role === 'agency') {
-            $userData['agency_id'] = $companyId;
+            $userData['agency_id'] = $companyId; // backwards compat
         }
     }
 
     $newUserDoc->set($userData);
+    $newUserId = $newUserDoc->id();
 
-    // 3. Update integrations record if location level
+    // Sync integration record & GHL Custom Values
     update_integration_record($db, $locationId, $email, $fullName, $phone, $now);
-
-    // 4. Write owner info to GHL Custom Values
     _sync_owner_to_ghl($db, $locationId, $fullName, $email, $phone);
+
+    // Return JWT immediately so the install page can cache auth without a second login
+    $token = jwt_sign([
+        'sub'        => $newUserId,
+        'email'      => $email,
+        'role'       => $role,
+        'company_id' => $companyId ?? null,
+    ], $jwtSecret, 28800);
 
     http_response_code(201);
     echo json_encode([
-        'status' => 'success',
-        'message' => 'Account ready.'
+        'status'      => 'success',
+        'message'     => 'Account ready.',
+        'token'       => $token,
+        'role'        => $role,
+        'location_id' => $locationId,
+        'company_id'  => $companyId ?? null,
+        'user' => [
+            'firstName'   => $firstName,
+            'lastName'    => $lastName,
+            'email'       => $email,
+            'phone'       => $phone,
+            'location_id' => $locationId,
+        ],
     ]);
 
 } catch (Exception $e) {
@@ -140,44 +182,47 @@ try {
     echo json_encode(['error' => 'Registration failed: ' . $e->getMessage()]);
 }
 
-function update_integration_record($db, $locationId, $email, $fullName, $phone, $now) {
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Write owner contact info into the integrations/<intDocId> document.
+ */
+function update_integration_record($db, ?string $locationId, string $email, string $fullName, string $phone, DateTimeImmutable $now): void
+{
     if (!$locationId) return;
 
-    $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locationId);
+    $intDocId       = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
     $integrationRef = $db->collection('integrations')->document($intDocId);
-    
+
     if ($integrationRef->snapshot()->exists()) {
         $integrationRef->set([
             'owner_email' => $email,
             'owner_name'  => $fullName,
             'owner_phone' => $phone,
-            'updated_at'  => new \Google\Cloud\Core\Timestamp($now)
+            'updated_at'  => new \Google\Cloud\Core\Timestamp($now),
         ], ['merge' => true]);
     }
 }
 
-function _sync_owner_to_ghl($db, string $locationId, string $fullName, string $email, string $phone): void
+/**
+ * Write owner_name / owner_email / owner_phone to GHL Location Custom Values.
+ * Creates the custom field definitions if they don't already exist.
+ * Errors are logged but never bubble up — this is best-effort.
+ */
+function _sync_owner_to_ghl($db, ?string $locationId, string $fullName, string $email, string $phone): void
 {
     if (!$locationId) return;
 
-    // 1. Retrieve the access token from Firestore integrations
     $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
     try {
-        $intSnap = $db->collection('integrations')->document($intDocId)->snapshot();
+        $intSnap     = $db->collection('integrations')->document($intDocId)->snapshot();
         if (!$intSnap->exists()) return;
         $accessToken = $intSnap->data()['access_token'] ?? null;
         if (!$accessToken) return;
     } catch (Exception $e) {
-        error_log("_sync_owner_to_ghl: failed to fetch integration for $locationId: " . $e->getMessage());
+        error_log("[register_from_install] _sync_owner_to_ghl: fetch integration failed for $locationId: " . $e->getMessage());
         return;
     }
-
-    // 2. Fields to upsert: [GHL fieldKey => value]
-    $fields = [
-        'owner_name'  => $fullName,
-        'owner_email' => $email,
-        'owner_phone' => $phone,
-    ];
 
     $headers = [
         'Authorization: Bearer ' . $accessToken,
@@ -186,13 +231,17 @@ function _sync_owner_to_ghl($db, string $locationId, string $fullName, string $e
         'Version: 2021-07-28',
     ];
 
+    $fields = [
+        'owner_name'  => $fullName,
+        'owner_email' => $email,
+        'owner_phone' => $phone,
+    ];
+
     foreach ($fields as $fieldKey => $value) {
         try {
-            // 3a. Get or create the custom field
             $fieldId = _ghl_get_or_create_custom_field($locationId, $fieldKey, $headers);
             if (!$fieldId) continue;
 
-            // 3b. Set the custom value
             $ch = curl_init("https://services.leadconnectorhq.com/locations/{$locationId}/customValues/{$fieldId}");
             curl_setopt_array($ch, [
                 CURLOPT_RETURNTRANSFER => true,
@@ -203,19 +252,20 @@ function _sync_owner_to_ghl($db, string $locationId, string $fullName, string $e
             curl_exec($ch);
             curl_close($ch);
         } catch (Exception $e) {
-            error_log("_sync_owner_to_ghl: failed to set $fieldKey for $locationId: " . $e->getMessage());
+            error_log("[register_from_install] _sync_owner_to_ghl: failed to set $fieldKey for $locationId: " . $e->getMessage());
         }
     }
 }
 
+/**
+ * Return the GHL custom field ID for $fieldKey on $locationId.
+ * Creates the field (name, fieldKey, dataType: TEXT) if it doesn't exist.
+ */
 function _ghl_get_or_create_custom_field(string $locationId, string $fieldKey, array $headers): ?string
 {
-    // GET existing fields
+    // 1. Look for existing field
     $ch = curl_init("https://services.leadconnectorhq.com/locations/{$locationId}/customFields");
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_HTTPHEADER     => $headers,
-    ]);
+    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_HTTPHEADER => $headers]);
     $resp = curl_exec($ch);
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
@@ -229,7 +279,7 @@ function _ghl_get_or_create_custom_field(string $locationId, string $fieldKey, a
         }
     }
 
-    // Field doesn't exist — create it
+    // 2. Create the field
     $nameMap = [
         'owner_name'  => 'Owner Name',
         'owner_email' => 'Owner Email',
@@ -241,9 +291,9 @@ function _ghl_get_or_create_custom_field(string $locationId, string $fieldKey, a
         CURLOPT_POST           => true,
         CURLOPT_HTTPHEADER     => $headers,
         CURLOPT_POSTFIELDS     => json_encode([
-            'name'      => $nameMap[$fieldKey] ?? $fieldKey,
-            'fieldKey'  => $fieldKey,
-            'dataType'  => 'TEXT',
+            'name'     => $nameMap[$fieldKey] ?? $fieldKey,
+            'fieldKey' => $fieldKey,
+            'dataType' => 'TEXT',
         ]),
     ]);
     $resp = curl_exec($ch);
