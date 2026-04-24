@@ -692,7 +692,17 @@ try {
     }
     foreach ($userQuery as $doc) {
         if ($doc->exists()) {
-            $userExists = true;
+            $data = $doc->data();
+            
+            // Check if profile is actually complete
+            $hasEmail = !empty($data['email']);
+            $hasPhone = !empty($data['phone']);
+            $hasName  = !empty($data['firstName']) || !empty($data['name']);
+            $hasPass  = !empty($data['password_hash']);
+            
+            if ($hasEmail && $hasPhone && $hasName && $hasPass) {
+                $userExists = true;
+            }
             break;
         }
     }

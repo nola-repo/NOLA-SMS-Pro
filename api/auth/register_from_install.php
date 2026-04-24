@@ -70,7 +70,23 @@ try {
         }
     }
 
-    // ── 2a. EXISTING ACCOUNT — link location / company ────────────────────────
+    // ── 1b. If no email match, check for an INCOMPLETE doc by location_id ────
+    if (!$existingDoc && $isLocationLevel) {
+        $locQuery = $usersRef->where('active_location_id', '=', $locationId)->limit(1)->documents();
+        foreach ($locQuery as $snap) {
+            if ($snap->exists()) {
+                $docData = $snap->data();
+                // If the doc is missing core info, we will treat it as "existing" to finish it
+                if (empty($docData['email']) || empty($docData['password_hash'])) {
+                    $existingDoc = $docData;
+                    $existingId  = $snap->id();
+                }
+                break;
+            }
+        }
+    }
+
+    // ── 2a. EXISTING ACCOUNT — link location / complete profile ───────────────
     if ($existingDoc) {
         $updates = ['updated_at' => new \Google\Cloud\Core\Timestamp($now)];
 
@@ -78,6 +94,16 @@ try {
             $updates['active_location_id'] = $locationId;
         } elseif (!empty($companyId)) {
             $updates['company_id'] = $companyId;
+        }
+
+        // If the account was incomplete, populate the missing fields with the form data
+        if (empty($existingDoc['email']) || empty($existingDoc['password_hash'])) {
+            $updates['email']         = $email;
+            $updates['phone']         = $phone;
+            $updates['firstName']     = $firstName;
+            $updates['lastName']      = $lastName;
+            $updates['name']          = $fullName;
+            $updates['password_hash'] = password_hash($password, PASSWORD_BCRYPT);
         }
 
         $usersRef->document($existingId)->set($updates, ['merge' => true]);
@@ -100,16 +126,16 @@ try {
         http_response_code(200);
         echo json_encode([
             'status'      => 'linked',
-            'message'     => 'Account already exists. Location linked.',
+            'message'     => 'Account setup complete.',
             'token'       => $token,
             'role'        => $role,
             'location_id' => $linkedLoc,
             'company_id'  => $linkedCo,
             'user' => [
-                'firstName'   => $existingDoc['firstName'] ?? $firstName,
-                'lastName'    => $existingDoc['lastName']  ?? $lastName,
+                'firstName'   => $updates['firstName'] ?? $existingDoc['firstName'] ?? $firstName,
+                'lastName'    => $updates['lastName']  ?? $existingDoc['lastName']  ?? $lastName,
                 'email'       => $email,
-                'phone'       => $existingDoc['phone']     ?? $phone,
+                'phone'       => $updates['phone']     ?? $existingDoc['phone']     ?? $phone,
                 'location_id' => $linkedLoc,
             ],
         ]);
