@@ -571,13 +571,13 @@ catch (Exception $e) {
 }
 
 $displayNameSafe = $displayName ? htmlspecialchars($displayName, ENT_QUOTES, 'UTF-8') : ($userType === 'Company' ? 'Your Agency' : 'Your Sub-Account');
-// ── Dashboard URL: point back INSIDE GHL (app.leadconnectorhq.com) ────────────
-// Agency install  → Agency Panel custom menu link (flat format, no location segment)
-// Location install → Subaccount NOLA SMS Pro custom menu link
+// ── Dashboard URL ──────────────────────────────────────────────────────────────
+// Agency install  → GHL Agency Panel custom menu link
+// Location install → NOLA SMS Pro app with location context
 if ($userType === 'Company') {
     $dashboardUrl = 'https://app.leadconnectorhq.com/custom-page-link/69d3212eb3071ba8a0cd0b51';
 } else {
-    $dashboardUrl = 'https://app.leadconnectorhq.com/v2/location/' . $idSafe . '/custom-page-link/69a642aae76974824fd39bb6';
+    $dashboardUrl = 'https://app.nolasmspro.com/?location_id=' . urlencode((string)$idSafe);
 }
 
 // ─── Save Tokens & Metadata to Firestore ──────────────────────────────────────
@@ -684,26 +684,36 @@ catch (Exception $e) {
 // ─── Check for existing users record ──────────────────────────────────────────
 $userExists = false;
 try {
-    $usersRef = $db->collection('users');
-    if ($userType === 'Location') {
-        $userQuery = $usersRef->where('active_location_id', '=', (string)$id)->limit(1)->documents();
-    } else {
-        $userQuery = $usersRef->where('company_id', '=', (string)$id)->limit(1)->documents();
-    }
+    $usersRef  = $db->collection('users');
+    $queryField = ($userType === 'Location') ? 'active_location_id' : 'company_id';
+    $userQuery  = $usersRef->where($queryField, '=', (string)$id)->limit(1)->documents();
+
     foreach ($userQuery as $doc) {
         if ($doc->exists()) {
-            $data = $doc->data();
-            
-            // Check if profile is actually complete
-            $hasEmail = !empty($data['email']);
-            $hasPhone = !empty($data['phone']);
-            $hasName  = !empty($data['firstName']) || !empty($data['name']);
-            $hasPass  = !empty($data['password_hash']);
-            
+            $userData = $doc->data(); // Use $userData — not $data — to avoid shadowing OAuth response
+
+            // Only treat as "existing" when ALL required profile fields are present
+            $hasEmail = !empty($userData['email']);
+            $hasPhone = !empty($userData['phone']);
+            $hasName  = !empty($userData['firstName']) || !empty($userData['name']);
+            $hasPass  = !empty($userData['password_hash']);
+
+            error_log(sprintf(
+                '[GHL_CALLBACK] User check for %s=%s | email=%s phone=%s name=%s pass=%s → exists=%s',
+                $queryField, $id,
+                $hasEmail ? 'Y' : 'N',
+                $hasPhone ? 'Y' : 'N',
+                $hasName  ? 'Y' : 'N',
+                $hasPass  ? 'Y' : 'N',
+                ($hasEmail && $hasPhone && $hasName && $hasPass) ? 'true' : 'false'
+            ));
+
             if ($hasEmail && $hasPhone && $hasName && $hasPass) {
                 $userExists = true;
             }
             break;
+        } else {
+            error_log("[GHL_CALLBACK] No users doc found for {$queryField}={$id} — will show registration form.");
         }
     }
 } catch (Exception $e) {
