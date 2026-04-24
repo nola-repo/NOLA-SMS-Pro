@@ -91,3 +91,4 @@ This section tracks alignments and verified fixes completed internally or by the
 | **Admin Users 401 Fix**: Frontend updated to pass `X-Webhook-Secret` | Phase 4 | Completed |
 | **First-Run Registration Flow**: Intercept `ghl_callback.php` to capture user account, create `users` record and avoid disjointed registration | Phase 4 | Completed |
 | **Login Response Update**: Include user `phone` for frontend localStorage injection | Phase 4 | Completed |
+| **Checkout Form Pre-fill**: Sync user registration info to GHL Custom Values (`owner_name`, `owner_email`, `owner_phone`) during installation | Phase 4 | Completed |

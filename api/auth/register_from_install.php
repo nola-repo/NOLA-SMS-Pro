@@ -126,6 +126,9 @@ try {
     // 3. Update integrations record if location level
     update_integration_record($db, $locationId, $email, $fullName, $phone, $now);
 
+    // 4. Write owner info to GHL Custom Values
+    _sync_owner_to_ghl($db, $locationId, $fullName, $email, $phone);
+
     http_response_code(201);
     echo json_encode([
         'status' => 'success',
@@ -151,4 +154,106 @@ function update_integration_record($db, $locationId, $email, $fullName, $phone, 
             'updated_at'  => new \Google\Cloud\Core\Timestamp($now)
         ], ['merge' => true]);
     }
+}
+
+function _sync_owner_to_ghl($db, string $locationId, string $fullName, string $email, string $phone): void
+{
+    if (!$locationId) return;
+
+    // 1. Retrieve the access token from Firestore integrations
+    $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
+    try {
+        $intSnap = $db->collection('integrations')->document($intDocId)->snapshot();
+        if (!$intSnap->exists()) return;
+        $accessToken = $intSnap->data()['access_token'] ?? null;
+        if (!$accessToken) return;
+    } catch (Exception $e) {
+        error_log("_sync_owner_to_ghl: failed to fetch integration for $locationId: " . $e->getMessage());
+        return;
+    }
+
+    // 2. Fields to upsert: [GHL fieldKey => value]
+    $fields = [
+        'owner_name'  => $fullName,
+        'owner_email' => $email,
+        'owner_phone' => $phone,
+    ];
+
+    $headers = [
+        'Authorization: Bearer ' . $accessToken,
+        'Content-Type: application/json',
+        'Accept: application/json',
+        'Version: 2021-07-28',
+    ];
+
+    foreach ($fields as $fieldKey => $value) {
+        try {
+            // 3a. Get or create the custom field
+            $fieldId = _ghl_get_or_create_custom_field($locationId, $fieldKey, $headers);
+            if (!$fieldId) continue;
+
+            // 3b. Set the custom value
+            $ch = curl_init("https://services.leadconnectorhq.com/locations/{$locationId}/customValues/{$fieldId}");
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_CUSTOMREQUEST  => 'PUT',
+                CURLOPT_HTTPHEADER     => $headers,
+                CURLOPT_POSTFIELDS     => json_encode(['value' => $value]),
+            ]);
+            curl_exec($ch);
+            curl_close($ch);
+        } catch (Exception $e) {
+            error_log("_sync_owner_to_ghl: failed to set $fieldKey for $locationId: " . $e->getMessage());
+        }
+    }
+}
+
+function _ghl_get_or_create_custom_field(string $locationId, string $fieldKey, array $headers): ?string
+{
+    // GET existing fields
+    $ch = curl_init("https://services.leadconnectorhq.com/locations/{$locationId}/customFields");
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER     => $headers,
+    ]);
+    $resp = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($code === 200) {
+        $data = json_decode($resp, true);
+        foreach (($data['customFields'] ?? []) as $f) {
+            if (($f['fieldKey'] ?? '') === $fieldKey) {
+                return $f['id'];
+            }
+        }
+    }
+
+    // Field doesn't exist — create it
+    $nameMap = [
+        'owner_name'  => 'Owner Name',
+        'owner_email' => 'Owner Email',
+        'owner_phone' => 'Owner Phone',
+    ];
+    $ch = curl_init("https://services.leadconnectorhq.com/locations/{$locationId}/customFields");
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST           => true,
+        CURLOPT_HTTPHEADER     => $headers,
+        CURLOPT_POSTFIELDS     => json_encode([
+            'name'      => $nameMap[$fieldKey] ?? $fieldKey,
+            'fieldKey'  => $fieldKey,
+            'dataType'  => 'TEXT',
+        ]),
+    ]);
+    $resp = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($code === 200 || $code === 201) {
+        $data = json_decode($resp, true);
+        return $data['customField']['id'] ?? $data['id'] ?? null;
+    }
+
+    return null;
 }

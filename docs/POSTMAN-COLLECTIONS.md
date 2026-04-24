@@ -20,7 +20,7 @@
 |---|--------|-----|------|------|
 | 1.1 | POST | `/api/auth/login.php` | None | `{"email":"you@agency.com","password":"yourpass"}` |
 | 1.2 | POST | `/api/auth/register.php` | None | `{"email":"...","password":"...","name":"..."}` |
-| 1.3 | POST | `/api/auth/register-from-install` | None | `{"full_name":"...", "phone":"...", "email":"...", "password":"...", "location_id":"...", "company_id":"..."}` |
+| 1.3 | POST | `/api/auth/register-from-install` | None | `{"full_name":"...", "phone":"...", "email":"...", "password":"...", "location_id":"...", "company_id":"..."}` (Syncs owner info to GHL Custom Values) |
 
 ---
 
