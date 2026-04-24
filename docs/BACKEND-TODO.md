@@ -23,6 +23,7 @@ This document tracks the phased development of the NOLA SMS Pro backend, includi
 | Auto-Recharge Cron: Detect low balances and trigger recharging | Phase 3 | Completed |
 | Payment Provider Integration: Actual "Charge" implementation (Stripe/Xendit) | Phase 3 | Pending |
 | Unified Payment Webhook: handle Stripe/LemonSqueezy/Xendit callbacks | Phase 3 | Pending |
+| **Refine Checkout Pricing Logic**: Implement distinct rates for User vs Agency | Phase 3 | Pending |
 | Cloud Scheduler: Register auto-recharge cron (every 15 min) | Phase 3 | Completed |
 | **Phase 4: Admin Controls & Configuration** | | |
 | Dynamic Pricing Config: Move cost/rates from code to Firestore `admin_config` | Phase 4 | Completed |
@@ -51,6 +52,8 @@ This document tracks the phased development of the NOLA SMS Pro backend, includi
 | **Phase 3: Integrity & Observability** | | |
 | Native Sync Consistency: Ensure metadata matches between `messages` and `sms_logs` | Phase 3 | Pending |
 | Internal Deduction Debugging: Add server-side logs to CreditManager for audit trails | Phase 3 | Pending |
+| **Background Location ID Injection**: Automate injection in payment flows to simplify UX | Phase 3 | Pending |
+| **Company Name/Mapping Audit**: Verify transaction routing between Company Name and Location ID | Phase 3 | Pending |
 | **Deduplication Stability**: Prevent loops in Provider sync (Increased window to 120s + direction prefix) | Phase 3 | **Completed** |
 | **Dynamic Sender ID Resolution**: Trust Admin approvals in Firestore directly (Simplified resolution) | Phase 3 | **Completed** |
 | **GHL Feedback UI Fixes**: Replaced hardcoded "NOLA SMS Pro" with actual sender IDs in GHL response | Phase 3 | **Completed** |
@@ -86,3 +89,5 @@ This section tracks alignments and verified fixes completed internally or by the
 | :--- | :--- | :--- |
 | **Admin All Subaccounts**: `admin_sender_requests.php` includes agency data | Phase 4 | Completed |
 | **Admin Users 401 Fix**: Frontend updated to pass `X-Webhook-Secret` | Phase 4 | Completed |
+| **First-Run Registration Flow**: Intercept `ghl_callback.php` to capture user account, create `users` record and avoid disjointed registration | Phase 4 | Completed |
+| **Login Response Update**: Include user `phone` for frontend localStorage injection | Phase 4 | Completed |

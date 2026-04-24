@@ -20,6 +20,7 @@
 |---|--------|-----|------|------|
 | 1.1 | POST | `/api/auth/login.php` | None | `{"email":"you@agency.com","password":"yourpass"}` |
 | 1.2 | POST | `/api/auth/register.php` | None | `{"email":"...","password":"...","name":"..."}` |
+| 1.3 | POST | `/api/auth/register-from-install` | None | `{"full_name":"...", "phone":"...", "email":"...", "password":"...", "location_id":"...", "company_id":"..."}` |
 
 ---
 
@@ -35,6 +36,7 @@
 | 2.2 | POST | `{"action":"set_auto_recharge","agency_id":"X","enabled":true,"amount":500,"threshold":100}` | Update auto-recharge settings |
 | 2.3 | POST | `{"action":"set_master_lock","agency_id":"X","enabled":false}` | Toggle master balance lock |
 | 2.4 | POST | `{"action":"gift","agency_id":"X","location_id":"abc12345","amount":100,"note":"Monthly allocation"}` | Transfer credits to a subaccount (atomic) |
+|      |      |                                                                                                      | *Note: `location_id` injection is being automated for background routing.* |
 
 ### Subaccount Wallet (`/api/billing/subaccount_wallet.php`)
 
@@ -120,5 +122,5 @@
 | # | Method | URL | Params / Body | Description |
 |---|--------|-----|---------------|-------------|
 | 7.1 | GET | `/api/admin_settings.php` | — | Fetch core system settings and global pricing (`provider_cost`, `charged_rate`) |
-| 7.2 | POST | `/api/admin_settings.php` | `{"provider_cost": 0.02, "charged_rate": 0.05}` | Update system settings and/or global pricing |
+| 7.2 | POST | `/api/admin_settings.php` | `{"provider_cost": 0.02, "charged_rate": 0.05}` | Update system settings and/or global pricing (Saves to `admin_config` for dynamic pricing) |
 | 7.3 | GET | `/api/admin_sender_requests.php` | `?action=accounts&company_id=xyz` | Unified subaccount list (with optional company_id scoping and enriched token metadata) |

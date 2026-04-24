@@ -681,22 +681,145 @@ catch (Exception $e) {
     render_error('Callback authorized, but failed to save tokens: ' . $e->getMessage());
 }
 
-// ─── Render Success Page ───────────────────────────────────────────────────────
-$body = <<<HTML
-    <div class="success-ring">
-        <div class="success-icon">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+// ─── Check for existing users record ──────────────────────────────────────────
+$userExists = false;
+try {
+    $usersRef = $db->collection('users');
+    if ($userType === 'Location') {
+        $userQuery = $usersRef->where('active_location_id', '=', (string)$id)->limit(1)->documents();
+    } else {
+        $userQuery = $usersRef->where('company_id', '=', (string)$id)->limit(1)->documents();
+    }
+    foreach ($userQuery as $doc) {
+        if ($doc->exists()) {
+            $userExists = true;
+            break;
+        }
+    }
+} catch (Exception $e) {
+    error_log("Failed to check existing user: " . $e->getMessage());
+}
+
+// ─── Render Page ───────────────────────────────────────────────────────
+if ($userExists) {
+    // Re-install / existing account view
+    $body = <<<HTML
+        <div class="success-ring">
+            <div class="success-icon">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+        </div>
+        <h1>Welcome Back!</h1>
+        <p class="subtitle"><b>{\$displayNameSafe}</b> is already connected.</p>
+        
+        <div style="display: flex; flex-direction: column; gap: 16px; margin-bottom: 32px;">
+            <a href="{\$dashboardUrl}" class="btn-primary">Open Dashboard &rarr;</a>
+        </div>
+HTML;
+    render_page('Welcome Back!', $body);
+    exit;
+} else {
+    // First-time install view
+    $companyIdJs = ($userType === 'Company') ? "'" . addslashes((string)$id) . "'" : 'null';
+    $locationIdJs = ($userType === 'Location') ? "'" . addslashes((string)$id) . "'" : 'null';
+
+    $formBody = <<<HTML
+    <div id="registration-view">
+        <div class="success-ring" style="margin-bottom: 16px;">
+            <div class="success-icon" style="width: 56px; height: 56px;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+        </div>
+        <h1 style="font-size: 24px;">Connected!</h1>
+        <p class="subtitle" style="margin-bottom: 24px; font-size: 14px;">
+            NOLA SMS Pro is linked to:<br>
+            <strong style="color: #111;">📍 {\$displayNameSafe}</strong>
+        </p>
+
+        <div style="background: rgba(255,255,255,0.8); border-radius: 20px; padding: 24px; text-align: left; border: 1px solid rgba(0,0,0,0.05); margin-bottom: 24px;">
+            <h3 style="font-size: 16px; font-weight: 800; color: #111; margin-bottom: 16px;">Complete Your Account</h3>
+            
+            <form id="install-register-form" onsubmit="handleInstallRegister(event)">
+                <div id="register-error" class="hidden" style="color:#ef4444; font-size:12px; font-weight:600; margin-bottom:16px;"></div>
+                
+                <label>Full Name</label>
+                <input id="reg-name" type="text" placeholder="John Doe" required>
+                
+                <label>Phone Number</label>
+                <input id="reg-phone" type="tel" placeholder="+1234567890" required>
+                
+                <label>Email Address</label>
+                <input id="reg-email" type="email" placeholder="john@example.com" required>
+                
+                <label>Password</label>
+                <input id="reg-pass" type="password" placeholder="Min 8 characters" minlength="8" required>
+                
+                <button type="submit" id="reg-submit-btn" class="btn-submit" style="margin-top: 8px;">Complete Setup &rarr;</button>
+            </form>
         </div>
     </div>
-    <h1>Success!</h1>
-    <p class="subtitle"><b>{$displayNameSafe}</b> is now connected to <b>NOLA SMS Pro</b></p>
-    
-    <div style="display: flex; flex-direction: column; gap: 16px; margin-bottom: 32px;">
-        <a href="{$dashboardUrl}" class="btn-primary">Open Dashboard</a>
-        <div class="sender-toggle" onclick="toggleModal('sender-modal')">Request Sender ID</div>
-    </div>
 
-    <div onclick="toggleModal('how-modal')" class="tutorial-link">How it works & Credits</div>
+    <div id="success-view" class="hidden">
+        <div class="success-ring">
+            <div class="success-icon">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+        </div>
+        <h1>Success!</h1>
+        <p class="subtitle">Account created and linked to <b>{\$displayNameSafe}</b></p>
+        
+        <div style="display: flex; flex-direction: column; gap: 16px; margin-bottom: 32px;">
+            <a href="{\$dashboardUrl}" class="btn-primary">Open Dashboard</a>
+            <div class="sender-toggle" onclick="toggleModal('sender-modal')">Request Sender ID</div>
+        </div>
+
+        <div onclick="toggleModal('how-modal')" class="tutorial-link">How it works & Credits</div>
+    </div>
+    
+    <script>
+    async function handleInstallRegister(e) {
+        e.preventDefault();
+        const btn = document.getElementById('reg-submit-btn');
+        const errDiv = document.getElementById('register-error');
+        btn.disabled = true;
+        btn.innerHTML = 'Setting up...';
+        errDiv.classList.add('hidden');
+        
+        try {
+            const payload = {
+                full_name: document.getElementById('reg-name').value.trim(),
+                phone: document.getElementById('reg-phone').value.trim(),
+                email: document.getElementById('reg-email').value.trim(),
+                password: document.getElementById('reg-pass').value,
+                location_id: {\$locationIdJs},
+                company_id: {\$companyIdJs}
+            };
+            
+            const res = await fetch(API_BASE + '/api/auth/register-from-install', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            
+            const data = await res.json();
+            
+            if (!res.ok) {
+                throw new Error(data.error || 'Registration failed');
+            }
+            
+            // Success
+            document.getElementById('registration-view').classList.add('hidden');
+            document.getElementById('success-view').classList.remove('hidden');
+            
+        } catch (err) {
+            errDiv.textContent = err.message;
+            errDiv.classList.remove('hidden');
+            btn.disabled = false;
+            btn.innerHTML = 'Complete Setup &rarr;';
+        }
+    }
+    </script>
 HTML;
 
-render_page('Success!', $body);
+    render_page('Complete Setup', $formBody);
+}

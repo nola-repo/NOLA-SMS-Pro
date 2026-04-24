@@ -90,6 +90,7 @@ try {
             'firstName' => $userData['firstName'] ?? '',
             'lastName'  => $userData['lastName']  ?? '',
             'email'     => $email,
+            'phone'     => $userData['phone'] ?? '',
         ],
     ]);
 
