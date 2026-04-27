@@ -466,8 +466,8 @@ HTML;
 // We now support both the legacy Sub-account app and the new Agency-level app.
 $ghlApps = [
     'subaccount' => [
-        'clientId' => getenv('GHL_USER_CLIENT_ID') ?: '6999da2b8f278296d95f7274-mm9wv85e',
-        'clientSecret' => getenv('GHL_USER_CLIENT_SECRET') ?: 'dfc4380f-b132-49b3-824b-02e14f55ee78',
+        'clientId' => getenv('GHL_CLIENT_ID') ?: '6999da2b8f278296d95f7274-mm9wv85e',
+        'clientSecret' => getenv('GHL_CLIENT_SECRET') ?: 'dfc4380f-6132-49b3-8246-92e14f55ee78',
     ],
     'agency' => [
         'clientId' => getenv('GHL_AGENCY_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3',
@@ -631,24 +631,29 @@ try {
         $integrationRef = $db->collection('integrations')->document($intDocId);
         $integrationSnap = $integrationRef->snapshot();
 
+        $integrationData = [
+            'location_id' => $id,
+            'location_name' => $displayName,
+            'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+            'access_token' => $data['access_token'] ?? null,
+            'refresh_token' => $data['refresh_token'] ?? null,
+            'scope' => $data['scope'] ?? null,
+            'expires_at' => $expiresAtUnix,
+            'client_id' => $ghlApps[$usedAppType]['clientId'],
+            'app_type' => $usedAppType,
+        ];
+
         if (!$integrationSnap->exists()) {
             // First-time install — 10 free credits
-            $integrationRef->set([
-                'location_id' => $id,
-                'location_name' => $displayName,
-                'free_credits_total' => 10,
-                'free_usage_count' => 0,
-                'credit_balance' => 0,
-                'installed_at' => new \Google\Cloud\Core\Timestamp($now),
-                'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-            ]);
+            $integrationData['free_credits_total'] = 10;
+            $integrationData['free_usage_count'] = 0;
+            $integrationData['credit_balance'] = 0;
+            $integrationData['installed_at'] = new \Google\Cloud\Core\Timestamp($now);
+            $integrationRef->set($integrationData);
         }
         else {
-            // Re-install: preserve credits, just update name
-            $integrationRef->set([
-                'location_name' => $displayName,
-                'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-            ], ['merge' => true]);
+            // Re-install: preserve credits, just update name & tokens
+            $integrationRef->set($integrationData, ['merge' => true]);
         }
     }
 

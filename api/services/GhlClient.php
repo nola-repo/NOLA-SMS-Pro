@@ -152,15 +152,16 @@ class GhlClient
             return $cachedData;
         }
 
-        // 2. Not in cache? Hit Firestore (Primary: doc ID = raw locationId)
+        // 2. Not in cache? Hit Firestore (Primary: doc ID = ghl_locationId)
         $data = null;
-        $doc = $this->db->collection('ghl_tokens')->document($locationId)->snapshot();
+        $docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
+        $doc = $this->db->collection('integrations')->document($docId)->snapshot();
         if ($doc->exists()) {
             $data = $doc->data();
-            $data['firestore_doc_id'] = $locationId;
+            $data['firestore_doc_id'] = $docId;
         } else {
             // Fallback: search by location_id field (handles legacy docs)
-            $query = $this->db->collection('ghl_tokens')
+            $query = $this->db->collection('integrations')
                 ->where('location_id', '==', $locationId)
                 ->limit(1)
                 ->documents();
@@ -236,8 +237,8 @@ class GhlClient
             $clientSecret = getenv('GHL_AGENCY_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322';
         } else {
             // Default to User App for legacy/unknown tokens
-            $clientId = getenv('GHL_USER_CLIENT_ID') ?: '6999da2b8f278296d95f7274-mm9wv85e';
-            $clientSecret = getenv('GHL_USER_CLIENT_SECRET') ?: 'dfc4380f-b132-49b3-824b-02e14f55ee78';
+            $clientId = getenv('GHL_CLIENT_ID') ?: '6999da2b8f278296d95f7274-mm9wv85e';
+            $clientSecret = getenv('GHL_CLIENT_SECRET') ?: 'dfc4380f-6132-49b3-8246-92e14f55ee78';
         }
 
         $refreshToken = $this->integration['refresh_token'] ?? null;
@@ -299,7 +300,7 @@ class GhlClient
         ];
 
         // Write back to Firestore
-        $this->db->collection('ghl_tokens')->document($docId)->set($updateData, ['merge' => true]);
+        $this->db->collection('integrations')->document($docId)->set($updateData, ['merge' => true]);
 
         // Update local state so the caller has the new token immediately
         $this->integration['access_token']  = $data['access_token'] ?? null;
