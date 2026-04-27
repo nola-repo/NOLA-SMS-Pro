@@ -36,8 +36,8 @@ if ($appType === 'agency') {
     $clientId = getenv('GHL_AGENCY_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3';
     $clientSecret = getenv('GHL_AGENCY_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322';
 } else {
-    $clientId = getenv('GHL_USER_CLIENT_ID') ?: '6999da2b8f278296d95f7274-mm9wv85e';
-    $clientSecret = getenv('GHL_USER_CLIENT_SECRET') ?: 'dfc4380f-b132-49b3-824b-02e14f55ee78';
+    $clientId = getenv('GHL_CLIENT_ID') ?: '6999da2b8f278296d95f7274-mm9wv85e';
+    $clientSecret = getenv('GHL_CLIENT_SECRET') ?: 'dfc4380f-6132-49b3-8246-92e14f55ee78';
 }
 
 if (!$clientId || !$clientSecret) {

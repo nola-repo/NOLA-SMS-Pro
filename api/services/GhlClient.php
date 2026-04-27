@@ -144,7 +144,7 @@ class GhlClient
         require_once __DIR__ . '/Cache.php';
         $cache = new Cache('tokens');
         $cacheKey = 'token_' . $locationId;
-        $cacheTTL = 3600; // Increase token cache to 1 hour (refreshes still happen on 401)
+        $cacheTTL = 300; // 5 minutes buffer — matches proactive refresh window
 
         // 1. Check local file cache first (reduce Firestore reads)
         $cachedData = $cache->get($cacheKey, $cacheTTL);
@@ -152,16 +152,15 @@ class GhlClient
             return $cachedData;
         }
 
-        // 2. Not in cache? Hit Firestore (Primary: doc ID = ghl_locationId)
+        // 2. Not in cache? Hit Firestore (Primary: doc ID = raw locationId)
         $data = null;
-        $docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
-        $doc = $this->db->collection('integrations')->document($docId)->snapshot();
+        $doc = $this->db->collection('ghl_tokens')->document($locationId)->snapshot();
         if ($doc->exists()) {
             $data = $doc->data();
-            $data['firestore_doc_id'] = $docId;
+            $data['firestore_doc_id'] = $locationId;
         } else {
             // Fallback: search by location_id field (handles legacy docs)
-            $query = $this->db->collection('integrations')
+            $query = $this->db->collection('ghl_tokens')
                 ->where('location_id', '==', $locationId)
                 ->limit(1)
                 ->documents();
@@ -299,17 +298,15 @@ class GhlClient
             'raw_refresh'   => $data,
         ];
 
-        // Write back to Firestore
-        $this->db->collection('integrations')->document($docId)->set($updateData, ['merge' => true]);
+        // Write back to Firestore (ghl_tokens collection)
+        $this->db->collection('ghl_tokens')->document($docId)->set($updateData, ['merge' => true]);
 
         // Update local state so the caller has the new token immediately
         $this->integration['access_token']  = $data['access_token'] ?? null;
         $this->integration['refresh_token'] = $data['refresh_token'] ?? null;
         $this->integration['expires_at']    = $expiresAtUnix;
 
-        // Update local file cache immediately
-        $cacheDir = __DIR__ . '/../cache/tokens';
-        $cacheFile = $cacheDir . '/token_' . preg_replace('/[^a-zA-Z0-9_\-]/', '', $this->locationId) . '.json';
-        file_put_contents($cacheFile, json_encode($this->integration));
+        // Invalidate the in-memory/file cache so next request re-reads from Firestore
+        $this->clearCache();
     }
 }
