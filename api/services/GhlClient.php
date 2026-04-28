@@ -259,8 +259,10 @@ class GhlClient
             $clientSecret = getenv('GHL_AGENCY_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322';
         } else {
             // Default to User App for legacy/unknown tokens
-            $clientId = getenv('GHL_CLIENT_ID') ?: '6999da2b8f278296d95f7274-mm9wv85e';
-            $clientSecret = getenv('GHL_CLIENT_SECRET') ?: 'dfc4380f-6132-49b3-8246-92e14f55ee78';
+            $clientId = getenv('GHL_CLIENT_ID') ?: '6999da2b8f278296d95f7274-mmn30t4f';
+
+            $clientSecret = getenv('GHL_CLIENT_SECRET') ?: 'd91017ad-f4eb-461f-8967-b1d51cd1c1eb';
+
         }
 
         $refreshToken = $this->integration['refresh_token'] ?? null;

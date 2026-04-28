@@ -89,7 +89,8 @@ echo "  refresh_token     : " . ($refreshToken ? substr($refreshToken, 0, 20) . 
 // ── Step 2: Credential mismatch check ────────────────────────────────────────
 echo "[ STEP 2 ] Checking for phantom/mismatched client_id...\n";
 
-$knownUserAppId   = getenv('GHL_CLIENT_ID')        ?: '6999da2b8f278296d95f7274-mm9wv85e';
+$knownUserAppId   = getenv('GHL_CLIENT_ID')        ?: '6999da2b8f278296d95f7274-mmn30t4f';
+
 $knownAgencyAppId = getenv('GHL_AGENCY_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3';
 $phantomIds       = ['69aa6cc3']; // Known bad phantom IDs from previous installs
 
@@ -129,8 +130,10 @@ if (!$refreshToken) {
 
 $credentialSets = [
     'User App'   => [
-        'client_id'     => getenv('GHL_CLIENT_ID')        ?: '6999da2b8f278296d95f7274-mm9wv85e',
-        'client_secret' => getenv('GHL_CLIENT_SECRET')    ?: 'dfc4380f-6132-49b3-8246-92e14f55ee78',
+        'client_id'     => getenv('GHL_CLIENT_ID')        ?: '6999da2b8f278296d95f7274-mmn30t4f',
+
+        'client_secret' => getenv('GHL_CLIENT_SECRET')    ?: 'd91017ad-f4eb-461f-8967-b1d51cd1c1eb',
+
         'user_type'     => 'Location',
     ],
     'Agency App' => [
