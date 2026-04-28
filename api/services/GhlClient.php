@@ -173,33 +173,25 @@ class GhlClient
             }
         }
 
-        // 2.5. Support Agency-Level Installations: Check if there is a newer Company token!
-        if ($data && !empty($data['companyId'])) {
+        // 2.5. Agency-Level Fallback (SCOPE-SAFE):
+        // Only use the company token when the location document has NO usable token
+        // (missing access_token AND missing refresh_token). NEVER override a valid
+        // location token with a company token — company tokens carry userType=Company
+        // scope and GHL rejects them for location-level endpoints like /contacts/ and
+        // /conversations/ with "This authClass type is not allowed to access this scope."
+        $locationHasToken = !empty($data['access_token']) || !empty($data['refresh_token']);
+
+        if ($data && !$locationHasToken && !empty($data['companyId'])) {
             $companyId = $data['companyId'];
             $companyDoc = $this->db->collection('ghl_tokens')->document($companyId)->snapshot();
             if ($companyDoc->exists()) {
                 $companyData = $companyDoc->data();
-                
-                // Compare timestamps to ensure we use the most recently authorized token
-                $locUpdated = 0;
-                if (isset($data['updated_at'])) {
-                    $locUpdated = $data['updated_at'] instanceof \Google\Cloud\Core\Timestamp 
-                        ? $data['updated_at']->get()->getTimestamp() 
-                        : (int)$data['updated_at'];
-                }
-                
-                $compUpdated = 0;
-                if (isset($companyData['updated_at'])) {
-                    $compUpdated = $companyData['updated_at'] instanceof \Google\Cloud\Core\Timestamp 
-                        ? $companyData['updated_at']->get()->getTimestamp() 
-                        : (int)$companyData['updated_at'];
-                }
-
-                // If the boss installed from the Agency View more recently, use that token instead!
-                if ($compUpdated > $locUpdated) {
+                // Only use company token if it actually has a usable token
+                if (!empty($companyData['access_token']) || !empty($companyData['refresh_token'])) {
                     $companyData['firestore_doc_id'] = $companyId;
                     $companyData['location_id'] = $locationId; // Preserve context
                     $data = $companyData;
+                    error_log("[GhlClient] Using company token fallback for location {$locationId} (location token missing).");
                 }
             }
         }
