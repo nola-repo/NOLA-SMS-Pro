@@ -164,11 +164,42 @@ class GhlClient
                 ->where('location_id', '==', $locationId)
                 ->limit(1)
                 ->documents();
-            foreach ($query as $doc) {
-                if ($doc->exists()) {
-                    $data = $doc->data();
-                    $data['firestore_doc_id'] = $doc->id();
+            foreach ($query as $d) {
+                if ($d->exists()) {
+                    $data = $d->data();
+                    $data['firestore_doc_id'] = $d->id();
                     break;
+                }
+            }
+        }
+
+        // 2.5. Support Agency-Level Installations: Check if there is a newer Company token!
+        if ($data && !empty($data['companyId'])) {
+            $companyId = $data['companyId'];
+            $companyDoc = $this->db->collection('ghl_tokens')->document($companyId)->snapshot();
+            if ($companyDoc->exists()) {
+                $companyData = $companyDoc->data();
+                
+                // Compare timestamps to ensure we use the most recently authorized token
+                $locUpdated = 0;
+                if (isset($data['updated_at'])) {
+                    $locUpdated = $data['updated_at'] instanceof \Google\Cloud\Core\Timestamp 
+                        ? $data['updated_at']->get()->getTimestamp() 
+                        : (int)$data['updated_at'];
+                }
+                
+                $compUpdated = 0;
+                if (isset($companyData['updated_at'])) {
+                    $compUpdated = $companyData['updated_at'] instanceof \Google\Cloud\Core\Timestamp 
+                        ? $companyData['updated_at']->get()->getTimestamp() 
+                        : (int)$companyData['updated_at'];
+                }
+
+                // If the boss installed from the Agency View more recently, use that token instead!
+                if ($compUpdated > $locUpdated) {
+                    $companyData['firestore_doc_id'] = $companyId;
+                    $companyData['location_id'] = $locationId; // Preserve context
+                    $data = $companyData;
                 }
             }
         }
