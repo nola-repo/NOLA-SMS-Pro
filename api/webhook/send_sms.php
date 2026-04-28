@@ -416,7 +416,9 @@ if ($usingFreeCredits) {
             }
         }
 
-        if ($agency_id) {
+        if ($agency_id && $creditManager->get_agency_master_lock($agency_id)) {
+            // Master balance lock is ON — deduct from BOTH agency and subaccount wallets.
+            // Agency balance must cover the send; if empty, the send is blocked.
             $creditManager->deduct_agency_and_subaccount(
                 $account_id,
                 $agency_id,
@@ -430,9 +432,11 @@ if ($usingFreeCredits) {
                 $txMetadata
             );
         } else {
+            // No agency master lock — deduct from subaccount wallet only.
+            // agency_id is passed for transaction logging/reporting only; no agency balance required.
             $creditManager->deduct_subaccount_only(
                 $account_id,
-                '',
+                $agency_id ?: '',
                 $required_credits,
                 $refId,
                 $desc,
