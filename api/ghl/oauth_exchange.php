@@ -93,15 +93,13 @@ if (!$data) {
     exit;
 }
 
-if ($response === false) {
-    http_response_code(500);
-    echo json_encode(["success" => false, "error" => curl_error($ch)]);
-    exit;
-}
 
-$result = json_decode($response, true);
+// $data holds the successful token exchange result from the foreach loop above.
+// $result is an alias for readability in the code below.
+$result = $data;
 
 if ($http_status == 200 && is_array($result) && isset($result['access_token'])) {
+
     
     // The oauth response could contain companyId for agency-level apps, or locationId
     $companyId = $result['companyId'] ?? $result['company_id'] ?? '';

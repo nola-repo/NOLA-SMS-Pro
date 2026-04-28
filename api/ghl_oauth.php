@@ -113,30 +113,39 @@ if ($http_status == 200 && is_array($result) && isset($result['access_token'])) 
             error_log("Failed to fetch location name: " . $e->getMessage());
         }
 
+        // PRIMARY WRITE: ghl_tokens/{locationId} — canonical store that GhlClient reads
+        $db->collection('ghl_tokens')
+            ->document($locationId)
+            ->set([
+                'access_token'  => $result['access_token'],
+                'refresh_token' => $result['refresh_token'],
+                'expires_at'    => new \Google\Cloud\Core\Timestamp($expiresAt),
+                'scope'         => $result['scope'] ?? '',
+                'location_id'   => $locationId,
+                'location_name' => $locationName,
+                'companyId'     => $result['companyId'] ?? '',
+                'userType'      => $result['userType'] ?? 'Location',
+                'client_id'     => $clientId,
+                'is_live'       => true,
+                'toggle_enabled' => true,
+                'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
+            ], ['merge' => true]);
+
+        // LEGACY WRITE: integrations/{docId} — kept for any legacy code paths still reading it
         $db->collection('integrations')
             ->document($docId)
             ->set([
-            'access_token' => $result['access_token'],
+            'access_token'  => $result['access_token'],
             'refresh_token' => $result['refresh_token'],
-            'expires_at' => new \Google\Cloud\Core\Timestamp($expiresAt),
-            'scope' => $result['scope'] ?? '',
-            'location_id' => $locationId,
+            'expires_at'    => new \Google\Cloud\Core\Timestamp($expiresAt),
+            'scope'         => $result['scope'] ?? '',
+            'location_id'   => $locationId,
             'location_name' => $locationName,
-            'client_id' => $clientId,
-            'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-            'created_at' => new \Google\Cloud\Core\Timestamp($now)
+            'client_id'     => $clientId,
+            'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
+            'created_at'    => new \Google\Cloud\Core\Timestamp($now)
         ], ['merge' => true]);
 
-        // Also register in ghl_tokens for Agency Dashboard install verification
-        $db->collection('ghl_tokens')->document($locationId)->set([
-            'location_id' => $locationId,
-            'location_name' => $locationName,
-            'companyId' => $result['companyId'] ?? '',
-            'userType' => $result['userType'] ?? 'Location',
-            'is_live' => true,
-            'toggle_enabled' => true,
-            'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-        ], ['merge' => true]);
 
         echo json_encode([
             "status" => "success",

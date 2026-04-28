@@ -365,7 +365,7 @@ if ($usingFreeCredits) {
 
 if ($smsStatus !== 200 || empty($smsResult)) {
     // Refund credits if SMS failed and we deducted
-    if (!$usingCustomSender) {
+    if (!$usingOwnApiKey) {
         try {
             $creditManager->add_credits(
                 $account_id,
