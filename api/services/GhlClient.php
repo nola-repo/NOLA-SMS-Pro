@@ -146,11 +146,11 @@ class GhlClient
         $cacheKey = 'token_' . $locationId;
         $cacheTTL = 300; // 5 minutes buffer — matches proactive refresh window
 
-        // 1. Check local file cache first (reduce Firestore reads)
-        $cachedData = $cache->get($cacheKey, $cacheTTL);
-        if ($cachedData) {
-            return $cachedData;
-        }
+        // 1. File cache disabled — unsafe across Cloud Run multi-instance deployments.
+        // Each container has an independent filesystem; a token refreshed by Instance A
+        // will not be visible to Instance B's cache, leading to stale refresh_token 400s.
+        // $cachedData = $cache->get($cacheKey, $cacheTTL); // DISABLED
+        // if ($cachedData) { return $cachedData; }         // DISABLED
 
         // 2. Not in cache? Hit Firestore (Primary: doc ID = raw locationId)
         $data = null;
@@ -196,9 +196,9 @@ class GhlClient
             }
         }
 
-        // 3. Save to cache if found
+        // 3. Cache write disabled — see note above re: Cloud Run multi-instance.
+        // $cache->set($cacheKey, $data); // DISABLED
         if ($data) {
-            $cache->set($cacheKey, $data);
             return $data;
         }
 
@@ -321,6 +321,8 @@ class GhlClient
             'expires_at'    => $expiresAtUnix,
             'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
             'raw_refresh'   => $data,
+            'client_id'     => $clientId,   // Ensures credential routing field is always fresh
+            'appId'         => $clientId,   // Backward compat with callback-written docs
         ];
 
         // Write back to Firestore (ghl_tokens collection)

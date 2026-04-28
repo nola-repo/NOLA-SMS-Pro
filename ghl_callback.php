@@ -477,7 +477,12 @@ $ghlApps = [
     ]
 ];
 
-$redirectUri = 'https://smspro-api.nolacrm.io/oauth/callback';
+// Build redirect_uri dynamically to match whichever host GHL redirected to.
+// GHL requires the redirect_uri in the token exchange to EXACTLY match the
+// one used in the install link (Whitelabel tab uses raw Cloud Run URL,
+// Standard tab uses the custom domain). A mismatch causes token exchange failure.
+$host = $_SERVER['HTTP_HOST'] ?? 'smspro-api.nolacrm.io';
+$redirectUri = 'https://' . $host . '/oauth/callback';
 
 if (!isset($_GET['code'])) {
     if (isset($_GET['test'])) {
@@ -598,8 +603,9 @@ try {
         'companyId' => $data['companyId'] ?? '',
         'hashed_companyId' => $data['hashedCompanyId'] ?? '',
         'userId' => $data['userId'] ?? '',
-        'appId' => $ghlApps[$usedAppType]['clientId'], // Store which app provided this token
-        'appType' => $usedAppType,
+        'appId'     => $ghlApps[$usedAppType]['clientId'], // Store which app provided this token
+        'client_id' => $ghlApps[$usedAppType]['clientId'], // Standard field name read by GhlClient::refreshToken()
+        'appType'   => $usedAppType,
         'raw' => $data,
         'updated_at' => new \Google\Cloud\Core\Timestamp($now),
     ];
