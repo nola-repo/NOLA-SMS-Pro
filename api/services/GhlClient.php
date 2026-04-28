@@ -174,27 +174,85 @@ class GhlClient
         }
 
         // 2.5. Agency-Level Fallback (SCOPE-SAFE):
-        // Only use the company token when the location document has NO usable token
-        // (missing access_token AND missing refresh_token). NEVER override a valid
-        // location token with a company token — company tokens carry userType=Company
-        // scope and GHL rejects them for location-level endpoints like /contacts/ and
-        // /conversations/ with "This authClass type is not allowed to access this scope."
+        // Only use the company token when the location document has NO usable token.
+        // When found, automatically exchange for a location-scoped token via
+        // GHL's /oauth/locationToken endpoint — which returns authClass:Location
+        // tokens valid for /contacts/ and /conversations/.
         $locationHasToken = !empty($data['access_token']) || !empty($data['refresh_token']);
 
         if ($data && !$locationHasToken && !empty($data['companyId'])) {
-            $companyId = $data['companyId'];
+            $companyId  = $data['companyId'];
             $companyDoc = $this->db->collection('ghl_tokens')->document($companyId)->snapshot();
             if ($companyDoc->exists()) {
                 $companyData = $companyDoc->data();
-                // Only use company token if it actually has a usable token
-                if (!empty($companyData['access_token']) || !empty($companyData['refresh_token'])) {
-                    $companyData['firestore_doc_id'] = $companyId;
-                    $companyData['location_id'] = $locationId; // Preserve context
-                    $data = $companyData;
-                    error_log("[GhlClient] Using company token fallback for location {$locationId} (location token missing).");
+                $companyAccessToken = $companyData['access_token'] ?? null;
+
+                if ($companyAccessToken) {
+                    // Try to exchange for a location-scoped token automatically
+                    $ltCh = curl_init('https://services.leadconnectorhq.com/oauth/locationToken');
+                    curl_setopt_array($ltCh, [
+                        CURLOPT_RETURNTRANSFER => true,
+                        CURLOPT_POST           => true,
+                        CURLOPT_POSTFIELDS     => json_encode([
+                            'companyId'  => $companyId,
+                            'locationId' => $locationId,
+                        ]),
+                        CURLOPT_HTTPHEADER => [
+                            'Authorization: Bearer ' . $companyAccessToken,
+                            'Content-Type: application/json',
+                            'Version: 2021-07-28',
+                        ],
+                    ]);
+                    $ltResp = curl_exec($ltCh);
+                    $ltCode = curl_getinfo($ltCh, CURLINFO_HTTP_CODE);
+                    curl_close($ltCh);
+
+                    $ltData = json_decode($ltResp, true);
+
+                    if ($ltCode === 200 && !empty($ltData['access_token'])) {
+                        // Save location-scoped token to Firestore
+                        $now          = new \DateTimeImmutable();
+                        $ltExpires    = time() + (int)($ltData['expires_in'] ?? 86400);
+                        $locationPayload = [
+                            'access_token'          => $ltData['access_token'],
+                            'refresh_token'         => $companyData['refresh_token'] ?? null,
+                            'expires_at'            => $ltExpires,
+                            'client_id'             => $companyData['client_id'] ?? $companyData['appId'] ?? null,
+                            'appId'                 => $companyData['appId']      ?? $companyData['client_id'] ?? null,
+                            'appType'               => $companyData['appType']    ?? 'subaccount',
+                            'userType'              => 'Location',
+                            'location_id'           => $locationId,
+                            'companyId'             => $companyId,
+                            'scope'                 => $companyData['scope']      ?? null,
+                            'is_live'               => true,
+                            'toggle_enabled'        => true,
+                            'updated_at'            => new \Google\Cloud\Core\Timestamp($now),
+                            'provisioned_from_bulk' => true,
+                        ];
+                        $this->db->collection('ghl_tokens')->document($locationId)->set($locationPayload, ['merge' => true]);
+                        error_log("[GhlClient] Auto-provisioned location token for {$locationId} via /oauth/locationToken.");
+
+                        $locationPayload['firestore_doc_id'] = $locationId;
+                        $data = $locationPayload;
+                    } else {
+                        // locationToken exchange failed — fall back to company token as read-only context
+                        error_log("[GhlClient] locationToken exchange failed for {$locationId} (HTTP {$ltCode}). Using company token fallback.");
+                        $companyData['firestore_doc_id'] = $companyId;
+                        $companyData['location_id']      = $locationId;
+                        $data = $companyData;
+                    }
+                } else {
+                    // Company doc has no access_token — still use it if it has a refresh token
+                    if (!empty($companyData['access_token']) || !empty($companyData['refresh_token'])) {
+                        $companyData['firestore_doc_id'] = $companyId;
+                        $companyData['location_id']      = $locationId;
+                        $data = $companyData;
+                        error_log("[GhlClient] Using company token fallback for location {$locationId} (location token missing).");
+                    }
                 }
             }
         }
+
 
         // 3. Cache write disabled — see note above re: Cloud Run multi-instance.
         // $cache->set($cacheKey, $data); // DISABLED
