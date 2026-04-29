@@ -606,6 +606,29 @@ if (!empty($all_results)) {
         } catch (\Throwable $e) {
             error_log('[GHL Sync] Failed (non-fatal): ' . $e->getMessage());
         }
+
+        // ── Step 3: Apply Tags (NEW) ───────────────────────────────────────────
+        // Check if the frontend provided tags to be applied to this contact
+        $tagsToApply = $customData['tagsToApply'] ?? [];
+        if (!empty($tagsToApply) && is_array($tagsToApply) && $contactId) {
+            try {
+                // Instantiate GhlClient if not already available in the scope
+                if (!isset($ghlClient)) {
+                    $ghlClient = new GhlClient($db, $locId);
+                }
+                
+                $ghlClient->request(
+                    'POST',
+                    "/contacts/{$contactId}/tags",
+                    json_encode(['tags' => $tagsToApply]),
+                    '2021-07-28'
+                );
+                error_log("[GHL Sync] Successfully applied " . count($tagsToApply) . " tags to contact {$contactId}");
+            } catch (\Throwable $e) {
+                // Log failure but do not interrupt the SMS delivery response
+                error_log('[GHL Sync] Failed to apply tags: ' . $e->getMessage());
+            }
+        }
     }
 
 // ── End GHL Sync ──────────────────────────────────────────────────────────
