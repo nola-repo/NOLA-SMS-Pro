@@ -69,7 +69,7 @@ function agency_curl_json(string $url, string $token, string $method = 'GET', ?a
 // ─── Config ────────────────────────────────────────────────────────────────────
 $agencyClientId     = getenv('GHL_AGENCY_CLIENT_ID')     ?: '69d31f33b3071b25dbcc5656-mnqxvtt3';
 $agencyClientSecret = getenv('GHL_AGENCY_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322';
-$redirectUri        = 'https://smspro-api.nolacrm.io/oauth/agency-callback'; // HARDCODED — must match GHL Marketplace
+$redirectUri        = 'https://agency.nolasmspro.com/oauth/agency-callback'; // HARDCODED — must match GHL Marketplace
 
 if (!$agencyClientId || !$agencyClientSecret) {
     agency_render_error('Agency GHL credentials are not configured on the server.');
