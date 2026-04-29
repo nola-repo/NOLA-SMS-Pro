@@ -210,63 +210,74 @@ try {
     }
 
     // --- Calculate Stats ---
+    // Stats count both 'deduction' (legacy) and 'sms_usage' (modern deduct_subaccount_only)
+    // transaction types so the figures are always accurate regardless of which code path sent.
     $startOfMonth = new \DateTimeImmutable('first day of this month 00:00:00');
     $startOfToday = new \DateTimeImmutable('today 00:00:00');
 
     $creditsRef = $db->collection('credit_transactions');
-    $query = $creditsRef->where('account_id', '=', $docId)
+
+    // Query by account_id (stored as the Firestore doc ID, e.g. "ghl_ABC123")
+    $query = $creditsRef
+        ->where('account_id', '=', $docId)
         ->where('created_at', '>=', new \Google\Cloud\Core\Timestamp($startOfMonth));
 
     $statsDocs = [];
     try {
         $statsDocs = $query->documents();
-    }
-    catch (\Throwable $e) {
-        // If Firestore throws a Missing Index error, catch it here cleanly
+    } catch (\Throwable $e) {
+        // If Firestore throws a Missing Index error, catch it here cleanly.
+        // Fix: create a composite index on credit_transactions for (account_id ASC, created_at ASC)
         $stats = [
-            'sent_today' => 0,
+            'sent_today'         => 0,
             'credits_used_today' => 0,
             'credits_used_month' => 0,
-            'error' => 'Stats query failed. Likely missing Firestore index. See message string.',
-            'message' => $e->getMessage()
+            'error'   => 'Stats query failed — likely missing Firestore composite index.',
+            'message' => $e->getMessage(),
         ];
     }
 
     if (empty($stats)) {
-        $sentToday = 0;
-        $creditsUsedToday = 0;
-        $creditsUsedMonth = 0;
+        $sentToday         = 0;
+        $creditsUsedToday  = 0;
+        $creditsUsedMonth  = 0;
 
         foreach ($statsDocs as $txDoc) {
-            if (!$txDoc->exists())
-                continue;
+            if (!$txDoc->exists()) continue;
             $tx = $txDoc->data();
 
-            if (($tx['type'] ?? '') === 'deduction') {
-                $amt = abs((int)($tx['amount'] ?? 0));
+            $txType = $tx['type'] ?? '';
+
+            // Count both legacy 'deduction' AND modern 'sms_usage' transaction types.
+            // 'sms_usage' is written by deduct_subaccount_only() (the current SMS path).
+            // 'deduction' is written by the older deduct_credits() path.
+            $isSmsDeduction = ($txType === 'deduction' || $txType === 'sms_usage')
+                && ($tx['wallet_scope'] ?? '') !== 'agency'; // exclude agency-side mirror rows
+
+            if ($isSmsDeduction) {
+                $amt         = abs((int)($tx['amount'] ?? 0));
                 $freeApplied = (int)($tx['free_usage_applied'] ?? 0);
 
-                // All tx here are at least this month
+                // All documents here are >= start of month (enforced by Firestore query)
                 $creditsUsedMonth += $amt;
 
                 $createdAtTs = $tx['created_at'] ?? null;
-                if ($createdAtTs && $createdAtTs instanceof \Google\Cloud\Core\Timestamp) {
+                if ($createdAtTs instanceof \Google\Cloud\Core\Timestamp) {
                     $dt = $createdAtTs->get();
 
-                    // Compare explicitly to start of today using timestamp or date formatting
-                    // get() returns a DateTime object (or DateTimeImmutable)
                     if ($dt->getTimestamp() >= $startOfToday->getTimestamp()) {
                         $creditsUsedToday += $amt;
-                        $sentToday += ($amt + $freeApplied);
+                        // sent_today = paid credits used + free trial credits used
+                        $sentToday += max(1, $amt + $freeApplied);
                     }
                 }
             }
         }
 
         $stats = [
-            'sent_today' => $sentToday,
+            'sent_today'         => $sentToday,
             'credits_used_today' => $creditsUsedToday,
-            'credits_used_month' => $creditsUsedMonth
+            'credits_used_month' => $creditsUsedMonth,
         ];
     }
     // -----------------------

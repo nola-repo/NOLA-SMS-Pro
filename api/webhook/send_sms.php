@@ -607,26 +607,23 @@ if (!empty($all_results)) {
             error_log('[GHL Sync] Failed (non-fatal): ' . $e->getMessage());
         }
 
-        // ── Step 3: Apply Tags (NEW) ───────────────────────────────────────────
-        // Check if the frontend provided tags to be applied to this contact
+        // ── Apply Tags to GHL Contact ────────────────────────────────────────────
+        // If the frontend passed tags (via the "Apply Tags" button in the Composer),
+        // post them to the GHL Contacts API. Requires a resolved GHL contact ID.
+        // This is non-fatal — a tagging failure will never block SMS delivery.
         $tagsToApply = $customData['tagsToApply'] ?? [];
         if (!empty($tagsToApply) && is_array($tagsToApply) && $contactId) {
             try {
-                // Instantiate GhlClient if not already available in the scope
-                if (!isset($ghlClient)) {
-                    $ghlClient = new GhlClient($db, $locId);
-                }
-                
-                $ghlClient->request(
+                $ghlClient = new GhlClient($db, $locId);
+                $tagsResp  = $ghlClient->request(
                     'POST',
                     "/contacts/{$contactId}/tags",
                     json_encode(['tags' => $tagsToApply]),
                     '2021-07-28'
                 );
-                error_log("[GHL Sync] Successfully applied " . count($tagsToApply) . " tags to contact {$contactId}");
+                error_log("[GHL Sync] Applied " . count($tagsToApply) . " tags to contact {$contactId}: " . json_encode($tagsToApply));
             } catch (\Throwable $e) {
-                // Log failure but do not interrupt the SMS delivery response
-                error_log('[GHL Sync] Failed to apply tags: ' . $e->getMessage());
+                error_log('[GHL Sync] Failed to apply tags (non-fatal): ' . $e->getMessage());
             }
         }
     }
