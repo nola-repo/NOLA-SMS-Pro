@@ -19,8 +19,10 @@
     RewriteRule ^ - [L]
 
     # ── OAuth ────────────────────────────────────────────────────────────
-    # /oauth/callback -> /ghl_callback.php
-    RewriteRule ^oauth/callback/?$ /ghl_callback.php [NC,L,QSA]
+    # /oauth/callback         -> /ghl_callback.php          (subaccount app)
+    # /oauth/agency-callback  -> /ghl_agency_callback.php   (agency app)
+    RewriteRule ^oauth/callback/?$        /ghl_callback.php        [NC,L,QSA]
+    RewriteRule ^oauth/agency-callback/?$ /ghl_agency_callback.php [NC,L,QSA]
 
     # ── Hide .php extension: redirect direct .php access to clean URLs ──
     # This prevents users from accessing the .php files directly if they know the path.

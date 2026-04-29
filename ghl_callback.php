@@ -26,16 +26,14 @@ function render_page(string $title, string $body_html): void
     <title>{$title} — NOLA SMS Pro</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-        html { font-family: 'Poppins', system-ui, -apple-system, sans-serif; background: #fdfdfd; color: #1a1a1a; -webkit-font-smoothing: antialiased; }
-        body { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 20px; overflow: hidden; }
+        html { font-family: 'Poppins', system-ui, -apple-system, sans-serif; background: #f9fafb; color: #1a1a1a; -webkit-font-smoothing: antialiased; }
+        body { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 20px; overflow: hidden; background: #f9fafb; }
 
-        #antigravity-bg { 
-            position: fixed; inset: 0; z-index: -1; pointer-events: none;
-            background: radial-gradient(circle at center, #ffffff 0%, #f0f7ff 100%);
-        }
+        .blob { position: fixed; border-radius: 50%; background: #2b83fa; filter: blur(120px); opacity: 0.15; pointer-events: none; z-index: 0; }
+        .blob-tl { top: -10%; left: -10%; width: 50vw; height: 50vw; }
+        .blob-br { bottom: -10%; right: -10%; width: 50vw; height: 50vw; }
 
         .unified-card { 
             max-width: 440px; width: 100%; 
@@ -145,7 +143,8 @@ function render_page(string $title, string $body_html): void
     </style>
 </head>
 <body>
-    <canvas id="antigravity-bg"></canvas>
+    <div class="blob blob-tl"></div>
+    <div class="blob blob-br"></div>
 
     <div class="unified-card">
         {$body_html}
@@ -238,147 +237,6 @@ function render_page(string $title, string $body_html): void
       const LOCATION_ID = '{$locationIdSafe}';
       const API_BASE    = '{$backendApiUrl}';
 
-      (function() {
-        const canvas = document.getElementById('antigravity-bg');
-        const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-        renderer.setPixelRatio(window.devicePixelRatio);
-        renderer.setSize(window.innerWidth, window.innerHeight);
-
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 1000);
-        camera.position.z = 50;
-
-        const count = 300;
-        const magnetRadius = 6;
-        const ringRadius = 7;
-        const waveSpeed = 0.4;
-        const waveAmplitude = 1;
-        const particleSize = 1.5;
-        const lerpSpeed = 0.05;
-        const autoAnimate = true;
-        const particleVariance = 1;
-        const rotationSpeed = 0;
-        const depthFactor = 1;
-        const pulseSpeed = 3;
-        const fieldStrength = 10;
-        const color = '#2b83fa';
-
-        const geometry = new THREE.CapsuleGeometry(0.1, 0.4, 4, 8);
-        const material = new THREE.MeshBasicMaterial({ color: new THREE.Color(color) });
-        const mesh = new THREE.InstancedMesh(geometry, material, count);
-        scene.add(mesh);
-
-        const dummy = new THREE.Object3D();
-        const particles = [];
-        
-        function initParticles() {
-            const aspect = window.innerWidth / window.innerHeight;
-            const h = 2 * Math.tan((camera.fov * Math.PI) / 360) * camera.position.z;
-            const w = h * aspect;
-
-            for (let i = 0; i < count; i++) {
-                const x = (Math.random() - 0.5) * w;
-                const y = (Math.random() - 0.5) * h;
-                const z = (Math.random() - 0.5) * 20;
-                particles.push({
-                    t: Math.random() * 100,
-                    speed: 0.01 + Math.random() / 200,
-                    mx: x, my: y, mz: z,
-                    cx: x, cy: y, cz: z,
-                    randomRadiusOffset: (Math.random() - 0.5) * 2
-                });
-            }
-        }
-        initParticles();
-
-        let mouse = new THREE.Vector2(0, 0);
-        let virtualMouse = new THREE.Vector2(0, 0);
-        let lastMouseMoveTime = 0;
-
-        window.addEventListener('mousemove', (e) => {
-            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
-            lastMouseMoveTime = Date.now();
-        });
-
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
-
-        function animate() {
-            requestAnimationFrame(animate);
-            const time = performance.now() / 1000;
-            
-            const aspect = window.innerWidth / window.innerHeight;
-            const vh = 2 * Math.tan((camera.fov * Math.PI) / 360) * camera.position.z;
-            const vw = vh * aspect;
-
-            let destX = (mouse.x * vw) / 2;
-            let destY = (mouse.y * vh) / 2;
-
-            if (autoAnimate && Date.now() - lastMouseMoveTime > 2000) {
-                destX = Math.sin(time * 0.5) * (vw / 4);
-                destY = Math.cos(time * 0.5 * 2) * (vh / 4);
-            }
-
-            virtualMouse.x += (destX - virtualMouse.x) * 0.05;
-            virtualMouse.y += (destY - virtualMouse.y) * 0.05;
-
-            const globalRotation = time * rotationSpeed;
-
-            for (let i = 0; i < count; i++) {
-                const p = particles[i];
-                p.t += p.speed / 2;
-
-                const projectionFactor = 1 - p.cz / 50;
-                const pTargetX = virtualMouse.x * projectionFactor;
-                const pTargetY = virtualMouse.y * projectionFactor;
-
-                const dx = p.mx - pTargetX;
-                const dy = p.my - pTargetY;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-
-                let targetX = p.mx;
-                let targetY = p.my;
-                let targetZ = p.mz * depthFactor;
-
-                if (dist < magnetRadius) {
-                    const angle = Math.atan2(dy, dx) + globalRotation;
-                    const wave = Math.sin(p.t * waveSpeed + angle) * (0.5 * waveAmplitude);
-                    const deviation = p.randomRadiusOffset * (5 / (fieldStrength + 0.1));
-                    const currentRingRadius = ringRadius + wave + deviation;
-
-                    targetX = pTargetX + currentRingRadius * Math.cos(angle);
-                    targetY = pTargetY + currentRingRadius * Math.sin(angle);
-                    targetZ = p.mz * depthFactor + Math.sin(p.t) * (1 * waveAmplitude * depthFactor);
-                }
-
-                p.cx += (targetX - p.cx) * lerpSpeed;
-                p.cy += (targetY - p.cy) * lerpSpeed;
-                p.cz += (targetZ - p.cz) * lerpSpeed;
-
-                dummy.position.set(p.cx, p.cy, p.cz);
-                dummy.lookAt(pTargetX, pTargetY, p.cz);
-                dummy.rotateX(Math.PI / 2);
-
-                const currentDist = Math.sqrt(Math.pow(p.cx - pTargetX, 2) + Math.pow(p.cy - pTargetY, 2));
-                const distFromRing = Math.abs(currentDist - ringRadius);
-                let scaleFactor = Math.max(0, Math.min(1, 1 - distFromRing / 10));
-                const finalScale = scaleFactor * (0.8 + Math.sin(p.t * pulseSpeed) * 0.2 * particleVariance) * particleSize;
-                
-                dummy.scale.set(finalScale, finalScale, finalScale);
-                dummy.updateMatrix();
-                mesh.setMatrixAt(i, dummy.matrix);
-            }
-
-            mesh.instanceMatrix.needsUpdate = true;
-            renderer.render(scene, camera);
-        }
-        animate();
-      })();
-
       function toggleModal(id) {
         const el = document.getElementById(id);
         if (el && el.style.display === 'flex') {
@@ -444,7 +302,7 @@ function render_error(string $message, array $details = []): void
         $details_html = "<pre class=\"error-pre\">{$json}</pre>";
     }
 
-    $reinstall_url = 'https://marketplace.leadconnectorhq.com/oauth/chooselocation?response_type=code&redirect_uri=https%3A%2F%2Fsmspro-api.nolacrm.io%2Foauth%2Fcallback&client_id=69d31f33b3071b25dbcc5656-mnqxvtt3&scope=locations.readonly+workflows.readonly+conversations%2Fmessage.readonly+conversations.readonly+conversations.write+contacts.readonly+contacts.write+conversations%2Fmessage.write&version_id=69d31f33b3071b25dbcc5656';
+    $reinstall_url = 'https://marketplace.leadconnectorhq.com/v2/oauth/chooselocation?response_type=code&redirect_uri=https%3A%2F%2Fsmspro-api.nolacrm.io%2Foauth%2Fcallback&client_id=6999da2b8f278296d95f7274-mmn30t4f&scope=workflows.readonly+conversations%2Fmessage.readonly+conversations.readonly+conversations.write+contacts.readonly+contacts.write+conversations%2Fmessage.write+saas%2Flocation.read+locations.readonly+locations%2Ftags.readonly+locations%2Ftags.write&version_id=6999da2b8f278296d95f7274';
 
     $body = <<<HTML
         <div class="error-icon" style="margin: 0 auto 32px;">
@@ -461,131 +319,84 @@ HTML;
     exit;
 }
 
-// ─── OAuth Logic ────────────────────────────────────────────────────────────
+// ─── OAuth Config ──────────────────────────────────────────────────────────────
+// Subaccount app only — NO agency fallback.
+// Agency installs use /oauth/agency-callback → ghl_agency_callback.php
+$clientId     = getenv('GHL_CLIENT_ID')     ?: '6999da2b8f278296d95f7274-mmn30t4f';
+$clientSecret = getenv('GHL_CLIENT_SECRET') ?: 'd91017ad-f4eb-461f-8967-b1d51cd1c1eb';
+$redirectUri  = 'https://smspro-api.nolacrm.io/oauth/callback'; // HARDCODED
 
-// We now support both the legacy Sub-account app and the new Agency-level app.
-$ghlApps = [
-    'subaccount' => [
-        'clientId' => getenv('GHL_CLIENT_ID') ?: '6999da2b8f278296d95f7274-mmn30t4f',
-
-        'clientSecret' => getenv('GHL_CLIENT_SECRET') ?: 'd91017ad-f4eb-461f-8967-b1d51cd1c1eb',
-
-    ],
-    'agency' => [
-        'clientId' => getenv('GHL_AGENCY_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3',
-        'clientSecret' => getenv('GHL_AGENCY_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322',
-    ]
-];
-
-// Build redirect_uri dynamically to match whichever host GHL redirected to.
-// GHL requires the redirect_uri in the token exchange to EXACTLY match the
-// one used in the install link (Whitelabel tab uses raw Cloud Run URL,
-// Standard tab uses the custom domain). A mismatch causes token exchange failure.
-$host = $_SERVER['HTTP_HOST'] ?? 'smspro-api.nolacrm.io';
-$redirectUri = 'https://' . $host . '/oauth/callback';
-
-if (!isset($_GET['code'])) {
-    if (isset($_GET['test'])) {
-        render_page('Success!', '<h1>Test Page</h1>');
-        exit;
-    }
+if (!$clientId || !$clientSecret)
+    render_error('Server configuration error: GHL credentials are not set up.');
+if (!isset($_GET['code']))
     render_error('No authorization code was received.');
-}
 
-$code = $_GET['code'];
+$code  = $_GET['code'];
 $state = $_GET['state'] ?? null;
 
-// ─── Token Exchange (Multi-Client Fallback) ────────────────────────────────────
-$data = null;
-$httpCode = 0;
-$usedAppType = '';
-$response = '';
+// ─── Token Exchange ────────────────────────────────────────────────────────────
+$ch = curl_init('https://services.leadconnectorhq.com/oauth/token');
+curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+curl_setopt($ch, CURLOPT_POST, true);
+curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query([
+    'client_id'     => $clientId,
+    'client_secret' => $clientSecret,
+    'grant_type'    => 'authorization_code',
+    'code'          => $code,
+    'user_type'     => 'Location',
+    'redirect_uri'  => $redirectUri,
+]));
+curl_setopt($ch, CURLOPT_HTTPHEADER, ['Accept: application/json', 'Version: 2021-07-28']);
 
-foreach ($ghlApps as $appType => $config) {
-    if (!$config['clientId'] || !$config['clientSecret'])
-        continue;
+$response = curl_exec($ch);
+$httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+curl_close($ch);
 
-    $ch = curl_init('https://services.leadconnectorhq.com/oauth/token');
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query([
-        'client_id' => $config['clientId'],
-        'client_secret' => $config['clientSecret'],
-        'grant_type' => 'authorization_code',
-        'code' => $code,
-        'user_type' => ($appType === 'agency' ? 'Company' : 'Location'),
-        'redirect_uri' => $redirectUri,
-    ]));
-    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Accept: application/json', 'Version: 2021-07-28']);
+$data = json_decode($response, true);
+if ($httpCode !== 200 || !is_array($data))
+    render_error('Authorization failed.', $data ?: []);
 
-    $response = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+// Subaccount-only — $usedAppType is always 'subaccount'
+$usedAppType = 'subaccount';
 
-    $responseData = json_decode($response, true);
-    if ($httpCode === 200 && is_array($responseData)) {
-        $data = $responseData;
-        $usedAppType = $appType;
-        break; // Success!
-    }
-}
+// ─── Determine Location ID ────────────────────────────────────────────────────
+$locationId = $state ?? $data['locationId'] ?? $data['location_id'] ?? null;
+if (!$locationId)
+    render_error('No Location ID returned.', $data);
 
-if (!$data) {
-    render_error('Authorization failed. Tried both Sub-account and Agency credentials.', ['code' => $httpCode, 'response' => $response]);
-}
+$locationIdSafe = htmlspecialchars((string)$locationId, ENT_QUOTES, 'UTF-8');
 
-// ─── Determine ID (Company vs Location) ────────────────────────────────────────
-$userType = $data['userType'] ?? 'Location';
-$id = ($userType === 'Company') ? ($data['companyId'] ?? null) : ($state ?? $data['locationId'] ?? $data['location_id'] ?? null);
+// Alias for render_page() global
+$id          = $locationId;
+$idSafe      = $locationIdSafe;
+$userType    = 'Location';
+$usedAppType = 'subaccount';
 
-if (!$id) {
-    render_error('No valid ID (Location or Company) returned.', $data);
-}
-
-$idSafe = htmlspecialchars((string)$id, ENT_QUOTES, 'UTF-8');
-
-// ─── Fetch Name (Location or Company) ─────────────────────────────────────────
-$displayName = '';
+// ─── Fetch Location Name ───────────────────────────────────────────────────────
+$locationName = '';
 try {
-    $fetchUrl = ($userType === 'Company')
-        ? 'https://services.leadconnectorhq.com/companies/' . $id
-        : 'https://services.leadconnectorhq.com/locations/' . $id;
-
-    $locCh = curl_init($fetchUrl);
+    $locCh = curl_init('https://services.leadconnectorhq.com/locations/' . $locationId);
     curl_setopt($locCh, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($locCh, CURLOPT_HTTPHEADER, [
         'Authorization: Bearer ' . $data['access_token'],
         'Accept: application/json',
-        'Version: ' . ($userType === 'Company' ? '2021-04-15' : '2021-07-28'),
+        'Version: 2021-07-28',
     ]);
     $locResp = curl_exec($locCh);
     $locCode = curl_getinfo($locCh, CURLINFO_HTTP_CODE);
     curl_close($locCh);
 
     if ($locCode === 200) {
-        $locData = json_decode($locResp, true);
-        $displayName = ($userType === 'Company') ? ($locData['company']['name'] ?? '') : ($locData['location']['name'] ?? '');
+        $locData      = json_decode($locResp, true);
+        $locationName = $locData['location']['name'] ?? '';
     }
-
-    // Log for monitoring — helps debug when name detection fails
-    error_log(sprintf(
-        '[GHL_CALLBACK] Name fetch for %s %s: HTTP %d | name="%s"',
-        $userType, $id, $locCode, $displayName ?: '(empty)'
-    ));
-}
-catch (Exception $e) {
-    error_log("Failed to fetch name in callback for $id: " . $e->getMessage());
+} catch (Exception $e) {
+    error_log("Failed to fetch location name in callback for $locationId: " . $e->getMessage());
 }
 
-$displayNameSafe = $displayName ? htmlspecialchars($displayName, ENT_QUOTES, 'UTF-8') : ($userType === 'Company' ? 'Your Agency' : 'Your Sub-Account');
-// ── Dashboard URL ──────────────────────────────────────────────────────────────
-// Agency install  → GHL Agency Panel custom menu link
-// Location install → NOLA SMS Pro app with location context
-if ($userType === 'Company') {
-    $dashboardUrl = 'https://app.leadconnectorhq.com/custom-page-link/69d3212eb3071ba8a0cd0b51';
-} else {
-    $dashboardUrl = 'https://app.nolasmspro.com/?location_id=' . urlencode((string)$idSafe);
-}
+$displayName     = $locationName;
+$displayNameSafe = $locationName ? htmlspecialchars($locationName, ENT_QUOTES, 'UTF-8') : 'Your Sub-Account';
+$dashboardUrl    = 'https://app.nolacrm.io/v2/location/' . $locationIdSafe . '/custom-page-link/69a642aae76974824fd39bb6';
 
 // ─── Save Tokens & Metadata to Firestore ──────────────────────────────────────
 $db = get_firestore();
