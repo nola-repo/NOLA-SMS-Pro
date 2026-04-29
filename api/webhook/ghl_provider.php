@@ -277,6 +277,19 @@ if ($usingFreeCredits) {
         $agency_id = $agencyDoc->exists() ? ($agencyDoc->data()['agency_id'] ?? '') : '';
         $provider  = $usingOwnApiKey ? 'semaphore_custom' : 'semaphore';
 
+        // ── Pre-flight: subaccount balance check ────────────────────────────
+        $subBalance = $creditManager->get_balance($account_id);
+        if ($subBalance <= 0) {
+            http_response_code(402);
+            echo json_encode([
+                'success'            => false,
+                'error'              => 'insufficient_credits',
+                'message'            => 'Your account has no credits. Please top up or request credits from your agency.',
+                'subaccount_balance' => $subBalance,
+            ]);
+            exit;
+        }
+
         $refId = $messageId ?? ('ghl_prov_' . bin2hex(random_bytes(4)));
         $desc = "SMS to {$normalizedPhone}";
 
@@ -296,7 +309,11 @@ if ($usingFreeCredits) {
             }
         }
 
-        if ($agency_id) {
+        // ── Deduction: mirror send_sms.php — only dual-deduct when master lock is ON ──
+        // ghl_provider was previously always calling deduct_agency_and_subaccount() whenever
+        // agency_id existed, which required the agency wallet to also have balance. This caused
+        // 402 errors even when the subaccount had sufficient credits.
+        if ($agency_id && $creditManager->get_agency_master_lock($agency_id)) {
             $creditManager->deduct_agency_and_subaccount(
                 $account_id,
                 $agency_id,
@@ -312,7 +329,7 @@ if ($usingFreeCredits) {
         } else {
             $creditManager->deduct_subaccount_only(
                 $account_id,
-                '',
+                $agency_id ?: '',
                 $required_credits,
                 $refId,
                 $desc,
