@@ -324,7 +324,7 @@ HTML;
 // Agency installs use /oauth/agency-callback → ghl_agency_callback.php
 $clientId     = getenv('GHL_CLIENT_ID')     ?: '6999da2b8f278296d95f7274-mmn30t4f';
 $clientSecret = getenv('GHL_CLIENT_SECRET') ?: 'd91017ad-f4eb-461f-8967-b1d51cd1c1eb';
-$redirectUri  = 'https://agency.nolasmspro.com/oauth/callback'; // HARDCODED
+$redirectUri  = 'https://smspro-api.nolacrm.io/oauth/callback'; // HARDCODED
 
 if (!$clientId || !$clientSecret)
     render_error('Server configuration error: GHL credentials are not set up.');
