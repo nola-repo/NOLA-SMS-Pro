@@ -100,6 +100,8 @@
     RewriteRule ^api/conversations/?$ /api/conversations.php [NC,L,QSA]
     RewriteRule ^api/templates/?$ /api/templates.php [NC,L,QSA]
     RewriteRule ^api/notification-settings/?$ /api/notification-settings.php [NC,L,QSA]
+    RewriteRule ^api/check_message_status/?$ /api/check_message_status.php [NC,L,QSA]
+    RewriteRule ^api/check-message-status/?$ /api/check_message_status.php [NC,L,QSA]
 
     # Catch-all: /api/XXX -> /api/XXX.php (if the .php file exists)
     RewriteCond %{REQUEST_FILENAME}.php -f

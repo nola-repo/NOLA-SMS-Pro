@@ -522,19 +522,36 @@ if (!empty($all_results)) {
     // Calculate credits per message for logging
     $credits_per_message = CreditManager::calculateRequiredCredits($message, 1);
 
+    $saved_message_ids = [];
+
     foreach ($all_results as $msg) {
         if (!isset($msg['message_id']))
             continue;
 
         $messageId = (string)$msg['message_id'];
+        $saved_message_ids[] = $messageId;
 
         $recipientRaw = $msg['number'] ?? $msg['recipient'] ?? $msg['to'] ?? null;
         $recipientArr = $recipientRaw ? clean_numbers($recipientRaw) : [];
         $recipient = $recipientArr[0] ?? $validNumbers[0];
 
-        $sender_id = $sender; // Assuming $sender is already defined
-        $recipientKey = $recipient_key ?? $recipient; // Assuming $recipient_key is already defined
-        $recipientName = $customData['name'] ?? $recipient; // Assuming $customData is defined
+        $sender_id = $sender;
+        $recipientKey = $recipient_key ?? $recipient;
+        $recipientName = $customData['name'] ?? $recipient;
+
+        // ── Resolve initial status from Semaphore response ─────────────────────
+        // Semaphore returns the actual send status in the response (e.g. 'Queued', 'Sent').
+        // Use it directly instead of always storing 'Sending', so the frontend
+        // sees the real status immediately without waiting for the 5-min cron.
+        $rawMsgStatus = strtolower($msg['status'] ?? '');
+        $initialStatus = 'Sending';
+        if (in_array($rawMsgStatus, ['sent', 'success', 'delivered'])) {
+            $initialStatus = 'Sent';
+        } elseif (in_array($rawMsgStatus, ['failed', 'expired', 'rejected', 'undelivered'])) {
+            $initialStatus = 'Failed';
+        }
+        // 'queued' and 'pending' intentionally stay as 'Sending' — they will be
+        // polled by check_message_status.php and resolved quickly.
 
         $saveData = [
             'conversation_id' => $conversation_id,
@@ -543,7 +560,7 @@ if (!empty($all_results)) {
             'message' => $message,
             'direction' => 'outbound',
             'sender_id' => $sender_id,
-            'status' => 'Sending',
+            'status' => $initialStatus,
             'batch_id' => $batch_id,
             'recipient_key' => $recipientKey,
             'created_at' => $ts,
@@ -564,7 +581,7 @@ if (!empty($all_results)) {
             'numbers' => [$recipient],
             'message' => $message,
             'sender_id' => $sender,
-            'status' => 'Sending',
+            'status' => $initialStatus,
             'date_created' => $ts,
             'source' => 'semaphore',
             'batch_id' => $batch_id,
@@ -657,7 +674,8 @@ echo json_encode([
         "success" => ($total_status == 200),
         "summary" => $summary,
         "credits" => $required_credits,
-        "location_id" => $locId
+        "location_id" => $locId,
+        "message_ids" => $saved_message_ids ?? []
     ],
     "debug_info" => [
         "location_id" => $locId,
