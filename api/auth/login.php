@@ -69,9 +69,10 @@ try {
         exit;
     }
 
-    $role      = $userData['role']       ?? 'user';
-    $companyId = $userData['company_id'] ?? null;
-    $locationId= $userData['active_location_id'] ?? null;
+    $role        = $userData['role']               ?? 'user';
+    $companyId   = $userData['company_id']          ?? null;
+    $locationId  = $userData['active_location_id']  ?? null;
+    $locationMemberships = $userData['location_memberships'] ?? ($locationId ? [$locationId] : []);
 
     // ── Sign JWT ─────────────────────────────────────────────────────────────
     $token = jwt_sign([
@@ -82,10 +83,11 @@ try {
     ], $jwtSecret, 28800); // 8 hours
 
     echo json_encode([
-        'token'       => $token,
-        'role'        => $role,
-        'company_id'  => $companyId,
-        'location_id' => $locationId,
+        'token'                => $token,
+        'role'                 => $role,
+        'company_id'           => $companyId,
+        'location_id'          => $locationId,
+        'location_memberships' => $locationMemberships,
         'user'        => [
             'firstName' => $userData['firstName'] ?? '',
             'lastName'  => $userData['lastName']  ?? '',

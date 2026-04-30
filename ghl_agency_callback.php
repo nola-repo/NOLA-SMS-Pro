@@ -253,65 +253,48 @@ foreach ($allLocationIds as $locId) {
     }
 }
 
-// ─── Step 6: Success Page ──────────────────────────────────────────────────────
-$companyNameSafe = htmlspecialchars($companyName ?: 'Your Agency', ENT_QUOTES, 'UTF-8');
-$agencyDashboard = 'https://app.nolasmspro.com/?company_id=' . urlencode($companyId);
-$failedColor     = $failed > 0 ? '#dc2626' : '#16a34a';
+// ─── Redirect Logic (replaces static success page) ────────────────────────────
 
-header('Content-Type: text/html; charset=utf-8');
-echo <<<HTML
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Agency Connected — NOLA SMS Pro</title>
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&display=swap" rel="stylesheet">
-<style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Poppins', sans-serif; min-height: 100vh; display: flex; align-items: center;
-         justify-content: center; background: #f9fafb; padding: 20px; overflow: hidden; position: relative; }
-  .blob { position: fixed; border-radius: 50%; background: #2b83fa; filter: blur(120px); opacity: 0.15; pointer-events: none; }
-  .blob-tl { top: -10%; left: -10%; width: 50vw; height: 50vw; }
-  .blob-br { bottom: -10%; right: -10%; width: 50vw; height: 50vw; }
-  .card { background: rgba(255,255,255,.75); backdrop-filter: blur(24px);
-          border: 1px solid rgba(255,255,255,.3); border-radius: 32px;
-          padding: 48px 36px; max-width: 440px; width: 100%; text-align: center;
-          box-shadow: 0 8px 32px rgba(0,0,0,.06); position: relative; z-index: 1;
-          animation: rise .7s cubic-bezier(.16,1,.3,1) both; }
-  @keyframes rise { from { opacity:0; transform:translateY(32px); } to { opacity:1; transform:none; } }
-  .icon { width:72px; height:72px; background:#2b83fa; border-radius:50%; display:flex;
-          align-items:center; justify-content:center; margin:0 auto 28px;
-          box-shadow: 0 10px 24px rgba(43,131,250,.4); }
-  h1 { font-size:28px; font-weight:800; letter-spacing:-1px; color:#111; margin-bottom:8px; }
-  p  { font-size:15px; color:#6e6e73; font-weight:500; margin-bottom:8px; }
-  .stats { background:#f4f4f5; border-radius:16px; padding:16px 20px; margin:24px 0; text-align:left; }
-  .stat  { display:flex; justify-content:space-between; font-size:13px; padding:4px 0; color:#555; }
-  .stat strong { color:#111; font-weight:700; }
-  .btn { display:inline-flex; align-items:center; justify-content:center; padding:14px 40px;
-         background:#2b83fa; color:#fff; font-size:15px; font-weight:700; text-decoration:none;
-         border-radius:99px; box-shadow:0 6px 16px rgba(43,131,250,.35); transition:.2s;
-         margin-top:8px; }
-  .btn:hover { background:#1d6bd4; transform:translateY(-2px); }
-</style>
-</head>
-<body>
-<div class="blob blob-tl"></div>
-<div class="blob blob-br"></div>
-<div class="card">
-  <div class="icon">
-    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3"
-         stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-  </div>
-  <h1>Agency Connected!</h1>
-  <p>NOLA SMS Pro has been installed for <strong>{$companyNameSafe}</strong>.</p>
-  <div class="stats">
-    <div class="stat"><span>Sub-accounts provisioned</span><strong>{$provisioned}</strong></div>
-    <div class="stat"><span>Failed</span><strong style="color:{$failedColor}">{$failed}</strong></div>
-    <div class="stat"><span>Company ID</span><strong style="font-size:11px;">{$companyId}</strong></div>
-  </div>
-  <a href="{$agencyDashboard}" class="btn">Open Agency Panel &rarr;</a>
-</div>
-</body>
-</html>
-HTML;
+require_once __DIR__ . '/api/jwt_helper.php';
+
+$jwtSecret      = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
+$agencyAppUrl   = 'https://agency.nolasmspro.com';
+
+// Check if an agency user is already registered for this company_id
+$hasExistingAgency = false;
+try {
+    $agencyUsers = $db->collection('users')
+        ->where('company_id', '=', $companyId)
+        ->where('role', '=', 'agency')
+        ->limit(1)
+        ->documents();
+
+    foreach ($agencyUsers as $doc) {
+        if ($doc->exists()) {
+            $hasExistingAgency = true;
+            break;
+        }
+    }
+} catch (Exception $e) {
+    error_log('[GHL_AGENCY_CALLBACK] Could not check existing agency users: ' . $e->getMessage());
+}
+
+if ($hasExistingAgency) {
+    // ── Re-install: redirect to login with welcome-back banner ──
+    $redirectUrl = $agencyAppUrl . '/login?welcome_back=1';
+    error_log("[GHL_AGENCY_CALLBACK] Re-install for company {$companyId} — redirecting to welcome-back login.");
+} else {
+    // ── First install: generate install token → React agency registration ──
+    $installToken = jwt_sign([
+        'type'         => 'agency_install',
+        'company_id'   => $companyId,
+        'company_name' => $companyName ?: '',
+    ], $jwtSecret, 900); // 15 minutes
+
+    $redirectUrl = $agencyAppUrl . '/register-from-install?install_token=' . urlencode($installToken);
+    error_log("[GHL_AGENCY_CALLBACK] First install for company {$companyId} — redirecting to registration.");
+}
+
+header('Location: ' . $redirectUrl, true, 302);
+exit;
+

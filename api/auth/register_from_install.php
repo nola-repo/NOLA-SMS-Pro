@@ -21,12 +21,36 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 $input = json_decode(file_get_contents('php://input'), true);
 
-$fullName   = trim($input['full_name'] ?? '');
-$phone      = trim($input['phone']     ?? '');
-$email      = strtolower(trim($input['email'] ?? ''));
-$password   = $input['password']    ?? '';
-$locationId = $input['location_id'] ?? null;
-$companyId  = $input['company_id']  ?? null;
+$fullName      = trim($input['full_name']      ?? '');
+$phone         = trim($input['phone']          ?? '');
+$email         = strtolower(trim($input['email'] ?? ''));
+$password      = $input['password']    ?? '';
+$installToken  = $input['install_token'] ?? null; // optional — if present, trust it over raw IDs
+$locationId    = $input['location_id'] ?? null;
+$companyId     = $input['company_id']  ?? null;
+
+$jwtSecret = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
+
+// ── If install_token provided, verify and extract IDs from it (more secure) ──
+if ($installToken) {
+    $installPayload = jwt_verify($installToken, $jwtSecret);
+    if (!$installPayload) {
+        http_response_code(401);
+        echo json_encode(['error' => 'Install token is invalid or expired. Please reinstall from the GHL Marketplace.']);
+        exit;
+    }
+    $type = $installPayload['type'] ?? '';
+    if ($type === 'install') {
+        $locationId = $installPayload['location_id'] ?? $locationId;
+        $companyId  = $installPayload['company_id']  ?? $companyId;
+    } elseif ($type === 'agency_install') {
+        $companyId  = $installPayload['company_id']  ?? $companyId;
+    } else {
+        http_response_code(401);
+        echo json_encode(['error' => 'Invalid install token type.']);
+        exit;
+    }
+}
 
 // ── Per-field validation (return all errors at once) ─────────────────────────
 $errors = [];
@@ -49,7 +73,6 @@ $nameParts = explode(' ', $fullName, 2);
 $firstName = $nameParts[0];
 $lastName  = $nameParts[1] ?? '';
 
-$jwtSecret       = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
 $isLocationLevel = !empty($locationId);
 
 try {
@@ -108,6 +131,18 @@ try {
 
         $usersRef->document($existingId)->set($updates, ['merge' => true]);
 
+        // Add location to user's location_memberships array (idempotent via arrayUnion)
+        if ($isLocationLevel && $locationId) {
+            try {
+                $db->collection('users')->document($existingId)->update([
+                    ['path' => 'location_memberships', 'value' => \Google\Cloud\Firestore\FieldValue::arrayUnion([$locationId])],
+                ]);
+            } catch (Exception $ignored) {}
+
+            // Write location_members subcollection entry
+            _write_location_member($db, $locationId, $existingId, $email, $now);
+        }
+
         // Sync integration record & GHL Custom Values
         update_integration_record($db, $locationId, $email, $fullName, $phone, $now);
         _sync_owner_to_ghl($db, $locationId, $fullName, $email, $phone);
@@ -115,6 +150,10 @@ try {
         $role      = $existingDoc['role']       ?? 'user';
         $linkedCo  = $existingDoc['company_id'] ?? $companyId ?? null;
         $linkedLoc = $isLocationLevel ? $locationId : ($existingDoc['active_location_id'] ?? null);
+
+        // Fetch fresh location_memberships
+        $freshDoc = $db->collection('users')->document($existingId)->snapshot();
+        $locationMemberships = $freshDoc->exists() ? ($freshDoc->data()['location_memberships'] ?? []) : [];
 
         $token = jwt_sign([
             'sub'        => $existingId,
@@ -125,18 +164,20 @@ try {
 
         http_response_code(200);
         echo json_encode([
-            'status'      => 'linked',
-            'message'     => 'Account setup complete.',
-            'token'       => $token,
-            'role'        => $role,
-            'location_id' => $linkedLoc,
-            'company_id'  => $linkedCo,
+            'status'               => 'linked',
+            'message'              => 'Account setup complete.',
+            'token'                => $token,
+            'role'                 => $role,
+            'location_id'          => $linkedLoc,
+            'company_id'           => $linkedCo,
+            'location_memberships' => $locationMemberships,
             'user' => [
-                'firstName'   => $updates['firstName'] ?? $existingDoc['firstName'] ?? $firstName,
-                'lastName'    => $updates['lastName']  ?? $existingDoc['lastName']  ?? $lastName,
-                'email'       => $email,
-                'phone'       => $updates['phone']     ?? $existingDoc['phone']     ?? $phone,
-                'location_id' => $linkedLoc,
+                'firstName'            => $updates['firstName'] ?? $existingDoc['firstName'] ?? $firstName,
+                'lastName'             => $updates['lastName']  ?? $existingDoc['lastName']  ?? $lastName,
+                'email'                => $email,
+                'phone'                => $updates['phone']     ?? $existingDoc['phone']     ?? $phone,
+                'location_id'          => $linkedLoc,
+                'location_memberships' => $locationMemberships,
             ],
         ]);
         exit;
@@ -162,7 +203,8 @@ try {
     ];
 
     if ($isLocationLevel) {
-        $userData['active_location_id'] = $locationId;
+        $userData['active_location_id']   = $locationId;
+        $userData['location_memberships'] = [$locationId]; // initialise membership array
     }
     if (!empty($companyId)) {
         $userData['company_id'] = $companyId;
@@ -173,6 +215,11 @@ try {
 
     $newUserDoc->set($userData);
     $newUserId = $newUserDoc->id();
+
+    // Write location_members subcollection entry
+    if ($isLocationLevel && $locationId) {
+        _write_location_member($db, $locationId, $newUserId, $email, $now);
+    }
 
     // Sync integration record & GHL Custom Values
     update_integration_record($db, $locationId, $email, $fullName, $phone, $now);
@@ -186,20 +233,24 @@ try {
         'company_id' => $companyId ?? null,
     ], $jwtSecret, 28800);
 
+    $locationMemberships = $isLocationLevel ? [$locationId] : [];
+
     http_response_code(201);
     echo json_encode([
-        'status'      => 'success',
-        'message'     => 'Account ready.',
-        'token'       => $token,
-        'role'        => $role,
-        'location_id' => $locationId,
-        'company_id'  => $companyId ?? null,
+        'status'               => 'success',
+        'message'              => 'Account ready.',
+        'token'                => $token,
+        'role'                 => $role,
+        'location_id'          => $locationId,
+        'company_id'           => $companyId ?? null,
+        'location_memberships' => $locationMemberships,
         'user' => [
-            'firstName'   => $firstName,
-            'lastName'    => $lastName,
-            'email'       => $email,
-            'phone'       => $phone,
-            'location_id' => $locationId,
+            'firstName'            => $firstName,
+            'lastName'             => $lastName,
+            'email'                => $email,
+            'phone'                => $phone,
+            'location_id'          => $locationId,
+            'location_memberships' => $locationMemberships,
         ],
     ]);
 
@@ -209,6 +260,43 @@ try {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Write (or update) a member record in the location_members/{locationId}/members/{uid}
+ * subcollection. The FIRST person to register for a location gets role "owner";
+ * subsequent registrations get role "member".
+ */
+function _write_location_member($db, string $locationId, string $uid, string $email, DateTimeImmutable $now): void
+{
+    try {
+        $membersRef  = $db->collection('location_members')->document($locationId)->collection('members');
+        $memberDocRef = $membersRef->document($uid);
+        $existing     = $memberDocRef->snapshot();
+
+        // Determine role: first member = owner, subsequent = member
+        if (!$existing->exists()) {
+            $allMembers = $membersRef->limit(1)->documents();
+            $hasOther   = false;
+            foreach ($allMembers as $m) {
+                if ($m->exists() && $m->id() !== $uid) {
+                    $hasOther = true;
+                    break;
+                }
+            }
+            $role = $hasOther ? 'member' : 'owner';
+
+            $memberDocRef->set([
+                'uid'       => $uid,
+                'email'     => $email,
+                'role'      => $role,
+                'joined_at' => new \Google\Cloud\Core\Timestamp($now),
+            ]);
+        }
+        // If already a member, leave it as-is (re-installs don't downgrade the role)
+    } catch (Exception $e) {
+        error_log("[register_from_install] _write_location_member failed for uid={$uid}, loc={$locationId}: " . $e->getMessage());
+    }
+}
 
 /**
  * Write owner contact info into the integrations/<intDocId> document.

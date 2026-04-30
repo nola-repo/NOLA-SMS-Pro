@@ -620,29 +620,51 @@ catch (Exception $e) {
     render_error('Callback authorized, but failed to save tokens: ' . $e->getMessage());
 }
 
-// ─── Render Page ───────────────────────────────────────────────────────
+// ─── Redirect Logic (replaces the old static success page) ────────────────────
 
-// First-time install view
-$companyIdJs  = ($userType === 'Company') ? "'" . addslashes((string)$id) . "'" : 'null';
-$locationIdJs = ($userType === 'Location') ? "'" . addslashes((string)$id) . "'" : 'null';
+require_once __DIR__ . '/api/jwt_helper.php';
 
-$formBody = <<<HTML
-    <div id="success-view">
-        <div class="success-ring">
-            <div class="success-icon">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-            </div>
-        </div>
-        <h1>You're All Set!</h1>
-        <p class="subtitle">Account created and linked to <b>{$displayNameSafe}</b></p>
+$jwtSecret       = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
+$reactAppUrl     = 'https://app.nolacrm.io';
+$locationNameEnc = urlencode($locationName ?: 'Your Sub-Account');
 
-        <div style="display: flex; flex-direction: column; gap: 16px; margin-bottom: 32px;">
-            <a id="dashboard-btn" href="{$dashboardUrl}" class="btn-primary">Open Dashboard &rarr;</a>
-            <div class="sender-toggle" onclick="toggleModal('sender-modal')">Request Sender ID</div>
-        </div>
+// Check if ANY user is already registered for this location via location_members subcollection.
+// This is faster than scanning the full users collection and is the correct source of truth.
+$hasExistingMembers = false;
+try {
+    $membersSnap = $db->collection('location_members')
+        ->document($locationId)
+        ->collection('members')
+        ->limit(1)
+        ->documents();
 
-        <div onclick="toggleModal('how-modal')" class="tutorial-link">How it works &amp; Credits</div>
-    </div>
-HTML;
+    foreach ($membersSnap as $m) {
+        if ($m->exists()) {
+            $hasExistingMembers = true;
+            break;
+        }
+    }
+} catch (Exception $e) {
+    error_log('[GHL_CALLBACK] Could not check location_members: ' . $e->getMessage());
+}
 
-render_page('Success!', $formBody);
+if ($hasExistingMembers) {
+    // ── Re-install: redirect to login with welcome-back banner ──
+    $redirectUrl = $reactAppUrl . '/login?welcome_back=1&name=' . $locationNameEnc;
+    error_log("[GHL_CALLBACK] Re-install for {$locationId} — redirecting to welcome-back login.");
+} else {
+    // ── First install: generate a short-lived install token → React registration ──
+    $installToken = jwt_sign([
+        'type'          => 'install',
+        'location_id'   => $locationId,
+        'location_name' => $locationName ?: '',
+        'company_id'    => $data['companyId'] ?? '',
+    ], $jwtSecret, 900); // 15 minutes
+
+    $redirectUrl = $reactAppUrl . '/register-from-install?install_token=' . urlencode($installToken);
+    error_log("[GHL_CALLBACK] First install for {$locationId} — redirecting to registration.");
+}
+
+header('Location: ' . $redirectUrl, true, 302);
+exit;
+
