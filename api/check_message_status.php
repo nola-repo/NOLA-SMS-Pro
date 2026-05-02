@@ -103,8 +103,16 @@ foreach ($messageIds as $messageId) {
 
     if ($httpCode === 200 && $resp) {
         $decoded = json_decode($resp, true);
-        if ($decoded && is_array($decoded) && isset($decoded[0]['status'])) {
-            $status = $mapStatus($decoded[0]['status']);
+        
+        $statusStr = '';
+        if (is_array($decoded) && isset($decoded[0]['status'])) {
+            $statusStr = $decoded[0]['status'];
+        } elseif (is_array($decoded) && isset($decoded['status'])) {
+            $statusStr = $decoded['status'];
+        }
+
+        if ($statusStr) {
+            $status = $mapStatus($statusStr);
 
             // Persist to Firestore if resolved
             if (in_array($status, ['Sent', 'Failed'])) {
