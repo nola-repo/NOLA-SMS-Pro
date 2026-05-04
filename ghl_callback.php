@@ -407,7 +407,7 @@ function extract_location_id_from_state(?string $state): ?string
  * Exchange a company-scoped token into a location-scoped token.
  * Tries both payload formats because GHL behavior varies by app/runtime.
  *
- * @return array{ok:bool, code:int, data:array, raw:string, format:string}
+ * @return array{ok:bool, code:int, data:array, raw:string, format:string, failures:array}
  */
 function exchange_location_token(string $companyToken, string $companyId, string $locationId): array
 {
@@ -432,10 +432,21 @@ function exchange_location_token(string $companyToken, string $companyId, string
                 'Version: 2021-07-28',
             ],
         ],
+        [
+            'format' => 'query',
+            'url' => 'https://services.leadconnectorhq.com/oauth/locationToken?companyId=' . urlencode($companyId) . '&locationId=' . urlencode($locationId),
+            'body' => '',
+            'headers' => [
+                'Authorization: Bearer ' . $companyToken,
+                'Accept: application/json',
+                'Version: 2021-07-28',
+            ],
+        ],
     ];
 
+    $failures = [];
     foreach ($attempts as $attempt) {
-        $ltCurl = curl_init('https://services.leadconnectorhq.com/oauth/locationToken');
+        $ltCurl = curl_init($attempt['url'] ?? 'https://services.leadconnectorhq.com/oauth/locationToken');
         curl_setopt_array($ltCurl, [
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_POST           => true,
@@ -457,9 +468,15 @@ function exchange_location_token(string $companyToken, string $companyId, string
                 'data' => $data,
                 'raw' => (string)$raw,
                 'format' => $attempt['format'],
+                'failures' => $failures,
             ];
         }
 
+        $failures[] = [
+            'format' => $attempt['format'],
+            'code' => $code,
+            'raw' => is_string($raw) ? substr($raw, 0, 400) : '',
+        ];
         error_log("[GHL_CALLBACK] locationToken {$attempt['format']} failed for {$locationId}: HTTP {$code} — {$raw}");
     }
 
@@ -469,6 +486,7 @@ function exchange_location_token(string $companyToken, string $companyId, string
         'data' => [],
         'raw' => '',
         'format' => 'none',
+        'failures' => $failures,
     ];
 }
 
@@ -614,6 +632,11 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         $ltData2   = $ltResult2['data'];
 
         if (!$ltResult2['ok']) {
+            error_log('[GHL_CALLBACK_DEBUG] caseA_locationToken_failures=' . json_encode([
+                'locationId' => $singleLocationId,
+                'companyId' => $companyId,
+                'failures' => $ltResult2['failures'] ?? [],
+            ]));
             render_error('Failed to exchange company token for location token.', [
                 'locationId' => $singleLocationId,
                 'companyId'  => $companyId,
@@ -815,6 +838,10 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
 
                 error_log("[GHL_CALLBACK] Bulk: provisioned location token for {$locId} ({$locName}) via {$ltResult['format']} format");
             } else {
+                error_log('[GHL_CALLBACK_DEBUG] caseB_locationToken_fail=' . json_encode([
+                    'locationId' => $locId,
+                    'failures' => $ltResult['failures'] ?? [],
+                ]));
                 error_log("[GHL_CALLBACK] Bulk: locationToken failed for {$locId} after trying all formats.");
             }
         } catch (Exception $e) {
