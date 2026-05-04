@@ -162,6 +162,9 @@ try {
             'company_id' => $linkedCo,
         ], $jwtSecret, 28800); // 8 hours
 
+        $locName = $existingDoc['location_name'] ?? null;
+        $compName = $existingDoc['company_name'] ?? null;
+
         http_response_code(200);
         echo json_encode([
             'status'               => 'linked',
@@ -170,6 +173,8 @@ try {
             'role'                 => $role,
             'location_id'          => $linkedLoc,
             'company_id'           => $linkedCo,
+            'location_name'        => $locName,
+            'company_name'         => $compName,
             'location_memberships' => $locationMemberships,
             'user' => [
                 'firstName'            => $updates['firstName'] ?? $existingDoc['firstName'] ?? $firstName,
@@ -177,6 +182,8 @@ try {
                 'email'                => $email,
                 'phone'                => $updates['phone']     ?? $existingDoc['phone']     ?? $phone,
                 'location_id'          => $linkedLoc,
+                'location_name'        => $locName,
+                'company_name'         => $compName,
                 'location_memberships' => $locationMemberships,
             ],
         ]);
@@ -260,6 +267,8 @@ try {
         'role'                 => $role,
         'location_id'          => $locationId,
         'company_id'           => $companyId ?? null,
+        'location_name'        => $locationName ?? null,
+        'company_name'         => $companyName  ?? null,
         'location_memberships' => $locationMemberships,
         'user' => [
             'firstName'            => $firstName,
