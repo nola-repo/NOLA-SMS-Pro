@@ -374,34 +374,37 @@ $ghlApps = [
 ];
 
 // ─── Bulk-install guard ───────────────────────────────────────────────────────
-// When GHL sends isBulkInstallation=true the token is Company-scoped and has
-// NO locationId. Redirect to the agency callback which handles this correctly.
+// When an agency admin installs the sub-account app in bulk, GHL sends a
+// Company-scoped token (isBulkInstallation=true, userType=Company) with NO
+// locationId. We exchange it for per-location tokens and redirect to app.nolacrm.io.
 if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Company') {
-    $companyId        = $data['companyId'] ?? null;
-    $agencyClientId   = $ghlApps['agency']['clientId'];
-    $companyToken     = $data['access_token'];
-    $companyRefresh   = $data['refresh_token'] ?? null;
-    $expiresIn        = (int)($data['expires_in'] ?? 86400);
-    $companyExpiresAt = time() + $expiresIn;
+    // This is the sub-account app bulk install — use sub-account credentials throughout.
+    $companyId          = $data['companyId'] ?? null;
+    $subaccountClientId = $ghlApps['subaccount']['clientId'];
+    $companyToken       = $data['access_token'];
+    $companyRefresh     = $data['refresh_token'] ?? null;
+    $expiresIn          = (int)($data['expires_in'] ?? 86400);
+    $companyExpiresAt   = time() + $expiresIn;
 
     if (!$companyId) {
         render_error('Bulk install received but no companyId in token response.', $data);
     }
 
-    error_log("[GHL_CALLBACK] Bulk install detected — companyId={$companyId}. Provisioning location tokens.");
+    error_log("[GHL_CALLBACK] Sub-account bulk install detected — companyId={$companyId}. Provisioning location tokens.");
 
     $db  = get_firestore();
     $now = new DateTimeImmutable();
 
     // Save Company-level token
     try {
+        // Save the Company-scoped token so we can use it to exchange for location tokens later
         $db->collection('ghl_tokens')->document($companyId)->set([
             'access_token'  => $companyToken,
             'refresh_token' => $companyRefresh,
             'expires_at'    => $companyExpiresAt,
-            'client_id'     => $agencyClientId,
-            'appId'         => $agencyClientId,
-            'appType'       => 'agency',
+            'client_id'     => $subaccountClientId,
+            'appId'         => $subaccountClientId,
+            'appType'       => 'subaccount',
             'userType'      => 'Company',
             'companyId'     => $companyId,
             'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
@@ -469,9 +472,9 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
                     'access_token'          => $ltData['access_token'],
                     'refresh_token'         => $companyRefresh,
                     'expires_at'            => $ltExpires,
-                    'client_id'             => $agencyClientId,
-                    'appId'                 => $agencyClientId,
-                    'appType'               => 'agency',
+                    'client_id'             => $subaccountClientId,
+                    'appId'                 => $subaccountClientId,
+                    'appType'               => 'subaccount',
                     'userType'              => 'Location',
                     'location_id'           => $locId,
                     'location_name'         => $locName,
@@ -516,29 +519,16 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         }
     }
 
-    // Redirect to agency app (same as ghl_agency_callback.php)
+    // Bulk sub-account install complete — redirect to the sub-account app (app.nolacrm.io).
+    // Each provisioned location needs its own registration. We redirect to a generic
+    // success page so the agency admin knows all sub-accounts were provisioned.
     require_once __DIR__ . '/api/jwt_helper.php';
-    $jwtSecret    = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
-    $agencyAppUrl = 'https://agency.nolasmspro.com';
+    $jwtSecret      = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
+    $reactAppUrl    = 'https://app.nolacrm.io';
+    $provisionCount = count($allLocationIds);
 
-    $hasExistingAgency = false;
-    try {
-        foreach ($db->collection('users')->where('company_id', '=', $companyId)->where('role', '=', 'agency')->limit(1)->documents() as $doc) {
-            if ($doc->exists()) { $hasExistingAgency = true; break; }
-        }
-    } catch (Exception $e) {
-        error_log('[GHL_CALLBACK] Could not check agency users: ' . $e->getMessage());
-    }
-
-    if ($hasExistingAgency) {
-        header('Location: ' . $agencyAppUrl . '/login?welcome_back=1', true, 302);
-    } else {
-        $installToken = jwt_sign([
-            'type'       => 'agency_install',
-            'company_id' => $companyId,
-        ], $jwtSecret, 900);
-        header('Location: ' . $agencyAppUrl . '/register-from-install?install_token=' . urlencode($installToken), true, 302);
-    }
+    // Redirect with a bulk-success flag so the React app can show a tailored message
+    header('Location: ' . $reactAppUrl . '/login?bulk_install=1&locations=' . $provisionCount, true, 302);
     exit;
 }
 
