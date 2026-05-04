@@ -193,13 +193,14 @@ class GhlClient
                     curl_setopt_array($ltCh, [
                         CURLOPT_RETURNTRANSFER => true,
                         CURLOPT_POST           => true,
-                        CURLOPT_POSTFIELDS     => json_encode([
+                        CURLOPT_POSTFIELDS     => http_build_query([
                             'companyId'  => $companyId,
                             'locationId' => $locationId,
                         ]),
                         CURLOPT_HTTPHEADER => [
                             'Authorization: Bearer ' . $companyAccessToken,
-                            'Content-Type: application/json',
+                            'Content-Type: application/x-www-form-urlencoded',
+                            'Accept: application/json',
                             'Version: 2021-07-28',
                         ],
                     ]);
@@ -430,10 +431,11 @@ class GhlClient
             curl_setopt_array($ltCh, [
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_POST           => true,
-                CURLOPT_POSTFIELDS     => json_encode(['companyId' => $companyId, 'locationId' => $this->locationId]),
+                CURLOPT_POSTFIELDS     => http_build_query(['companyId' => $companyId, 'locationId' => $this->locationId]),
                 CURLOPT_HTTPHEADER     => [
                     'Authorization: Bearer ' . $data['access_token'],
-                    'Content-Type: application/json',
+                    'Content-Type: application/x-www-form-urlencoded',
+                    'Accept: application/json',
                     'Version: 2021-07-28',
                 ],
             ]);

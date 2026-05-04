@@ -181,12 +181,22 @@ $failed      = 0;
 
 foreach ($allLocationIds as $locId) {
     try {
-        $ltRes = agency_curl_json(
-            'https://services.leadconnectorhq.com/oauth/locationToken',
-            $companyToken,
-            'POST',
-            ['companyId' => $companyId, 'locationId' => $locId]
-        );
+        $ltCh = curl_init('https://services.leadconnectorhq.com/oauth/locationToken');
+        curl_setopt_array($ltCh, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => http_build_query(['companyId' => $companyId, 'locationId' => $locId]),
+            CURLOPT_HTTPHEADER     => [
+                'Authorization: Bearer ' . $companyToken,
+                'Content-Type: application/x-www-form-urlencoded',
+                'Accept: application/json',
+                'Version: 2021-07-28',
+            ],
+        ]);
+        $ltRespRaw = curl_exec($ltCh);
+        $ltCode    = curl_getinfo($ltCh, CURLINFO_HTTP_CODE);
+        curl_close($ltCh);
+        $ltRes = ['code' => $ltCode, 'body' => json_decode($ltRespRaw, true), 'raw' => $ltRespRaw];
 
         if ($ltRes['code'] === 200 && !empty($ltRes['body']['access_token'])) {
             $ltToken     = $ltRes['body']['access_token'];

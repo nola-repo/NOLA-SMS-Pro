@@ -570,10 +570,11 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
             curl_setopt_array($ltCurl, [
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_POST           => true,
-                CURLOPT_POSTFIELDS     => json_encode(['companyId' => $companyId, 'locationId' => $locId]),
+                CURLOPT_POSTFIELDS     => http_build_query(['companyId' => $companyId, 'locationId' => $locId]),
                 CURLOPT_HTTPHEADER     => [
                     'Authorization: Bearer ' . $companyToken,
-                    'Content-Type: application/json',
+                    'Content-Type: application/x-www-form-urlencoded',
+                    'Accept: application/json',
                     'Version: 2021-07-28',
                 ],
             ]);
