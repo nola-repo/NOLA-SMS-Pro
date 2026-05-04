@@ -70,6 +70,7 @@
     RewriteRule ^api/auth/verify-install-token/?$  /api/auth/verify_install_token.php  [NC,L,QSA]
     RewriteRule ^api/auth/register/?$ /api/auth/register.php [NC,L,QSA]
     RewriteRule ^api/auth/login/?$    /api/auth/login.php    [NC,L,QSA]
+    RewriteRule ^api/auth/me/?$       /api/auth/me.php       [NC,L,QSA]
     RewriteRule ^api/agency/ghl_autologin/?$ /api/agency/ghl_autologin.php [NC,L,QSA]
     RewriteRule ^api/agency/ghl_sso_decrypt/?$ /api/agency/ghl_sso_decrypt.php [NC,L,QSA]
     RewriteRule ^api/agency/link_company/?$ /api/agency/link_company.php [NC,L,QSA]
