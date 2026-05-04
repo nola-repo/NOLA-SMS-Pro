@@ -417,6 +417,16 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     // Treat this exactly like a normal sub-account install.
     $singleLocationId = $data['locationId'] ?? $data['location_id'] ?? null;
 
+    // Agency view sometimes sends the selected sub-account inside the locations[]
+    // array rather than at the root locationId field. Detect that here.
+    if (!$singleLocationId && !empty($data['locations']) && is_array($data['locations'])) {
+        $selectedLocs = array_values(array_filter($data['locations']));
+        if (count($selectedLocs) === 1) {
+            $singleLocationId = $selectedLocs[0]['id'] ?? $selectedLocs[0]['locationId'] ?? null;
+            error_log("[GHL_CALLBACK] Case A: single location found in locations[] array — {$singleLocationId}");
+        }
+    }
+
     if ($singleLocationId) {
         error_log("[GHL_CALLBACK] Case A: single-location agency install — locationId={$singleLocationId}");
 
@@ -636,23 +646,49 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         }
     }
 
-    // Bulk sub-account install complete — show a native success page so they
-    // know all sub-accounts were provisioned, instead of redirecting to React.
-    $successHtml = <<<HTML
-        <div class="success-ring" style="margin: 0 auto 32px;">
-            <div class="success-icon">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-            </div>
-        </div>
-        <h1>Bulk Install Successful</h1>
-        <p class="subtitle" style="margin-bottom: 32px;">
-            Successfully provisioned <strong>{$successfulProvisions}</strong> sub-accounts.<br>
-            Each location is now ready to use NOLA SMS Pro.
-        </p>
-        <a href="https://app.nolacrm.io/login" class="btn-primary" style="text-decoration:none;">Go to Dashboard</a>
-HTML;
+    // ── Redirect to React app after bulk provisioning ────────────────────────
+    // Always send users into the React flow (register or login), never a dead-end
+    // static page. For a single provisioned location → registration. For multiple
+    // → login so each location admin can register individually.
+    error_log("[GHL_CALLBACK] Case B: provisioned {$successfulProvisions} of " . count($allLocationIds) . " locations.");
 
-    render_page('Bulk Install Complete', $successHtml);
+    require_once __DIR__ . '/api/jwt_helper.php';
+    $jwtSecretB   = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
+    $reactAppUrlB = 'https://app.nolacrm.io';
+
+    if ($successfulProvisions === 1 && !empty($allLocationIds)) {
+        $onlyLocId = $allLocationIds[0];
+
+        // Check whether this location already has registered users
+        $hasMembersB = false;
+        try {
+            foreach ($db->collection('location_members')->document($onlyLocId)->collection('members')->limit(1)->documents() as $m) {
+                if ($m->exists()) { $hasMembersB = true; break; }
+            }
+        } catch (Exception $e) {
+            error_log('[GHL_CALLBACK] Case B: could not check members: ' . $e->getMessage());
+        }
+
+        if ($hasMembersB) {
+            // Re-install of a location that already has users → welcome-back login
+            error_log("[GHL_CALLBACK] Case B: {$onlyLocId} already has members — redirect to login.");
+            header('Location: ' . $reactAppUrlB . '/login?welcome_back=1', true, 302);
+        } else {
+            // First install → generate a short-lived install token → registration form
+            $tokenB = jwt_sign([
+                'type'        => 'install',
+                'location_id' => $onlyLocId,
+                'company_id'  => $companyId,
+            ], $jwtSecretB, 900);
+            error_log("[GHL_CALLBACK] Case B: {$onlyLocId} is new — redirect to registration.");
+            header('Location: ' . $reactAppUrlB . '/register-from-install?install_token=' . urlencode($tokenB), true, 302);
+        }
+    } else {
+        // True multi-location bulk install — redirect to login
+        // Each sub-account admin registers independently from within their location.
+        error_log("[GHL_CALLBACK] Case B: true bulk install ({$successfulProvisions} locations) — redirect to login.");
+        header('Location: ' . $reactAppUrlB . '/login?bulk_install=1&count=' . $successfulProvisions, true, 302);
+    }
     exit;
 }
 
