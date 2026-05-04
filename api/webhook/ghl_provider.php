@@ -53,6 +53,18 @@ if (!is_array($payload)) {
 }
 
 error_log('[ghl_provider] Received payload: ' . $raw);
+$providerReqId = 'ghlp_' . bin2hex(random_bytes(6));
+error_log('[ghl_provider][INGRESS] ' . json_encode([
+    'req_id' => $providerReqId,
+    'locationId' => $payload['locationId'] ?? $payload['location_id'] ?? null,
+    'contactId' => $payload['contactId'] ?? $payload['contact_id'] ?? null,
+    'messageId' => $payload['messageId'] ?? $payload['message_id'] ?? null,
+    'conversationId' => $payload['conversationId'] ?? $payload['conversation_id'] ?? null,
+    'type' => $payload['type'] ?? null,
+    'messageDirection' => $payload['messageDirection'] ?? null,
+    'has_phone' => !empty($payload['phone']),
+    'has_message' => !empty($payload['message']) || !empty($payload['body']),
+]));
 
 $locationId = $payload['locationId'] ?? $payload['location_id'] ?? null;
 if ($locationId) $locationId = trim((string)$locationId);
@@ -62,6 +74,13 @@ $phone = $payload['phone'] ?? null;
 $message = $payload['message'] ?? $payload['body'] ?? null;
 $messageId = $payload['messageId'] ?? $payload['message_id'] ?? null;
 $msgType = strtoupper($payload['type'] ?? 'SMS');
+error_log('[ghl_provider][NORMALIZED] ' . json_encode([
+    'req_id' => $providerReqId,
+    'locationId' => $locationId,
+    'contactId' => $contactId,
+    'messageId' => $messageId,
+    'msgType' => $msgType,
+]));
 
 // ── Validate Required Fields ────────────────────────────────────────────────
 if (!$locationId) {
@@ -101,6 +120,11 @@ elseif (str_starts_with($digits, '9') && strlen($digits) === 10) {
     $normalizedPhone = '0' . $digits;
 }
 else {
+    error_log('[ghl_provider][REJECT] ' . json_encode([
+        'req_id' => $providerReqId,
+        'reason' => 'invalid_phone',
+        'phone' => $phone,
+    ]));
     http_response_code(400);
     echo json_encode(['success' => false, 'error' => "Invalid Philippine mobile number: {$phone}"]);
     exit;
@@ -123,6 +147,12 @@ if ($dedupSnap->exists()) {
     if (time() - $dedupData['timestamp'] < 120) {
         // It's a sync loop! Acknowledge success to GHL without sending via Semaphore
         error_log('[ghl_provider] Skipped sending message to ' . $normalizedPhone . ' (prevented double-send loop, age=' . (time() - $dedupData['timestamp']) . 's).');
+        error_log('[ghl_provider][DEDUP_SKIP] ' . json_encode([
+            'req_id' => $providerReqId,
+            'locationId' => $locationId,
+            'normalizedPhone' => $normalizedPhone,
+            'age_seconds' => (time() - $dedupData['timestamp']),
+        ]));
 
         // Clean up the dedup flag to keep the database tidy
         $dedupRef->delete();
@@ -147,6 +177,11 @@ $tokenData = $tokenSnap->exists() ? $tokenSnap->data() : [];
 $toggleEnabled = isset($tokenData['toggle_enabled']) ? (bool)$tokenData['toggle_enabled'] : true;
 
 if (!$toggleEnabled) {
+    error_log('[ghl_provider][REJECT] ' . json_encode([
+        'req_id' => $providerReqId,
+        'reason' => 'toggle_disabled',
+        'locationId' => $locationId,
+    ]));
     http_response_code(403);
     echo json_encode([
         'success' => false,
@@ -378,6 +413,13 @@ if ($usingFreeCredits) {
 
     $smsResult = json_decode($smsResponse, true);
     error_log('[ghl_provider] Semaphore response: ' . $smsResponse);
+error_log('[ghl_provider][GATEWAY_RESULT] ' . json_encode([
+    'req_id' => $providerReqId,
+    'http_status' => $smsStatus,
+    'normalizedPhone' => $normalizedPhone,
+    'locationId' => $locationId,
+    'sender' => $sender,
+]));
 
 
 if ($smsStatus !== 200 || empty($smsResult)) {
@@ -486,3 +528,9 @@ echo json_encode([
     'message_body' => $message,
     'sender' => $sender
 ]);
+error_log('[ghl_provider][SUCCESS] ' . json_encode([
+    'req_id' => $providerReqId,
+    'locationId' => $locationId,
+    'stored_message_id' => $storedMsgId,
+    'conversation_id' => $convId,
+]));
