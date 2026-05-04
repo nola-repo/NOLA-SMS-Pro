@@ -457,8 +457,23 @@ function exchange_location_token(string $companyToken, string $companyId, string
         $code = curl_getinfo($ltCurl, CURLINFO_HTTP_CODE);
         curl_close($ltCurl);
         $data = json_decode($raw ?: '', true);
-        if (!is_array($data)) {
+        $jsonDecodeOk = is_array($data);
+        if (!$jsonDecodeOk) {
             $data = [];
+        }
+
+        // Some GHL responses occasionally arrive in a form that json_decode fails to parse
+        // even though the payload clearly contains access_token. Recover minimal fields.
+        if (empty($data['access_token']) && is_string($raw) && $raw !== '') {
+            if (preg_match('/"access_token"\s*:\s*"([^"]+)"/', $raw, $m)) {
+                $data['access_token'] = stripcslashes($m[1]);
+            }
+            if (preg_match('/"refresh_token"\s*:\s*"([^"]+)"/', $raw, $m)) {
+                $data['refresh_token'] = stripcslashes($m[1]);
+            }
+            if (preg_match('/"expires_in"\s*:\s*(\d+)/', $raw, $m)) {
+                $data['expires_in'] = (int)$m[1];
+            }
         }
 
         if (($code === 200 || $code === 201) && !empty($data['access_token'])) {
@@ -475,6 +490,8 @@ function exchange_location_token(string $companyToken, string $companyId, string
         $failures[] = [
             'format' => $attempt['format'],
             'code' => $code,
+            'json_decode_ok' => $jsonDecodeOk,
+            'has_access_token_field' => !empty($data['access_token']) || (is_string($raw) && strpos($raw, '"access_token"') !== false),
             'raw' => is_string($raw) ? substr($raw, 0, 400) : '',
         ];
         error_log("[GHL_CALLBACK] locationToken {$attempt['format']} failed for {$locationId}: HTTP {$code} — {$raw}");
