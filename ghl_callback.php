@@ -319,6 +319,60 @@ HTML;
     exit;
 }
 
+/**
+ * Best-effort extraction of a locationId from OAuth state.
+ * Supports plain IDs and common encoded JSON wrapper formats.
+ */
+function extract_location_id_from_state(?string $state): ?string
+{
+    if (!$state) {
+        return null;
+    }
+
+    $candidates = [];
+    $candidates[] = $state;
+    $decoded = urldecode($state);
+    if ($decoded !== $state) {
+        $candidates[] = $decoded;
+    }
+
+    foreach ($candidates as $candidate) {
+        if (!is_string($candidate) || trim($candidate) === '') {
+            continue;
+        }
+
+        $trimmed = trim($candidate);
+
+        // Case 1: JSON payload in state (direct)
+        $json = json_decode($trimmed, true);
+        if (is_array($json)) {
+            $fromJson = $json['locationId'] ?? $json['location_id'] ?? null;
+            if (is_string($fromJson) && $fromJson !== '') {
+                return $fromJson;
+            }
+        }
+
+        // Case 2: base64-encoded JSON payload
+        $b64 = base64_decode($trimmed, true);
+        if ($b64 !== false && $b64 !== '') {
+            $jsonB64 = json_decode($b64, true);
+            if (is_array($jsonB64)) {
+                $fromB64Json = $jsonB64['locationId'] ?? $jsonB64['location_id'] ?? null;
+                if (is_string($fromB64Json) && $fromB64Json !== '') {
+                    return $fromB64Json;
+                }
+            }
+        }
+
+        // Case 3: plain location-like ID (guard against obvious non-IDs)
+        if (preg_match('/^[A-Za-z0-9_-]{12,}$/', $trimmed)) {
+            return $trimmed;
+        }
+    }
+
+    return null;
+}
+
 // ─── OAuth Config ──────────────────────────────────────────────────────────────
 // Subaccount app only — NO agency fallback.
 // Agency installs use /oauth/agency-callback → ghl_agency_callback.php
@@ -424,6 +478,14 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         if (count($selectedLocs) === 1) {
             $singleLocationId = $selectedLocs[0]['id'] ?? $selectedLocs[0]['locationId'] ?? null;
             error_log("[GHL_CALLBACK] Case A: single location found in locations[] array — {$singleLocationId}");
+        }
+    }
+
+    // Final fallback for single-location installs where GHL puts selected location in state.
+    if (!$singleLocationId) {
+        $singleLocationId = extract_location_id_from_state($state);
+        if ($singleLocationId) {
+            error_log("[GHL_CALLBACK] Case A: single location recovered from state — {$singleLocationId}");
         }
     }
 
@@ -694,7 +756,8 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
 }
 
 // ─── Determine Location ID ────────────────────────────────────────────────────
-$locationId = $state ?? $data['locationId'] ?? $data['location_id'] ?? null;
+// Prefer explicit token response fields. state is fallback-only.
+$locationId = $data['locationId'] ?? $data['location_id'] ?? extract_location_id_from_state($state);
 if (!$locationId)
     render_error('No Location ID returned.', $data);
 
@@ -888,4 +951,4 @@ if ($hasExistingMembers) {
 
 header('Location: ' . $redirectUrl, true, 302);
 exit;
-
+
