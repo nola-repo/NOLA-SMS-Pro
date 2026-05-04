@@ -551,6 +551,8 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         } while (count($fetched) === $limit && count($allLocationIds) < 500);
     }
 
+    $successfulProvisions = 0;
+
     // Provision per-location tokens
     foreach ($allLocationIds as $locId) {
         try {
@@ -571,6 +573,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
             $ltData = json_decode($ltResp, true);
 
             if ($ltCode === 200 && !empty($ltData['access_token'])) {
+                $successfulProvisions++;
                 $ltExpires = time() + (int)($ltData['expires_in'] ?? 86400);
 
                 // Fetch location name
@@ -635,7 +638,6 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
 
     // Bulk sub-account install complete — show a native success page so they
     // know all sub-accounts were provisioned, instead of redirecting to React.
-    $provisionCount = count($allLocationIds);
     $successHtml = <<<HTML
         <div class="success-ring" style="margin: 0 auto 32px;">
             <div class="success-icon">
@@ -644,7 +646,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         </div>
         <h1>Bulk Install Successful</h1>
         <p class="subtitle" style="margin-bottom: 32px;">
-            Successfully provisioned <strong>{$provisionCount}</strong> sub-accounts.<br>
+            Successfully provisioned <strong>{$successfulProvisions}</strong> sub-accounts.<br>
             Each location is now ready to use NOLA SMS Pro.
         </p>
         <a href="https://app.nolacrm.io/login" class="btn-primary" style="text-decoration:none;">Go to Dashboard</a>
@@ -726,120 +728,7 @@ try {
 
     $db->collection('ghl_tokens')->document((string)$id)->set($tokenPayload, ['merge' => true]);
 
-    // 2a. Bulk install: exchange company token for per-location tokens automatically.
-    // When GHL does isBulkInstallation=true (agency installs sub-account app), the
-    // token returned is Company-scoped. GHL /oauth/locationToken converts it to a
-    // Location-scoped token so /contacts/ and /conversations/ endpoints work.
-    if ($userType === 'Company' && !empty($data['isBulkInstallation'])) {
-        $companyAccessToken = $data['access_token'] ?? null;
-        $bulkCompanyId      = $data['companyId'] ?? (string)$id;
-
-        // Get all locations that were part of this install
-        // GHL bulk installs can cover specific locations or all locations.
-        // We can query ghl_tokens for locations that belong to this company.
-        // As a minimum, also try the known NOLA CRM location directly.
-        $locationsToProvision = [];
-
-        // Try to get installed locations from GHL API
-        try {
-            $installedLoc = $data['locations'] ?? [];
-            if (!empty($installedLoc) && is_array($installedLoc)) {
-                foreach ($installedLoc as $loc) {
-                    $lid = $loc['id'] ?? $loc['locationId'] ?? null;
-                    if ($lid) $locationsToProvision[] = $lid;
-                }
-            }
-        } catch (\Exception $ignored) {}
-
-        // Fallback: find existing location docs that belong to this company
-        if (empty($locationsToProvision)) {
-            try {
-                $existingLocs = $db->collection('ghl_tokens')
-                    ->where('companyId', '==', $bulkCompanyId)
-                    ->where('userType', '==', 'Location')
-                    ->limit(20)
-                    ->documents();
-                foreach ($existingLocs as $ld) {
-                    if ($ld->exists() && $ld->id() !== (string)$id) {
-                        $locationsToProvision[] = $ld->id();
-                    }
-                }
-            } catch (\Exception $ignored) {}
-        }
-
-        // Also check integrations collection for this company's sub-accounts
-        if (empty($locationsToProvision)) {
-            try {
-                $intLocs = $db->collection('agency_subaccounts')
-                    ->where('agency_id', '==', $bulkCompanyId)
-                    ->limit(20)
-                    ->documents();
-                foreach ($intLocs as $il) {
-                    if ($il->exists()) {
-                        $locationsToProvision[] = $il->id();
-                    }
-                }
-            } catch (\Exception $ignored) {}
-        }
-
-        foreach ($locationsToProvision as $locId) {
-            try {
-                $ltCh = curl_init('https://services.leadconnectorhq.com/oauth/locationToken');
-                curl_setopt_array($ltCh, [
-                    CURLOPT_RETURNTRANSFER => true,
-                    CURLOPT_POST           => true,
-                    CURLOPT_POSTFIELDS     => json_encode(['companyId' => $bulkCompanyId, 'locationId' => $locId]),
-                    CURLOPT_HTTPHEADER     => [
-                        'Authorization: Bearer ' . $companyAccessToken,
-                        'Content-Type: application/json',
-                        'Version: 2021-07-28',
-                    ],
-                ]);
-                $ltResp = curl_exec($ltCh);
-                $ltCode = curl_getinfo($ltCh, CURLINFO_HTTP_CODE);
-                curl_close($ltCh);
-
-                $ltData = json_decode($ltResp, true);
-                if ($ltCode === 200 && !empty($ltData['access_token'])) {
-                    $ltExpires = time() + (int)($ltData['expires_in'] ?? 86400);
-                    $locationTokenPayload = [
-                        'access_token'  => $ltData['access_token'],
-                        'refresh_token' => $data['refresh_token'] ?? null, // use company refresh_token
-                        'expires_at'    => $ltExpires,
-                        'client_id'     => $ghlApps[$usedAppType]['clientId'],
-                        'appId'         => $ghlApps[$usedAppType]['clientId'],
-                        'appType'       => $usedAppType,
-                        'userType'      => 'Location',
-                        'location_id'   => $locId,
-                        'companyId'     => $bulkCompanyId,
-                        'scope'         => $data['scope'] ?? null,
-                        'is_live'       => true,
-                        'toggle_enabled'=> true,
-                        'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
-                        'provisioned_from_bulk' => true,
-                    ];
-                    $db->collection('ghl_tokens')->document($locId)->set($locationTokenPayload, ['merge' => true]);
-
-                    // Also update integrations doc
-                    $ltIntDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locId);
-                    $db->collection('integrations')->document($ltIntDocId)->set([
-                        'access_token'  => $ltData['access_token'],
-                        'expires_at'    => $ltExpires,
-                        'client_id'     => $ghlApps[$usedAppType]['clientId'],
-                        'app_type'      => $usedAppType,
-                        'location_id'   => $locId,
-                        'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
-                    ], ['merge' => true]);
-
-                    error_log("[GHL_CALLBACK] Bulk install: provisioned location token for {$locId}");
-                } else {
-                    error_log("[GHL_CALLBACK] Bulk install: locationToken exchange failed for {$locId} (HTTP {$ltCode}): {$ltResp}");
-                }
-            } catch (\Exception $ltEx) {
-                error_log("[GHL_CALLBACK] Bulk install: exception provisioning {$locId}: " . $ltEx->getMessage());
-            }
-        }
-    }
+    // (Removed legacy duplicate bulk install logic)
 
     // 2b. Register the subaccount in ghl_tokens for the Agency Dashboard to track
     if ($userType === 'Location') {
