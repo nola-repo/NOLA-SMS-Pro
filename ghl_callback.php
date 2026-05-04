@@ -546,19 +546,28 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         }
     }
     if (empty($allLocationIds)) {
-        $skip = 0; $limit = 100;
-        do {
-            $locCurl = curl_init("https://services.leadconnectorhq.com/locations/search?companyId={$companyId}&skip={$skip}&limit={$limit}");
-            curl_setopt_array($locCurl, [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $companyToken, 'Accept: application/json', 'Version: 2021-07-28'],
-            ]);
-            $locResp  = curl_exec($locCurl);
-            curl_close($locCurl);
-            $fetched  = json_decode($locResp, true)['locations'] ?? [];
-            foreach ($fetched as $loc) { if ($loc['id'] ?? null) $allLocationIds[] = $loc['id']; }
-            $skip += $limit;
-        } while (count($fetched) === $limit && count($allLocationIds) < 500);
+        $maxRetries = 4;
+        for ($attempt = 0; $attempt < $maxRetries; $attempt++) {
+            $skip = 0; $limit = 100;
+            do {
+                $locCurl = curl_init("https://services.leadconnectorhq.com/locations/search?companyId={$companyId}&skip={$skip}&limit={$limit}");
+                curl_setopt_array($locCurl, [
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $companyToken, 'Accept: application/json', 'Version: 2021-07-28'],
+                ]);
+                $locResp  = curl_exec($locCurl);
+                curl_close($locCurl);
+                $fetched  = json_decode($locResp, true)['locations'] ?? [];
+                foreach ($fetched as $loc) { if ($loc['id'] ?? null) $allLocationIds[] = $loc['id']; }
+                $skip += $limit;
+            } while (count($fetched) === $limit && count($allLocationIds) < 500);
+
+            if (!empty($allLocationIds)) {
+                break;
+            }
+            // If empty, GHL API might be eventually consistent. Wait and retry.
+            sleep(3);
+        }
     }
 
     $successfulProvisions = 0;
