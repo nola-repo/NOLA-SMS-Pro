@@ -75,6 +75,10 @@ try {
     $locationMemberships = $userData['location_memberships'] ?? ($locationId ? [$locationId] : []);
     $locationName = $userData['location_name'] ?? null;
     $companyName  = $userData['company_name']  ?? null;
+    // Build full name: prefer stored `name` field, fallback to joining firstName + lastName
+    $fullName = $userData['name']
+        ?? trim(($userData['firstName'] ?? '') . ' ' . ($userData['lastName'] ?? ''))
+        ?: $email;
 
     // ── Sign JWT ─────────────────────────────────────────────────────────────
     $token = jwt_sign([
@@ -91,8 +95,7 @@ try {
         'location_id'          => $locationId,
         'location_memberships' => $locationMemberships,
         'user'        => [
-            'firstName'     => $userData['firstName'] ?? '',
-            'lastName'      => $userData['lastName']  ?? '',
+            'name'          => $fullName,
             'email'         => $email,
             'phone'         => $userData['phone'] ?? '',
             'location_name' => $locationName,

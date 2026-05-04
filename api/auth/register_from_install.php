@@ -70,11 +70,6 @@ if (!empty($errors)) {
     exit;
 }
 
-// Split full name → firstName + lastName
-$nameParts = explode(' ', $fullName, 2);
-$firstName = $nameParts[0];
-$lastName  = $nameParts[1] ?? '';
-
 $isLocationLevel = !empty($locationId);
 
 try {
@@ -125,8 +120,6 @@ try {
         if (empty($existingDoc['email']) || empty($existingDoc['password_hash'])) {
             $updates['email']         = $email;
             $updates['phone']         = $phone;
-            $updates['firstName']     = $firstName;
-            $updates['lastName']      = $lastName;
             $updates['name']          = $fullName;
             $updates['password_hash'] = password_hash($password, PASSWORD_BCRYPT);
         }
@@ -179,8 +172,7 @@ try {
             'company_name'         => $compName,
             'location_memberships' => $locationMemberships,
             'user' => [
-                'firstName'            => $updates['firstName'] ?? $existingDoc['firstName'] ?? $firstName,
-                'lastName'             => $updates['lastName']  ?? $existingDoc['lastName']  ?? $lastName,
+                'name'                 => $updates['name'] ?? $existingDoc['name'] ?? $fullName,
                 'email'                => $email,
                 'phone'                => $updates['phone']     ?? $existingDoc['phone']     ?? $phone,
                 'location_id'          => $linkedLoc,
@@ -212,9 +204,7 @@ try {
     }
 
     $userData = [
-        'firstName'     => $firstName,
-        'lastName'      => $lastName,
-        'name'          => $fullName,    // legacy full-name field for older code paths
+        'name'          => $fullName,
         'email'         => $email,
         'phone'         => $phone,
         'password_hash' => $passwordHash,
@@ -273,8 +263,7 @@ try {
         'company_name'         => $companyName  ?? null,
         'location_memberships' => $locationMemberships,
         'user' => [
-            'firstName'            => $firstName,
-            'lastName'             => $lastName,
+            'name'                 => $fullName,
             'email'                => $email,
             'phone'                => $phone,
             'location_id'          => $locationId,

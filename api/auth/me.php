@@ -56,8 +56,9 @@ try {
 
     echo json_encode([
         'user' => [
-            'firstName'    => $d['firstName']          ?? '',
-            'lastName'     => $d['lastName']           ?? '',
+            'name'         => $d['name']
+                              ?? trim(($d['firstName'] ?? '') . ' ' . ($d['lastName'] ?? ''))
+                              ?: ($d['email'] ?? ''),
             'email'        => $d['email']              ?? '',
             'phone'        => $d['phone']              ?? '',
             'location_id'  => $d['active_location_id'] ?? null,
