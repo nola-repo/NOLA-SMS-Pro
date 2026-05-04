@@ -326,6 +326,9 @@ class GhlClient
         $refreshToken = $this->integration['refresh_token'] ?? null;
         $docId        = $this->integration['firestore_doc_id'] ?? $this->locationId;
 
+        $isBulkProvisioned = !empty($this->integration['provisioned_from_bulk']);
+        $companyId         = $this->integration['companyId'] ?? null;
+
         if (!$clientId || !$clientSecret || !$refreshToken) {
             $missing = [];
             if (!$clientId)     $missing[] = 'GHL_CLIENT_ID';
@@ -335,13 +338,16 @@ class GhlClient
             throw new \Exception('GHL Refresh Error: Missing ' . implode(', ', $missing));
         }
 
+        // If bulk provisioned, the refresh_token is Company-scoped.
+        $userTypeForRefresh = $isBulkProvisioned ? 'Company' : ($this->integration['userType'] ?? 'Location');
+
         $tokenUrl = 'https://services.leadconnectorhq.com/oauth/token';
         $postData = [
             'client_id'     => $clientId,
             'client_secret' => $clientSecret,
             'grant_type'    => 'refresh_token',
             'refresh_token' => $refreshToken,
-            'user_type'     => ($this->integration['userType'] ?? 'Location'),
+            'user_type'     => $userTypeForRefresh,
         ];
 
         $ch = curl_init($tokenUrl);
@@ -369,7 +375,48 @@ class GhlClient
             );
         }
 
-        $now            = new \DateTimeImmutable();
+        $now = new \DateTimeImmutable();
+
+        // If this was a bulk-provisioned token, $data now contains a COMPANY token.
+        // We must save it to the Company doc, and then exchange it for a LOCATION token.
+        if ($isBulkProvisioned && $companyId) {
+            $companyExpires = (int)($data['expires_in'] ?? 0);
+            $companyExpiresAtUnix = time() + $companyExpires;
+
+            $this->db->collection('ghl_tokens')->document($companyId)->set([
+                'access_token'  => $data['access_token'] ?? null,
+                'refresh_token' => $data['refresh_token'] ?? null,
+                'expires_at'    => $companyExpiresAtUnix,
+                'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
+                'raw_refresh'   => $data,
+            ], ['merge' => true]);
+
+            // Exchange Company token -> Location token
+            $ltCh = curl_init('https://services.leadconnectorhq.com/oauth/locationToken');
+            curl_setopt_array($ltCh, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_POST           => true,
+                CURLOPT_POSTFIELDS     => json_encode(['companyId' => $companyId, 'locationId' => $this->locationId]),
+                CURLOPT_HTTPHEADER     => [
+                    'Authorization: Bearer ' . $data['access_token'],
+                    'Content-Type: application/json',
+                    'Version: 2021-07-28',
+                ],
+            ]);
+            $ltResp = curl_exec($ltCh);
+            $ltCode = curl_getinfo($ltCh, CURLINFO_HTTP_CODE);
+            curl_close($ltCh);
+            $ltData = json_decode($ltResp, true);
+
+            if ($ltCode !== 200 || empty($ltData['access_token'])) {
+                throw new \Exception("GHL locationToken exchange failed after refresh: HTTP {$ltCode} - {$ltResp}");
+            }
+
+            // Override the payload to use the Location token (but keep the Company refresh_token)
+            $data['access_token'] = $ltData['access_token'];
+            $data['expires_in']   = $ltData['expires_in'] ?? 86400;
+        }
+
         $expires        = (int) ($data['expires_in'] ?? 0);
         $expiresAtUnix  = time() + $expires;
 
