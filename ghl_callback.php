@@ -359,6 +359,189 @@ if ($httpCode !== 200 || !is_array($data))
 // Subaccount-only — $usedAppType is always 'subaccount'
 $usedAppType = 'subaccount';
 
+// ─── App credentials map (mirrors oauth_exchange.php) ────────────────────────
+$ghlApps = [
+    'subaccount' => [
+        'clientId'     => getenv('GHL_CLIENT_ID')     ?: '6999da2b8f278296d95f7274-mmn30t4f',
+        'clientSecret' => getenv('GHL_CLIENT_SECRET') ?: 'd91017ad-f4eb-461f-8967-b1d51cd1c1eb',
+        'userType'     => 'Location',
+    ],
+    'agency' => [
+        'clientId'     => getenv('GHL_AGENCY_CLIENT_ID')     ?: '69d31f33b3071b25dbcc5656-mnqxvtt3',
+        'clientSecret' => getenv('GHL_AGENCY_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322',
+        'userType'     => 'Company',
+    ],
+];
+
+// ─── Bulk-install guard ───────────────────────────────────────────────────────
+// When GHL sends isBulkInstallation=true the token is Company-scoped and has
+// NO locationId. Redirect to the agency callback which handles this correctly.
+if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Company') {
+    $companyId        = $data['companyId'] ?? null;
+    $agencyClientId   = $ghlApps['agency']['clientId'];
+    $companyToken     = $data['access_token'];
+    $companyRefresh   = $data['refresh_token'] ?? null;
+    $expiresIn        = (int)($data['expires_in'] ?? 86400);
+    $companyExpiresAt = time() + $expiresIn;
+
+    if (!$companyId) {
+        render_error('Bulk install received but no companyId in token response.', $data);
+    }
+
+    error_log("[GHL_CALLBACK] Bulk install detected — companyId={$companyId}. Provisioning location tokens.");
+
+    $db  = get_firestore();
+    $now = new DateTimeImmutable();
+
+    // Save Company-level token
+    try {
+        $db->collection('ghl_tokens')->document($companyId)->set([
+            'access_token'  => $companyToken,
+            'refresh_token' => $companyRefresh,
+            'expires_at'    => $companyExpiresAt,
+            'client_id'     => $agencyClientId,
+            'appId'         => $agencyClientId,
+            'appType'       => 'agency',
+            'userType'      => 'Company',
+            'companyId'     => $companyId,
+            'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
+        ], ['merge' => true]);
+    } catch (Exception $e) {
+        error_log('[GHL_CALLBACK] Failed to save company token: ' . $e->getMessage());
+    }
+
+    // Fetch all locations for this company
+    $allLocationIds = [];
+    if (!empty($data['locations']) && is_array($data['locations'])) {
+        foreach ($data['locations'] as $loc) {
+            $lid = $loc['id'] ?? $loc['locationId'] ?? null;
+            if ($lid) $allLocationIds[] = $lid;
+        }
+    }
+    if (empty($allLocationIds)) {
+        $skip = 0; $limit = 100;
+        do {
+            $locCurl = curl_init("https://services.leadconnectorhq.com/locations/search?companyId={$companyId}&skip={$skip}&limit={$limit}");
+            curl_setopt_array($locCurl, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $companyToken, 'Accept: application/json', 'Version: 2021-07-28'],
+            ]);
+            $locResp  = curl_exec($locCurl);
+            curl_close($locCurl);
+            $fetched  = json_decode($locResp, true)['locations'] ?? [];
+            foreach ($fetched as $loc) { if ($loc['id'] ?? null) $allLocationIds[] = $loc['id']; }
+            $skip += $limit;
+        } while (count($fetched) === $limit && count($allLocationIds) < 500);
+    }
+
+    // Provision per-location tokens
+    foreach ($allLocationIds as $locId) {
+        try {
+            $ltCurl = curl_init('https://services.leadconnectorhq.com/oauth/locationToken');
+            curl_setopt_array($ltCurl, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_POST           => true,
+                CURLOPT_POSTFIELDS     => json_encode(['companyId' => $companyId, 'locationId' => $locId]),
+                CURLOPT_HTTPHEADER     => [
+                    'Authorization: Bearer ' . $companyToken,
+                    'Content-Type: application/json',
+                    'Version: 2021-07-28',
+                ],
+            ]);
+            $ltResp = curl_exec($ltCurl);
+            $ltCode = curl_getinfo($ltCurl, CURLINFO_HTTP_CODE);
+            curl_close($ltCurl);
+            $ltData = json_decode($ltResp, true);
+
+            if ($ltCode === 200 && !empty($ltData['access_token'])) {
+                $ltExpires = time() + (int)($ltData['expires_in'] ?? 86400);
+
+                // Fetch location name
+                $lnCurl = curl_init('https://services.leadconnectorhq.com/locations/' . $locId);
+                curl_setopt_array($lnCurl, [
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $ltData['access_token'], 'Accept: application/json', 'Version: 2021-07-28'],
+                ]);
+                $lnResp  = curl_exec($lnCurl); curl_close($lnCurl);
+                $locName = json_decode($lnResp, true)['location']['name'] ?? '';
+
+                $db->collection('ghl_tokens')->document($locId)->set([
+                    'access_token'          => $ltData['access_token'],
+                    'refresh_token'         => $companyRefresh,
+                    'expires_at'            => $ltExpires,
+                    'client_id'             => $agencyClientId,
+                    'appId'                 => $agencyClientId,
+                    'appType'               => 'agency',
+                    'userType'              => 'Location',
+                    'location_id'           => $locId,
+                    'location_name'         => $locName,
+                    'companyId'             => $companyId,
+                    'is_live'               => true,
+                    'toggle_enabled'        => true,
+                    'provisioned_from_bulk' => true,
+                    'updated_at'            => new \Google\Cloud\Core\Timestamp($now),
+                ], ['merge' => true]);
+
+                // Provision integrations doc (credits etc.)
+                $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locId);
+                $intRef   = $db->collection('integrations')->document($intDocId);
+                $intSnap  = $intRef->snapshot();
+                if (!$intSnap->exists()) {
+                    $intRef->set([
+                        'location_id'           => $locId,
+                        'location_name'         => $locName,
+                        'companyId'             => $companyId,
+                        'free_credits_total'    => 10,
+                        'free_usage_count'      => 0,
+                        'credit_balance'        => 0,
+                        'system_default_sender' => 'NOLASMSPro',
+                        'installed_at'          => new \Google\Cloud\Core\Timestamp($now),
+                        'updated_at'            => new \Google\Cloud\Core\Timestamp($now),
+                    ]);
+                } else {
+                    $intRef->set([
+                        'access_token'  => $ltData['access_token'],
+                        'expires_at'    => $ltExpires,
+                        'location_name' => $locName,
+                        'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
+                    ], ['merge' => true]);
+                }
+
+                error_log("[GHL_CALLBACK] Bulk: provisioned location token for {$locId} ({$locName})");
+            } else {
+                error_log("[GHL_CALLBACK] Bulk: locationToken failed for {$locId}: HTTP {$ltCode} — {$ltResp}");
+            }
+        } catch (Exception $e) {
+            error_log("[GHL_CALLBACK] Bulk: exception for {$locId}: " . $e->getMessage());
+        }
+    }
+
+    // Redirect to agency app (same as ghl_agency_callback.php)
+    require_once __DIR__ . '/api/jwt_helper.php';
+    $jwtSecret    = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
+    $agencyAppUrl = 'https://agency.nolasmspro.com';
+
+    $hasExistingAgency = false;
+    try {
+        foreach ($db->collection('users')->where('company_id', '=', $companyId)->where('role', '=', 'agency')->limit(1)->documents() as $doc) {
+            if ($doc->exists()) { $hasExistingAgency = true; break; }
+        }
+    } catch (Exception $e) {
+        error_log('[GHL_CALLBACK] Could not check agency users: ' . $e->getMessage());
+    }
+
+    if ($hasExistingAgency) {
+        header('Location: ' . $agencyAppUrl . '/login?welcome_back=1', true, 302);
+    } else {
+        $installToken = jwt_sign([
+            'type'       => 'agency_install',
+            'company_id' => $companyId,
+        ], $jwtSecret, 900);
+        header('Location: ' . $agencyAppUrl . '/register-from-install?install_token=' . urlencode($installToken), true, 302);
+    }
+    exit;
+}
+
 // ─── Determine Location ID ────────────────────────────────────────────────────
 $locationId = $state ?? $data['locationId'] ?? $data['location_id'] ?? null;
 if (!$locationId)
