@@ -73,6 +73,8 @@ try {
     $companyId   = $userData['company_id']          ?? null;
     $locationId  = $userData['active_location_id']  ?? null;
     $locationMemberships = $userData['location_memberships'] ?? ($locationId ? [$locationId] : []);
+    $locationName = $userData['location_name'] ?? null;
+    $companyName  = $userData['company_name']  ?? null;
 
     // ── Sign JWT ─────────────────────────────────────────────────────────────
     $token = jwt_sign([
@@ -89,10 +91,12 @@ try {
         'location_id'          => $locationId,
         'location_memberships' => $locationMemberships,
         'user'        => [
-            'firstName' => $userData['firstName'] ?? '',
-            'lastName'  => $userData['lastName']  ?? '',
-            'email'     => $email,
-            'phone'     => $userData['phone'] ?? '',
+            'firstName'     => $userData['firstName'] ?? '',
+            'lastName'      => $userData['lastName']  ?? '',
+            'email'         => $email,
+            'phone'         => $userData['phone'] ?? '',
+            'location_name' => $locationName,
+            'company_name'  => $companyName,
         ],
     ]);
 

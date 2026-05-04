@@ -22,7 +22,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 $input = json_decode(file_get_contents('php://input'), true);
 
 $fullName      = trim($input['full_name']      ?? '');
-$phone         = trim($input['phone']          ?? '');
+$phone         = preg_replace('/\s+/', '', trim($input['phone'] ?? '')); // strip spaces
 $email         = strtolower(trim($input['email'] ?? ''));
 $password      = $input['password']    ?? '';
 $installToken  = $input['install_token'] ?? null; // optional — if present, trust it over raw IDs
@@ -188,6 +188,20 @@ try {
     $passwordHash = password_hash($password, PASSWORD_BCRYPT);
     $newUserDoc   = $usersRef->newDocument();
 
+    // ── Fetch location_name and company_name from ghl_tokens ─────────────────
+    $locationName = null;
+    $companyName  = null;
+    if ($locationId) {
+        try {
+            $tokenSnap = $db->collection('ghl_tokens')->document($locationId)->snapshot();
+            if ($tokenSnap->exists()) {
+                $tokenData    = $tokenSnap->data();
+                $locationName = $tokenData['location_name'] ?? null;
+                $companyName  = $tokenData['company_name']  ?? null;
+            }
+        } catch (Exception $ignored) {}
+    }
+
     $userData = [
         'firstName'     => $firstName,
         'lastName'      => $lastName,
@@ -201,6 +215,9 @@ try {
         'created_at'    => new \Google\Cloud\Core\Timestamp($now),
         'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
     ];
+
+    if ($locationName) $userData['location_name'] = $locationName;
+    if ($companyName)  $userData['company_name']  = $companyName;
 
     if ($isLocationLevel) {
         $userData['active_location_id']   = $locationId;
@@ -250,6 +267,8 @@ try {
             'email'                => $email,
             'phone'                => $phone,
             'location_id'          => $locationId,
+            'location_name'        => $locationName ?? null,
+            'company_name'         => $companyName  ?? null,
             'location_memberships' => $locationMemberships,
         ],
     ]);
