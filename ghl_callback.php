@@ -465,7 +465,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         // Save Location-scoped token
         $db->collection('ghl_tokens')->document($singleLocationId)->set([
             'access_token'          => $ltData2['access_token'],
-            'refresh_token'         => $companyRefresh,
+            'refresh_token'         => $ltData2['refresh_token'] ?? $companyRefresh,
             'expires_at'            => $ltExpires2,
             'client_id'             => $subaccountClientId,
             'appId'                 => $subaccountClientId,
@@ -546,31 +546,22 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         }
     }
     if (empty($allLocationIds)) {
-        $maxRetries = 4;
-        for ($attempt = 0; $attempt < $maxRetries; $attempt++) {
-            $skip = 0; $limit = 100;
-            do {
-                $locCurl = curl_init("https://services.leadconnectorhq.com/locations/search?companyId={$companyId}&skip={$skip}&limit={$limit}");
-                curl_setopt_array($locCurl, [
-                    CURLOPT_RETURNTRANSFER => true,
-                    CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $companyToken, 'Accept: application/json', 'Version: 2021-07-28'],
-                ]);
-                $locResp  = curl_exec($locCurl);
-                curl_close($locCurl);
-                $fetched  = json_decode($locResp, true)['locations'] ?? [];
-                foreach ($fetched as $loc) { if ($loc['id'] ?? null) $allLocationIds[] = $loc['id']; }
-                $skip += $limit;
-            } while (count($fetched) === $limit && count($allLocationIds) < 500);
-
-            if (!empty($allLocationIds)) {
-                break;
-            }
-            // If empty, GHL API might be eventually consistent. Wait and retry.
-            sleep(3);
-        }
+        $skip = 0; $limit = 100;
+        do {
+            $locCurl = curl_init("https://services.leadconnectorhq.com/locations/search?companyId={$companyId}&skip={$skip}&limit={$limit}");
+            curl_setopt_array($locCurl, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $companyToken, 'Accept: application/json', 'Version: 2021-07-28'],
+            ]);
+            $locResp  = curl_exec($locCurl);
+            curl_close($locCurl);
+            $fetched  = json_decode($locResp, true)['locations'] ?? [];
+            foreach ($fetched as $loc) { if ($loc['id'] ?? null) $allLocationIds[] = $loc['id']; }
+            $skip += $limit;
+        } while (count($fetched) === $limit && count($allLocationIds) < 500);
     }
 
-    $successfulProvisions = 0;
+    $successfulLocIds = [];
 
     // Provision per-location tokens
     foreach ($allLocationIds as $locId) {
@@ -592,7 +583,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
             $ltData = json_decode($ltResp, true);
 
             if ($ltCode === 200 && !empty($ltData['access_token'])) {
-                $successfulProvisions++;
+                $successfulLocIds[] = $locId;
                 $ltExpires = time() + (int)($ltData['expires_in'] ?? 86400);
 
                 // Fetch location name
@@ -606,7 +597,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
 
                 $db->collection('ghl_tokens')->document($locId)->set([
                     'access_token'          => $ltData['access_token'],
-                    'refresh_token'         => $companyRefresh,
+                    'refresh_token'         => $ltData['refresh_token'] ?? $companyRefresh,
                     'expires_at'            => $ltExpires,
                     'client_id'             => $subaccountClientId,
                     'appId'                 => $subaccountClientId,
@@ -659,14 +650,14 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     // Always send users into the React flow (register or login), never a dead-end
     // static page. For a single provisioned location → registration. For multiple
     // → login so each location admin can register individually.
-    error_log("[GHL_CALLBACK] Case B: provisioned {$successfulProvisions} of " . count($allLocationIds) . " locations.");
+    error_log("[GHL_CALLBACK] Case B: provisioned " . count($successfulLocIds) . " of " . count($allLocationIds) . " locations.");
 
     require_once __DIR__ . '/api/jwt_helper.php';
     $jwtSecretB   = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
     $reactAppUrlB = 'https://app.nolacrm.io';
 
-    if ($successfulProvisions === 1 && !empty($allLocationIds)) {
-        $onlyLocId = $allLocationIds[0];
+    if (count($successfulLocIds) === 1) {
+        $onlyLocId = $successfulLocIds[0];
 
         // Check whether this location already has registered users
         $hasMembersB = false;
@@ -695,8 +686,8 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     } else {
         // True multi-location bulk install — redirect to login
         // Each sub-account admin registers independently from within their location.
-        error_log("[GHL_CALLBACK] Case B: true bulk install ({$successfulProvisions} locations) — redirect to login.");
-        header('Location: ' . $reactAppUrlB . '/login?bulk_install=1&count=' . $successfulProvisions, true, 302);
+        error_log("[GHL_CALLBACK] Case B: true bulk install (" . count($successfulLocIds) . " locations) — redirect to login.");
+        header('Location: ' . $reactAppUrlB . '/login?bulk_install=1&count=' . count($successfulLocIds), true, 302);
     }
     exit;
 }
