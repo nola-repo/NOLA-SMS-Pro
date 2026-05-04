@@ -343,6 +343,14 @@ function extract_location_id_from_state(?string $state): ?string
 
         $trimmed = trim($candidate);
 
+        // Case 0: query-string-like state payload
+        $parsed = [];
+        parse_str($trimmed, $parsed);
+        $fromQuery = $parsed['locationId'] ?? $parsed['location_id'] ?? null;
+        if (is_string($fromQuery) && $fromQuery !== '') {
+            return $fromQuery;
+        }
+
         // Case 1: JSON payload in state (direct)
         $json = json_decode($trimmed, true);
         if (is_array($json)) {
@@ -362,6 +370,28 @@ function extract_location_id_from_state(?string $state): ?string
                     return $fromB64Json;
                 }
             }
+        }
+
+        // Case 2b: base64url-encoded JSON payload
+        $b64Url = strtr($trimmed, '-_', '+/');
+        $padLen = strlen($b64Url) % 4;
+        if ($padLen > 0) {
+            $b64Url .= str_repeat('=', 4 - $padLen);
+        }
+        $b64u = base64_decode($b64Url, true);
+        if ($b64u !== false && $b64u !== '') {
+            $jsonB64u = json_decode($b64u, true);
+            if (is_array($jsonB64u)) {
+                $fromB64uJson = $jsonB64u['locationId'] ?? $jsonB64u['location_id'] ?? null;
+                if (is_string($fromB64uJson) && $fromB64uJson !== '') {
+                    return $fromB64uJson;
+                }
+            }
+        }
+
+        // Case 2c: locationId embedded in a larger plain string
+        if (preg_match('/(?:locationId|location_id)["=: ]+([A-Za-z0-9_-]{12,})/i', $trimmed, $m)) {
+            return $m[1];
         }
 
         // Case 3: plain location-like ID (guard against obvious non-IDs)
@@ -624,6 +654,18 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         } while (count($fetched) === $limit && count($allLocationIds) < 500);
     }
 
+    // If GHL search returns zero, fall back to location context from callback state.
+    // This prevents false "bulk_install count=0" outcomes for single-location installs.
+    if (empty($allLocationIds)) {
+        $stateLocId = extract_location_id_from_state($state);
+        if ($stateLocId) {
+            $allLocationIds[] = $stateLocId;
+            error_log("[GHL_CALLBACK] Case B fallback: using locationId from state — {$stateLocId}");
+        }
+    }
+
+    $allLocationIds = array_values(array_unique($allLocationIds));
+
     $successfulLocIds = [];
     $successfulLocNames = [];
 
@@ -722,7 +764,14 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     $jwtSecretB   = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
     $reactAppUrlB = 'https://app.nolacrm.io';
 
-    if (count($successfulLocIds) === 1) {
+    if (count($successfulLocIds) === 0) {
+        render_error('Installation completed, but no location tokens were provisioned. Please reinstall from a specific sub-account.', [
+            'companyId' => $companyId,
+            'hint' => 'No location-scoped token could be created from this callback context.',
+            'isBulkInstallation' => $data['isBulkInstallation'] ?? null,
+            'state' => $state,
+        ]);
+    } elseif (count($successfulLocIds) === 1) {
         $onlyLocId = $successfulLocIds[0];
 
         // Check whether this location already has registered users
