@@ -633,16 +633,24 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         }
     }
 
-    // Bulk sub-account install complete — redirect to the sub-account app (app.nolacrm.io).
-    // Each provisioned location needs its own registration. We redirect to a generic
-    // success page so the agency admin knows all sub-accounts were provisioned.
-    require_once __DIR__ . '/api/jwt_helper.php';
-    $jwtSecret      = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
-    $reactAppUrl    = 'https://app.nolacrm.io';
+    // Bulk sub-account install complete — show a native success page so they
+    // know all sub-accounts were provisioned, instead of redirecting to React.
     $provisionCount = count($allLocationIds);
+    $successHtml = <<<HTML
+        <div class="success-ring" style="margin: 0 auto 32px;">
+            <div class="success-icon">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+        </div>
+        <h1>Bulk Install Successful</h1>
+        <p class="subtitle" style="margin-bottom: 32px;">
+            Successfully provisioned <strong>{$provisionCount}</strong> sub-accounts.<br>
+            Each location is now ready to use NOLA SMS Pro.
+        </p>
+        <a href="https://app.nolacrm.io/login" class="btn-primary" style="text-decoration:none;">Go to Dashboard</a>
+HTML;
 
-    // Redirect with a bulk-success flag so the React app can show a tailored message
-    header('Location: ' . $reactAppUrl . '/login?bulk_install=1&locations=' . $provisionCount, true, 302);
+    render_page('Bulk Install Complete', $successHtml);
     exit;
 }
 
