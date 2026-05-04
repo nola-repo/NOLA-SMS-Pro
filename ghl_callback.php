@@ -395,9 +395,8 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     $db  = get_firestore();
     $now = new DateTimeImmutable();
 
-    // Save Company-level token
+    // Save Company-level token for future reference
     try {
-        // Save the Company-scoped token so we can use it to exchange for location tokens later
         $db->collection('ghl_tokens')->document($companyId)->set([
             'access_token'  => $companyToken,
             'refresh_token' => $companyRefresh,
@@ -413,7 +412,122 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         error_log('[GHL_CALLBACK] Failed to save company token: ' . $e->getMessage());
     }
 
-    // Fetch all locations for this company
+    // ── CASE A: Single-location install from agency view ─────────────────────
+    // GHL includes locationId when the agency admin installs for one sub-account.
+    // Treat this exactly like a normal sub-account install.
+    $singleLocationId = $data['locationId'] ?? $data['location_id'] ?? null;
+
+    if ($singleLocationId) {
+        error_log("[GHL_CALLBACK] Case A: single-location agency install — locationId={$singleLocationId}");
+
+        // Exchange company token -> location-scoped token
+        $ltCurl2 = curl_init('https://services.leadconnectorhq.com/oauth/locationToken');
+        curl_setopt_array($ltCurl2, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => json_encode(['companyId' => $companyId, 'locationId' => $singleLocationId]),
+            CURLOPT_HTTPHEADER     => [
+                'Authorization: Bearer ' . $companyToken,
+                'Content-Type: application/json',
+                'Version: 2021-07-28',
+            ],
+        ]);
+        $ltResp2 = curl_exec($ltCurl2);
+        $ltCode2 = curl_getinfo($ltCurl2, CURLINFO_HTTP_CODE);
+        curl_close($ltCurl2);
+        $ltData2 = json_decode($ltResp2, true);
+
+        if ($ltCode2 !== 200 || empty($ltData2['access_token'])) {
+            render_error("Failed to exchange company token for location token (HTTP {$ltCode2}).", $ltData2 ?: []);
+        }
+
+        $ltExpires2 = time() + (int)($ltData2['expires_in'] ?? 86400);
+
+        // Fetch location name
+        $lnCurl2 = curl_init('https://services.leadconnectorhq.com/locations/' . $singleLocationId);
+        curl_setopt_array($lnCurl2, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $ltData2['access_token'], 'Accept: application/json', 'Version: 2021-07-28'],
+        ]);
+        $lnResp2       = curl_exec($lnCurl2); curl_close($lnCurl2);
+        $singleLocName = json_decode($lnResp2, true)['location']['name'] ?? '';
+
+        // Save Location-scoped token
+        $db->collection('ghl_tokens')->document($singleLocationId)->set([
+            'access_token'          => $ltData2['access_token'],
+            'refresh_token'         => $companyRefresh,
+            'expires_at'            => $ltExpires2,
+            'client_id'             => $subaccountClientId,
+            'appId'                 => $subaccountClientId,
+            'appType'               => 'subaccount',
+            'userType'              => 'Location',
+            'location_id'           => $singleLocationId,
+            'location_name'         => $singleLocName,
+            'companyId'             => $companyId,
+            'is_live'               => true,
+            'toggle_enabled'        => true,
+            'provisioned_from_bulk' => true,
+            'updated_at'            => new \Google\Cloud\Core\Timestamp($now),
+        ], ['merge' => true]);
+
+        // Provision integrations doc
+        $intDocId2 = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $singleLocationId);
+        $intRef2   = $db->collection('integrations')->document($intDocId2);
+        $intSnap2  = $intRef2->snapshot();
+        if (!$intSnap2->exists()) {
+            $intRef2->set([
+                'location_id'           => $singleLocationId,
+                'location_name'         => $singleLocName,
+                'companyId'             => $companyId,
+                'free_credits_total'    => 10,
+                'free_usage_count'      => 0,
+                'credit_balance'        => 0,
+                'system_default_sender' => 'NOLASMSPro',
+                'installed_at'          => new \Google\Cloud\Core\Timestamp($now),
+                'updated_at'            => new \Google\Cloud\Core\Timestamp($now),
+            ]);
+        } else {
+            $intRef2->set([
+                'access_token'  => $ltData2['access_token'],
+                'expires_at'    => $ltExpires2,
+                'location_name' => $singleLocName,
+                'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
+            ], ['merge' => true]);
+        }
+
+        error_log("[GHL_CALLBACK] Case A: provisioned {$singleLocationId} ({$singleLocName})");
+
+        // Redirect through normal sub-account registration/welcome-back flow
+        require_once __DIR__ . '/api/jwt_helper.php';
+        $jwtSecret2  = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
+        $reactAppUrl2 = 'https://app.nolacrm.io';
+        $locNameEnc2  = urlencode($singleLocName ?: 'Your Sub-Account');
+
+        $hasMembers2 = false;
+        try {
+            foreach ($db->collection('location_members')->document($singleLocationId)->collection('members')->limit(1)->documents() as $m) {
+                if ($m->exists()) { $hasMembers2 = true; break; }
+            }
+        } catch (Exception $e) {
+            error_log('[GHL_CALLBACK] Could not check location_members: ' . $e->getMessage());
+        }
+
+        if ($hasMembers2) {
+            header('Location: ' . $reactAppUrl2 . '/login?welcome_back=1&name=' . $locNameEnc2, true, 302);
+        } else {
+            $installToken2 = jwt_sign([
+                'type'          => 'install',
+                'location_id'   => $singleLocationId,
+                'location_name' => $singleLocName ?: '',
+                'company_id'    => $companyId,
+            ], $jwtSecret2, 900);
+            header('Location: ' . $reactAppUrl2 . '/register-from-install?install_token=' . urlencode($installToken2), true, 302);
+        }
+        exit;
+    }
+
+    // ── CASE B: True bulk install — provision ALL company locations ───────────
+    error_log("[GHL_CALLBACK] Case B: true bulk install — companyId={$companyId}");
     $allLocationIds = [];
     if (!empty($data['locations']) && is_array($data['locations'])) {
         foreach ($data['locations'] as $loc) {
