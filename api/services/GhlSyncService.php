@@ -26,6 +26,10 @@ class GhlSyncService
     public function syncOutboundMessage(string $phone, string $message, ?string $contactId = null): array
     {
         try {
+            if ($this->isConversationSyncDisabled()) {
+                return ['success' => true, 'skipped' => true, 'reason' => 'conversation_sync_disabled_for_location'];
+            }
+
             $resolvedContactId = $contactId;
             $ghlConvId = $this->resolveConversation($phone, $resolvedContactId);
 
@@ -71,6 +75,16 @@ class GhlSyncService
                 '2021-04-15'
             );
 
+            if ($this->isTrialModeErrorResponse($resp)) {
+                $this->disableConversationSync('trial_mode_not_enabled_for_agency', $resp);
+                return [
+                    'success' => true,
+                    'skipped' => true,
+                    'reason' => 'trial_mode_not_enabled_for_agency',
+                    'ghl_response' => $resp
+                ];
+            }
+
             return ['success' => $resp['status'] < 300, 'ghl_response' => $resp];
         } catch (\Exception $e) {
             return ['success' => false, 'error' => $e->getMessage()];
@@ -83,6 +97,10 @@ class GhlSyncService
     public function syncInboundMessage(string $phone, string $message): array
     {
         try {
+            if ($this->isConversationSyncDisabled()) {
+                return ['success' => true, 'skipped' => true, 'reason' => 'conversation_sync_disabled_for_location'];
+            }
+
             $contactId = null;
             $ghlConvId = $this->resolveConversation($phone, $contactId);
 
@@ -119,6 +137,16 @@ class GhlSyncService
                 json_encode($body),
                 '2021-04-15'
             );
+
+            if ($this->isTrialModeErrorResponse($resp)) {
+                $this->disableConversationSync('trial_mode_not_enabled_for_agency', $resp);
+                return [
+                    'success' => true,
+                    'skipped' => true,
+                    'reason' => 'trial_mode_not_enabled_for_agency',
+                    'ghl_response' => $resp
+                ];
+            }
 
             return ['success' => $resp['status'] < 300, 'ghl_response' => $resp];
         } catch (\Exception $e) {
@@ -208,5 +236,73 @@ class GhlSyncService
         }
 
         return null;
+    }
+
+    private function integrationDocRef()
+    {
+        $docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $this->locationId);
+        return $this->db->collection('integrations')->document($docId);
+    }
+
+    private function isConversationSyncDisabled(): bool
+    {
+        try {
+            $snap = $this->integrationDocRef()->snapshot();
+            if (!$snap->exists()) {
+                return false;
+            }
+            $data = $snap->data();
+            return !empty($data['disable_ghl_conversation_sync']);
+        } catch (\Throwable $e) {
+            error_log('[GhlSyncService] Failed to read sync toggle: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    private function disableConversationSync(string $reason, array $resp = []): void
+    {
+        try {
+            $now = new \DateTimeImmutable();
+            $this->integrationDocRef()->set([
+                'disable_ghl_conversation_sync' => true,
+                'ghl_conversation_sync_disabled_reason' => $reason,
+                'ghl_conversation_sync_disabled_at' => new \Google\Cloud\Core\Timestamp($now),
+                'ghl_conversation_sync_last_error' => [
+                    'status' => $resp['status'] ?? null,
+                    'body' => isset($resp['body']) ? substr((string)$resp['body'], 0, 1000) : null,
+                ],
+                'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+            ], ['merge' => true]);
+            error_log("[GhlSyncService] Disabled conversation sync for {$this->locationId}: {$reason}");
+        } catch (\Throwable $e) {
+            error_log('[GhlSyncService] Failed to disable conversation sync: ' . $e->getMessage());
+        }
+    }
+
+    private function isTrialModeErrorResponse(array $resp): bool
+    {
+        $status = (int)($resp['status'] ?? 0);
+        if ($status < 400) {
+            return false;
+        }
+
+        $body = (string)($resp['body'] ?? '');
+        if ($body === '') {
+            return false;
+        }
+
+        $decoded = json_decode($body, true);
+        $rawMessage = strtolower($body);
+
+        $msg = '';
+        $code = '';
+        if (is_array($decoded)) {
+            $msg = strtolower((string)($decoded['error']['msg'] ?? $decoded['message'] ?? ''));
+            $code = (string)($decoded['error']['code'] ?? $decoded['code'] ?? '');
+        }
+
+        return $code === '101'
+            || str_contains($msg, 'trial mode not enabled')
+            || str_contains($rawMessage, 'trial mode not enabled');
     }
 }
