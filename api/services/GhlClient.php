@@ -458,7 +458,8 @@ class GhlClient
 
         $updateData = [
             'access_token'  => $data['access_token'] ?? null,
-            'refresh_token' => $data['refresh_token'] ?? null,
+            // Preserve current refresh token when provider omits a new one.
+            'refresh_token' => $data['refresh_token'] ?? ($this->integration['refresh_token'] ?? null),
             'expires_at'    => $expiresAtUnix,
             'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
             'raw_refresh'   => $data,

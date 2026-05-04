@@ -497,10 +497,11 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         curl_setopt_array($ltCurl2, [
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => json_encode(['companyId' => $companyId, 'locationId' => $singleLocationId]),
+            CURLOPT_POSTFIELDS     => http_build_query(['companyId' => $companyId, 'locationId' => $singleLocationId]),
             CURLOPT_HTTPHEADER     => [
                 'Authorization: Bearer ' . $companyToken,
-                'Content-Type: application/json',
+                'Content-Type: application/x-www-form-urlencoded',
+                'Accept: application/json',
                 'Version: 2021-07-28',
             ],
         ]);
@@ -624,6 +625,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     }
 
     $successfulLocIds = [];
+    $successfulLocNames = [];
 
     // Provision per-location tokens
     foreach ($allLocationIds as $locId) {
@@ -657,6 +659,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
                 ]);
                 $lnResp  = curl_exec($lnCurl); curl_close($lnCurl);
                 $locName = json_decode($lnResp, true)['location']['name'] ?? '';
+                $successfulLocNames[$locId] = $locName;
 
                 $db->collection('ghl_tokens')->document($locId)->set([
                     'access_token'          => $ltData['access_token'],
@@ -739,9 +742,10 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         } else {
             // First install → generate a short-lived install token → registration form
             $tokenB = jwt_sign([
-                'type'        => 'install',
-                'location_id' => $onlyLocId,
-                'company_id'  => $companyId,
+                'type'          => 'install',
+                'location_id'   => $onlyLocId,
+                'location_name' => $successfulLocNames[$onlyLocId] ?? '',
+                'company_id'    => $companyId,
             ], $jwtSecretB, 900);
             error_log("[GHL_CALLBACK] Case B: {$onlyLocId} is new — redirect to registration.");
             header('Location: ' . $reactAppUrlB . '/register-from-install?install_token=' . urlencode($tokenB), true, 302);
