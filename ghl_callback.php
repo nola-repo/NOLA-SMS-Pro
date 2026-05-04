@@ -461,7 +461,7 @@ function exchange_location_token(string $companyToken, string $companyId, string
             $data = [];
         }
 
-        if ($code === 200 && !empty($data['access_token'])) {
+        if (($code === 200 || $code === 201) && !empty($data['access_token'])) {
             return [
                 'ok' => true,
                 'code' => $code,
