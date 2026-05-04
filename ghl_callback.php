@@ -417,6 +417,12 @@ if (!isset($_GET['code']))
 
 $code  = $_GET['code'];
 $state = $_GET['state'] ?? null;
+$debugTrace = [
+    'source' => 'ghl_callback',
+    'has_code' => !empty($code),
+    'state_present' => $state !== null && $state !== '',
+    'state_preview' => $state ? substr((string)$state, 0, 180) : null,
+];
 
 // ─── Token Exchange ────────────────────────────────────────────────────────────
 $ch = curl_init('https://services.leadconnectorhq.com/oauth/token');
@@ -440,6 +446,13 @@ $data = json_decode($response, true);
 if ($httpCode !== 200 || !is_array($data))
     render_error('Authorization failed.', $data ?: []);
 
+$debugTrace['token_http'] = $httpCode;
+$debugTrace['token_userType'] = $data['userType'] ?? null;
+$debugTrace['token_isBulkInstallation'] = $data['isBulkInstallation'] ?? null;
+$debugTrace['token_companyId'] = $data['companyId'] ?? null;
+$debugTrace['token_locationId'] = $data['locationId'] ?? ($data['location_id'] ?? null);
+error_log('[GHL_CALLBACK_DEBUG] token_exchange=' . json_encode($debugTrace));
+
 // Subaccount-only — $usedAppType is always 'subaccount'
 $usedAppType = 'subaccount';
 
@@ -462,6 +475,7 @@ $ghlApps = [
 // Company-scoped token (isBulkInstallation=true, userType=Company) with NO
 // locationId. We exchange it for per-location tokens and redirect to app.nolacrm.io.
 if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Company') {
+    error_log('[GHL_CALLBACK_DEBUG] branch=bulk_guard_entered companyId=' . ($data['companyId'] ?? ''));
     // This is the sub-account app bulk install — use sub-account credentials throughout.
     $companyId          = $data['companyId'] ?? null;
     $subaccountClientId = $ghlApps['subaccount']['clientId'];
@@ -518,6 +532,10 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
             error_log("[GHL_CALLBACK] Case A: single location recovered from state — {$singleLocationId}");
         }
     }
+    error_log('[GHL_CALLBACK_DEBUG] bulk_caseA_candidate=' . json_encode([
+        'singleLocationId' => $singleLocationId,
+        'state_present' => $state !== null && $state !== '',
+    ]));
 
     if ($singleLocationId) {
         error_log("[GHL_CALLBACK] Case A: single-location agency install — locationId={$singleLocationId}");
@@ -665,6 +683,10 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     }
 
     $allLocationIds = array_values(array_unique($allLocationIds));
+    error_log('[GHL_CALLBACK_DEBUG] bulk_caseB_location_candidates=' . json_encode([
+        'count' => count($allLocationIds),
+        'first' => $allLocationIds[0] ?? null,
+    ]));
 
     $successfulLocIds = [];
     $successfulLocNames = [];
@@ -759,6 +781,11 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     // static page. For a single provisioned location → registration. For multiple
     // → login so each location admin can register individually.
     error_log("[GHL_CALLBACK] Case B: provisioned " . count($successfulLocIds) . " of " . count($allLocationIds) . " locations.");
+    error_log('[GHL_CALLBACK_DEBUG] bulk_caseB_provision_result=' . json_encode([
+        'successful_count' => count($successfulLocIds),
+        'candidate_count' => count($allLocationIds),
+        'successful_first' => $successfulLocIds[0] ?? null,
+    ]));
 
     require_once __DIR__ . '/api/jwt_helper.php';
     $jwtSecretB   = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
@@ -811,6 +838,11 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
 // ─── Determine Location ID ────────────────────────────────────────────────────
 // Prefer explicit token response fields. state is fallback-only.
 $locationId = $data['locationId'] ?? $data['location_id'] ?? extract_location_id_from_state($state);
+error_log('[GHL_CALLBACK_DEBUG] final_location_resolution=' . json_encode([
+    'resolved_locationId' => $locationId,
+    'token_locationId' => $data['locationId'] ?? ($data['location_id'] ?? null),
+    'state_present' => $state !== null && $state !== '',
+]));
 if (!$locationId)
     render_error('No Location ID returned.', $data);
 
@@ -1001,6 +1033,11 @@ if ($hasExistingMembers) {
     $redirectUrl = $reactAppUrl . '/register-from-install?install_token=' . urlencode($installToken);
     error_log("[GHL_CALLBACK] First install for {$locationId} — redirecting to registration.");
 }
+error_log('[GHL_CALLBACK_DEBUG] final_redirect=' . json_encode([
+    'locationId' => $locationId,
+    'hasExistingMembers' => $hasExistingMembers,
+    'redirectUrl' => $redirectUrl,
+]));
 
 header('Location: ' . $redirectUrl, true, 302);
 exit;
