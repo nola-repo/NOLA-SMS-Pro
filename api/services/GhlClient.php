@@ -328,6 +328,38 @@ class GhlClient
 
         $isBulkProvisioned = !empty($this->integration['provisioned_from_bulk']);
         $companyId         = $this->integration['companyId'] ?? null;
+        $now               = new \DateTimeImmutable();
+
+        // Check if we even need to refresh the Company token
+        $companyTokenSkippedRefresh = false;
+        $data = null;
+        $httpCode = 200;
+
+        if ($isBulkProvisioned && $companyId) {
+            $companyDoc = $this->db->collection('ghl_tokens')->document($companyId)->snapshot();
+            if ($companyDoc->exists()) {
+                $companyData = $companyDoc->data();
+                $companyAccessToken = $companyData['access_token'] ?? null;
+                $companyExpiresAt   = $companyData['expires_at'] ?? 0;
+                $companyRefresh     = $companyData['refresh_token'] ?? null;
+
+                // Always use the freshest refresh_token from the parent company doc
+                if ($companyRefresh) {
+                    $refreshToken = $companyRefresh;
+                }
+
+                // If the company access_token is still valid (e.g. refreshed by another subaccount),
+                // we can skip the refresh and immediately exchange it for a location token!
+                if ($companyAccessToken && time() < ($companyExpiresAt - 300)) {
+                    $companyTokenSkippedRefresh = true;
+                    $data = [
+                        'access_token'  => $companyAccessToken,
+                        'refresh_token' => $companyRefresh,
+                        'expires_in'    => $companyExpiresAt - time(),
+                    ];
+                }
+            }
+        }
 
         if (!$clientId || !$clientSecret || !$refreshToken) {
             $missing = [];
@@ -338,41 +370,43 @@ class GhlClient
             throw new \Exception('GHL Refresh Error: Missing ' . implode(', ', $missing));
         }
 
-        // If bulk provisioned, the refresh_token is Company-scoped.
-        $userTypeForRefresh = $isBulkProvisioned ? 'Company' : ($this->integration['userType'] ?? 'Location');
+        // Only perform the actual refresh if we couldn't skip it
+        if (!$companyTokenSkippedRefresh) {
+            $userTypeForRefresh = $isBulkProvisioned ? 'Company' : ($this->integration['userType'] ?? 'Location');
 
-        $tokenUrl = 'https://services.leadconnectorhq.com/oauth/token';
-        $postData = [
-            'client_id'     => $clientId,
-            'client_secret' => $clientSecret,
-            'grant_type'    => 'refresh_token',
-            'refresh_token' => $refreshToken,
-            'user_type'     => $userTypeForRefresh,
-        ];
+            $tokenUrl = 'https://services.leadconnectorhq.com/oauth/token';
+            $postData = [
+                'client_id'     => $clientId,
+                'client_secret' => $clientSecret,
+                'grant_type'    => 'refresh_token',
+                'refresh_token' => $refreshToken,
+                'user_type'     => $userTypeForRefresh,
+            ];
 
-        $ch = curl_init($tokenUrl);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => http_build_query($postData),
-            CURLOPT_HTTPHEADER     => [
-                'Accept: application/json',
-                'Content-Type: application/x-www-form-urlencoded',
-                'Version: 2021-07-28',
-            ],
-        ]);
+            $ch = curl_init($tokenUrl);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_POST           => true,
+                CURLOPT_POSTFIELDS     => http_build_query($postData),
+                CURLOPT_HTTPHEADER     => [
+                    'Accept: application/json',
+                    'Content-Type: application/x-www-form-urlencoded',
+                    'Version: 2021-07-28',
+                ],
+            ]);
 
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
+            $response = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
 
-        $data = json_decode($response, true);
+            $data = json_decode($response, true);
 
-        if ($httpCode !== 200 || !is_array($data)) {
-            throw new \Exception(
-                "GHL token refresh failed with code {$httpCode}: "
-                . ($data['error_description'] ?? $response)
-            );
+            if ($httpCode !== 200 || !is_array($data)) {
+                throw new \Exception(
+                    "GHL token refresh failed with code {$httpCode}: "
+                    . ($data['error_description'] ?? $response)
+                );
+            }
         }
 
         $now = new \DateTimeImmutable();
