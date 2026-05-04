@@ -403,6 +403,75 @@ function extract_location_id_from_state(?string $state): ?string
     return null;
 }
 
+/**
+ * Exchange a company-scoped token into a location-scoped token.
+ * Tries both payload formats because GHL behavior varies by app/runtime.
+ *
+ * @return array{ok:bool, code:int, data:array, raw:string, format:string}
+ */
+function exchange_location_token(string $companyToken, string $companyId, string $locationId): array
+{
+    $attempts = [
+        [
+            'format' => 'form',
+            'body' => http_build_query(['companyId' => $companyId, 'locationId' => $locationId]),
+            'headers' => [
+                'Authorization: Bearer ' . $companyToken,
+                'Content-Type: application/x-www-form-urlencoded',
+                'Accept: application/json',
+                'Version: 2021-07-28',
+            ],
+        ],
+        [
+            'format' => 'json',
+            'body' => json_encode(['companyId' => $companyId, 'locationId' => $locationId]),
+            'headers' => [
+                'Authorization: Bearer ' . $companyToken,
+                'Content-Type: application/json',
+                'Accept: application/json',
+                'Version: 2021-07-28',
+            ],
+        ],
+    ];
+
+    foreach ($attempts as $attempt) {
+        $ltCurl = curl_init('https://services.leadconnectorhq.com/oauth/locationToken');
+        curl_setopt_array($ltCurl, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => $attempt['body'],
+            CURLOPT_HTTPHEADER     => $attempt['headers'],
+        ]);
+        $raw = curl_exec($ltCurl);
+        $code = curl_getinfo($ltCurl, CURLINFO_HTTP_CODE);
+        curl_close($ltCurl);
+        $data = json_decode($raw ?: '', true);
+        if (!is_array($data)) {
+            $data = [];
+        }
+
+        if ($code === 200 && !empty($data['access_token'])) {
+            return [
+                'ok' => true,
+                'code' => $code,
+                'data' => $data,
+                'raw' => (string)$raw,
+                'format' => $attempt['format'],
+            ];
+        }
+
+        error_log("[GHL_CALLBACK] locationToken {$attempt['format']} failed for {$locationId}: HTTP {$code} — {$raw}");
+    }
+
+    return [
+        'ok' => false,
+        'code' => 0,
+        'data' => [],
+        'raw' => '',
+        'format' => 'none',
+    ];
+}
+
 // ─── OAuth Config ──────────────────────────────────────────────────────────────
 // Subaccount app only — NO agency fallback.
 // Agency installs use /oauth/agency-callback → ghl_agency_callback.php
@@ -541,26 +610,17 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         error_log("[GHL_CALLBACK] Case A: single-location agency install — locationId={$singleLocationId}");
 
         // Exchange company token -> location-scoped token
-        $ltCurl2 = curl_init('https://services.leadconnectorhq.com/oauth/locationToken');
-        curl_setopt_array($ltCurl2, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => http_build_query(['companyId' => $companyId, 'locationId' => $singleLocationId]),
-            CURLOPT_HTTPHEADER     => [
-                'Authorization: Bearer ' . $companyToken,
-                'Content-Type: application/x-www-form-urlencoded',
-                'Accept: application/json',
-                'Version: 2021-07-28',
-            ],
-        ]);
-        $ltResp2 = curl_exec($ltCurl2);
-        $ltCode2 = curl_getinfo($ltCurl2, CURLINFO_HTTP_CODE);
-        curl_close($ltCurl2);
-        $ltData2 = json_decode($ltResp2, true);
+        $ltResult2 = exchange_location_token($companyToken, $companyId, $singleLocationId);
+        $ltData2   = $ltResult2['data'];
 
-        if ($ltCode2 !== 200 || empty($ltData2['access_token'])) {
-            render_error("Failed to exchange company token for location token (HTTP {$ltCode2}).", $ltData2 ?: []);
+        if (!$ltResult2['ok']) {
+            render_error('Failed to exchange company token for location token.', [
+                'locationId' => $singleLocationId,
+                'companyId'  => $companyId,
+                'hint'       => 'Tried both form and JSON payload formats for /oauth/locationToken.',
+            ]);
         }
+        error_log("[GHL_CALLBACK] Case A: locationToken succeeded for {$singleLocationId} via {$ltResult2['format']} format.");
 
         $ltExpires2 = time() + (int)($ltData2['expires_in'] ?? 86400);
 
@@ -694,24 +754,10 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     // Provision per-location tokens
     foreach ($allLocationIds as $locId) {
         try {
-            $ltCurl = curl_init('https://services.leadconnectorhq.com/oauth/locationToken');
-            curl_setopt_array($ltCurl, [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_POST           => true,
-                CURLOPT_POSTFIELDS     => http_build_query(['companyId' => $companyId, 'locationId' => $locId]),
-                CURLOPT_HTTPHEADER     => [
-                    'Authorization: Bearer ' . $companyToken,
-                    'Content-Type: application/x-www-form-urlencoded',
-                    'Accept: application/json',
-                    'Version: 2021-07-28',
-                ],
-            ]);
-            $ltResp = curl_exec($ltCurl);
-            $ltCode = curl_getinfo($ltCurl, CURLINFO_HTTP_CODE);
-            curl_close($ltCurl);
-            $ltData = json_decode($ltResp, true);
+            $ltResult = exchange_location_token($companyToken, $companyId, $locId);
+            $ltData   = $ltResult['data'];
 
-            if ($ltCode === 200 && !empty($ltData['access_token'])) {
+            if ($ltResult['ok']) {
                 $successfulLocIds[] = $locId;
                 $ltExpires = time() + (int)($ltData['expires_in'] ?? 86400);
 
@@ -767,9 +813,9 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
                     ], ['merge' => true]);
                 }
 
-                error_log("[GHL_CALLBACK] Bulk: provisioned location token for {$locId} ({$locName})");
+                error_log("[GHL_CALLBACK] Bulk: provisioned location token for {$locId} ({$locName}) via {$ltResult['format']} format");
             } else {
-                error_log("[GHL_CALLBACK] Bulk: locationToken failed for {$locId}: HTTP {$ltCode} — {$ltResp}");
+                error_log("[GHL_CALLBACK] Bulk: locationToken failed for {$locId} after trying all formats.");
             }
         } catch (Exception $e) {
             error_log("[GHL_CALLBACK] Bulk: exception for {$locId}: " . $e->getMessage());
