@@ -28,6 +28,8 @@ $password      = $input['password']    ?? '';
 $installToken  = $input['install_token'] ?? null; // optional — if present, trust it over raw IDs
 $locationId    = $input['location_id'] ?? null;
 $companyId     = $input['company_id']  ?? null;
+$payloadLocName = $input['location_name'] ?? null;
+$payloadCompName = $input['company_name'] ?? null;
 
 $jwtSecret = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
 
@@ -196,15 +198,15 @@ try {
     $newUserDoc   = $usersRef->newDocument();
 
     // ── Fetch location_name and company_name from ghl_tokens ─────────────────
-    $locationName = null;
-    $companyName  = null;
+    $locationName = $payloadLocName;
+    $companyName  = $payloadCompName;
     if ($locationId) {
         try {
             $tokenSnap = $db->collection('ghl_tokens')->document($locationId)->snapshot();
             if ($tokenSnap->exists()) {
                 $tokenData    = $tokenSnap->data();
-                $locationName = $tokenData['location_name'] ?? null;
-                $companyName  = $tokenData['company_name']  ?? null;
+                $locationName = $tokenData['location_name'] ?? $payloadLocName;
+                $companyName  = $tokenData['company_name']  ?? $payloadCompName;
             }
         } catch (Exception $ignored) {}
     }
