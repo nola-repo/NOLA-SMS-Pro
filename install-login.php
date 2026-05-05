@@ -222,5 +222,5 @@ il_page('Sign In', <<<HTML
         </div>
         <button id="submit-btn" type="submit" class="btn-submit">Sign In</button>
     </form>
-    <p class="footer" style="margin-top:16px;">New installation? <a href="{$reactApp}/register-from-install" style="color:#2b83fa;font-weight:600;">Create account</a></p>
+    <p class="footer" style="margin-top:16px;">New installation? <a href="/install-register.php" style="color:#2b83fa;font-weight:600;">Create account</a></p>
 HTML);
