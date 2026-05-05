@@ -1046,10 +1046,20 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         header('Location: https://smspro-api.nolacrm.io/install-register.php?install_token=' . urlencode($tokenB), true, 302);
 
     } else {
-        // Multiple locations need registration — each admin registers independently
-        $needCount = count($needsRegistration);
-        error_log("[GHL_CALLBACK] Case B: {$needCount} locations need registration — redirect to bulk_install banner.");
-        header('Location: https://smspro-api.nolacrm.io/install-login.php?bulk_install=1&count=' . $needCount, true, 302);
+        // Multiple locations need registration — default to the first one for the initial registration form
+        $needCount   = count($needsRegistration);
+        $onlyLocId   = array_key_first($needsRegistration);
+        $onlyLocName = $needsRegistration[$onlyLocId];
+
+        $tokenB = jwt_sign([
+            'type'          => 'install',
+            'location_id'   => $onlyLocId,
+            'location_name' => $onlyLocName,
+            'company_id'    => $companyId,
+        ], $jwtSecretB, 900);
+
+        error_log("[GHL_CALLBACK] Case B: {$needCount} locations need registration — redirecting to registration form for first location.");
+        header('Location: https://smspro-api.nolacrm.io/install-register.php?install_token=' . urlencode($tokenB), true, 302);
     }
     exit;
 }
