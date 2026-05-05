@@ -927,13 +927,23 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     }
 
     // ── Redirect to React app after bulk provisioning ────────────────────────
-    // Always send users into the React flow (register or login), never a dead-end
-    // static page. For a single provisioned location → registration. For multiple
-    // → login so each location admin can register individually.
+    // Classify every provisioned location into one of three tiers using two
+    // Firestore checks:
+    //
+    //   Tier 1 — Brand new: no ghl_tokens/{locationId} doc exists at all
+    //             → Highest priority for registration
+    //   Tier 2 — Installed before but never registered: token doc exists,
+    //             location_members has no members
+    //             → Also needs registration
+    //   Tier 3 — Fully set up: token doc exists AND members exist
+    //             → Redirect to welcome_back login
+    //
+    // Tier 1 + Tier 2 → needsRegistration[]
+    // Tier 3          → alreadyRegistered[]
     error_log("[GHL_CALLBACK] Case B: provisioned " . count($successfulLocIds) . " of " . count($allLocationIds) . " locations.");
     error_log('[GHL_CALLBACK_DEBUG] bulk_caseB_provision_result=' . json_encode([
         'successful_count' => count($successfulLocIds),
-        'candidate_count' => count($allLocationIds),
+        'candidate_count'  => count($allLocationIds),
         'successful_first' => $successfulLocIds[0] ?? null,
     ]));
 
@@ -943,44 +953,97 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
 
     if (count($successfulLocIds) === 0) {
         render_error('Installation completed, but no location tokens were provisioned. Please reinstall from a specific sub-account.', [
-            'companyId' => $companyId,
-            'hint' => 'No location-scoped token could be created from this callback context.',
+            'companyId'          => $companyId,
+            'hint'               => 'No location-scoped token could be created from this callback context.',
             'isBulkInstallation' => $data['isBulkInstallation'] ?? null,
-            'state' => $state,
+            'state'              => $state,
         ]);
-    } elseif (count($successfulLocIds) === 1) {
-        $onlyLocId = $successfulLocIds[0];
+    }
 
-        // Check whether this location already has registered users
-        $hasMembersB = false;
+    $needsRegistration = [];  // [ locationId => locationName ]
+    $alreadyRegistered = [];  // [ locationId => locationName ]
+
+    foreach ($successfulLocIds as $locId) {
+        $locName = $successfulLocNames[$locId] ?? '';
+
+        // ── Tier 1 check: does ghl_tokens/{locationId} doc exist? ────────────
+        $tokenDocExists = false;
         try {
-            foreach ($db->collection('location_members')->document($onlyLocId)->collection('members')->limit(1)->documents() as $m) {
-                if ($m->exists()) { $hasMembersB = true; break; }
+            $tokenSnap      = $db->collection('ghl_tokens')->document($locId)->snapshot();
+            $tokenDocExists = $tokenSnap->exists();
+        } catch (Exception $e) {
+            error_log("[GHL_CALLBACK] Case B: could not check ghl_tokens for {$locId}: " . $e->getMessage());
+        }
+
+        if (!$tokenDocExists) {
+            // Tier 1 — brand new location, never installed before
+            error_log("[GHL_CALLBACK] Case B: {$locId} is Tier 1 (no ghl_tokens doc) — needs registration.");
+            $needsRegistration[$locId] = $locName;
+            continue;
+        }
+
+        // ── Tier 2 / Tier 3 check: does location_members have any member? ────
+        $hasMembers = false;
+        try {
+            foreach (
+                $db->collection('location_members')
+                   ->document($locId)
+                   ->collection('members')
+                   ->limit(1)
+                   ->documents()
+                as $m
+            ) {
+                if ($m->exists()) {
+                    $hasMembers = true;
+                    break;
+                }
             }
         } catch (Exception $e) {
-            error_log('[GHL_CALLBACK] Case B: could not check members: ' . $e->getMessage());
+            error_log("[GHL_CALLBACK] Case B: could not check location_members for {$locId}: " . $e->getMessage());
         }
 
-        if ($hasMembersB) {
-            // Re-install of a location that already has users → welcome-back login
-            error_log("[GHL_CALLBACK] Case B: {$onlyLocId} already has members — redirect to login.");
-            header('Location: ' . $reactAppUrlB . '/login?welcome_back=1', true, 302);
+        if ($hasMembers) {
+            // Tier 3 — fully registered
+            error_log("[GHL_CALLBACK] Case B: {$locId} is Tier 3 (has members) — welcome_back.");
+            $alreadyRegistered[$locId] = $locName;
         } else {
-            // First install → generate a short-lived install token → registration form
-            $tokenB = jwt_sign([
-                'type'          => 'install',
-                'location_id'   => $onlyLocId,
-                'location_name' => $successfulLocNames[$onlyLocId] ?? '',
-                'company_id'    => $companyId,
-            ], $jwtSecretB, 900);
-            error_log("[GHL_CALLBACK] Case B: {$onlyLocId} is new — redirect to registration.");
-            header('Location: ' . $reactAppUrlB . '/register-from-install?install_token=' . urlencode($tokenB), true, 302);
+            // Tier 2 — token doc exists but registration never completed
+            error_log("[GHL_CALLBACK] Case B: {$locId} is Tier 2 (token exists, no members) — needs registration.");
+            $needsRegistration[$locId] = $locName;
         }
+    }
+
+    error_log('[GHL_CALLBACK_DEBUG] bulk_caseB_registration_split=' . json_encode([
+        'needs_registration' => array_keys($needsRegistration),
+        'already_registered' => array_keys($alreadyRegistered),
+    ]));
+
+    // ── Route based on registration tier ─────────────────────────────────────
+    if (count($needsRegistration) === 0) {
+        // All locations are Tier 3 — everyone already registered
+        error_log("[GHL_CALLBACK] Case B: all locations are Tier 3 — redirect to welcome_back.");
+        header('Location: ' . $reactAppUrlB . '/login?welcome_back=1', true, 302);
+
+    } elseif (count($needsRegistration) === 1) {
+        // Exactly one location needs registration — send directly to the form
+        $onlyLocId   = array_key_first($needsRegistration);
+        $onlyLocName = $needsRegistration[$onlyLocId];
+
+        $tokenB = jwt_sign([
+            'type'          => 'install',
+            'location_id'   => $onlyLocId,
+            'location_name' => $onlyLocName,
+            'company_id'    => $companyId,
+        ], $jwtSecretB, 900);
+
+        error_log("[GHL_CALLBACK] Case B: 1 location needs registration ({$onlyLocId}) — redirect to register-from-install.");
+        header('Location: ' . $reactAppUrlB . '/register-from-install?install_token=' . urlencode($tokenB), true, 302);
+
     } else {
-        // True multi-location bulk install — redirect to login
-        // Each sub-account admin registers independently from within their location.
-        error_log("[GHL_CALLBACK] Case B: true bulk install (" . count($successfulLocIds) . " locations) — redirect to login.");
-        header('Location: ' . $reactAppUrlB . '/login?bulk_install=1&count=' . count($successfulLocIds), true, 302);
+        // Multiple locations need registration — each admin registers independently
+        $needCount = count($needsRegistration);
+        error_log("[GHL_CALLBACK] Case B: {$needCount} locations need registration — redirect to bulk_install banner.");
+        header('Location: ' . $reactAppUrlB . '/login?bulk_install=1&count=' . $needCount, true, 302);
     }
     exit;
 }
