@@ -12,6 +12,7 @@ require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 require __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/../jwt_helper.php';
+require_once __DIR__ . '/user_profile_helper.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     http_response_code(405);
@@ -55,18 +56,7 @@ try {
     $d = $snap->data();
 
     echo json_encode([
-        'user' => [
-            'name'         => $d['name']
-                              ?? trim(($d['firstName'] ?? '') . ' ' . ($d['lastName'] ?? ''))
-                              ?: ($d['email'] ?? ''),
-            'email'        => $d['email']              ?? '',
-            'phone'        => $d['phone']              ?? '',
-            'location_id'  => $d['active_location_id'] ?? null,
-            'company_id'   => $d['company_id']         ?? null,
-            'location_name'=> $d['location_name']      ?? null,
-            'company_name' => $d['company_name']       ?? null,
-            'location_memberships' => $d['location_memberships'] ?? [],
-        ],
+        'user' => auth_user_payload_for_api($d),
     ]);
 } catch (Exception $e) {
     http_response_code(500);

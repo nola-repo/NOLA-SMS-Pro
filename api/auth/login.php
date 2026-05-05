@@ -11,6 +11,7 @@ require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 require __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/../jwt_helper.php';
+require_once __DIR__ . '/user_profile_helper.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
@@ -73,13 +74,6 @@ try {
     $companyId   = $userData['company_id']          ?? null;
     $locationId  = $userData['active_location_id']  ?? null;
     $locationMemberships = $userData['location_memberships'] ?? ($locationId ? [$locationId] : []);
-    $locationName = $userData['location_name'] ?? null;
-    $companyName  = $userData['company_name']  ?? null;
-    // Build full name: prefer stored `name` field, fallback to joining firstName + lastName
-    $fullName = $userData['name']
-        ?? trim(($userData['firstName'] ?? '') . ' ' . ($userData['lastName'] ?? ''))
-        ?: $email;
-
     // ── Sign JWT ─────────────────────────────────────────────────────────────
     $token = jwt_sign([
         'sub'        => $userId,
@@ -94,13 +88,7 @@ try {
         'company_id'           => $companyId,
         'location_id'          => $locationId,
         'location_memberships' => $locationMemberships,
-        'user'        => [
-            'name'          => $fullName,
-            'email'         => $email,
-            'phone'         => $userData['phone'] ?? '',
-            'location_name' => $locationName,
-            'company_name'  => $companyName,
-        ],
+        'user'                 => auth_user_payload_for_api($userData, $email),
     ]);
 
 } catch (Exception $e) {

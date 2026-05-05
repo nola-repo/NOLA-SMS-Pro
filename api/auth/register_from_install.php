@@ -12,6 +12,7 @@ require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 require __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/../jwt_helper.php';
+require_once __DIR__ . '/user_profile_helper.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
@@ -121,6 +122,9 @@ try {
             $updates['email']         = $email;
             $updates['phone']         = $phone;
             $updates['name']          = $fullName;
+            $parts                    = auth_split_full_name($fullName);
+            $updates['firstName']     = $parts['firstName'];
+            $updates['lastName']      = $parts['lastName'];
             $updates['password_hash'] = password_hash($password, PASSWORD_BCRYPT);
         }
 
@@ -142,13 +146,18 @@ try {
         update_integration_record($db, $locationId, $email, $fullName, $phone, $now);
         _sync_owner_to_ghl($db, $locationId, $fullName, $email, $phone);
 
-        $role      = $existingDoc['role']       ?? 'user';
-        $linkedCo  = $existingDoc['company_id'] ?? $companyId ?? null;
-        $linkedLoc = $isLocationLevel ? $locationId : ($existingDoc['active_location_id'] ?? null);
-
-        // Fetch fresh location_memberships
+        // Fetch fresh profile for response + location_memberships
         $freshDoc = $db->collection('users')->document($existingId)->snapshot();
-        $locationMemberships = $freshDoc->exists() ? ($freshDoc->data()['location_memberships'] ?? []) : [];
+        $fd       = $freshDoc->exists() ? $freshDoc->data() : array_merge($existingDoc, $updates);
+
+        $role      = $fd['role'] ?? $existingDoc['role'] ?? 'user';
+        $linkedCo  = $fd['company_id'] ?? $companyId ?? null;
+        $linkedLoc = $fd['active_location_id'] ?? null;
+
+        $locationMemberships = $fd['location_memberships'] ?? [];
+        $locName             = $fd['location_name'] ?? null;
+        $compName            = $fd['company_name'] ?? null;
+        $userApiOut          = auth_user_payload_for_api($fd, $email);
 
         $token = jwt_sign([
             'sub'        => $existingId,
@@ -156,9 +165,6 @@ try {
             'role'       => $role,
             'company_id' => $linkedCo,
         ], $jwtSecret, 28800); // 8 hours
-
-        $locName = $existingDoc['location_name'] ?? null;
-        $compName = $existingDoc['company_name'] ?? null;
 
         http_response_code(200);
         echo json_encode([
@@ -171,15 +177,7 @@ try {
             'location_name'        => $locName,
             'company_name'         => $compName,
             'location_memberships' => $locationMemberships,
-            'user' => [
-                'name'                 => $updates['name'] ?? $existingDoc['name'] ?? $fullName,
-                'email'                => $email,
-                'phone'                => $updates['phone']     ?? $existingDoc['phone']     ?? $phone,
-                'location_id'          => $linkedLoc,
-                'location_name'        => $locName,
-                'company_name'         => $compName,
-                'location_memberships' => $locationMemberships,
-            ],
+            'user'                 => $userApiOut,
         ]);
         exit;
     }
@@ -203,8 +201,11 @@ try {
         } catch (Exception $ignored) {}
     }
 
-    $userData = [
+    $nameParts = auth_split_full_name($fullName);
+    $userData  = [
         'name'          => $fullName,
+        'firstName'     => $nameParts['firstName'],
+        'lastName'      => $nameParts['lastName'],
         'email'         => $email,
         'phone'         => $phone,
         'password_hash' => $passwordHash,
@@ -251,6 +252,8 @@ try {
 
     $locationMemberships = $isLocationLevel ? [$locationId] : [];
 
+    $userApiNew = auth_user_payload_for_api($userData, $email);
+
     http_response_code(201);
     echo json_encode([
         'status'               => 'success',
@@ -262,15 +265,7 @@ try {
         'location_name'        => $locationName ?? null,
         'company_name'         => $companyName  ?? null,
         'location_memberships' => $locationMemberships,
-        'user' => [
-            'name'                 => $fullName,
-            'email'                => $email,
-            'phone'                => $phone,
-            'location_id'          => $locationId,
-            'location_name'        => $locationName ?? null,
-            'company_name'         => $companyName  ?? null,
-            'location_memberships' => $locationMemberships,
-        ],
+        'user'                 => $userApiNew,
     ]);
 
 } catch (Exception $e) {
