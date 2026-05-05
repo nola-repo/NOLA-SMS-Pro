@@ -13,7 +13,7 @@
 require_once __DIR__ . '/api/jwt_helper.php';
 
 $apiBase  = 'https://smspro-api.nolacrm.io';
-$reactApp = 'https://app.nolacrm.io';
+$reactApp = 'https://app.nolasmspro.com';
 
 // ── Shared page renderer (matches install-register.php / ghl_callback.php) ───
 function il_page(string $title, string $body): void {

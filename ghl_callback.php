@@ -784,17 +784,13 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
             error_log('[GHL_CALLBACK] Could not check location_members: ' . $e->getMessage());
         }
 
-        if ($hasMembers2) {
-            header('Location: https://smspro-api.nolacrm.io/install-login.php?welcome_back=1&name=' . $locNameEnc2, true, 302);
-        } else {
-            $installToken2 = jwt_sign([
-                'type'          => 'install',
-                'location_id'   => $singleLocationId,
-                'location_name' => $singleLocName ?: '',
-                'company_id'    => $companyId,
-            ], $jwtSecret2, 900);
-            header('Location: https://smspro-api.nolacrm.io/install-register.php?install_token=' . urlencode($installToken2), true, 302);
-        }
+        $installToken2 = jwt_sign([
+            'type'          => 'install',
+            'location_id'   => $singleLocationId,
+            'location_name' => $singleLocName ?: '',
+            'company_id'    => $companyId,
+        ], $jwtSecret2, 900);
+        header('Location: https://smspro-api.nolacrm.io/install-register.php?install_token=' . urlencode($installToken2), true, 302);
         exit;
     }
 
@@ -1230,12 +1226,6 @@ try {
     error_log('[GHL_CALLBACK] Could not check location_members: ' . $e->getMessage());
 }
 
-if ($hasExistingMembers) {
-    // ── Re-install: redirect to login with welcome-back banner ──
-    $redirectUrl = 'https://smspro-api.nolacrm.io/install-login.php?welcome_back=1&name=' . $locationNameEnc;
-    error_log("[GHL_CALLBACK] Re-install for {$locationId} — redirecting to welcome-back login.");
-} else {
-    // ── First install: generate a short-lived install token → React registration ──
     $installToken = jwt_sign([
         'type'          => 'install',
         'location_id'   => $locationId,
@@ -1244,8 +1234,7 @@ if ($hasExistingMembers) {
     ], $jwtSecret, 900); // 15 minutes
 
     $redirectUrl = 'https://smspro-api.nolacrm.io/install-register.php?install_token=' . urlencode($installToken);
-    error_log("[GHL_CALLBACK] First install for {$locationId} — redirecting to registration.");
-}
+    error_log("[GHL_CALLBACK] Redirecting {$locationId} to registration.");
 error_log('[GHL_CALLBACK_DEBUG] final_redirect=' . json_encode([
     'locationId' => $locationId,
     'hasExistingMembers' => $hasExistingMembers,
