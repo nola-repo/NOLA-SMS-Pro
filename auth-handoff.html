@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Setting up your account… — NOLA SMS Pro</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { height: 100%; font-family: 'Poppins', system-ui, sans-serif; background: #f9fafb; }
+        body { display: flex; align-items: center; justify-content: center; }
+        .wrap { text-align: center; }
+        .spinner {
+            width: 56px; height: 56px; border-radius: 50%;
+            border: 4px solid #e0e7ff;
+            border-top-color: #2b83fa;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 20px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        h1 { font-size: 20px; font-weight: 700; color: #111; margin-bottom: 6px; }
+        p { font-size: 14px; color: #6e6e73; }
+        .error-box {
+            display: none;
+            margin-top: 24px;
+            background: #fef2f2; border: 1px solid #fecaca;
+            border-radius: 14px; padding: 16px 20px;
+            font-size: 13px; color: #dc2626; max-width: 360px;
+        }
+        .error-box a { color: #2b83fa; font-weight: 600; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <div class="spinner"></div>
+    <h1>Setting up your account…</h1>
+    <p>You'll be redirected to your dashboard in a moment.</p>
+    <div id="error-box" class="error-box">
+        <strong>Something went wrong.</strong><br>
+        Could not store your session. <a href="https://app.nolacrm.io/login">Go to login →</a>
+    </div>
+</div>
+
+<script>
+(function () {
+    var params  = new URLSearchParams(window.location.search);
+    var token   = params.get('token');
+    var userB64 = params.get('user');
+    var redirect = params.get('redirect') || 'https://app.nolacrm.io';
+
+    if (!token) {
+        document.getElementById('error-box').style.display = 'block';
+        document.querySelector('.spinner').style.display = 'none';
+        return;
+    }
+
+    try {
+        // Write JWT — same key that authService.ts / safeStorage reads
+        localStorage.setItem('nola_auth_token', token);
+
+        // Write user profile cache
+        if (userB64) {
+            var userData = JSON.parse(atob(userB64));
+            localStorage.setItem('nola_user', JSON.stringify({
+                name:                 userData.name                 || '',
+                firstName:            userData.firstName            || '',
+                lastName:             userData.lastName             || '',
+                email:                userData.email               || '',
+                phone:                (userData.phone || '').replace(/\s+/g, ''),
+                location_id:          userData.location_id          || null,
+                company_id:           userData.company_id           || null,
+                location_name:        userData.location_name        || null,
+                company_name:         userData.company_name         || null,
+                location_memberships: userData.location_memberships || [],
+            }));
+        }
+    } catch (e) {
+        // localStorage may be blocked (iframe/private mode) — still redirect,
+        // the React app will call /api/auth/me to self-heal
+        console.warn('[auth-handoff] localStorage unavailable, falling back:', e);
+    }
+
+    // Small delay so spinner shows briefly (reassures user something happened)
+    setTimeout(function () {
+        window.location.replace(redirect);
+    }, 600);
+})();
+</script>
+</body>
+</html>

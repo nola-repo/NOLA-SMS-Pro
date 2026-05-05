@@ -785,7 +785,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         }
 
         if ($hasMembers2) {
-            header('Location: ' . $reactAppUrl2 . '/login?welcome_back=1&name=' . $locNameEnc2, true, 302);
+            header('Location: https://smspro-api.nolacrm.io/install-login.php?welcome_back=1&name=' . $locNameEnc2, true, 302);
         } else {
             $installToken2 = jwt_sign([
                 'type'          => 'install',
@@ -793,7 +793,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
                 'location_name' => $singleLocName ?: '',
                 'company_id'    => $companyId,
             ], $jwtSecret2, 900);
-            header('Location: ' . $reactAppUrl2 . '/register-from-install?install_token=' . urlencode($installToken2), true, 302);
+            header('Location: https://smspro-api.nolacrm.io/install-register.php?install_token=' . urlencode($installToken2), true, 302);
         }
         exit;
     }
@@ -1022,7 +1022,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     if (count($needsRegistration) === 0) {
         // All locations are Tier 3 — everyone already registered
         error_log("[GHL_CALLBACK] Case B: all locations are Tier 3 — redirect to welcome_back.");
-        header('Location: ' . $reactAppUrlB . '/login?welcome_back=1', true, 302);
+        header('Location: https://smspro-api.nolacrm.io/install-login.php?welcome_back=1', true, 302);
 
     } elseif (count($needsRegistration) === 1) {
         // Exactly one location needs registration — send directly to the form
@@ -1037,13 +1037,13 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         ], $jwtSecretB, 900);
 
         error_log("[GHL_CALLBACK] Case B: 1 location needs registration ({$onlyLocId}) — redirect to register-from-install.");
-        header('Location: ' . $reactAppUrlB . '/register-from-install?install_token=' . urlencode($tokenB), true, 302);
+        header('Location: https://smspro-api.nolacrm.io/install-register.php?install_token=' . urlencode($tokenB), true, 302);
 
     } else {
         // Multiple locations need registration — each admin registers independently
         $needCount = count($needsRegistration);
         error_log("[GHL_CALLBACK] Case B: {$needCount} locations need registration — redirect to bulk_install banner.");
-        header('Location: ' . $reactAppUrlB . '/login?bulk_install=1&count=' . $needCount, true, 302);
+        header('Location: https://smspro-api.nolacrm.io/install-login.php?bulk_install=1&count=' . $needCount, true, 302);
     }
     exit;
 }
@@ -1232,7 +1232,7 @@ try {
 
 if ($hasExistingMembers) {
     // ── Re-install: redirect to login with welcome-back banner ──
-    $redirectUrl = $reactAppUrl . '/login?welcome_back=1&name=' . $locationNameEnc;
+    $redirectUrl = 'https://smspro-api.nolacrm.io/install-login.php?welcome_back=1&name=' . $locationNameEnc;
     error_log("[GHL_CALLBACK] Re-install for {$locationId} — redirecting to welcome-back login.");
 } else {
     // ── First install: generate a short-lived install token → React registration ──
@@ -1243,7 +1243,7 @@ if ($hasExistingMembers) {
         'company_id'    => $data['companyId'] ?? '',
     ], $jwtSecret, 900); // 15 minutes
 
-    $redirectUrl = $reactAppUrl . '/register-from-install?install_token=' . urlencode($installToken);
+    $redirectUrl = 'https://smspro-api.nolacrm.io/install-register.php?install_token=' . urlencode($installToken);
     error_log("[GHL_CALLBACK] First install for {$locationId} — redirecting to registration.");
 }
 error_log('[GHL_CALLBACK_DEBUG] final_redirect=' . json_encode([
