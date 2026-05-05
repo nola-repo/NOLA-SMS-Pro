@@ -1017,8 +1017,18 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     // ── Route based on registration tier ─────────────────────────────────────
     if (count($needsRegistration) === 0) {
         // All locations are Tier 3 — everyone already registered
-        error_log("[GHL_CALLBACK] Case B: all locations are Tier 3 — redirect to welcome_back.");
-        header('Location: https://smspro-api.nolacrm.io/install-login.php?welcome_back=1', true, 302);
+        $onlyLocId   = array_key_first($alreadyRegistered);
+        $onlyLocName = $alreadyRegistered[$onlyLocId];
+
+        $tokenB = jwt_sign([
+            'type'          => 'install',
+            'location_id'   => $onlyLocId,
+            'location_name' => $onlyLocName,
+            'company_id'    => $companyId,
+        ], $jwtSecretB, 900);
+
+        error_log("[GHL_CALLBACK] Case B: all locations are Tier 3 — redirect to register-from-install.");
+        header('Location: https://smspro-api.nolacrm.io/install-register.php?install_token=' . urlencode($tokenB), true, 302);
 
     } elseif (count($needsRegistration) === 1) {
         // Exactly one location needs registration — send directly to the form
