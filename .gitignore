@@ -21,6 +21,9 @@ api/webhook/nola-sms-pro-*.json
 **/yarn-debug.log*
 **/yarn-error.log*
 
+# Local clone for patching upstream frontend (not part of this repo)
+_nola-sms-pro-frontend/
+
 # Backups and Temporary Files
 vendor/
 frontend_old/

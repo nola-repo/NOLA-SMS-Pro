@@ -320,6 +320,38 @@ HTML;
 }
 
 /**
+ * Pull a GHL location id from an associative JSON-decoded payload (OAuth state body).
+ */
+function location_id_from_assoc_json(?array $json): ?string
+{
+    if (!$json) {
+        return null;
+    }
+    foreach (['locationId', 'location_id', 'selectedLocationId'] as $key) {
+        $v = $json[$key] ?? null;
+        if (is_string($v) && $v !== '') {
+            return $v;
+        }
+    }
+    $locIds = $json['location_ids'] ?? null;
+    if (is_array($locIds) && count($locIds) === 1) {
+        $only = $locIds[0];
+        if (is_string($only) && $only !== '') {
+            return $only;
+        }
+    }
+    $nested = $json['locations'] ?? null;
+    if (is_array($nested) && count($nested) === 1 && is_array($nested[0])) {
+        $row = $nested[0];
+        $lid = $row['id'] ?? $row['locationId'] ?? null;
+        if (is_string($lid) && $lid !== '') {
+            return $lid;
+        }
+    }
+    return null;
+}
+
+/**
  * Best-effort extraction of a locationId from OAuth state.
  * Supports plain IDs and common encoded JSON wrapper formats.
  */
@@ -346,7 +378,7 @@ function extract_location_id_from_state(?string $state): ?string
         // Case 0: query-string-like state payload
         $parsed = [];
         parse_str($trimmed, $parsed);
-        $fromQuery = $parsed['locationId'] ?? $parsed['location_id'] ?? null;
+        $fromQuery = $parsed['locationId'] ?? $parsed['location_id'] ?? $parsed['selectedLocationId'] ?? null;
         if (is_string($fromQuery) && $fromQuery !== '') {
             return $fromQuery;
         }
@@ -354,7 +386,7 @@ function extract_location_id_from_state(?string $state): ?string
         // Case 1: JSON payload in state (direct)
         $json = json_decode($trimmed, true);
         if (is_array($json)) {
-            $fromJson = $json['locationId'] ?? $json['location_id'] ?? null;
+            $fromJson = location_id_from_assoc_json($json);
             if (is_string($fromJson) && $fromJson !== '') {
                 return $fromJson;
             }
@@ -365,7 +397,7 @@ function extract_location_id_from_state(?string $state): ?string
         if ($b64 !== false && $b64 !== '') {
             $jsonB64 = json_decode($b64, true);
             if (is_array($jsonB64)) {
-                $fromB64Json = $jsonB64['locationId'] ?? $jsonB64['location_id'] ?? null;
+                $fromB64Json = location_id_from_assoc_json($jsonB64);
                 if (is_string($fromB64Json) && $fromB64Json !== '') {
                     return $fromB64Json;
                 }
@@ -382,7 +414,7 @@ function extract_location_id_from_state(?string $state): ?string
         if ($b64u !== false && $b64u !== '') {
             $jsonB64u = json_decode($b64u, true);
             if (is_array($jsonB64u)) {
-                $fromB64uJson = $jsonB64u['locationId'] ?? $jsonB64u['location_id'] ?? null;
+                $fromB64uJson = location_id_from_assoc_json($jsonB64u);
                 if (is_string($fromB64uJson) && $fromB64uJson !== '') {
                     return $fromB64uJson;
                 }
@@ -629,6 +661,25 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         }
     }
 
+    // When locations[] has multiple entries, OAuth state may still identify the sub-account
+    // that initiated install — prefer that row so we do not fall through to company-wide bulk.
+    if (!$singleLocationId && !empty($data['locations']) && is_array($data['locations'])) {
+        $statePin = extract_location_id_from_state($state);
+        if ($statePin) {
+            foreach ($data['locations'] as $loc) {
+                if (!is_array($loc)) {
+                    continue;
+                }
+                $lid = $loc['id'] ?? $loc['locationId'] ?? null;
+                if ($lid !== null && (string) $lid === (string) $statePin) {
+                    $singleLocationId = (string) $lid;
+                    error_log("[GHL_CALLBACK] Case A: OAuth state matched locations[] entry — {$singleLocationId}");
+                    break;
+                }
+            }
+        }
+    }
+
     // Final fallback for single-location installs where GHL puts selected location in state.
     if (!$singleLocationId) {
         $singleLocationId = extract_location_id_from_state($state);
@@ -783,6 +834,15 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     }
 
     $allLocationIds = array_values(array_unique($allLocationIds));
+
+    // If GHL gave multiple candidate locations but OAuth state pins exactly one of them,
+    // treat this as a single-sub-account install (registration + install_token), not bulk login.
+    $statePinned = extract_location_id_from_state($state);
+    if ($statePinned !== null && count($allLocationIds) > 1 && in_array($statePinned, $allLocationIds, true)) {
+        error_log('[GHL_CALLBACK] Case B: state pins ' . $statePinned . ' among ' . count($allLocationIds) . ' candidates — narrowing to single-location flow.');
+        $allLocationIds = [$statePinned];
+    }
+
     error_log('[GHL_CALLBACK_DEBUG] bulk_caseB_location_candidates=' . json_encode([
         'count' => count($allLocationIds),
         'first' => $allLocationIds[0] ?? null,
