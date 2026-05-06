@@ -650,46 +650,63 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     // GHL includes locationId when the agency admin installs for one sub-account.
     // Treat this exactly like a normal sub-account install.
     $singleLocationId = $data['locationId'] ?? $data['location_id'] ?? null;
+    $hasLocationsArray = !empty($data['locations']) && is_array($data['locations']);
 
-    // Agency view sometimes sends the selected sub-account inside the locations[]
-    // array rather than at the root locationId field. Detect that here.
-    if (!$singleLocationId && !empty($data['locations']) && is_array($data['locations'])) {
-        $selectedLocs = array_values(array_filter($data['locations']));
-        if (count($selectedLocs) === 1) {
-            $singleLocationId = $selectedLocs[0]['id'] ?? $selectedLocs[0]['locationId'] ?? null;
-            error_log("[GHL_CALLBACK] Case A: single location found in locations[] array — {$singleLocationId}");
-        }
-    }
-
-    // When locations[] has multiple entries, OAuth state may still identify the sub-account
-    // that initiated install — prefer that row so we do not fall through to company-wide bulk.
-    if (!$singleLocationId && !empty($data['locations']) && is_array($data['locations'])) {
-        $statePin = extract_location_id_from_state($state);
-        if ($statePin) {
-            foreach ($data['locations'] as $loc) {
-                if (!is_array($loc)) {
-                    continue;
-                }
-                $lid = $loc['id'] ?? $loc['locationId'] ?? null;
-                if ($lid !== null && (string) $lid === (string) $statePin) {
-                    $singleLocationId = (string) $lid;
-                    error_log("[GHL_CALLBACK] Case A: OAuth state matched locations[] entry — {$singleLocationId}");
-                    break;
-                }
+    // Agency view sends the selected sub-account(s) inside locations[].
+    // Build a flat list of IDs from that array for reliable matching.
+    $locationsArrayIds = [];
+    if ($hasLocationsArray) {
+        foreach ($data['locations'] as $loc) {
+            if (!is_array($loc)) continue;
+            $lid = $loc['id'] ?? $loc['locationId'] ?? null;
+            if (is_string($lid) && $lid !== '') {
+                $locationsArrayIds[] = $lid;
             }
         }
     }
 
-    // Final fallback for single-location installs where GHL puts selected location in state.
-    if (!$singleLocationId) {
+    // If locations[] has exactly one entry, that IS the selected sub-account.
+    if (!$singleLocationId && count($locationsArrayIds) === 1) {
+        $singleLocationId = $locationsArrayIds[0];
+        error_log("[GHL_CALLBACK] Case A: single location found in locations[] array — {$singleLocationId}");
+    }
+
+    // If locations[] has multiple entries, use the OAuth state ONLY to PIN
+    // which entry was selected. Never trust state as a standalone location ID
+    // when locations[] is present — GHL's state is an opaque token that
+    // extract_location_id_from_state() may mis-parse as a wrong location ID.
+    if (!$singleLocationId && count($locationsArrayIds) > 1) {
+        $statePin = extract_location_id_from_state($state);
+        if ($statePin) {
+            foreach ($locationsArrayIds as $lid) {
+                if ((string)$lid === (string)$statePin) {
+                    $singleLocationId = $lid;
+                    error_log("[GHL_CALLBACK] Case A: OAuth state pinned locations[] entry — {$singleLocationId}");
+                    break;
+                }
+            }
+            if (!$singleLocationId) {
+                error_log("[GHL_CALLBACK] Case A: state pin '{$statePin}' not found in locations[] — falling to bulk provisioning.");
+            }
+        }
+        // Do NOT fall through to raw state extraction here: if the state pin
+        // didn't match any entry in locations[], we have no reliable signal for
+        // which sub-account was selected. Let it fall to bulk provisioning below.
+    }
+
+    // Only use raw state extraction when GHL sent NO locations[] at all
+    // (e.g. true single-sub-account install without the bulk flag).
+    if (!$singleLocationId && !$hasLocationsArray) {
         $singleLocationId = extract_location_id_from_state($state);
         if ($singleLocationId) {
-            error_log("[GHL_CALLBACK] Case A: single location recovered from state — {$singleLocationId}");
+            error_log("[GHL_CALLBACK] Case A: single location recovered from state (no locations[] present) — {$singleLocationId}");
         }
     }
+
     error_log('[GHL_CALLBACK_DEBUG] bulk_caseA_candidate=' . json_encode([
-        'singleLocationId' => $singleLocationId,
-        'state_present' => $state !== null && $state !== '',
+        'singleLocationId'  => $singleLocationId,
+        'locationsArrayIds' => $locationsArrayIds,
+        'state_present'     => $state !== null && $state !== '',
     ]));
 
     if ($singleLocationId) {
