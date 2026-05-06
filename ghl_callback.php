@@ -1088,7 +1088,23 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     // Even if locations are already registered, an install action should 
     // always land on the registration/confirmation form.
     
-    // Pick the first provisioned location to context the registration form
+    // Pick the first provisioned location to context the registration form,
+    // BUT only if we actually had candidate locations passed in from GHL.
+    // If GHL gave us NO locations (true bulk), we cannot blindly pick the first one
+    // (which was causing 'Norwin Lacson' to be incorrectly selected).
+    if (empty($data['locations']) && empty($statePinned)) {
+        // True agency install with no specific sub-account targeted.
+        // Register them as an Agency user, not tied to a random location.
+        $tokenB = jwt_sign([
+            'type'       => 'agency_install',
+            'company_id' => $companyId,
+        ], $jwtSecretB, 900);
+
+        error_log("[GHL_CALLBACK] Case B: True bulk install — redirecting to agency registration.");
+        header('Location: https://smspro-api.nolacrm.io/register?install_token=' . urlencode($tokenB), true, 302);
+        exit;
+    }
+
     $onlyLocId   = $successfulLocIds[0] ?? null;
     $onlyLocName = $successfulLocNames[$onlyLocId] ?? '';
 
