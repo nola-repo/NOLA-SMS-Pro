@@ -909,6 +909,16 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         $allLocationIds = [$statePinned];
     }
 
+    // ── FAST PATH: Single sub-account selected from GHL picker ───────────────
+    // GHL sends $data['locationId'] when the user picks exactly one sub-account.
+    // Skip the bulk provisioning loop (which tries all 90 locations = ~90s wait)
+    // and provision only the selected location immediately.
+    $directLocFromTokenEarly = $data['locationId'] ?? $data['location_id'] ?? null;
+    if ($directLocFromTokenEarly && count($allLocationIds) > 1) {
+        error_log("[GHL_CALLBACK] Case B FAST PATH: single locationId detected ({$directLocFromTokenEarly}) — skipping bulk loop.");
+        $allLocationIds = [$directLocFromTokenEarly];
+    }
+
     error_log('[GHL_CALLBACK_DEBUG] bulk_caseB_location_candidates=' . json_encode([
         'count' => count($allLocationIds),
         'first' => $allLocationIds[0] ?? null,
@@ -919,6 +929,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
 
     // Provision per-location tokens
     foreach ($allLocationIds as $locId) {
+
         try {
             $ltResult = exchange_location_token($companyToken, $companyId, $locId);
             $ltData   = $ltResult['data'];
