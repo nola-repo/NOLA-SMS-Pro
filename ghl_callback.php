@@ -626,6 +626,24 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
 
     error_log("[GHL_CALLBACK] Sub-account bulk install detected — companyId={$companyId}. Provisioning location tokens.");
 
+    // ── CRITICAL DEBUG: log exactly what GHL sent us ──────────────────────────
+    $locationsPreview = [];
+    if (!empty($data['locations']) && is_array($data['locations'])) {
+        foreach (array_slice($data['locations'], 0, 10) as $l) {
+            $locationsPreview[] = [
+                'id'         => $l['id'] ?? $l['locationId'] ?? 'N/A',
+                'name'       => $l['name'] ?? $l['location_name'] ?? 'N/A',
+            ];
+        }
+    }
+    error_log('[GHL_CALLBACK_DEBUG] ghl_token_response_structure=' . json_encode([
+        'locationId_root'    => $data['locationId'] ?? null,
+        'location_id_root'   => $data['location_id'] ?? null,
+        'locations_count'    => isset($data['locations']) ? count($data['locations']) : 0,
+        'locations_preview'  => $locationsPreview,
+        'state_preview'      => $state ? substr($state, 0, 120) : null,
+    ]));
+
     $db  = get_firestore();
     $now = new DateTimeImmutable();
 
