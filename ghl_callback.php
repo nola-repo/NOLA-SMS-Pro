@@ -638,8 +638,11 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     }
     $debugPayload = [
         'ts'                 => date('Y-m-d H:i:s'),
+        'get_params'         => $_GET,
+        'data_keys'          => array_keys($data),
         'locationId_root'    => $data['locationId'] ?? null,
         'location_id_root'   => $data['location_id'] ?? null,
+        'approvedLocations'  => $data['approvedLocations'] ?? null,
         'locations_count'    => isset($data['locations']) ? count($data['locations']) : 0,
         'locations_preview'  => $locationsPreview,
         'state_preview'      => $state ? substr($state, 0, 120) : null,
