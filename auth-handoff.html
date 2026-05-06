@@ -83,7 +83,13 @@
 
     // Small delay so spinner shows briefly (reassures user something happened)
     setTimeout(function () {
-        window.location.replace(redirect);
+        var safeRedirect = redirect;
+        if (safeRedirect.indexOf('?') === -1) {
+            safeRedirect += '?token=' + encodeURIComponent(token);
+        } else {
+            safeRedirect += '&token=' + encodeURIComponent(token);
+        }
+        window.location.replace(safeRedirect);
     }, 600);
 })();
 </script>
