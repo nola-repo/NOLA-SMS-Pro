@@ -143,7 +143,6 @@ try {
 
         if ($isLocationLevel) {
             $updates['active_location_id'] = $locationId;
-            $updates['location_memberships'] = [$locationId]; // strictly only store one
         } elseif (!empty($companyId)) {
             $updates['company_id'] = $companyId;
         }
@@ -161,8 +160,18 @@ try {
 
         $usersRef->document($existingId)->set($updates, ['merge' => true]);
 
-        // Write location_members subcollection entry
+        // Overwrite location_memberships to ONLY store the newly detected location 
+        // (Ensuring it is not a growing array, as requested)
         if ($isLocationLevel && $locationId) {
+            try {
+                $db->collection('users')->document($existingId)->update([
+                    ['path' => 'location_memberships', 'value' => [$locationId]],
+                ]);
+            } catch (Exception $e) {
+                error_log('[REGISTER] Failed to update location_memberships: ' . $e->getMessage());
+            }
+
+            // Write location_members subcollection entry
             _write_location_member($db, $locationId, $existingId, $email, $now);
         }
 
@@ -174,7 +183,8 @@ try {
         $linkedCo  = $fd['company_id'] ?? $companyId ?? null;
         $linkedLoc = $fd['active_location_id'] ?? null;
 
-        $locationMemberships = $fd['location_memberships'] ?? [];
+        // Force the response to show only the single membership
+        $locationMemberships = $isLocationLevel ? [$locationId] : ($fd['location_memberships'] ?? []);
         $locName             = $fd['location_name'] ?? null;
         $compName            = $fd['company_name'] ?? null;
         $userApiOut          = auth_user_payload_for_api($fd, $email);
