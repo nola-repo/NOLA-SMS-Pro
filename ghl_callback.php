@@ -436,6 +436,43 @@ function extract_location_id_from_state(?string $state): ?string
 }
 
 /**
+ * Best-effort extraction of a locationId directly from callback query params.
+ * Handles common variants seen in GHL redirects.
+ */
+function extract_location_id_from_query(array $query): ?string
+{
+    $directKeys = ['locationId', 'location_id', 'selectedLocationId'];
+    foreach ($directKeys as $key) {
+        $val = $query[$key] ?? null;
+        if (is_string($val) && preg_match('/^[A-Za-z0-9_-]{12,}$/', $val)) {
+            return $val;
+        }
+    }
+
+    // approvedLocations can be an array or CSV with one selected sub-account.
+    $approved = $query['approvedLocations'] ?? null;
+    if (is_array($approved)) {
+        $ids = array_values(array_filter($approved, static function ($v) {
+            return is_string($v) && preg_match('/^[A-Za-z0-9_-]{12,}$/', $v);
+        }));
+        if (count($ids) === 1) {
+            return $ids[0];
+        }
+    }
+    if (is_string($approved) && $approved !== '') {
+        $parts = array_values(array_filter(array_map('trim', explode(',', $approved))));
+        $ids = array_values(array_filter($parts, static function ($v) {
+            return preg_match('/^[A-Za-z0-9_-]{12,}$/', $v);
+        }));
+        if (count($ids) === 1) {
+            return $ids[0];
+        }
+    }
+
+    return null;
+}
+
+/**
  * Exchange a company-scoped token into a location-scoped token.
  * Tries both payload formats because GHL behavior varies by app/runtime.
  *
@@ -553,11 +590,13 @@ if (!isset($_GET['code']))
 
 $code  = $_GET['code'];
 $state = $_GET['state'] ?? null;
+$queryLocationId = extract_location_id_from_query($_GET);
 $debugTrace = [
     'source' => 'ghl_callback',
     'has_code' => !empty($code),
     'state_present' => $state !== null && $state !== '',
     'state_preview' => $state ? substr((string)$state, 0, 180) : null,
+    'query_locationId' => $queryLocationId,
 ];
 
 // ─── Token Exchange ────────────────────────────────────────────────────────────
@@ -674,7 +713,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     // ── CASE A: Single-location install from agency view ─────────────────────
     // GHL includes locationId when the agency admin installs for one sub-account.
     // Treat this exactly like a normal sub-account install.
-    $singleLocationId = $data['locationId'] ?? $data['location_id'] ?? null;
+    $singleLocationId = $data['locationId'] ?? $data['location_id'] ?? $queryLocationId ?? null;
     $hasLocationsArray = !empty($data['locations']) && is_array($data['locations']);
 
     // Agency view sends the selected sub-account(s) inside locations[].
@@ -1106,7 +1145,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     //   3. $data['location_id'] — alternate casing
     //   4. $statePinned        — location ID embedded in the OAuth state
     //   5. $successfulLocIds   — fallback: exactly 1 location was provisioned
-    $directLocFromToken = $data['locationId'] ?? $data['location_id'] ?? null;
+    $directLocFromToken = $data['locationId'] ?? $data['location_id'] ?? $queryLocationId ?? null;
 
     $isTrueBulkAgencyInstall = empty($data['locations'])
         && empty($statePinned)
@@ -1128,8 +1167,10 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
 
     // ── Resolve the single target location ───────────────────────────────────
     // Priority: state-pinned > direct token field > single provisioned loc
+    $singleCandidateFromAll = count($allLocationIds) === 1 ? $allLocationIds[0] : null;
     $onlyLocId = $statePinned
         ?? $directLocFromToken
+        ?? $singleCandidateFromAll
         ?? ($successfulLocIds[0] ?? null);
     $onlyLocName = $successfulLocNames[$onlyLocId] ?? '';
 
@@ -1163,10 +1204,11 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
 
 // ─── Determine Location ID ────────────────────────────────────────────────────
 // Prefer explicit token response fields. state is fallback-only.
-$locationId = $data['locationId'] ?? $data['location_id'] ?? extract_location_id_from_state($state);
+$locationId = $data['locationId'] ?? $data['location_id'] ?? $queryLocationId ?? extract_location_id_from_state($state);
 error_log('[GHL_CALLBACK_DEBUG] final_location_resolution=' . json_encode([
     'resolved_locationId' => $locationId,
     'token_locationId' => $data['locationId'] ?? ($data['location_id'] ?? null),
+    'query_locationId' => $queryLocationId,
     'state_present' => $state !== null && $state !== '',
 ]));
 if (!$locationId)
