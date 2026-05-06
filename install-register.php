@@ -11,6 +11,27 @@ $apiBase     = 'https://smspro-api.nolacrm.io';
 $reactApp    = 'https://app.nolasmspro.com';
 $marketplace = 'https://marketplace.leadconnectorhq.com/apps/overview/68118e8f9f1bac2ffc84ed23';
 
+/**
+ * Render debug install-token banner only outside production.
+ */
+function ir_is_non_production(): bool {
+    $appEnv = strtolower((string) (getenv('APP_ENV') ?: getenv('ENVIRONMENT') ?: ''));
+    if ($appEnv !== '') {
+        return !in_array($appEnv, ['prod', 'production'], true);
+    }
+
+    $host = strtolower((string) ($_SERVER['HTTP_HOST'] ?? ''));
+    if ($host === '') {
+        return false;
+    }
+
+    return str_contains($host, 'localhost')
+        || str_contains($host, '127.0.0.1')
+        || str_contains($host, 'staging')
+        || str_contains($host, 'dev')
+        || str_contains($host, 'test');
+}
+
 // ── Verify install_token ──────────────────────────────────────────────────────
 $installToken = trim($_GET['install_token'] ?? $_POST['install_token'] ?? '');
 
@@ -119,6 +140,21 @@ function ir_page(string $title, string $body): void {
         /* Success */
         .success-circle { width: 80px; height: 80px; border-radius: 50%; background: linear-gradient(135deg, #34d399, #059669); margin: 0 auto 24px; display: flex; align-items: center; justify-content: center; box-shadow: 0 10px 30px rgba(16,185,129,0.3); animation: scale-in 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) both; }
         @keyframes scale-in { 0% { transform: scale(0); } 100% { transform: scale(1); } }
+        
+        /* Non-production token debug */
+        .debug-banner {
+            margin-bottom: 18px;
+            border-radius: 12px;
+            border: 1px solid #fcd34d;
+            background: #fffbeb;
+            color: #92400e;
+            padding: 10px 12px;
+            text-align: left;
+            font-size: 11px;
+            line-height: 1.45;
+        }
+        .debug-banner strong { font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; display: inline-block; margin-bottom: 4px; }
+        .debug-banner code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 10px; }
     </style>
 </head>
 <body>
@@ -171,9 +207,44 @@ if ($tokenType !== 'install' && $tokenType !== 'agency_install') {
 }
 
 $locDisplay = $locationName ?: $locationId ?: '—';
+$locationIdSafe = htmlspecialchars((string) ($locationId ?? ''), ENT_QUOTES, 'UTF-8');
+$companyIdSafe = htmlspecialchars((string) ($companyId ?? ''), ENT_QUOTES, 'UTF-8');
+$tokenTypeSafe = htmlspecialchars((string) $tokenType, ENT_QUOTES, 'UTF-8');
+$showDebugBanner = ir_is_non_production();
+$debugBannerHtml = '';
+if ($showDebugBanner) {
+    $tokenExp = isset($payload['exp']) ? (int) $payload['exp'] : null;
+    $ttlSeconds = $tokenExp ? ($tokenExp - time()) : null;
+    $isExpired = $ttlSeconds !== null ? ($ttlSeconds <= 0) : null;
+    $ttlLabel = 'unknown';
+    if ($ttlSeconds !== null) {
+        $abs = abs($ttlSeconds);
+        $mins = intdiv($abs, 60);
+        $secs = $abs % 60;
+        $ttlLabel = sprintf('%s%02dm %02ds', $ttlSeconds < 0 ? '-' : '', $mins, $secs);
+    }
+    $expLabel = $tokenExp ? gmdate('Y-m-d H:i:s', $tokenExp) . ' UTC' : 'unknown';
+    $statusLabel = $isExpired === null ? 'unknown' : ($isExpired ? 'expired' : 'valid');
+    $expLabelSafe = htmlspecialchars($expLabel, ENT_QUOTES, 'UTF-8');
+    $ttlLabelSafe = htmlspecialchars($ttlLabel, ENT_QUOTES, 'UTF-8');
+
+    $debugBannerHtml = <<<HTML
+    <div class="debug-banner">
+        <strong>Debug Install Token (non-production)</strong><br>
+        <code>type={$tokenTypeSafe}</code> |
+        <code>location_id={$locationIdSafe}</code> |
+        <code>location_name={$locationName}</code> |
+        <code>company_id={$companyIdSafe}</code><br>
+        <code>status={$statusLabel}</code> |
+        <code>ttl={$ttlLabelSafe}</code> |
+        <code>exp={$expLabelSafe}</code>
+    </div>
+HTML;
+}
 
 // Form UI with JS
 ir_page('Create Your Account', <<<HTML
+    {$debugBannerHtml}
     <div class="steps">
         <div class="step active" id="s-ind-1">
             <div class="step-circle">1</div>
@@ -265,7 +336,7 @@ ir_page('Create Your Account', <<<HTML
             <div class="review-row"><span class="review-label">Email</span><span class="review-val" id="rev-email"></span></div>
             <div class="review-row"><span class="review-label">Phone</span><span class="review-val" id="rev-phone"></span></div>
             <div class="review-row"><span class="review-label">Subaccount</span><span class="review-val hl">{$locDisplay}</span></div>
-            <div class="review-row"><span class="review-label">Location ID</span><span class="review-val hl">{$locationId}</span></div>
+            <div class="review-row"><span class="review-label">Location ID</span><span class="review-val hl">{$locationIdSafe}</span></div>
         </div>
         
         <div class="checkbox-wrap" onclick="toggleAgree()">
