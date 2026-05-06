@@ -124,6 +124,23 @@ try {
 
         $updates = ['updated_at' => new \Google\Cloud\Core\Timestamp($now)];
 
+        // Try to fetch the real name of the new location from ghl_tokens
+        $newLocationName = $payloadLocName;
+        $newCompanyName  = $payloadCompName;
+        if ($locationId) {
+            try {
+                $tokenSnap = $db->collection('ghl_tokens')->document($locationId)->snapshot();
+                if ($tokenSnap->exists()) {
+                    $tokenData = $tokenSnap->data();
+                    $newLocationName = $tokenData['location_name'] ?? $payloadLocName;
+                    $newCompanyName  = $tokenData['company_name']  ?? $payloadCompName;
+                }
+            } catch (Exception $ignored) {}
+        }
+
+        if ($newLocationName) $updates['location_name'] = $newLocationName;
+        if ($newCompanyName)  $updates['company_name']  = $newCompanyName;
+
         if ($isLocationLevel) {
             $updates['active_location_id'] = $locationId;
         } elseif (!empty($companyId)) {
