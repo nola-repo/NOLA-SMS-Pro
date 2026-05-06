@@ -171,8 +171,8 @@ try {
                 error_log('[REGISTER] Failed to update location_memberships: ' . $e->getMessage());
             }
 
-            // Write location_members subcollection entry
-            _write_location_member($db, $locationId, $existingId, $email, $now);
+            // Write location_members subcollection entry (force-replace to evict any stale/ghost entries)
+            _write_location_member($db, $locationId, $existingId, $email, $now, true);
         }
 
         // Fetch fresh profile for response + location_memberships
@@ -303,28 +303,40 @@ try {
 
 /**
  * Write (or update) a member record in the location_members/{locationId}/members/{uid}
- * subcollection. The FIRST person to register for a location gets role "owner";
- * subsequent registrations get role "member".
+ * subcollection. Enforces 1-to-1: one active member per location.
+ *
+ * @param bool $forceReplace  If true, delete ALL other member docs first to prevent
+ *                            ghost/stale entries from blocking future installs.
  */
-function _write_location_member($db, string $locationId, string $uid, string $email, DateTimeImmutable $now): void
+function _write_location_member($db, string $locationId, string $uid, string $email, DateTimeImmutable $now, bool $forceReplace = false): void
 {
     try {
-        $membersRef  = $db->collection('location_members')->document($locationId)->collection('members');
+        $membersRef   = $db->collection('location_members')->document($locationId)->collection('members');
         $memberDocRef = $membersRef->document($uid);
-        $existing     = $memberDocRef->snapshot();
 
-        // Determine role: all users are equal
+        if ($forceReplace) {
+            // ── Purge any stale/ghost member docs that don't belong to $uid ──
+            // This enforces strict 1-to-1: only one user per location.
+            $staleMembers = $membersRef->documents();
+            foreach ($staleMembers as $staleDoc) {
+                if ($staleDoc->exists() && $staleDoc->id() !== $uid) {
+                    error_log("[register_from_install] Purging stale member {$staleDoc->id()} from location {$locationId}");
+                    $staleDoc->reference()->delete();
+                }
+            }
+        }
+
+        $existing = $memberDocRef->snapshot();
+
         if (!$existing->exists()) {
-            $role = 'user';
-
             $memberDocRef->set([
                 'uid'       => $uid,
                 'email'     => $email,
-                'role'      => $role,
+                'role'      => 'user',
                 'joined_at' => new \Google\Cloud\Core\Timestamp($now),
             ]);
         }
-        // If already a member, leave it as-is (re-installs don't downgrade the role)
+        // If already a member, leave it as-is (re-installs don't overwrite the existing entry)
     } catch (Exception $e) {
         error_log("[register_from_install] _write_location_member failed for uid={$uid}, loc={$locationId}: " . $e->getMessage());
     }
