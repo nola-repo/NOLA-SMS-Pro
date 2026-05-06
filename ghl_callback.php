@@ -645,8 +645,8 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         'state_preview'      => $state ? substr($state, 0, 120) : null,
     ];
     error_log('[GHL_CALLBACK_DEBUG] ghl_token_response_structure=' . json_encode($debugPayload));
-    // Write to a readable file so we can inspect it via HTTP
-    @file_put_contents(__DIR__ . '/ghl_debug_output.txt', json_encode($debugPayload, JSON_PRETTY_PRINT) . "\n---\n", FILE_APPEND);
+    // Write to /tmp which is always writable — read via /tmp_inspect.php?secret=nola_debug_2026
+    @file_put_contents('/tmp/ghl_debug_install.json', json_encode($debugPayload, JSON_PRETTY_PRINT));
 
     $db  = get_firestore();
     $now = new DateTimeImmutable();
