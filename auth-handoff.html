@@ -83,13 +83,10 @@
 
     // Small delay so spinner shows briefly (reassures user something happened)
     setTimeout(function () {
-<<<<<<< HEAD
         // Always append token to the redirect URL as a fallback for iframe environments
         // where localStorage is blocked (Safari ITP, Chrome Incognito).
         // The React app's AuthContext will read ?token= from the URL, store it in memory,
         // then clean the URL with history.replaceState().
-=======
->>>>>>> b4cda92a6114285d60de1a87dd0b48807676ecd7
         var safeRedirect = redirect;
         if (token) {
             safeRedirect += (safeRedirect.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(token);

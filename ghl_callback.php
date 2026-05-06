@@ -768,17 +768,6 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
             }
         }
 
-        // Check whether this location already has members (determines login vs register).
-        // This is a single lightweight Firestore read — keep it before the redirect.
-        $hasMembers2 = false;
-        try {
-            foreach ($db->collection('location_members')->document($singleLocationId)->collection('members')->limit(1)->documents() as $m) {
-                if ($m->exists()) { $hasMembers2 = true; break; }
-            }
-        } catch (Exception $e) {
-            error_log('[GHL_CALLBACK] Could not check location_members: ' . $e->getMessage());
-        }
-
         // Sign JWT and send the redirect immediately — get the user to the next
         // page as fast as possible. Firestore provisioning runs in the background.
         require_once __DIR__ . '/api/jwt_helper.php';
@@ -790,13 +779,8 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
             'company_id'    => $companyId,
         ], $jwtSecret2, 900);
 
-        if ($hasMembers2) {
-            error_log("[GHL_CALLBACK] Case A: {$singleLocationId} is Tier 3 (has members) — redirect to login.");
-            header('Location: https://smspro-api.nolacrm.io/login?welcome_back=1&name=' . urlencode($singleLocName), true, 302);
-        } else {
-            error_log("[GHL_CALLBACK] Case A: {$singleLocationId} needs registration — redirect to register.");
-            header('Location: https://smspro-api.nolacrm.io/register?install_token=' . urlencode($installToken2), true, 302);
-        }
+        error_log("[GHL_CALLBACK] Case A: {$singleLocationId} — redirecting to registration form for confirmation/setup.");
+        header('Location: https://smspro-api.nolacrm.io/register?install_token=' . urlencode($installToken2), true, 302);
 
         // ── Flush response to browser NOW — user is already navigating away ───
         // All remaining work (Firestore writes + optional name fetch) runs as
@@ -1097,12 +1081,15 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         'already_registered' => array_keys($alreadyRegistered),
     ]));
 
-    // ── Route based on registration tier ─────────────────────────────────────
-    if (count($needsRegistration) === 0) {
-        // All locations are Tier 3 — everyone already registered
-        $onlyLocId   = array_key_first($alreadyRegistered);
-        $onlyLocName = $alreadyRegistered[$onlyLocId];
+    // ── Route to Registration ────────────────────────────────────────────────
+    // Even if locations are already registered, an install action should 
+    // always land on the registration/confirmation form.
+    
+    // Pick the first provisioned location to context the registration form
+    $onlyLocId   = $successfulLocIds[0] ?? null;
+    $onlyLocName = $successfulLocNames[$onlyLocId] ?? '';
 
+    if ($onlyLocId) {
         $tokenB = jwt_sign([
             'type'          => 'install',
             'location_id'   => $onlyLocId,
@@ -1110,39 +1097,10 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
             'company_id'    => $companyId,
         ], $jwtSecretB, 900);
 
-        error_log("[GHL_CALLBACK] Case B: all locations are Tier 3 — redirect to login.");
-        header('Location: https://smspro-api.nolacrm.io/login?welcome_back=1&name=' . urlencode($onlyLocName), true, 302);
-
-    } elseif (count($needsRegistration) === 1) {
-        // Exactly one location needs registration — send directly to the form
-        $onlyLocId   = array_key_first($needsRegistration);
-        $onlyLocName = $needsRegistration[$onlyLocId];
-
-        $tokenB = jwt_sign([
-            'type'          => 'install',
-            'location_id'   => $onlyLocId,
-            'location_name' => $onlyLocName,
-            'company_id'    => $companyId,
-        ], $jwtSecretB, 900);
-
-        error_log("[GHL_CALLBACK] Case B: 1 location needs registration ({$onlyLocId}) — redirect to register.");
+        error_log("[GHL_CALLBACK] Case B: redirecting to registration form for first location ({$onlyLocId}).");
         header('Location: https://smspro-api.nolacrm.io/register?install_token=' . urlencode($tokenB), true, 302);
-
     } else {
-        // Multiple locations need registration — default to the first one for the initial registration form
-        $needCount   = count($needsRegistration);
-        $onlyLocId   = array_key_first($needsRegistration);
-        $onlyLocName = $needsRegistration[$onlyLocId];
-
-        $tokenB = jwt_sign([
-            'type'          => 'install',
-            'location_id'   => $onlyLocId,
-            'location_name' => $onlyLocName,
-            'company_id'    => $companyId,
-        ], $jwtSecretB, 900);
-
-        error_log("[GHL_CALLBACK] Case B: {$needCount} locations need registration — redirecting to registration form for first location.");
-        header('Location: https://smspro-api.nolacrm.io/register?install_token=' . urlencode($tokenB), true, 302);
+        render_error('No valid locations found for registration routing.', []);
     }
     exit;
 }
