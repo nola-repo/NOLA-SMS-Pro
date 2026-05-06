@@ -143,6 +143,7 @@ try {
 
         if ($isLocationLevel) {
             $updates['active_location_id'] = $locationId;
+            $updates['location_memberships'] = [$locationId]; // strictly only store one
         } elseif (!empty($companyId)) {
             $updates['company_id'] = $companyId;
         }
@@ -160,15 +161,8 @@ try {
 
         $usersRef->document($existingId)->set($updates, ['merge' => true]);
 
-        // Add location to user's location_memberships array (idempotent via arrayUnion)
+        // Write location_members subcollection entry
         if ($isLocationLevel && $locationId) {
-            try {
-                $db->collection('users')->document($existingId)->update([
-                    ['path' => 'location_memberships', 'value' => \Google\Cloud\Firestore\FieldValue::arrayUnion([$locationId])],
-                ]);
-            } catch (Exception $ignored) {}
-
-            // Write location_members subcollection entry
             _write_location_member($db, $locationId, $existingId, $email, $now);
         }
 
