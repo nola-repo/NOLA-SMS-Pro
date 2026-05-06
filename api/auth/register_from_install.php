@@ -22,13 +22,13 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 $input = json_decode(file_get_contents('php://input'), true);
 
-$fullName      = trim($input['full_name']      ?? '');
-$phone         = preg_replace('/\s+/', '', trim($input['phone'] ?? '')); // strip spaces
-$email         = strtolower(trim($input['email'] ?? ''));
-$password      = $input['password']    ?? '';
-$installToken  = $input['install_token'] ?? null; // optional — if present, trust it over raw IDs
-$locationId    = $input['location_id'] ?? null;
-$companyId     = $input['company_id']  ?? null;
+$fullName = trim($input['full_name'] ?? '');
+$phone = preg_replace('/\s+/', '', trim($input['phone'] ?? '')); // strip spaces
+$email = strtolower(trim($input['email'] ?? ''));
+$password = $input['password'] ?? '';
+$installToken = $input['install_token'] ?? null; // optional — if present, trust it over raw IDs
+$locationId = $input['location_id'] ?? null;
+$companyId = $input['company_id'] ?? null;
 $payloadLocName = $input['location_name'] ?? null;
 $payloadCompName = $input['company_name'] ?? null;
 
@@ -50,9 +50,9 @@ if (!$installPayload) {
 $type = $installPayload['type'] ?? '';
 if ($type === 'install') {
     $locationId = $installPayload['location_id'] ?? $locationId;
-    $companyId  = $installPayload['company_id']  ?? $companyId;
+    $companyId = $installPayload['company_id'] ?? $companyId;
 } elseif ($type === 'agency_install') {
-    $companyId  = $installPayload['company_id']  ?? $companyId;
+    $companyId = $installPayload['company_id'] ?? $companyId;
 } else {
     http_response_code(401);
     echo json_encode(['error' => 'Invalid install token type.']);
@@ -61,13 +61,20 @@ if ($type === 'install') {
 
 // ── Per-field validation (return all errors at once) ─────────────────────────
 $errors = [];
-if (!$fullName)  $errors[] = 'Full name is required.';
-if (!$phone)     $errors[] = 'Phone number is required.';
-if (!$email)     $errors[] = 'Email address is required.';
-elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) $errors[] = 'A valid email address is required.';
-if (!$password)  $errors[] = 'Password is required.';
-elseif (strlen($password) < 8) $errors[] = 'Password must be at least 8 characters.';
-if (!$locationId && !$companyId) $errors[] = 'A location_id or company_id is required.';
+if (!$fullName)
+    $errors[] = 'Full name is required.';
+if (!$phone)
+    $errors[] = 'Phone number is required.';
+if (!$email)
+    $errors[] = 'Email address is required.';
+elseif (!filter_var($email, FILTER_VALIDATE_EMAIL))
+    $errors[] = 'A valid email address is required.';
+if (!$password)
+    $errors[] = 'Password is required.';
+elseif (strlen($password) < 8)
+    $errors[] = 'Password must be at least 8 characters.';
+if (!$locationId && !$companyId)
+    $errors[] = 'A location_id or company_id is required.';
 
 if (!empty($errors)) {
     http_response_code(422);
@@ -78,19 +85,19 @@ if (!empty($errors)) {
 $isLocationLevel = !empty($locationId);
 
 try {
-    $db  = get_firestore();
+    $db = get_firestore();
     $now = new DateTimeImmutable();
 
     // ── 1. Check if email already exists ─────────────────────────────────────
-    $usersRef      = $db->collection('users');
+    $usersRef = $db->collection('users');
     $existingQuery = $usersRef->where('email', '=', $email)->limit(1)->documents();
-    $existingDoc   = null;
-    $existingId    = null;
+    $existingDoc = null;
+    $existingId = null;
 
     foreach ($existingQuery as $snap) {
         if ($snap->exists()) {
             $existingDoc = $snap->data();
-            $existingId  = $snap->id();
+            $existingId = $snap->id();
             break;
         }
     }
@@ -104,7 +111,7 @@ try {
                 // If the doc is missing core info, we will treat it as "existing" to finish it
                 if (empty($docData['email']) || empty($docData['password_hash'])) {
                     $existingDoc = $docData;
-                    $existingId  = $snap->id();
+                    $existingId = $snap->id();
                 }
                 break;
             }
@@ -126,20 +133,23 @@ try {
 
         // Try to fetch the real name of the new location from ghl_tokens
         $newLocationName = $payloadLocName;
-        $newCompanyName  = $payloadCompName;
+        $newCompanyName = $payloadCompName;
         if ($locationId) {
             try {
                 $tokenSnap = $db->collection('ghl_tokens')->document($locationId)->snapshot();
                 if ($tokenSnap->exists()) {
                     $tokenData = $tokenSnap->data();
                     $newLocationName = $tokenData['location_name'] ?? $payloadLocName;
-                    $newCompanyName  = $tokenData['company_name']  ?? $payloadCompName;
+                    $newCompanyName = $tokenData['company_name'] ?? $payloadCompName;
                 }
-            } catch (Exception $ignored) {}
+            } catch (Exception $ignored) {
+            }
         }
 
-        if ($newLocationName) $updates['location_name'] = $newLocationName;
-        if ($newCompanyName)  $updates['company_name']  = $newCompanyName;
+        if ($newLocationName)
+            $updates['location_name'] = $newLocationName;
+        if ($newCompanyName)
+            $updates['company_name'] = $newCompanyName;
 
         if ($isLocationLevel) {
             $updates['active_location_id'] = $locationId;
@@ -149,12 +159,12 @@ try {
 
         // If the account was incomplete, populate the missing fields with the form data
         if (empty($existingDoc['email']) || empty($existingDoc['password_hash'])) {
-            $updates['email']         = $email;
-            $updates['phone']         = $phone;
-            $updates['name']          = $fullName;
-            $parts                    = auth_split_full_name($fullName);
-            $updates['firstName']     = $parts['firstName'];
-            $updates['lastName']      = $parts['lastName'];
+            $updates['email'] = $email;
+            $updates['phone'] = $phone;
+            $updates['name'] = $fullName;
+            $parts = auth_split_full_name($fullName);
+            $updates['firstName'] = $parts['firstName'];
+            $updates['lastName'] = $parts['lastName'];
             $updates['password_hash'] = password_hash($password, PASSWORD_BCRYPT);
         }
 
@@ -177,80 +187,83 @@ try {
 
         // Fetch fresh profile for response + location_memberships
         $freshDoc = $db->collection('users')->document($existingId)->snapshot();
-        $fd       = $freshDoc->exists() ? $freshDoc->data() : array_merge($existingDoc, $updates);
+        $fd = $freshDoc->exists() ? $freshDoc->data() : array_merge($existingDoc, $updates);
 
-        $role      = $fd['role'] ?? $existingDoc['role'] ?? 'user';
-        $linkedCo  = $fd['company_id'] ?? $companyId ?? null;
+        $role = $fd['role'] ?? $existingDoc['role'] ?? 'user';
+        $linkedCo = $fd['company_id'] ?? $companyId ?? null;
         $linkedLoc = $fd['active_location_id'] ?? null;
 
         // Force the response to show only the single membership
         $locationMemberships = $isLocationLevel ? [$locationId] : ($fd['location_memberships'] ?? []);
-        $locName             = $fd['location_name'] ?? null;
-        $compName            = $fd['company_name'] ?? null;
-        $userApiOut          = auth_user_payload_for_api($fd, $email);
+        $locName = $fd['location_name'] ?? null;
+        $compName = $fd['company_name'] ?? null;
+        $userApiOut = auth_user_payload_for_api($fd, $email);
 
         $token = jwt_sign([
-            'sub'        => $existingId,
-            'email'      => $email,
-            'role'       => $role,
+            'sub' => $existingId,
+            'email' => $email,
+            'role' => $role,
             'company_id' => $linkedCo,
         ], $jwtSecret, 28800); // 8 hours
 
         http_response_code(200);
         echo json_encode([
-            'status'               => 'linked',
-            'message'              => 'Account setup complete.',
-            'token'                => $token,
-            'role'                 => $role,
-            'location_id'          => $linkedLoc,
-            'company_id'           => $linkedCo,
-            'location_name'        => $locName,
-            'company_name'         => $compName,
+            'status' => 'linked',
+            'message' => 'Account setup complete.',
+            'token' => $token,
+            'role' => $role,
+            'location_id' => $linkedLoc,
+            'company_id' => $linkedCo,
+            'location_name' => $locName,
+            'company_name' => $compName,
             'location_memberships' => $locationMemberships,
-            'user'                 => $userApiOut,
+            'user' => $userApiOut,
         ]);
         exit;
     }
 
     // ── 2b. NEW ACCOUNT — create users document ───────────────────────────────
-    $role         = $isLocationLevel ? 'user' : 'agency';
+    $role = $isLocationLevel ? 'user' : 'agency';
     $passwordHash = password_hash($password, PASSWORD_BCRYPT);
-    $newUserDoc   = $usersRef->newDocument();
+    $newUserDoc = $usersRef->newDocument();
 
     // ── Fetch location_name and company_name from ghl_tokens ─────────────────
     $locationName = $payloadLocName;
-    $companyName  = $payloadCompName;
+    $companyName = $payloadCompName;
     if ($locationId) {
         try {
             $tokenSnap = $db->collection('ghl_tokens')->document($locationId)->snapshot();
             if ($tokenSnap->exists()) {
-                $tokenData    = $tokenSnap->data();
+                $tokenData = $tokenSnap->data();
                 $locationName = $tokenData['location_name'] ?? $payloadLocName;
-                $companyName  = $tokenData['company_name']  ?? $payloadCompName;
+                $companyName = $tokenData['company_name'] ?? $payloadCompName;
             }
-        } catch (Exception $ignored) {}
+        } catch (Exception $ignored) {
+        }
     }
 
     $nameParts = auth_split_full_name($fullName);
-    $userData  = [
-        'name'          => $fullName,
-        'firstName'     => $nameParts['firstName'],
-        'lastName'      => $nameParts['lastName'],
-        'email'         => $email,
-        'phone'         => $phone,
+    $userData = [
+        'name' => $fullName,
+        'firstName' => $nameParts['firstName'],
+        'lastName' => $nameParts['lastName'],
+        'email' => $email,
+        'phone' => $phone,
         'password_hash' => $passwordHash,
-        'role'          => $role,
-        'active'        => true,
-        'source'        => 'marketplace_install',
-        'created_at'    => new \Google\Cloud\Core\Timestamp($now),
-        'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
+        'role' => $role,
+        'active' => true,
+        'source' => 'marketplace_install',
+        'created_at' => new \Google\Cloud\Core\Timestamp($now),
+        'updated_at' => new \Google\Cloud\Core\Timestamp($now),
     ];
 
-    if ($locationName) $userData['location_name'] = $locationName;
-    if ($companyName)  $userData['company_name']  = $companyName;
+    if ($locationName)
+        $userData['location_name'] = $locationName;
+    if ($companyName)
+        $userData['company_name'] = $companyName;
 
     if ($isLocationLevel) {
-        $userData['active_location_id']   = $locationId;
+        $userData['active_location_id'] = $locationId;
         $userData['location_memberships'] = [$locationId]; // initialise membership array
     }
     if (!empty($companyId)) {
@@ -270,9 +283,9 @@ try {
 
     // Return JWT immediately so the install page can cache auth without a second login
     $token = jwt_sign([
-        'sub'        => $newUserId,
-        'email'      => $email,
-        'role'       => $role,
+        'sub' => $newUserId,
+        'email' => $email,
+        'role' => $role,
         'company_id' => $companyId ?? null,
     ], $jwtSecret, 28800);
 
@@ -282,16 +295,16 @@ try {
 
     http_response_code(201);
     echo json_encode([
-        'status'               => 'success',
-        'message'              => 'Account ready.',
-        'token'                => $token,
-        'role'                 => $role,
-        'location_id'          => $locationId,
-        'company_id'           => $companyId ?? null,
-        'location_name'        => $locationName ?? null,
-        'company_name'         => $companyName  ?? null,
+        'status' => 'success',
+        'message' => 'Account ready.',
+        'token' => $token,
+        'role' => $role,
+        'location_id' => $locationId,
+        'company_id' => $companyId ?? null,
+        'location_name' => $locationName ?? null,
+        'company_name' => $companyName ?? null,
         'location_memberships' => $locationMemberships,
-        'user'                 => $userApiNew,
+        'user' => $userApiNew,
     ]);
 
 } catch (Exception $e) {
@@ -311,7 +324,7 @@ try {
 function _write_location_member($db, string $locationId, string $uid, string $email, DateTimeImmutable $now, bool $forceReplace = false): void
 {
     try {
-        $membersRef   = $db->collection('location_members')->document($locationId)->collection('members');
+        $membersRef = $db->collection('location_members')->document($locationId)->collection('members');
         $memberDocRef = $membersRef->document($uid);
 
         if ($forceReplace) {
@@ -330,9 +343,9 @@ function _write_location_member($db, string $locationId, string $uid, string $em
 
         if (!$existing->exists()) {
             $memberDocRef->set([
-                'uid'       => $uid,
-                'email'     => $email,
-                'role'      => 'user',
+                'uid' => $uid,
+                'email' => $email,
+                'role' => 'user',
                 'joined_at' => new \Google\Cloud\Core\Timestamp($now),
             ]);
         }
