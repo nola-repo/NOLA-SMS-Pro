@@ -636,13 +636,17 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
             ];
         }
     }
-    error_log('[GHL_CALLBACK_DEBUG] ghl_token_response_structure=' . json_encode([
+    $debugPayload = [
+        'ts'                 => date('Y-m-d H:i:s'),
         'locationId_root'    => $data['locationId'] ?? null,
         'location_id_root'   => $data['location_id'] ?? null,
         'locations_count'    => isset($data['locations']) ? count($data['locations']) : 0,
         'locations_preview'  => $locationsPreview,
         'state_preview'      => $state ? substr($state, 0, 120) : null,
-    ]));
+    ];
+    error_log('[GHL_CALLBACK_DEBUG] ghl_token_response_structure=' . json_encode($debugPayload));
+    // Write to a readable file so we can inspect it via HTTP
+    @file_put_contents(__DIR__ . '/ghl_debug_output.txt', json_encode($debugPayload, JSON_PRETTY_PRINT) . "\n---\n", FILE_APPEND);
 
     $db  = get_firestore();
     $now = new DateTimeImmutable();
