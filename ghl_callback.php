@@ -719,8 +719,8 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         if (!$ltResult2['ok']) {
             error_log('[GHL_CALLBACK_DEBUG] caseA_locationToken_failures=' . json_encode([
                 'locationId' => $singleLocationId,
-                'companyId' => $companyId,
-                'failures' => $ltResult2['failures'] ?? [],
+                'companyId'  => $companyId,
+                'failures'   => $ltResult2['failures'] ?? [],
             ]));
             render_error('Failed to exchange company token for location token.', [
                 'locationId' => $singleLocationId,
@@ -732,66 +732,22 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
 
         $ltExpires2 = time() + (int)($ltData2['expires_in'] ?? 86400);
 
-        // Fetch location name
-        $lnCurl2 = curl_init('https://services.leadconnectorhq.com/locations/' . $singleLocationId);
-        curl_setopt_array($lnCurl2, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $ltData2['access_token'], 'Accept: application/json', 'Version: 2021-07-28'],
-        ]);
-        $lnResp2       = curl_exec($lnCurl2); curl_close($lnCurl2);
-        $singleLocName = json_decode($lnResp2, true)['location']['name'] ?? '';
-
-        // Save Location-scoped token
-        $db->collection('ghl_tokens')->document($singleLocationId)->set([
-            'access_token'          => $ltData2['access_token'],
-            'refresh_token'         => $ltData2['refresh_token'] ?? $companyRefresh,
-            'expires_at'            => $ltExpires2,
-            'client_id'             => $subaccountClientId,
-            'appId'                 => $subaccountClientId,
-            'appType'               => 'subaccount',
-            'userType'              => 'Location',
-            'location_id'           => $singleLocationId,
-            'location_name'         => $singleLocName,
-            'companyId'             => $companyId,
-            'is_live'               => true,
-            'toggle_enabled'        => true,
-            'provisioned_from_bulk' => true,
-            'updated_at'            => new \Google\Cloud\Core\Timestamp($now),
-        ], ['merge' => true]);
-
-        // Provision integrations doc
-        $intDocId2 = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $singleLocationId);
-        $intRef2   = $db->collection('integrations')->document($intDocId2);
-        $intSnap2  = $intRef2->snapshot();
-        if (!$intSnap2->exists()) {
-            $intRef2->set([
-                'location_id'           => $singleLocationId,
-                'location_name'         => $singleLocName,
-                'companyId'             => $companyId,
-                'free_credits_total'    => 10,
-                'free_usage_count'      => 0,
-                'credit_balance'        => 0,
-                'system_default_sender' => 'NOLASMSPro',
-                'installed_at'          => new \Google\Cloud\Core\Timestamp($now),
-                'updated_at'            => new \Google\Cloud\Core\Timestamp($now),
-            ]);
-        } else {
-            $intRef2->set([
-                'access_token'  => $ltData2['access_token'],
-                'expires_at'    => $ltExpires2,
-                'location_name' => $singleLocName,
-                'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
-            ], ['merge' => true]);
+        // Try to get location name from the locations[] payload GHL already sent us
+        // (free — avoids a round-trip to the GHL /locations/{id} API before redirect).
+        $singleLocName = '';
+        if ($hasLocationsArray) {
+            foreach ($data['locations'] as $loc) {
+                if (!is_array($loc)) continue;
+                $lid = $loc['id'] ?? $loc['locationId'] ?? null;
+                if ((string)$lid === (string)$singleLocationId) {
+                    $singleLocName = $loc['name'] ?? $loc['location_name'] ?? '';
+                    break;
+                }
+            }
         }
 
-        error_log("[GHL_CALLBACK] Case A: provisioned {$singleLocationId} ({$singleLocName})");
-
-        // Redirect through normal sub-account registration/welcome-back flow
-        require_once __DIR__ . '/api/jwt_helper.php';
-        $jwtSecret2  = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
-        $reactAppUrl2 = 'https://app.nolacrm.io';
-        $locNameEnc2  = urlencode($singleLocName ?: 'Your Sub-Account');
-
+        // Check whether this location already has members (determines login vs register).
+        // This is a single lightweight Firestore read — keep it before the redirect.
         $hasMembers2 = false;
         try {
             foreach ($db->collection('location_members')->document($singleLocationId)->collection('members')->limit(1)->documents() as $m) {
@@ -801,13 +757,17 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
             error_log('[GHL_CALLBACK] Could not check location_members: ' . $e->getMessage());
         }
 
+        // Sign JWT and send the redirect immediately — get the user to the next
+        // page as fast as possible. Firestore provisioning runs in the background.
+        require_once __DIR__ . '/api/jwt_helper.php';
+        $jwtSecret2   = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
         $installToken2 = jwt_sign([
             'type'          => 'install',
             'location_id'   => $singleLocationId,
             'location_name' => $singleLocName ?: '',
             'company_id'    => $companyId,
         ], $jwtSecret2, 900);
-        
+
         if ($hasMembers2) {
             error_log("[GHL_CALLBACK] Case A: {$singleLocationId} is Tier 3 (has members) — redirect to login.");
             header('Location: https://smspro-api.nolacrm.io/login?welcome_back=1&name=' . urlencode($singleLocName), true, 302);
@@ -815,6 +775,83 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
             error_log("[GHL_CALLBACK] Case A: {$singleLocationId} needs registration — redirect to register.");
             header('Location: https://smspro-api.nolacrm.io/register?install_token=' . urlencode($installToken2), true, 302);
         }
+
+        // ── Flush response to browser NOW — user is already navigating away ───
+        // All remaining work (Firestore writes + optional name fetch) runs as
+        // a background task after the redirect headers are sent.
+        if (function_exists('fastcgi_finish_request')) {
+            fastcgi_finish_request();
+        } else {
+            ignore_user_abort(true);
+            ob_start();
+            ob_end_flush();
+            flush();
+        }
+
+        // ── Background: fetch location name from GHL if we didn't get it above ─
+        if ($singleLocName === '') {
+            $lnCurl2 = curl_init('https://services.leadconnectorhq.com/locations/' . $singleLocationId);
+            curl_setopt_array($lnCurl2, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT        => 10,
+                CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $ltData2['access_token'], 'Accept: application/json', 'Version: 2021-07-28'],
+            ]);
+            $lnResp2       = curl_exec($lnCurl2); curl_close($lnCurl2);
+            $singleLocName = json_decode($lnResp2 ?: '', true)['location']['name'] ?? '';
+        }
+
+        // ── Background: Save Location-scoped token ────────────────────────────
+        try {
+            $db->collection('ghl_tokens')->document($singleLocationId)->set([
+                'access_token'          => $ltData2['access_token'],
+                'refresh_token'         => $ltData2['refresh_token'] ?? $companyRefresh,
+                'expires_at'            => $ltExpires2,
+                'client_id'             => $subaccountClientId,
+                'appId'                 => $subaccountClientId,
+                'appType'               => 'subaccount',
+                'userType'              => 'Location',
+                'location_id'           => $singleLocationId,
+                'location_name'         => $singleLocName,
+                'companyId'             => $companyId,
+                'is_live'               => true,
+                'toggle_enabled'        => true,
+                'provisioned_from_bulk' => true,
+                'updated_at'            => new \Google\Cloud\Core\Timestamp($now),
+            ], ['merge' => true]);
+        } catch (Exception $e) {
+            error_log('[GHL_CALLBACK] Case A bg: ghl_tokens write failed: ' . $e->getMessage());
+        }
+
+        // ── Background: Provision integrations doc ────────────────────────────
+        try {
+            $intDocId2 = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $singleLocationId);
+            $intRef2   = $db->collection('integrations')->document($intDocId2);
+            $intSnap2  = $intRef2->snapshot();
+            if (!$intSnap2->exists()) {
+                $intRef2->set([
+                    'location_id'           => $singleLocationId,
+                    'location_name'         => $singleLocName,
+                    'companyId'             => $companyId,
+                    'free_credits_total'    => 10,
+                    'free_usage_count'      => 0,
+                    'credit_balance'        => 0,
+                    'system_default_sender' => 'NOLASMSPro',
+                    'installed_at'          => new \Google\Cloud\Core\Timestamp($now),
+                    'updated_at'            => new \Google\Cloud\Core\Timestamp($now),
+                ]);
+            } else {
+                $intRef2->set([
+                    'access_token'  => $ltData2['access_token'],
+                    'expires_at'    => $ltExpires2,
+                    'location_name' => $singleLocName,
+                    'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
+                ], ['merge' => true]);
+            }
+        } catch (Exception $e) {
+            error_log('[GHL_CALLBACK] Case A bg: integrations write failed: ' . $e->getMessage());
+        }
+
+        error_log("[GHL_CALLBACK] Case A: bg provisioning done for {$singleLocationId} ({$singleLocName})");
         exit;
     }
 
