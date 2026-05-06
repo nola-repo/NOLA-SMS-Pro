@@ -155,8 +155,6 @@ try {
             _write_location_member($db, $locationId, $existingId, $email, $now);
         }
 
-        }
-
         // Fetch fresh profile for response + location_memberships
         $freshDoc = $db->collection('users')->document($existingId)->snapshot();
         $fd       = $freshDoc->exists() ? $freshDoc->data() : array_merge($existingDoc, $updates);
@@ -249,8 +247,6 @@ try {
         _write_location_member($db, $locationId, $newUserId, $email, $now);
     }
 
-    }
-
     // Return JWT immediately so the install page can cache auth without a second login
     $token = jwt_sign([
         'sub'        => $newUserId,
@@ -311,6 +307,4 @@ function _write_location_member($db, string $locationId, string $uid, string $em
     } catch (Exception $e) {
         error_log("[register_from_install] _write_location_member failed for uid={$uid}, loc={$locationId}: " . $e->getMessage());
     }
-}
-
 }
