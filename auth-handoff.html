@@ -62,7 +62,7 @@
         // Write user profile cache
         if (userB64) {
             var userData = JSON.parse(atob(userB64));
-            localStorage.setItem('nola_user', JSON.stringify({
+            localStorage.setItem('nola_auth_user', JSON.stringify({
                 name:                 userData.name                 || '',
                 firstName:            userData.firstName            || '',
                 lastName:             userData.lastName             || '',
