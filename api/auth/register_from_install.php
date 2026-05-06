@@ -34,25 +34,29 @@ $payloadCompName = $input['company_name'] ?? null;
 
 $jwtSecret = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
 
-// ── If install_token provided, verify and extract IDs from it (more secure) ──
-if ($installToken) {
-    $installPayload = jwt_verify($installToken, $jwtSecret);
-    if (!$installPayload) {
-        http_response_code(401);
-        echo json_encode(['error' => 'Install token is invalid or expired. Please reinstall from the GHL Marketplace.']);
-        exit;
-    }
-    $type = $installPayload['type'] ?? '';
-    if ($type === 'install') {
-        $locationId = $installPayload['location_id'] ?? $locationId;
-        $companyId  = $installPayload['company_id']  ?? $companyId;
-    } elseif ($type === 'agency_install') {
-        $companyId  = $installPayload['company_id']  ?? $companyId;
-    } else {
-        http_response_code(401);
-        echo json_encode(['error' => 'Invalid install token type.']);
-        exit;
-    }
+// ── Mandate and verify install_token (prevents location bypass) ──
+if (!$installToken) {
+    http_response_code(401);
+    echo json_encode(['error' => 'Install token is required. Please reinstall from the GHL Marketplace.']);
+    exit;
+}
+
+$installPayload = jwt_verify($installToken, $jwtSecret);
+if (!$installPayload) {
+    http_response_code(401);
+    echo json_encode(['error' => 'Install token is invalid or expired. Please reinstall from the GHL Marketplace.']);
+    exit;
+}
+$type = $installPayload['type'] ?? '';
+if ($type === 'install') {
+    $locationId = $installPayload['location_id'] ?? $locationId;
+    $companyId  = $installPayload['company_id']  ?? $companyId;
+} elseif ($type === 'agency_install') {
+    $companyId  = $installPayload['company_id']  ?? $companyId;
+} else {
+    http_response_code(401);
+    echo json_encode(['error' => 'Invalid install token type.']);
+    exit;
 }
 
 // ── Per-field validation (return all errors at once) ─────────────────────────
@@ -109,6 +113,15 @@ try {
 
     // ── 2a. EXISTING ACCOUNT — link location / complete profile ───────────────
     if ($existingDoc) {
+        // Enforce password verification if the account is already fully set up
+        if (!empty($existingDoc['email']) && !empty($existingDoc['password_hash'])) {
+            if (!password_verify($password, $existingDoc['password_hash'])) {
+                http_response_code(401);
+                echo json_encode(['error' => 'An account with this email already exists, but the password provided is incorrect.']);
+                exit;
+            }
+        }
+
         $updates = ['updated_at' => new \Google\Cloud\Core\Timestamp($now)];
 
         if ($isLocationLevel) {
@@ -142,9 +155,7 @@ try {
             _write_location_member($db, $locationId, $existingId, $email, $now);
         }
 
-        // Sync integration record & GHL Custom Values
-        update_integration_record($db, $locationId, $email, $fullName, $phone, $now);
-        _sync_owner_to_ghl($db, $locationId, $fullName, $email, $phone);
+        }
 
         // Fetch fresh profile for response + location_memberships
         $freshDoc = $db->collection('users')->document($existingId)->snapshot();
@@ -238,9 +249,7 @@ try {
         _write_location_member($db, $locationId, $newUserId, $email, $now);
     }
 
-    // Sync integration record & GHL Custom Values
-    update_integration_record($db, $locationId, $email, $fullName, $phone, $now);
-    _sync_owner_to_ghl($db, $locationId, $fullName, $email, $phone);
+    }
 
     // Return JWT immediately so the install page can cache auth without a second login
     $token = jwt_sign([
@@ -287,17 +296,9 @@ function _write_location_member($db, string $locationId, string $uid, string $em
         $memberDocRef = $membersRef->document($uid);
         $existing     = $memberDocRef->snapshot();
 
-        // Determine role: first member = owner, subsequent = member
+        // Determine role: all users are equal
         if (!$existing->exists()) {
-            $allMembers = $membersRef->limit(1)->documents();
-            $hasOther   = false;
-            foreach ($allMembers as $m) {
-                if ($m->exists() && $m->id() !== $uid) {
-                    $hasOther = true;
-                    break;
-                }
-            }
-            $role = $hasOther ? 'member' : 'owner';
+            $role = 'user';
 
             $memberDocRef->set([
                 'uid'       => $uid,
@@ -312,133 +313,4 @@ function _write_location_member($db, string $locationId, string $uid, string $em
     }
 }
 
-/**
- * Write owner contact info into the integrations/<intDocId> document.
- */
-function update_integration_record($db, ?string $locationId, string $email, string $fullName, string $phone, DateTimeImmutable $now): void
-{
-    if (!$locationId) return;
-
-    $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
-    try {
-        // ── NEW: Only set owner if not already recorded ──
-        $snap = $db->collection('integrations')->document($intDocId)->snapshot();
-        if ($snap->exists() && !empty($snap->data()['owner_email'])) {
-            return; // First registrant is the permanent owner — don't overwrite
-        }
-        // ─────────────────────────────────────────────────
-
-        $db->collection('integrations')->document($intDocId)->set([
-            'owner_email' => $email,
-            'owner_name'  => $fullName,
-            'owner_phone' => $phone,
-            'updated_at'  => new \Google\Cloud\Core\Timestamp($now),
-        ], ['merge' => true]);
-    } catch (Exception $e) {
-        error_log("register_from_install: failed to update integration owner for $locationId: " . $e->getMessage());
-    }
-}
-
-/**
- * Write owner_name / owner_email / owner_phone to GHL Location Custom Values.
- * Creates the custom field definitions if they don't already exist.
- * Errors are logged but never bubble up — this is best-effort.
- */
-function _sync_owner_to_ghl($db, ?string $locationId, string $fullName, string $email, string $phone): void
-{
-    if (!$locationId) return;
-
-    $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
-    try {
-        $intSnap     = $db->collection('integrations')->document($intDocId)->snapshot();
-        if (!$intSnap->exists()) return;
-        $accessToken = $intSnap->data()['access_token'] ?? null;
-        if (!$accessToken) return;
-    } catch (Exception $e) {
-        error_log("[register_from_install] _sync_owner_to_ghl: fetch integration failed for $locationId: " . $e->getMessage());
-        return;
-    }
-
-    $headers = [
-        'Authorization: Bearer ' . $accessToken,
-        'Content-Type: application/json',
-        'Accept: application/json',
-        'Version: 2021-07-28',
-    ];
-
-    $fields = [
-        'owner_name'  => $fullName,
-        'owner_email' => $email,
-        'owner_phone' => $phone,
-    ];
-
-    foreach ($fields as $fieldKey => $value) {
-        try {
-            $fieldId = _ghl_get_or_create_custom_field($locationId, $fieldKey, $headers);
-            if (!$fieldId) continue;
-
-            $ch = curl_init("https://services.leadconnectorhq.com/locations/{$locationId}/customValues/{$fieldId}");
-            curl_setopt_array($ch, [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_CUSTOMREQUEST  => 'PUT',
-                CURLOPT_HTTPHEADER     => $headers,
-                CURLOPT_POSTFIELDS     => json_encode(['value' => $value]),
-            ]);
-            curl_exec($ch);
-            curl_close($ch);
-        } catch (Exception $e) {
-            error_log("[register_from_install] _sync_owner_to_ghl: failed to set $fieldKey for $locationId: " . $e->getMessage());
-        }
-    }
-}
-
-/**
- * Return the GHL custom field ID for $fieldKey on $locationId.
- * Creates the field (name, fieldKey, dataType: TEXT) if it doesn't exist.
- */
-function _ghl_get_or_create_custom_field(string $locationId, string $fieldKey, array $headers): ?string
-{
-    // 1. Look for existing field
-    $ch = curl_init("https://services.leadconnectorhq.com/locations/{$locationId}/customFields");
-    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_HTTPHEADER => $headers]);
-    $resp = curl_exec($ch);
-    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-
-    if ($code === 200) {
-        $data = json_decode($resp, true);
-        foreach (($data['customFields'] ?? []) as $f) {
-            if (($f['fieldKey'] ?? '') === $fieldKey) {
-                return $f['id'];
-            }
-        }
-    }
-
-    // 2. Create the field
-    $nameMap = [
-        'owner_name'  => 'Owner Name',
-        'owner_email' => 'Owner Email',
-        'owner_phone' => 'Owner Phone',
-    ];
-    $ch = curl_init("https://services.leadconnectorhq.com/locations/{$locationId}/customFields");
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POST           => true,
-        CURLOPT_HTTPHEADER     => $headers,
-        CURLOPT_POSTFIELDS     => json_encode([
-            'name'     => $nameMap[$fieldKey] ?? $fieldKey,
-            'fieldKey' => $fieldKey,
-            'dataType' => 'TEXT',
-        ]),
-    ]);
-    $resp = curl_exec($ch);
-    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-
-    if ($code === 200 || $code === 201) {
-        $data = json_decode($resp, true);
-        return $data['customField']['id'] ?? $data['id'] ?? null;
-    }
-
-    return null;
 }

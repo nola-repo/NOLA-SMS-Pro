@@ -204,7 +204,7 @@ il_page('Sign In', <<<HTML
     <p class="subtitle">Sign in to your NOLA SMS Pro account.</p>
     {$bannerHtml}
     {$errorHtml}
-    <form id="login-form" method="POST" action="/install-login.php">
+    <form id="login-form" method="POST" action="/login">
         <div class="field">
             <label for="email">Email Address</label>
             <input id="email" name="email" type="email" required
@@ -222,5 +222,5 @@ il_page('Sign In', <<<HTML
         </div>
         <button id="submit-btn" type="submit" class="btn-submit">Sign In</button>
     </form>
-    <p class="footer" style="margin-top:16px;">New installation? <a href="/install-register.php" style="color:#2b83fa;font-weight:600;">Create account</a></p>
+    <p class="footer" style="margin-top:16px;">New installation? <a href="/register" style="color:#2b83fa;font-weight:600;">Create account</a></p>
 HTML);
