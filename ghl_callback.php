@@ -1085,28 +1085,54 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     ]));
 
     // ── Route to Registration ────────────────────────────────────────────────
-    // Even if locations are already registered, an install action should 
+    // Even if locations are already registered, an install action should
     // always land on the registration/confirmation form.
-    
-    // Pick the first provisioned location to context the registration form,
-    // BUT only if we actually had candidate locations passed in from GHL.
-    // If GHL gave us NO locations (true bulk), we cannot blindly pick the first one
-    // (which was causing 'Norwin Lacson' to be incorrectly selected).
-    if (empty($data['locations']) && empty($statePinned)) {
-        // True agency install with no specific sub-account targeted.
-        // Register them as an Agency user, not tied to a random location.
+
+    // ── Detect the selected sub-account from ALL possible GHL signals ─────────
+    // GHL can communicate the selected sub-account in multiple ways:
+    //   1. $data['locations']  — array of selected subs (bulk picker, multiple selection)
+    //   2. $data['locationId'] — single sub-account selected from the picker
+    //   3. $data['location_id'] — alternate casing
+    //   4. $statePinned        — location ID embedded in the OAuth state
+    //   5. $successfulLocIds   — fallback: exactly 1 location was provisioned
+    $directLocFromToken = $data['locationId'] ?? $data['location_id'] ?? null;
+
+    $isTrueBulkAgencyInstall = empty($data['locations'])
+        && empty($statePinned)
+        && empty($directLocFromToken)
+        && count($successfulLocIds) !== 1; // If exactly 1 was provisioned, it's still a sub-account install
+
+    if ($isTrueBulkAgencyInstall) {
+        // True agency install: no specific sub-account was targeted at all.
+        // Register them as an Agency user, not tied to any location.
         $tokenB = jwt_sign([
             'type'       => 'agency_install',
             'company_id' => $companyId,
         ], $jwtSecretB, 900);
 
-        error_log("[GHL_CALLBACK] Case B: True bulk install — redirecting to agency registration.");
+        error_log("[GHL_CALLBACK] Case B: True bulk install (no location signal) — redirecting to agency registration.");
         header('Location: https://smspro-api.nolacrm.io/register?install_token=' . urlencode($tokenB), true, 302);
         exit;
     }
 
-    $onlyLocId   = $successfulLocIds[0] ?? null;
+    // ── Resolve the single target location ───────────────────────────────────
+    // Priority: state-pinned > direct token field > single provisioned loc
+    $onlyLocId = $statePinned
+        ?? $directLocFromToken
+        ?? ($successfulLocIds[0] ?? null);
     $onlyLocName = $successfulLocNames[$onlyLocId] ?? '';
+
+    // If we still don't have the name (e.g. came from $directLocFromToken), try ghl_tokens
+    if ($onlyLocId && $onlyLocName === '') {
+        try {
+            $ltSnap = $db->collection('ghl_tokens')->document($onlyLocId)->snapshot();
+            if ($ltSnap->exists()) {
+                $onlyLocName = $ltSnap->data()['location_name'] ?? '';
+            }
+        } catch (Exception $e) {
+            error_log("[GHL_CALLBACK] Case B: could not resolve location name for {$onlyLocId}: " . $e->getMessage());
+        }
+    }
 
     if ($onlyLocId) {
         $tokenB = jwt_sign([
@@ -1116,7 +1142,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
             'company_id'    => $companyId,
         ], $jwtSecretB, 900);
 
-        error_log("[GHL_CALLBACK] Case B: redirecting to registration form for first location ({$onlyLocId}).");
+        error_log("[GHL_CALLBACK] Case B: redirecting to registration form for location ({$onlyLocId}) name=({$onlyLocName}).");
         header('Location: https://smspro-api.nolacrm.io/register?install_token=' . urlencode($tokenB), true, 302);
     } else {
         render_error('No valid locations found for registration routing.', []);
