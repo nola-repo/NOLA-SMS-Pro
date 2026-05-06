@@ -5,6 +5,7 @@
  */
 
 require_once __DIR__ . '/api/jwt_helper.php';
+require_once __DIR__ . '/api/webhook/firestore_client.php';
 
 $jwtSecret   = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
 $apiBase     = 'https://smspro-api.nolacrm.io';
@@ -15,6 +16,10 @@ $marketplace = 'https://marketplace.leadconnectorhq.com/apps/overview/68118e8f9f
  * Render debug install-token banner only outside production.
  */
 function ir_is_non_production(): bool {
+    if (isset($_GET['debug_install']) && (string) $_GET['debug_install'] === '1') {
+        return true;
+    }
+
     $appEnv = strtolower((string) (getenv('APP_ENV') ?: getenv('ENVIRONMENT') ?: ''));
     if ($appEnv !== '') {
         return !in_array($appEnv, ['prod', 'production'], true);
@@ -201,12 +206,47 @@ $tokenType    = $payload['type'] ?? '';
 $locationId   = $payload['location_id'] ?? null;
 $locationName = htmlspecialchars($payload['location_name'] ?? '', ENT_QUOTES, 'UTF-8');
 $companyId    = $payload['company_id'] ?? null;
+$companyNameRaw = (string) ($payload['company_name'] ?? '');
+
+// Best-effort display-name hydration from Firestore when token payload is sparse.
+if (($locationName === '' || $companyNameRaw === '') && ($locationId || $companyId)) {
+    try {
+        $db = get_firestore();
+
+        if ($locationId) {
+            $locSnap = $db->collection('ghl_tokens')->document((string) $locationId)->snapshot();
+            if ($locSnap->exists()) {
+                $locData = $locSnap->data();
+                if ($locationName === '') {
+                    $locationName = htmlspecialchars((string) ($locData['location_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+                }
+                if ($companyNameRaw === '') {
+                    $companyNameRaw = (string) ($locData['company_name'] ?? $locData['agency_name'] ?? '');
+                }
+                if (!$companyId) {
+                    $companyId = $locData['companyId'] ?? $locData['company_id'] ?? $companyId;
+                }
+            }
+        }
+
+        if ($companyId && $companyNameRaw === '') {
+            $companySnap = $db->collection('ghl_tokens')->document((string) $companyId)->snapshot();
+            if ($companySnap->exists()) {
+                $companyData = $companySnap->data();
+                $companyNameRaw = (string) ($companyData['company_name'] ?? $companyData['agency_name'] ?? '');
+            }
+        }
+    } catch (Exception $e) {
+        error_log('[install-register] display-name hydration failed: ' . $e->getMessage());
+    }
+}
+$companyName = htmlspecialchars($companyNameRaw, ENT_QUOTES, 'UTF-8');
 
 if ($tokenType !== 'install' && $tokenType !== 'agency_install') {
     ir_page('Invalid Token', '<div style="text-align:center;"><h1>Invalid Token</h1><p class="subtitle">Unexpected token type. Please reinstall.</p></div>');
 }
 
-$locDisplay = $locationName ?: $locationId ?: '—';
+$locDisplay = $locationName ?: $companyName ?: $locationId ?: '—';
 $locationIdSafe = htmlspecialchars((string) ($locationId ?? ''), ENT_QUOTES, 'UTF-8');
 $companyIdSafe = htmlspecialchars((string) ($companyId ?? ''), ENT_QUOTES, 'UTF-8');
 $tokenTypeSafe = htmlspecialchars((string) $tokenType, ENT_QUOTES, 'UTF-8');
@@ -234,6 +274,7 @@ if ($showDebugBanner) {
         <code>type={$tokenTypeSafe}</code> |
         <code>location_id={$locationIdSafe}</code> |
         <code>location_name={$locationName}</code> |
+        <code>company_name={$companyName}</code> |
         <code>company_id={$companyIdSafe}</code><br>
         <code>status={$statusLabel}</code> |
         <code>ttl={$ttlLabelSafe}</code> |
