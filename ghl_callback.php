@@ -614,6 +614,47 @@ function exchange_location_token(string $companyToken, string $companyId, string
     ];
 }
 
+/**
+ * Returns true if any user is already linked to this location.
+ * Checks both root denormalized field and user-owned subaccounts model.
+ */
+function has_linked_user_for_location($db, string $locationId): bool
+{
+    try {
+        foreach (
+            $db->collection('users')
+                ->where('active_location_id', '=', $locationId)
+                ->limit(1)
+                ->documents()
+            as $userDoc
+        ) {
+            if ($userDoc->exists()) {
+                return true;
+            }
+        }
+    } catch (Exception $e) {
+        error_log("[GHL_CALLBACK] has_linked_user_for_location active_location_id check failed for {$locationId}: " . $e->getMessage());
+    }
+
+    try {
+        foreach (
+            $db->collectionGroup('subaccounts')
+                ->where('location_id', '=', $locationId)
+                ->limit(1)
+                ->documents()
+            as $subDoc
+        ) {
+            if ($subDoc->exists()) {
+                return true;
+            }
+        }
+    } catch (Exception $e) {
+        error_log("[GHL_CALLBACK] has_linked_user_for_location subaccounts check failed for {$locationId}: " . $e->getMessage());
+    }
+
+    return false;
+}
+
 // ─── OAuth Config ──────────────────────────────────────────────────────────────
 // Subaccount app only — NO agency fallback.
 // Agency installs use /oauth/agency-callback → ghl_agency_callback.php
@@ -1164,23 +1205,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         }
 
         // ── Tier 2 / Tier 3 check: does users have a linked account? ─────────
-        $hasLinkedUser = false;
-        try {
-            foreach (
-                $db->collection('users')
-                   ->where('active_location_id', '=', $locId)
-                   ->limit(1)
-                   ->documents()
-                as $m
-            ) {
-                if ($m->exists()) {
-                    $hasLinkedUser = true;
-                    break;
-                }
-            }
-        } catch (Exception $e) {
-            error_log("[GHL_CALLBACK] Case B: could not check users for location {$locId}: " . $e->getMessage());
-        }
+        $hasLinkedUser = has_linked_user_for_location($db, (string)$locId);
 
         if ($hasLinkedUser) {
             // Tier 3 — fully registered
@@ -1434,23 +1459,8 @@ $jwtSecret       = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_pr
 $reactAppUrl     = 'https://app.nolacrm.io';
 $locationNameEnc = urlencode($locationName ?: 'Your Sub-Account');
 
-// Check if ANY user is already registered for this location via users collection.
-$hasExistingUser = false;
-try {
-    $usersSnap = $db->collection('users')
-        ->where('active_location_id', '=', $locationId)
-        ->limit(1)
-        ->documents();
-
-    foreach ($usersSnap as $m) {
-        if ($m->exists()) {
-            $hasExistingUser = true;
-            break;
-        }
-    }
-} catch (Exception $e) {
-    error_log('[GHL_CALLBACK] Could not check existing users by active_location_id: ' . $e->getMessage());
-}
+// Check if any user already owns this location.
+$hasExistingUser = has_linked_user_for_location($db, (string)$locationId);
 
     $installToken = jwt_sign([
         'type'          => 'install',
