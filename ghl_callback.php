@@ -473,6 +473,42 @@ function extract_location_id_from_query(array $query): ?string
 }
 
 /**
+ * Normalize location IDs from mixed callback payload formats.
+ * Accepts array, CSV, or JSON string and returns unique IDs.
+ *
+ * @return array<int, string>
+ */
+function extract_location_ids_from_mixed($value): array
+{
+    $ids = [];
+    $addIfValid = static function ($candidate) use (&$ids): void {
+        if (is_string($candidate) && preg_match('/^[A-Za-z0-9_-]{12,}$/', $candidate)) {
+            $ids[] = $candidate;
+        }
+    };
+
+    if (is_array($value)) {
+        foreach ($value as $item) {
+            $addIfValid($item);
+        }
+    } elseif (is_string($value) && trim($value) !== '') {
+        $raw = trim($value);
+        $decoded = json_decode($raw, true);
+        if (is_array($decoded)) {
+            foreach ($decoded as $item) {
+                $addIfValid($item);
+            }
+        } else {
+            foreach (array_map('trim', explode(',', $raw)) as $item) {
+                $addIfValid($item);
+            }
+        }
+    }
+
+    return array_values(array_unique($ids));
+}
+
+/**
  * Exchange a company-scoped token into a location-scoped token.
  * Tries both payload formats because GHL behavior varies by app/runtime.
  *
@@ -591,12 +627,14 @@ if (!isset($_GET['code']))
 $code  = $_GET['code'];
 $state = $_GET['state'] ?? null;
 $queryLocationId = extract_location_id_from_query($_GET);
+$queryApprovedLocationIds = extract_location_ids_from_mixed($_GET['approvedLocations'] ?? null);
 $debugTrace = [
     'source' => 'ghl_callback',
     'has_code' => !empty($code),
     'state_present' => $state !== null && $state !== '',
     'state_preview' => $state ? substr((string)$state, 0, 180) : null,
     'query_locationId' => $queryLocationId,
+    'query_approved_location_ids' => $queryApprovedLocationIds,
 ];
 
 // ─── Token Exchange ────────────────────────────────────────────────────────────
@@ -715,6 +753,10 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     // Treat this exactly like a normal sub-account install.
     $singleLocationId = $data['locationId'] ?? $data['location_id'] ?? $queryLocationId ?? null;
     $hasLocationsArray = !empty($data['locations']) && is_array($data['locations']);
+    $approvedLocationIds = extract_location_ids_from_mixed($data['approvedLocations'] ?? null);
+    if (empty($approvedLocationIds) && !empty($queryApprovedLocationIds)) {
+        $approvedLocationIds = $queryApprovedLocationIds;
+    }
 
     // Agency view sends the selected sub-account(s) inside locations[].
     // Build a flat list of IDs from that array for reliable matching.
@@ -733,6 +775,15 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     if (!$singleLocationId && count($locationsArrayIds) === 1) {
         $singleLocationId = $locationsArrayIds[0];
         error_log("[GHL_CALLBACK] Case A: single location found in locations[] array — {$singleLocationId}");
+    }
+
+    // approvedLocations often carries the exact selection from agency view.
+    if (!$singleLocationId && count($approvedLocationIds) === 1) {
+        $approvedOnly = $approvedLocationIds[0];
+        if (!$hasLocationsArray || in_array($approvedOnly, $locationsArrayIds, true)) {
+            $singleLocationId = $approvedOnly;
+            error_log("[GHL_CALLBACK] Case A: single location recovered from approvedLocations — {$singleLocationId}");
+        }
     }
 
     // If locations[] has multiple entries, use the OAuth state ONLY to PIN
@@ -770,6 +821,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     error_log('[GHL_CALLBACK_DEBUG] bulk_caseA_candidate=' . json_encode([
         'singleLocationId'  => $singleLocationId,
         'locationsArrayIds' => $locationsArrayIds,
+        'approvedLocationIds' => $approvedLocationIds,
         'state_present'     => $state !== null && $state !== '',
     ]));
 
@@ -808,6 +860,19 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
                     break;
                 }
             }
+        }
+
+        // If the name is still unknown, do one quick lookup before signing token.
+        if ($singleLocName === '') {
+            $lnCurl2 = curl_init('https://services.leadconnectorhq.com/locations/' . $singleLocationId);
+            curl_setopt_array($lnCurl2, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT        => 6,
+                CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $ltData2['access_token'], 'Accept: application/json', 'Version: 2021-07-28'],
+            ]);
+            $lnResp2 = curl_exec($lnCurl2);
+            curl_close($lnCurl2);
+            $singleLocName = json_decode($lnResp2 ?: '', true)['location']['name'] ?? '';
         }
 
         // Sign JWT and send the redirect immediately — get the user to the next
@@ -906,7 +971,10 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     // ── CASE B: True bulk install — provision ALL company locations ───────────
     error_log("[GHL_CALLBACK] Case B: true bulk install — companyId={$companyId}");
     $allLocationIds = [];
-    if (!empty($data['locations']) && is_array($data['locations'])) {
+    if (!empty($approvedLocationIds)) {
+        // If agency picker gave explicit approvedLocations, trust that over full search.
+        $allLocationIds = $approvedLocationIds;
+    } elseif (!empty($data['locations']) && is_array($data['locations'])) {
         foreach ($data['locations'] as $loc) {
             $lid = $loc['id'] ?? $loc['locationId'] ?? null;
             if ($lid) $allLocationIds[] = $lid;
@@ -1147,7 +1215,9 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     //   5. $successfulLocIds   — fallback: exactly 1 location was provisioned
     $directLocFromToken = $data['locationId'] ?? $data['location_id'] ?? $queryLocationId ?? null;
 
+    $hasApprovedSignal = !empty($approvedLocationIds) || !empty($queryApprovedLocationIds);
     $isTrueBulkAgencyInstall = empty($data['locations'])
+        && !$hasApprovedSignal
         && empty($statePinned)
         && empty($directLocFromToken)
         && count($successfulLocIds) !== 1; // If exactly 1 was provisioned, it's still a sub-account install
@@ -1168,8 +1238,10 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     // ── Resolve the single target location ───────────────────────────────────
     // Priority: state-pinned > direct token field > single provisioned loc
     $singleCandidateFromAll = count($allLocationIds) === 1 ? $allLocationIds[0] : null;
+    $singleApprovedLoc = count($approvedLocationIds) === 1 ? $approvedLocationIds[0] : null;
     $onlyLocId = $statePinned
         ?? $directLocFromToken
+        ?? $singleApprovedLoc
         ?? $singleCandidateFromAll
         ?? ($successfulLocIds[0] ?? null);
     $onlyLocName = $successfulLocNames[$onlyLocId] ?? '';
