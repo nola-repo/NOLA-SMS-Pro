@@ -14,21 +14,80 @@ require __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/../jwt_helper.php';
 require_once __DIR__ . '/user_profile_helper.php';
 
+/**
+ * Best-effort token extraction for environments where Authorization headers
+ * are stripped (proxy, iframe, some browsers).
+ */
+function auth_extract_bearer_token(): ?string
+{
+    $headerCandidates = [
+        $_SERVER['HTTP_AUTHORIZATION'] ?? '',
+        $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '',
+        $_SERVER['Authorization'] ?? '',
+        $_SERVER['HTTP_X_AUTHORIZATION'] ?? '',
+        $_SERVER['HTTP_X_AUTH_TOKEN'] ?? '',
+    ];
+
+    if (function_exists('getallheaders')) {
+        try {
+            $headers = getallheaders();
+            if (is_array($headers)) {
+                $headerCandidates[] = $headers['Authorization'] ?? '';
+                $headerCandidates[] = $headers['authorization'] ?? '';
+                $headerCandidates[] = $headers['X-Authorization'] ?? '';
+                $headerCandidates[] = $headers['X-Auth-Token'] ?? '';
+            }
+        } catch (Exception $ignored) {
+        }
+    }
+
+    foreach ($headerCandidates as $candidate) {
+        if (!is_string($candidate) || $candidate === '') {
+            continue;
+        }
+        if (preg_match('/^Bearer\s+(.+)$/i', trim($candidate), $m)) {
+            return trim((string)$m[1]);
+        }
+        // Some clients pass raw JWT in custom auth headers.
+        if (substr_count($candidate, '.') === 2) {
+            return trim($candidate);
+        }
+    }
+
+    $queryToken = trim((string)($_GET['token'] ?? ''));
+    if ($queryToken !== '') {
+        return $queryToken;
+    }
+
+    $cookieCandidates = [
+        $_COOKIE['nola_auth_token'] ?? '',
+        $_COOKIE['auth_token'] ?? '',
+        $_COOKIE['token'] ?? '',
+    ];
+    foreach ($cookieCandidates as $cookieToken) {
+        if (is_string($cookieToken) && trim($cookieToken) !== '') {
+            return trim($cookieToken);
+        }
+    }
+
+    return null;
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     http_response_code(405);
     echo json_encode(['error' => 'Method not allowed']);
     exit;
 }
 
-$authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
-if (!preg_match('/^Bearer\s+(.+)$/i', $authHeader, $m)) {
+$jwt = auth_extract_bearer_token();
+if (!$jwt) {
     http_response_code(401);
-    echo json_encode(['error' => 'Missing or invalid Authorization header.']);
+    echo json_encode(['error' => 'Missing auth token. Provide Authorization: Bearer <token>.']);
     exit;
 }
 
 $jwtSecret = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
-$payload   = jwt_verify($m[1], $jwtSecret);
+$payload   = jwt_verify($jwt, $jwtSecret);
 
 if (!$payload) {
     http_response_code(401);
