@@ -557,6 +557,8 @@ function exchange_location_token(string $companyToken, string $companyId, string
             CURLOPT_POST           => true,
             CURLOPT_POSTFIELDS     => $attempt['body'],
             CURLOPT_HTTPHEADER     => $attempt['headers'],
+            CURLOPT_CONNECTTIMEOUT => 3,
+            CURLOPT_TIMEOUT        => 8,
         ]);
         $raw = curl_exec($ltCurl);
         $code = curl_getinfo($ltCurl, CURLINFO_HTTP_CODE);
@@ -641,6 +643,8 @@ $debugTrace = [
 $ch = curl_init('https://services.leadconnectorhq.com/oauth/token');
 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 curl_setopt($ch, CURLOPT_POST, true);
+curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+curl_setopt($ch, CURLOPT_TIMEOUT, 15);
 curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query([
     'client_id'     => $clientId,
     'client_secret' => $clientSecret,
@@ -867,6 +871,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
             $lnCurl2 = curl_init('https://services.leadconnectorhq.com/locations/' . $singleLocationId);
             curl_setopt_array($lnCurl2, [
                 CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_CONNECTTIMEOUT => 3,
                 CURLOPT_TIMEOUT        => 6,
                 CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $ltData2['access_token'], 'Accept: application/json', 'Version: 2021-07-28'],
             ]);
@@ -890,8 +895,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         header('Location: https://smspro-api.nolacrm.io/register?install_token=' . urlencode($installToken2), true, 302);
 
         // ── Flush response to browser NOW — user is already navigating away ───
-        // All remaining work (Firestore writes + optional name fetch) runs as
-        // a background task after the redirect headers are sent.
+        // On platforms without fastcgi_finish_request(), continue best-effort.
         if (function_exists('fastcgi_finish_request')) {
             fastcgi_finish_request();
         } else {
@@ -899,18 +903,6 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
             ob_start();
             ob_end_flush();
             flush();
-        }
-
-        // ── Background: fetch location name from GHL if we didn't get it above ─
-        if ($singleLocName === '') {
-            $lnCurl2 = curl_init('https://services.leadconnectorhq.com/locations/' . $singleLocationId);
-            curl_setopt_array($lnCurl2, [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_TIMEOUT        => 10,
-                CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $ltData2['access_token'], 'Accept: application/json', 'Version: 2021-07-28'],
-            ]);
-            $lnResp2       = curl_exec($lnCurl2); curl_close($lnCurl2);
-            $singleLocName = json_decode($lnResp2 ?: '', true)['location']['name'] ?? '';
         }
 
         // ── Background: Save Location-scoped token ────────────────────────────
@@ -986,6 +978,8 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
             $locCurl = curl_init("https://services.leadconnectorhq.com/locations/search?companyId={$companyId}&skip={$skip}&limit={$limit}");
             curl_setopt_array($locCurl, [
                 CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_CONNECTTIMEOUT => 3,
+                CURLOPT_TIMEOUT        => 8,
                 CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $companyToken, 'Accept: application/json', 'Version: 2021-07-28'],
             ]);
             $locResp  = curl_exec($locCurl);
@@ -1049,6 +1043,8 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
                 $lnCurl = curl_init('https://services.leadconnectorhq.com/locations/' . $locId);
                 curl_setopt_array($lnCurl, [
                     CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_CONNECTTIMEOUT => 3,
+                    CURLOPT_TIMEOUT        => 6,
                     CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $ltData['access_token'], 'Accept: application/json', 'Version: 2021-07-28'],
                 ]);
                 $lnResp  = curl_exec($lnCurl); curl_close($lnCurl);
@@ -1214,26 +1210,6 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     //   5. $successfulLocIds   — fallback: exactly 1 location was provisioned
     $directLocFromToken = $data['locationId'] ?? $data['location_id'] ?? $queryLocationId ?? null;
 
-    $hasApprovedSignal = !empty($approvedLocationIds) || !empty($queryApprovedLocationIds);
-    $isTrueBulkAgencyInstall = empty($data['locations'])
-        && !$hasApprovedSignal
-        && empty($statePinned)
-        && empty($directLocFromToken)
-        && count($successfulLocIds) !== 1; // If exactly 1 was provisioned, it's still a sub-account install
-
-    if ($isTrueBulkAgencyInstall) {
-        // True agency install: no specific sub-account was targeted at all.
-        // Register them as an Agency user, not tied to any location.
-        $tokenB = jwt_sign([
-            'type'       => 'agency_install',
-            'company_id' => $companyId,
-        ], $jwtSecretB, 900);
-
-        error_log("[GHL_CALLBACK] Case B: True bulk install (no location signal) — redirecting to agency registration.");
-        header('Location: https://smspro-api.nolacrm.io/register?install_token=' . urlencode($tokenB), true, 302);
-        exit;
-    }
-
     // ── Resolve the single target location ───────────────────────────────────
     // Priority: state-pinned > direct token field > single provisioned loc
     $singleCandidateFromAll = count($allLocationIds) === 1 ? $allLocationIds[0] : null;
@@ -1268,7 +1244,11 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         error_log("[GHL_CALLBACK] Case B: redirecting to registration form for location ({$onlyLocId}) name=({$onlyLocName}).");
         header('Location: https://smspro-api.nolacrm.io/register?install_token=' . urlencode($tokenB), true, 302);
     } else {
-        render_error('No valid locations found for registration routing.', []);
+        error_log('[GHL_CALLBACK] Case B: could not resolve a single selected location from callback signals.');
+        render_error('Could not determine the selected sub-account from this install callback. Please open NOLA SMS Pro from inside the target GHL sub-account and retry installation.', [
+            'companyId' => $companyId,
+            'hint' => 'Sub-account callback requires a resolvable location_id signal.',
+        ]);
     }
     exit;
 }
@@ -1298,6 +1278,8 @@ $locationName = '';
 try {
     $locCh = curl_init('https://services.leadconnectorhq.com/locations/' . $locationId);
     curl_setopt($locCh, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($locCh, CURLOPT_CONNECTTIMEOUT, 3);
+    curl_setopt($locCh, CURLOPT_TIMEOUT, 6);
     curl_setopt($locCh, CURLOPT_HTTPHEADER, [
         'Authorization: Bearer ' . $data['access_token'],
         'Accept: application/json',

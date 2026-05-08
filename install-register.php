@@ -273,7 +273,7 @@ if ($entityIdValue === '') {
 $entityIdLabelSafe = htmlspecialchars($entityIdLabel, ENT_QUOTES, 'UTF-8');
 $agencyLocHintHtml = '';
 if ($tokenType === 'agency_install' && ($locationId === null || $locationId === '')) {
-    $agencyLocHintHtml = '<p class="subtitle" style="color:#b45309; font-size:12.5px; line-height:1.45; margin:-8px 0 16px;">No Location ID was sent with this link (common when installing from the agency view with several sub-accounts). Open NOLA SMS Pro from inside the target GHL <strong>sub-account</strong> (custom menu link) so GHL passes <code style="font-size:11px;">location_id</code>, or complete registration as an agency user and add sub-accounts afterward.</p>';
+    $agencyLocHintHtml = '<p class="subtitle" style="color:#b45309; font-size:12.5px; line-height:1.45; margin:-8px 0 16px;">No Location ID was sent with this link. Open NOLA SMS Pro from inside the target GHL <strong>sub-account</strong> (custom menu link) so GHL passes <code style="font-size:11px;">location_id</code>.</p>';
 }
 $showDebugBanner = ir_is_non_production();
 $debugBannerHtml = '';
