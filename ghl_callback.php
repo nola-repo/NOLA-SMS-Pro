@@ -921,8 +921,12 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
             $singleLocName = json_decode($lnResp2 ?: '', true)['location']['name'] ?? '';
         }
 
-        // Sign JWT and send the redirect immediately — get the user to the next
-        // page as fast as possible. Firestore provisioning runs in the background.
+        // Decide destination immediately:
+        // - existing linked user -> login (welcome_back)
+        // - otherwise -> registration with install token
+        $hasLinkedUserCaseA = has_linked_user_for_location($db, (string)$singleLocationId);
+
+        // Sign JWT for the registration path.
         require_once __DIR__ . '/api/jwt_helper.php';
         $jwtSecret2   = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
         $installToken2 = jwt_sign([
@@ -933,8 +937,14 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
             'resolution_source' => 'case_a_single_location',
         ], $jwtSecret2, 900);
 
-        error_log("[GHL_CALLBACK] Case A: {$singleLocationId} — redirecting to registration form for confirmation/setup.");
-        header('Location: https://smspro-api.nolacrm.io/register?install_token=' . urlencode($installToken2), true, 302);
+        if ($hasLinkedUserCaseA) {
+            $caseARedirect = 'https://smspro-api.nolacrm.io/login?welcome_back=1&name=' . urlencode($singleLocName ?: 'Your Sub-Account');
+            error_log("[GHL_CALLBACK] Case A: {$singleLocationId} already linked — redirecting to login.");
+        } else {
+            $caseARedirect = 'https://smspro-api.nolacrm.io/register?install_token=' . urlencode($installToken2);
+            error_log("[GHL_CALLBACK] Case A: {$singleLocationId} new link — redirecting to registration.");
+        }
+        header('Location: ' . $caseARedirect, true, 302);
 
         // ── Flush response to browser NOW — user is already navigating away ───
         // On platforms without fastcgi_finish_request(), continue best-effort.
