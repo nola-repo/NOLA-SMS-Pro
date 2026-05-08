@@ -115,3 +115,78 @@ function validate_jwt(): array
 
     return $payload;
 }
+
+/**
+ * List distinct GHL location IDs that have a sub-account token under this company
+ * (excludes the agency-level ghl_tokens/{companyId} document).
+ *
+ * @return array<string, string> location_id => location_name (name may be empty)
+ */
+function auth_locations_under_company($db, string $companyId): array
+{
+    $out = [];
+    $companyId = (string) $companyId;
+    $tokenDocs = $db->collection('ghl_tokens')->where('companyId', '=', $companyId)->documents();
+
+    foreach ($tokenDocs as $doc) {
+        if (!$doc->exists()) {
+            continue;
+        }
+        $data = $doc->data();
+        $isAgency = ($data['appType'] ?? '') === 'agency' || $doc->id() === $companyId;
+        if ($isAgency) {
+            continue;
+        }
+        $locId = $data['locationId'] ?? $data['location_id'] ?? $doc->id();
+        if (!$locId || (string) $locId === $companyId) {
+            continue;
+        }
+        $locId = (string) $locId;
+        if (!isset($out[$locId])) {
+            $out[$locId] = (string) ($data['location_name'] ?? $data['locationName'] ?? '');
+        }
+    }
+
+    return $out;
+}
+
+/**
+ * When the install JWT has company_id but no location_id, return the only location
+ * under that company if it is unambiguous. Otherwise null (zero or multiple locations).
+ *
+ * @return array{location_id: string, location_name: string}|null
+ */
+function auth_infer_single_location_for_company($db, string $companyId): ?array
+{
+    $map = auth_locations_under_company($db, $companyId);
+    if (count($map) !== 1) {
+        return null;
+    }
+    $locationId = array_key_first($map);
+    $locationName = $map[$locationId] ?? '';
+
+    return ['location_id' => $locationId, 'location_name' => $locationName];
+}
+
+/**
+ * True if ghl_tokens/{locationId} exists and is scoped to this GHL company (not the agency doc).
+ */
+function auth_location_belongs_to_company($db, string $locationId, string $companyId): bool
+{
+    $locationId = (string) $locationId;
+    $companyId = (string) $companyId;
+    if ($locationId === '' || $companyId === '' || $locationId === $companyId) {
+        return false;
+    }
+    $snap = $db->collection('ghl_tokens')->document($locationId)->snapshot();
+    if (!$snap->exists()) {
+        return false;
+    }
+    $data = $snap->data();
+    if (($data['appType'] ?? '') === 'agency') {
+        return false;
+    }
+    $co = $data['companyId'] ?? $data['company_id'] ?? null;
+
+    return $co !== null && (string) $co === $companyId;
+}

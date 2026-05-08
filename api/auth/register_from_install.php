@@ -12,6 +12,7 @@ require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 require __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/../jwt_helper.php';
+require_once __DIR__ . '/../auth_helpers.php';
 require_once __DIR__ . '/user_profile_helper.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -82,11 +83,26 @@ if (!empty($errors)) {
     exit;
 }
 
-$isLocationLevel = !empty($locationId);
-
 try {
     $db = get_firestore();
     $now = new DateTimeImmutable();
+
+    if ($type === 'agency_install' && $locationId && $companyId) {
+        if (!auth_location_belongs_to_company($db, (string) $locationId, (string) $companyId)) {
+            http_response_code(422);
+            echo json_encode(['error' => 'This installation does not match the selected sub-account. Open NOLA SMS Pro from inside the correct GHL sub-account and try again.']);
+            exit;
+        }
+    }
+
+    if ($type === 'agency_install' && !$locationId && $companyId) {
+        $inferred = auth_infer_single_location_for_company($db, (string) $companyId);
+        if ($inferred) {
+            $locationId = $inferred['location_id'];
+        }
+    }
+
+    $isLocationLevel = !empty($locationId);
 
     // ── 1. Check if email already exists ─────────────────────────────────────
     $usersRef = $db->collection('users');

@@ -6,6 +6,7 @@
 
 require_once __DIR__ . '/api/jwt_helper.php';
 require_once __DIR__ . '/api/webhook/firestore_client.php';
+require_once __DIR__ . '/api/auth_helpers.php';
 
 $jwtSecret   = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
 $apiBase     = 'https://smspro-api.nolacrm.io';
@@ -209,36 +210,49 @@ $companyId    = $payload['company_id'] ?? null;
 $companyNameRaw = (string) ($payload['company_name'] ?? '');
 
 // Best-effort display-name hydration from Firestore when token payload is sparse.
-if (($locationName === '' || $companyNameRaw === '') && ($locationId || $companyId)) {
-    try {
+// Agency-level install JWTs omit location_id — infer it when exactly one sub-account token exists.
+try {
+    if ($locationId || $companyId) {
         $db = get_firestore();
 
-        if ($locationId) {
-            $locSnap = $db->collection('ghl_tokens')->document((string) $locationId)->snapshot();
-            if ($locSnap->exists()) {
-                $locData = $locSnap->data();
+        if (!$locationId && $companyId && $tokenType === 'agency_install') {
+            $inferred = auth_infer_single_location_for_company($db, (string) $companyId);
+            if ($inferred) {
+                $locationId = $inferred['location_id'];
                 if ($locationName === '') {
-                    $locationName = htmlspecialchars((string) ($locData['location_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-                }
-                if ($companyNameRaw === '') {
-                    $companyNameRaw = (string) ($locData['company_name'] ?? $locData['agency_name'] ?? '');
-                }
-                if (!$companyId) {
-                    $companyId = $locData['companyId'] ?? $locData['company_id'] ?? $companyId;
+                    $locationName = htmlspecialchars((string) ($inferred['location_name'] ?? ''), ENT_QUOTES, 'UTF-8');
                 }
             }
         }
 
-        if ($companyId && $companyNameRaw === '') {
-            $companySnap = $db->collection('ghl_tokens')->document((string) $companyId)->snapshot();
-            if ($companySnap->exists()) {
-                $companyData = $companySnap->data();
-                $companyNameRaw = (string) ($companyData['company_name'] ?? $companyData['agency_name'] ?? '');
+        if ($locationName === '' || $companyNameRaw === '') {
+            if ($locationId) {
+                $locSnap = $db->collection('ghl_tokens')->document((string) $locationId)->snapshot();
+                if ($locSnap->exists()) {
+                    $locData = $locSnap->data();
+                    if ($locationName === '') {
+                        $locationName = htmlspecialchars((string) ($locData['location_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+                    }
+                    if ($companyNameRaw === '') {
+                        $companyNameRaw = (string) ($locData['company_name'] ?? $locData['agency_name'] ?? '');
+                    }
+                    if (!$companyId) {
+                        $companyId = $locData['companyId'] ?? $locData['company_id'] ?? $companyId;
+                    }
+                }
+            }
+
+            if ($companyId && $companyNameRaw === '') {
+                $companySnap = $db->collection('ghl_tokens')->document((string) $companyId)->snapshot();
+                if ($companySnap->exists()) {
+                    $companyData = $companySnap->data();
+                    $companyNameRaw = (string) ($companyData['company_name'] ?? $companyData['agency_name'] ?? '');
+                }
             }
         }
-    } catch (Exception $e) {
-        error_log('[install-register] display-name hydration failed: ' . $e->getMessage());
     }
+} catch (Exception $e) {
+    error_log('[install-register] Firestore hydration/infer failed: ' . $e->getMessage());
 }
 $companyName = htmlspecialchars($companyNameRaw, ENT_QUOTES, 'UTF-8');
 
@@ -247,9 +261,14 @@ if ($tokenType !== 'install' && $tokenType !== 'agency_install') {
 }
 
 $locDisplay = $locationName ?: $companyName ?: $locationId ?: '—';
+$subaccountRowLabel = $locationId ? 'Subaccount' : 'Company';
 $locationIdSafe = htmlspecialchars((string) ($locationId ?? ''), ENT_QUOTES, 'UTF-8');
 $companyIdSafe = htmlspecialchars((string) ($companyId ?? ''), ENT_QUOTES, 'UTF-8');
 $tokenTypeSafe = htmlspecialchars((string) $tokenType, ENT_QUOTES, 'UTF-8');
+$agencyLocHintHtml = '';
+if ($tokenType === 'agency_install' && ($locationId === null || $locationId === '')) {
+    $agencyLocHintHtml = '<p class="subtitle" style="color:#b45309; font-size:12.5px; line-height:1.45; margin:-8px 0 16px;">No Location ID was sent with this link (common when installing from the agency view with several sub-accounts). Open NOLA SMS Pro from inside the target GHL <strong>sub-account</strong> (custom menu link) so GHL passes <code style="font-size:11px;">location_id</code>, or complete registration as an agency user and add sub-accounts afterward.</p>';
+}
 $showDebugBanner = ir_is_non_production();
 $debugBannerHtml = '';
 if ($showDebugBanner) {
@@ -307,12 +326,13 @@ ir_page('Create Your Account', <<<HTML
     <div id="step-1" class="step-content active">
         <h1>Your Information</h1>
         <p class="subtitle">Setting up for <strong style="color:#2b83fa;">{$locDisplay}</strong></p>
+        {$agencyLocHintHtml}
         
         <div class="field">
             <label>Full Name</label>
             <div class="input-wrap">
                 <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-                <input type="text" id="fullName" placeholder="John Doe">
+                <input type="text" id="fullName" name="nolasmspro_reg_full_name" autocomplete="off" data-lpignore="true" data-1p-ignore placeholder="John Doe">
             </div>
             <div class="error-msg" id="err-fullName"></div>
         </div>
@@ -321,7 +341,7 @@ ir_page('Create Your Account', <<<HTML
             <label>Email Address</label>
             <div class="input-wrap">
                 <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
-                <input type="email" id="email" placeholder="you@company.com">
+                <input type="email" id="email" name="nolasmspro_reg_email" autocomplete="off" data-lpignore="true" data-1p-ignore placeholder="you@company.com">
             </div>
             <div class="error-msg" id="err-email"></div>
         </div>
@@ -330,7 +350,7 @@ ir_page('Create Your Account', <<<HTML
             <label>Phone Number</label>
             <div class="input-wrap">
                 <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
-                <input type="tel" id="phone" placeholder="+1 555 000 0000">
+                <input type="tel" id="phone" name="nolasmspro_reg_phone" autocomplete="off" data-lpignore="true" data-1p-ignore placeholder="+1 555 000 0000">
             </div>
             <div class="error-msg" id="err-phone"></div>
         </div>
@@ -339,7 +359,7 @@ ir_page('Create Your Account', <<<HTML
             <label>Password</label>
             <div class="input-wrap">
                 <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-                <input type="password" id="password" placeholder="At least 8 characters">
+                <input type="password" id="password" name="nolasmspro_reg_password" autocomplete="new-password" data-lpignore="true" data-1p-ignore placeholder="At least 8 characters">
                 <button type="button" class="pw-toggle" onclick="togglePw('password', this)">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                 </button>
@@ -356,7 +376,7 @@ ir_page('Create Your Account', <<<HTML
             <label>Confirm Password</label>
             <div class="input-wrap">
                 <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-                <input type="password" id="confirm" placeholder="Re-enter password">
+                <input type="password" id="confirm" name="nolasmspro_reg_password_confirm" autocomplete="new-password" data-lpignore="true" data-1p-ignore placeholder="Re-enter password">
                 <button type="button" class="pw-toggle" onclick="togglePw('confirm', this)">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                 </button>
@@ -376,7 +396,7 @@ ir_page('Create Your Account', <<<HTML
             <div class="review-row"><span class="review-label">Name</span><span class="review-val" id="rev-name"></span></div>
             <div class="review-row"><span class="review-label">Email</span><span class="review-val" id="rev-email"></span></div>
             <div class="review-row"><span class="review-label">Phone</span><span class="review-val" id="rev-phone"></span></div>
-            <div class="review-row"><span class="review-label">Subaccount</span><span class="review-val hl">{$locDisplay}</span></div>
+            <div class="review-row"><span class="review-label">{$subaccountRowLabel}</span><span class="review-val hl">{$locDisplay}</span></div>
             <div class="review-row"><span class="review-label">Location ID</span><span class="review-val hl">{$locationIdSafe}</span></div>
         </div>
         
