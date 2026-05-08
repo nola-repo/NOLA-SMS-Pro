@@ -64,10 +64,13 @@
             var userData = JSON.parse(atob(userB64));
             localStorage.setItem('nola_auth_user', JSON.stringify({
                 name:                 userData.name                 || '',
+                full_name:            userData.full_name            || userData.name || '',
                 firstName:            userData.firstName            || '',
                 lastName:             userData.lastName             || '',
                 email:                userData.email               || '',
+                email_address:        userData.email_address        || userData.email || '',
                 phone:                (userData.phone || '').replace(/\s+/g, ''),
+                phone_number:         (userData.phone_number || userData.phone || '').replace(/\s+/g, ''),
                 location_id:          userData.location_id          || null,
                 company_id:           userData.company_id           || null,
                 location_name:        userData.location_name        || null,

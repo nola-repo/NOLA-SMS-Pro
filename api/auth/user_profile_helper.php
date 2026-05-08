@@ -68,10 +68,13 @@ function auth_user_payload_for_api(array $d, string $emailFallback = ''): array
 
     return [
         'name'                 => $resolvedName,
+        'full_name'            => $resolvedName,
         'firstName'            => $fl['firstName'],
         'lastName'             => $fl['lastName'],
         'email'                => $email,
+        'email_address'        => $email,
         'phone'                => isset($d['phone']) ? (string) $d['phone'] : '',
+        'phone_number'         => isset($d['phone']) ? (string) $d['phone'] : '',
         'location_id'          => $d['active_location_id'] ?? null,
         'company_id'           => $d['company_id'] ?? null,
         'location_name'        => $d['location_name'] ?? null,
