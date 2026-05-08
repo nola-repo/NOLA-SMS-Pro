@@ -56,16 +56,17 @@
     }
 
     try {
+        localStorage.removeItem('nola_auth_user');
+        localStorage.removeItem('nola_user');
+        localStorage.removeItem('nola_settings_account');
+
         // Write JWT — same key that authService.ts / safeStorage reads
         localStorage.setItem('nola_auth_token', token);
 
         // Write user profile cache
         if (userB64) {
             var userData = JSON.parse(atob(userB64));
-            var locId = userData.location_id || null;
-            var coId = userData.company_id || null;
-
-            localStorage.setItem('nola_auth_user', JSON.stringify({
+            var normalizedUser = {
                 name:                 userData.name                 || '',
                 full_name:            userData.full_name            || userData.name || '',
                 firstName:            userData.firstName            || '',
@@ -74,28 +75,26 @@
                 email_address:        userData.email_address        || userData.email || '',
                 phone:                (userData.phone || '').replace(/\s+/g, ''),
                 phone_number:         (userData.phone_number || userData.phone || '').replace(/\s+/g, ''),
-                location_id:          locId,
-                company_id:           coId,
+                location_id:          userData.location_id          || null,
+                company_id:           userData.company_id           || null,
                 location_name:        userData.location_name        || null,
                 company_name:         userData.company_name         || null,
-            }));
+            };
+            localStorage.setItem('nola_auth_user', JSON.stringify(normalizedUser));
+            localStorage.setItem('nola_user', JSON.stringify(normalizedUser));
 
-            // Sync other keys to prevent stale data leakage between sessions
-            if (locId) {
-                localStorage.setItem('nola_location_id', locId);
-                
-                // Sync nola_settings_account (used by Settings.tsx)
-                var settingsRaw = localStorage.getItem('nola_settings_account');
-                var settings = settingsRaw ? JSON.parse(settingsRaw) : {};
-                settings.ghlLocationId = locId;
-                settings.displayName = userData.location_name || settings.displayName || '';
-                localStorage.setItem('nola_settings_account', JSON.stringify(settings));
+            if (normalizedUser.location_id) {
+                localStorage.setItem('nola_location_id', normalizedUser.location_id);
+                localStorage.setItem('nola_settings_account', JSON.stringify({
+                    ghlLocationId: normalizedUser.location_id,
+                    displayName: normalizedUser.location_name || '',
+                }));
             } else {
                 localStorage.removeItem('nola_location_id');
             }
 
-            if (coId) {
-                localStorage.setItem('nola_company_id', coId);
+            if (normalizedUser.company_id) {
+                localStorage.setItem('nola_company_id', normalizedUser.company_id);
             } else {
                 localStorage.removeItem('nola_company_id');
             }

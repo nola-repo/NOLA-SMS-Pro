@@ -79,6 +79,7 @@ try {
         'email'      => $email,
         'role'       => $role,
         'company_id' => $companyId,
+        'location_id' => $locationId,
     ], $jwtSecret, 28800); // 8 hours
 
     echo json_encode([
