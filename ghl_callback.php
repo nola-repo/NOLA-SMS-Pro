@@ -889,6 +889,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
             'location_id'   => $singleLocationId,
             'location_name' => $singleLocName ?: '',
             'company_id'    => $companyId,
+            'resolution_source' => 'case_a_single_location',
         ], $jwtSecret2, 900);
 
         error_log("[GHL_CALLBACK] Case A: {$singleLocationId} — redirecting to registration form for confirmation/setup.");
@@ -1214,6 +1215,20 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     // Priority: state-pinned > direct token field > single provisioned loc
     $singleCandidateFromAll = count($allLocationIds) === 1 ? $allLocationIds[0] : null;
     $singleApprovedLoc = count($approvedLocationIds) === 1 ? $approvedLocationIds[0] : null;
+    $resolvedSource = null;
+    if ($statePinned) {
+        $resolvedSource = 'state_pinned';
+    } elseif ($directLocFromToken) {
+        $resolvedSource = 'token_location_field';
+    } elseif ($singleApprovedLoc) {
+        $resolvedSource = 'approved_locations_single';
+    } elseif ($singleCandidateFromAll) {
+        $resolvedSource = 'all_locations_single';
+    } elseif (!empty($successfulLocIds)) {
+        $resolvedSource = 'successful_locations_fallback';
+    } else {
+        $resolvedSource = 'unresolved';
+    }
     $onlyLocId = $statePinned
         ?? $directLocFromToken
         ?? $singleApprovedLoc
@@ -1239,6 +1254,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
             'location_id'   => $onlyLocId,
             'location_name' => $onlyLocName,
             'company_id'    => $companyId,
+            'resolution_source' => $resolvedSource,
         ], $jwtSecretB, 900);
 
         error_log("[GHL_CALLBACK] Case B: redirecting to registration form for location ({$onlyLocId}) name=({$onlyLocName}).");
@@ -1441,6 +1457,7 @@ try {
         'location_id'   => $locationId,
         'location_name' => $locationName ?: '',
         'company_id'    => $data['companyId'] ?? '',
+        'resolution_source' => 'direct_location_callback',
     ], $jwtSecret, 900); // 15 minutes
 
     if ($hasExistingUser) {

@@ -265,6 +265,8 @@ $subaccountRowLabel = $locationId ? 'Subaccount' : 'Company';
 $locationIdSafe = htmlspecialchars((string) ($locationId ?? ''), ENT_QUOTES, 'UTF-8');
 $companyIdSafe = htmlspecialchars((string) ($companyId ?? ''), ENT_QUOTES, 'UTF-8');
 $tokenTypeSafe = htmlspecialchars((string) $tokenType, ENT_QUOTES, 'UTF-8');
+$resolutionSource = (string) ($payload['resolution_source'] ?? 'unknown');
+$resolutionSourceSafe = htmlspecialchars($resolutionSource, ENT_QUOTES, 'UTF-8');
 $entityIdLabel = $locationId ? 'Location ID' : 'Company ID';
 $entityIdValue = $locationId ? $locationIdSafe : $companyIdSafe;
 if ($entityIdValue === '') {
@@ -438,8 +440,16 @@ ir_page('Create Your Account', <<<HTML
         const installToken = "{$installToken}";
         const API_BASE = "{$apiBase}";
         const REACT_APP = "{$reactApp}";
+        const INSTALL_DIAGNOSTICS = {
+            token_type: "{$tokenTypeSafe}",
+            location_id: "{$locationIdSafe}",
+            company_id: "{$companyIdSafe}",
+            resolution_source: "{$resolutionSourceSafe}"
+        };
         let agreed = false;
         let successData = null;
+
+        console.info('[Install Register] Token diagnostics', INSTALL_DIAGNOSTICS);
 
         function id(el) { return document.getElementById(el); }
         
