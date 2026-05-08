@@ -118,7 +118,28 @@ try {
         }
     }
 
-    // ── 1b. If no email match, check for an INCOMPLETE doc by location_id ────
+    // ── 1b. Enforce strict 1:1 (subaccount -> email) before creating/linking ─
+    $subaccountOwnerId = null;
+    $subaccountOwnerEmail = null;
+    if ($isLocationLevel) {
+        $subaccountOwnerQuery = $usersRef->where('active_location_id', '=', $locationId)->limit(1)->documents();
+        foreach ($subaccountOwnerQuery as $snap) {
+            if ($snap->exists()) {
+                $ownerData = $snap->data();
+                $subaccountOwnerId = $snap->id();
+                $subaccountOwnerEmail = strtolower(trim((string)($ownerData['email'] ?? '')));
+                break;
+            }
+        }
+
+        if ($subaccountOwnerId !== null && $subaccountOwnerEmail !== '' && $subaccountOwnerEmail !== $email) {
+            http_response_code(409);
+            echo json_encode(['error' => 'This subaccount is already linked to another email. Please login with the existing account.']);
+            exit;
+        }
+    }
+
+    // ── 1c. If no email match, check for an INCOMPLETE doc by location_id ────
     if (!$existingDoc && $isLocationLevel) {
         $locQuery = $usersRef->where('active_location_id', '=', $locationId)->limit(1)->documents();
         foreach ($locQuery as $snap) {
@@ -186,22 +207,40 @@ try {
 
         $usersRef->document($existingId)->set($updates, ['merge' => true]);
 
-        // Overwrite location_memberships to ONLY store the newly detected location 
-        // (Ensuring it is not a growing array, as requested)
         if ($isLocationLevel && $locationId) {
-            try {
-                $db->collection('users')->document($existingId)->update([
-                    ['path' => 'location_memberships', 'value' => [$locationId]],
-                ]);
-            } catch (Exception $e) {
-                error_log('[REGISTER] Failed to update location_memberships: ' . $e->getMessage());
-            }
-
-            // Write location_members subcollection entry (force-replace to evict any stale/ghost entries)
-            _write_location_member($db, $locationId, $existingId, $email, $now, true);
+            // Enforce one-email -> one-subaccount by pruning stale links first.
+            _prune_user_subaccounts_except($db, $existingId, $locationId);
+            _write_user_subaccount(
+                $db,
+                $existingId,
+                $locationId,
+                [
+                    'company_id' => $existingDoc['company_id'] ?? $companyId ?? '',
+                    'company_name' => $newCompanyName ?? ($existingDoc['company_name'] ?? ''),
+                    'location_name' => $newLocationName ?? ($existingDoc['location_name'] ?? ''),
+                    'role' => $existingDoc['role'] ?? 'user',
+                ],
+                $now,
+                false
+            );
+        } elseif (!empty($companyId)) {
+            // Agency model follows the same one-email -> one-company link.
+            _prune_user_subaccounts_except($db, $existingId, (string)$companyId);
+            _write_user_subaccount(
+                $db,
+                $existingId,
+                (string)$companyId,
+                [
+                    'company_id' => $companyId,
+                    'company_name' => $newCompanyName ?? ($existingDoc['company_name'] ?? ''),
+                    'role' => $existingDoc['role'] ?? 'agency',
+                ],
+                $now,
+                true
+            );
         }
 
-        // Fetch fresh profile for response + location_memberships
+        // Fetch fresh profile for response
         $freshDoc = $db->collection('users')->document($existingId)->snapshot();
         $fd = $freshDoc->exists() ? $freshDoc->data() : array_merge($existingDoc, $updates);
 
@@ -209,8 +248,6 @@ try {
         $linkedCo = $fd['company_id'] ?? $companyId ?? null;
         $linkedLoc = $fd['active_location_id'] ?? null;
 
-        // Force the response to show only the single membership
-        $locationMemberships = $isLocationLevel ? [$locationId] : ($fd['location_memberships'] ?? []);
         $locName = $fd['location_name'] ?? null;
         $compName = $fd['company_name'] ?? null;
         $userApiOut = auth_user_payload_for_api($fd, $email);
@@ -232,7 +269,6 @@ try {
             'company_id' => $linkedCo,
             'location_name' => $locName,
             'company_name' => $compName,
-            'location_memberships' => $locationMemberships,
             'user' => $userApiOut,
         ]);
         exit;
@@ -280,7 +316,6 @@ try {
 
     if ($isLocationLevel) {
         $userData['active_location_id'] = $locationId;
-        $userData['location_memberships'] = [$locationId]; // initialise membership array
     }
     if (!empty($companyId)) {
         $userData['company_id'] = $companyId;
@@ -292,9 +327,34 @@ try {
     $newUserDoc->set($userData);
     $newUserId = $newUserDoc->id();
 
-    // Write location_members subcollection entry
+    // Write user-owned subaccount entry
     if ($isLocationLevel && $locationId) {
-        _write_location_member($db, $locationId, $newUserId, $email, $now);
+        _write_user_subaccount(
+            $db,
+            $newUserId,
+            $locationId,
+            [
+                'company_id' => $companyId ?? '',
+                'company_name' => $companyName ?? '',
+                'location_name' => $locationName ?? '',
+                'role' => $role,
+            ],
+            $now,
+            false
+        );
+    } elseif (!empty($companyId)) {
+        _write_user_subaccount(
+            $db,
+            $newUserId,
+            (string)$companyId,
+            [
+                'company_id' => $companyId,
+                'company_name' => $companyName ?? '',
+                'role' => $role,
+            ],
+            $now,
+            true
+        );
     }
 
     // Return JWT immediately so the install page can cache auth without a second login
@@ -304,8 +364,6 @@ try {
         'role' => $role,
         'company_id' => $companyId ?? null,
     ], $jwtSecret, 28800);
-
-    $locationMemberships = $isLocationLevel ? [$locationId] : [];
 
     $userApiNew = auth_user_payload_for_api($userData, $email);
 
@@ -319,7 +377,6 @@ try {
         'company_id' => $companyId ?? null,
         'location_name' => $locationName ?? null,
         'company_name' => $companyName ?? null,
-        'location_memberships' => $locationMemberships,
         'user' => $userApiNew,
     ]);
 
@@ -331,42 +388,49 @@ try {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
- * Write (or update) a member record in the location_members/{locationId}/members/{uid}
- * subcollection. Enforces 1-to-1: one active member per location.
- *
- * @param bool $forceReplace  If true, delete ALL other member docs first to prevent
- *                            ghost/stale entries from blocking future installs.
+ * Write (or update) a subaccount record in users/{uid}/subaccounts/{entityId}.
+ * For agencies, entityId is companyId. For location users, entityId is locationId.
  */
-function _write_location_member($db, string $locationId, string $uid, string $email, DateTimeImmutable $now, bool $forceReplace = false): void
+function _write_user_subaccount($db, string $uid, string $entityId, array $details, DateTimeImmutable $now, bool $isAgency = false): void
 {
     try {
-        $membersRef = $db->collection('location_members')->document($locationId)->collection('members');
-        $memberDocRef = $membersRef->document($uid);
+        $subaccountRef = $db->collection('users')->document($uid)->collection('subaccounts')->document($entityId);
+        $payload = [
+            'company_id' => $details['company_id'] ?? '',
+            'company_name' => $details['company_name'] ?? '',
+            'role' => $details['role'] ?? 'user',
+            'is_active' => true,
+            'linked_at' => new \Google\Cloud\Core\Timestamp($now),
+        ];
 
-        if ($forceReplace) {
-            // ── Purge any stale/ghost member docs that don't belong to $uid ──
-            // This enforces strict 1-to-1: only one user per location.
-            $staleMembers = $membersRef->documents();
-            foreach ($staleMembers as $staleDoc) {
-                if ($staleDoc->exists() && $staleDoc->id() !== $uid) {
-                    error_log("[register_from_install] Purging stale member {$staleDoc->id()} from location {$locationId}");
-                    $staleDoc->reference()->delete();
-                }
-            }
+        if (!$isAgency) {
+            $payload['location_id'] = $entityId;
+            $payload['location_name'] = $details['location_name'] ?? '';
         }
 
-        $existing = $memberDocRef->snapshot();
-
-        if (!$existing->exists()) {
-            $memberDocRef->set([
-                'uid' => $uid,
-                'email' => $email,
-                'role' => 'user',
-                'joined_at' => new \Google\Cloud\Core\Timestamp($now),
-            ]);
-        }
-        // If already a member, leave it as-is (re-installs don't overwrite the existing entry)
+        $subaccountRef->set($payload, ['merge' => true]);
     } catch (Exception $e) {
-        error_log("[register_from_install] _write_location_member failed for uid={$uid}, loc={$locationId}: " . $e->getMessage());
+        error_log("[register_from_install] _write_user_subaccount failed for uid={$uid}, entity={$entityId}: " . $e->getMessage());
+    }
+}
+
+/**
+ * Keep only the active entity link for a user inside users/{uid}/subaccounts.
+ */
+function _prune_user_subaccounts_except($db, string $uid, string $keepEntityId): void
+{
+    try {
+        $subs = $db->collection('users')->document($uid)->collection('subaccounts')->documents();
+        foreach ($subs as $subDoc) {
+            if (!$subDoc->exists()) {
+                continue;
+            }
+            if ((string)$subDoc->id() === (string)$keepEntityId) {
+                continue;
+            }
+            $subDoc->reference()->delete();
+        }
+    } catch (Exception $e) {
+        error_log("[register_from_install] _prune_user_subaccounts_except failed for uid={$uid}, keep={$keepEntityId}: " . $e->getMessage());
     }
 }

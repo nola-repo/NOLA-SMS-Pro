@@ -55,8 +55,25 @@ try {
 
     $d = $snap->data();
 
+    $subaccounts = [];
+    try {
+        $subSnap = $db->collection('users')->document($userId)->collection('subaccounts')->documents();
+        foreach ($subSnap as $subDoc) {
+            if (!$subDoc->exists()) {
+                continue;
+            }
+            $subData = $subDoc->data();
+            if (!isset($subData['id'])) {
+                $subData['id'] = $subDoc->id();
+            }
+            $subaccounts[] = $subData;
+        }
+    } catch (Exception $ignored) {
+    }
+
     echo json_encode([
         'user' => auth_user_payload_for_api($d),
+        'subaccounts' => $subaccounts,
     ]);
 } catch (Exception $e) {
     http_response_code(500);

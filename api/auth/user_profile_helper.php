@@ -76,6 +76,5 @@ function auth_user_payload_for_api(array $d, string $emailFallback = ''): array
         'company_id'           => $d['company_id'] ?? null,
         'location_name'        => $d['location_name'] ?? null,
         'company_name'         => $d['company_name'] ?? null,
-        'location_memberships' => $d['location_memberships'] ?? [],
     ];
 }

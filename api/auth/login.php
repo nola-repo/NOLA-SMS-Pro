@@ -73,7 +73,6 @@ try {
     $role        = $userData['role']               ?? 'user';
     $companyId   = $userData['company_id']          ?? null;
     $locationId  = $userData['active_location_id']  ?? null;
-    $locationMemberships = $userData['location_memberships'] ?? ($locationId ? [$locationId] : []);
     // ── Sign JWT ─────────────────────────────────────────────────────────────
     $token = jwt_sign([
         'sub'        => $userId,
@@ -87,7 +86,6 @@ try {
         'role'                 => $role,
         'company_id'           => $companyId,
         'location_id'          => $locationId,
-        'location_memberships' => $locationMemberships,
         'user'                 => auth_user_payload_for_api($userData, $email),
     ]);
 

@@ -1117,9 +1117,9 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     //   Tier 1 — Brand new: no ghl_tokens/{locationId} doc exists at all
     //             → Highest priority for registration
     //   Tier 2 — Installed before but never registered: token doc exists,
-    //             location_members has no members
+    //             users has no account linked to this active location
     //             → Also needs registration
-    //   Tier 3 — Fully set up: token doc exists AND members exist
+    //   Tier 3 — Fully set up: token doc exists AND user exists for location
     //             → Redirect to welcome_back login
     //
     // Tier 1 + Tier 2 → needsRegistration[]
@@ -1166,33 +1166,32 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
             continue;
         }
 
-        // ── Tier 2 / Tier 3 check: does location_members have any member? ────
-        $hasMembers = false;
+        // ── Tier 2 / Tier 3 check: does users have a linked account? ─────────
+        $hasLinkedUser = false;
         try {
             foreach (
-                $db->collection('location_members')
-                   ->document($locId)
-                   ->collection('members')
+                $db->collection('users')
+                   ->where('active_location_id', '=', $locId)
                    ->limit(1)
                    ->documents()
                 as $m
             ) {
                 if ($m->exists()) {
-                    $hasMembers = true;
+                    $hasLinkedUser = true;
                     break;
                 }
             }
         } catch (Exception $e) {
-            error_log("[GHL_CALLBACK] Case B: could not check location_members for {$locId}: " . $e->getMessage());
+            error_log("[GHL_CALLBACK] Case B: could not check users for location {$locId}: " . $e->getMessage());
         }
 
-        if ($hasMembers) {
+        if ($hasLinkedUser) {
             // Tier 3 — fully registered
-            error_log("[GHL_CALLBACK] Case B: {$locId} is Tier 3 (has members) — welcome_back.");
+            error_log("[GHL_CALLBACK] Case B: {$locId} is Tier 3 (linked user exists) — welcome_back.");
             $alreadyRegistered[$locId] = $locName;
         } else {
             // Tier 2 — token doc exists but registration never completed
-            error_log("[GHL_CALLBACK] Case B: {$locId} is Tier 2 (token exists, no members) — needs registration.");
+            error_log("[GHL_CALLBACK] Case B: {$locId} is Tier 2 (token exists, no linked user) — needs registration.");
             $needsRegistration[$locId] = $locName;
         }
     }
@@ -1437,24 +1436,22 @@ $jwtSecret       = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_pr
 $reactAppUrl     = 'https://app.nolacrm.io';
 $locationNameEnc = urlencode($locationName ?: 'Your Sub-Account');
 
-// Check if ANY user is already registered for this location via location_members subcollection.
-// This is faster than scanning the full users collection and is the correct source of truth.
-$hasExistingMembers = false;
+// Check if ANY user is already registered for this location via users collection.
+$hasExistingUser = false;
 try {
-    $membersSnap = $db->collection('location_members')
-        ->document($locationId)
-        ->collection('members')
+    $usersSnap = $db->collection('users')
+        ->where('active_location_id', '=', $locationId)
         ->limit(1)
         ->documents();
 
-    foreach ($membersSnap as $m) {
+    foreach ($usersSnap as $m) {
         if ($m->exists()) {
-            $hasExistingMembers = true;
+            $hasExistingUser = true;
             break;
         }
     }
 } catch (Exception $e) {
-    error_log('[GHL_CALLBACK] Could not check location_members: ' . $e->getMessage());
+    error_log('[GHL_CALLBACK] Could not check existing users by active_location_id: ' . $e->getMessage());
 }
 
     $installToken = jwt_sign([
@@ -1464,7 +1461,7 @@ try {
         'company_id'    => $data['companyId'] ?? '',
     ], $jwtSecret, 900); // 15 minutes
 
-    if ($hasExistingMembers) {
+    if ($hasExistingUser) {
         $redirectUrl = 'https://smspro-api.nolacrm.io/login?welcome_back=1&name=' . urlencode($locationName);
         error_log("[GHL_CALLBACK] Redirecting {$locationId} to login.");
     } else {
@@ -1473,7 +1470,7 @@ try {
     }
 error_log('[GHL_CALLBACK_DEBUG] final_redirect=' . json_encode([
     'locationId' => $locationId,
-    'hasExistingMembers' => $hasExistingMembers,
+    'hasExistingUser' => $hasExistingUser,
     'redirectUrl' => $redirectUrl,
 ]));
 
