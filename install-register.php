@@ -265,6 +265,12 @@ $subaccountRowLabel = $locationId ? 'Subaccount' : 'Company';
 $locationIdSafe = htmlspecialchars((string) ($locationId ?? ''), ENT_QUOTES, 'UTF-8');
 $companyIdSafe = htmlspecialchars((string) ($companyId ?? ''), ENT_QUOTES, 'UTF-8');
 $tokenTypeSafe = htmlspecialchars((string) $tokenType, ENT_QUOTES, 'UTF-8');
+$entityIdLabel = $locationId ? 'Location ID' : 'Company ID';
+$entityIdValue = $locationId ? $locationIdSafe : $companyIdSafe;
+if ($entityIdValue === '') {
+    $entityIdValue = '—';
+}
+$entityIdLabelSafe = htmlspecialchars($entityIdLabel, ENT_QUOTES, 'UTF-8');
 $agencyLocHintHtml = '';
 if ($tokenType === 'agency_install' && ($locationId === null || $locationId === '')) {
     $agencyLocHintHtml = '<p class="subtitle" style="color:#b45309; font-size:12.5px; line-height:1.45; margin:-8px 0 16px;">No Location ID was sent with this link (common when installing from the agency view with several sub-accounts). Open NOLA SMS Pro from inside the target GHL <strong>sub-account</strong> (custom menu link) so GHL passes <code style="font-size:11px;">location_id</code>, or complete registration as an agency user and add sub-accounts afterward.</p>';
@@ -397,7 +403,7 @@ ir_page('Create Your Account', <<<HTML
             <div class="review-row"><span class="review-label">Email</span><span class="review-val" id="rev-email"></span></div>
             <div class="review-row"><span class="review-label">Phone</span><span class="review-val" id="rev-phone"></span></div>
             <div class="review-row"><span class="review-label">{$subaccountRowLabel}</span><span class="review-val hl">{$locDisplay}</span></div>
-            <div class="review-row"><span class="review-label">Location ID</span><span class="review-val hl">{$locationIdSafe}</span></div>
+            <div class="review-row"><span class="review-label">{$entityIdLabelSafe}</span><span class="review-val hl">{$entityIdValue}</span></div>
         </div>
         
         <div class="checkbox-wrap" onclick="toggleAgree()">
