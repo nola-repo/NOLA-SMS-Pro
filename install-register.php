@@ -179,6 +179,47 @@ HTML;
     exit;
 }
 
+/**
+ * Fallback guard: if callback missed it, detect existing linked user here
+ * and redirect straight to login before user fills the form.
+ */
+function ir_has_linked_user_for_location($db, string $locationId): bool
+{
+    try {
+        foreach (
+            $db->collection('users')
+                ->where('active_location_id', '=', $locationId)
+                ->limit(1)
+                ->documents()
+            as $userDoc
+        ) {
+            if ($userDoc->exists()) {
+                return true;
+            }
+        }
+    } catch (Exception $e) {
+        error_log('[install-register] active_location_id linked-user check failed: ' . $e->getMessage());
+    }
+
+    try {
+        foreach (
+            $db->collectionGroup('subaccounts')
+                ->where('location_id', '=', $locationId)
+                ->limit(1)
+                ->documents()
+            as $subDoc
+        ) {
+            if ($subDoc->exists()) {
+                return true;
+            }
+        }
+    } catch (Exception $e) {
+        error_log('[install-register] subaccounts linked-user check failed: ' . $e->getMessage());
+    }
+
+    return false;
+}
+
 if (!$installToken) {
     ir_page('Invalid Link', <<<HTML
         <div style="text-align: center;">
@@ -205,7 +246,8 @@ HTML);
 
 $tokenType    = $payload['type'] ?? '';
 $locationId   = $payload['location_id'] ?? null;
-$locationName = htmlspecialchars($payload['location_name'] ?? '', ENT_QUOTES, 'UTF-8');
+$locationNameRaw = (string) ($payload['location_name'] ?? '');
+$locationName = htmlspecialchars($locationNameRaw, ENT_QUOTES, 'UTF-8');
 $companyId    = $payload['company_id'] ?? null;
 $companyNameRaw = (string) ($payload['company_name'] ?? '');
 
@@ -231,7 +273,8 @@ try {
                 if ($locSnap->exists()) {
                     $locData = $locSnap->data();
                     if ($locationName === '') {
-                        $locationName = htmlspecialchars((string) ($locData['location_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+                        $locationNameRaw = (string) ($locData['location_name'] ?? '');
+                        $locationName = htmlspecialchars($locationNameRaw, ENT_QUOTES, 'UTF-8');
                     }
                     if ($companyNameRaw === '') {
                         $companyNameRaw = (string) ($locData['company_name'] ?? $locData['agency_name'] ?? '');
@@ -258,6 +301,21 @@ $companyName = htmlspecialchars($companyNameRaw, ENT_QUOTES, 'UTF-8');
 
 if ($tokenType !== 'install' && $tokenType !== 'agency_install') {
     ir_page('Invalid Token', '<div style="text-align:center;"><h1>Invalid Token</h1><p class="subtitle">Unexpected token type. Please reinstall.</p></div>');
+}
+
+// Final pre-form guard: if this location is already linked, skip registration.
+if ($locationId) {
+    try {
+        $db = isset($db) ? $db : get_firestore();
+        if (ir_has_linked_user_for_location($db, (string) $locationId)) {
+            $loginName = $locationNameRaw !== '' ? $locationNameRaw : ($companyNameRaw !== '' ? $companyNameRaw : 'Your Sub-Account');
+            $redirectUrl = 'https://smspro-api.nolacrm.io/login?welcome_back=1&name=' . urlencode($loginName);
+            header('Location: ' . $redirectUrl, true, 302);
+            exit;
+        }
+    } catch (Exception $e) {
+        error_log('[install-register] pre-form linked-user redirect guard failed: ' . $e->getMessage());
+    }
 }
 
 $locDisplay = $locationName ?: $companyName ?: $locationId ?: '—';
