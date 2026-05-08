@@ -55,7 +55,9 @@ try {
     // 3b. Fetch subaccount owner's profile for Settings personal details
     $userEmail = null;
     $userPhone = null;
-    $userName = null;
+    $userName  = null;
+    $userFirstName = null;
+    $userLastName  = null;
 
     try {
         $userQuery = $db->collection('users')
@@ -68,14 +70,14 @@ try {
                 continue;
             }
             $userData = $doc->data();
-            $userName = isset($userData['name']) ? trim((string)$userData['name']) : '';
-            $userEmail = isset($userData['email']) ? trim((string)$userData['email']) : null;
-            $userPhone = isset($userData['phone']) ? trim((string)$userData['phone']) : null;
+            $userName      = isset($userData['name'])      ? trim((string)$userData['name'])      : '';
+            $userFirstName = isset($userData['firstName']) ? trim((string)$userData['firstName']) : null;
+            $userLastName  = isset($userData['lastName'])  ? trim((string)$userData['lastName'])  : null;
+            $userEmail     = isset($userData['email'])     ? trim((string)$userData['email'])     : null;
+            $userPhone     = isset($userData['phone'])     ? trim((string)$userData['phone'])     : null;
 
             if ($userName === '') {
-                $first = isset($userData['firstName']) ? trim((string)$userData['firstName']) : '';
-                $last = isset($userData['lastName']) ? trim((string)$userData['lastName']) : '';
-                $joined = trim($first . ' ' . $last);
+                $joined = trim(($userFirstName ?? '') . ' ' . ($userLastName ?? ''));
                 $userName = $joined !== '' ? $joined : null;
             }
             break;
@@ -103,14 +105,14 @@ try {
                 }
 
                 $userData = $parentSnap->data();
-                $userName = isset($userData['name']) ? trim((string)$userData['name']) : '';
-                $userEmail = isset($userData['email']) ? trim((string)$userData['email']) : null;
-                $userPhone = isset($userData['phone']) ? trim((string)$userData['phone']) : null;
+                $userName      = isset($userData['name'])      ? trim((string)$userData['name'])      : '';
+                $userFirstName = isset($userData['firstName']) ? trim((string)$userData['firstName']) : null;
+                $userLastName  = isset($userData['lastName'])  ? trim((string)$userData['lastName'])  : null;
+                $userEmail     = isset($userData['email'])     ? trim((string)$userData['email'])     : null;
+                $userPhone     = isset($userData['phone'])     ? trim((string)$userData['phone'])     : null;
 
                 if ($userName === '') {
-                    $first = isset($userData['firstName']) ? trim((string)$userData['firstName']) : '';
-                    $last = isset($userData['lastName']) ? trim((string)$userData['lastName']) : '';
-                    $joined = trim($first . ' ' . $last);
+                    $joined = trim(($userFirstName ?? '') . ' ' . ($userLastName ?? ''));
                     $userName = $joined !== '' ? $joined : null;
                 }
                 break;
@@ -120,23 +122,32 @@ try {
         error_log("[api/account.php] Failed to fetch user credentials: " . $e->getMessage());
     }
 
+    // If firstName/lastName weren't stored separately, split from full name
+    if (($userFirstName === null || $userFirstName === '') && $userName) {
+        $nameParts     = preg_split('/\s+/', trim((string)$userName));
+        $userFirstName = $nameParts[0] ?? null;
+        $userLastName  = count($nameParts) > 1 ? implode(' ', array_slice($nameParts, 1)) : null;
+    }
+
     // 4. Response format
     echo json_encode([
         'status' => 'success',
         'data' => [
-            'location_id' => $locId,
-            'location_name' => $locationName,
-            'name' => $userName,
-            'full_name' => $userName,
-            'email' => $userEmail,
-            'email_address' => $userEmail,
-            'phone' => $userPhone,
-            'phone_number' => $userPhone,
-            'approved_sender_id' => $intData['approved_sender_id'] ?? null,
-            'free_usage_count' => $intData['free_usage_count'] ?? 0,
-            'free_credits_total' => $intData['free_credits_total'] ?? 10,
-            'credit_balance' => (int)($intData['credit_balance'] ?? 0),
-            'currency' => $intData['currency'] ?? 'PHP'
+            'location_id'       => $locId,
+            'location_name'     => $locationName,
+            'name'              => $userName,
+            'full_name'         => $userName,
+            'firstName'         => $userFirstName,
+            'lastName'          => $userLastName,
+            'email'             => $userEmail,
+            'email_address'     => $userEmail,
+            'phone'             => $userPhone,
+            'phone_number'      => $userPhone,
+            'approved_sender_id'  => $intData['approved_sender_id'] ?? null,
+            'free_usage_count'    => $intData['free_usage_count'] ?? 0,
+            'free_credits_total'  => $intData['free_credits_total'] ?? 10,
+            'credit_balance'      => (int)($intData['credit_balance'] ?? 0),
+            'currency'            => $intData['currency'] ?? 'PHP'
         ]
     ]);
 
