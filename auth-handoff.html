@@ -62,6 +62,9 @@
         // Write user profile cache
         if (userB64) {
             var userData = JSON.parse(atob(userB64));
+            var locId = userData.location_id || null;
+            var coId = userData.company_id || null;
+
             localStorage.setItem('nola_auth_user', JSON.stringify({
                 name:                 userData.name                 || '',
                 full_name:            userData.full_name            || userData.name || '',
@@ -71,11 +74,31 @@
                 email_address:        userData.email_address        || userData.email || '',
                 phone:                (userData.phone || '').replace(/\s+/g, ''),
                 phone_number:         (userData.phone_number || userData.phone || '').replace(/\s+/g, ''),
-                location_id:          userData.location_id          || null,
-                company_id:           userData.company_id           || null,
+                location_id:          locId,
+                company_id:           coId,
                 location_name:        userData.location_name        || null,
                 company_name:         userData.company_name         || null,
             }));
+
+            // Sync other keys to prevent stale data leakage between sessions
+            if (locId) {
+                localStorage.setItem('nola_location_id', locId);
+                
+                // Sync nola_settings_account (used by Settings.tsx)
+                var settingsRaw = localStorage.getItem('nola_settings_account');
+                var settings = settingsRaw ? JSON.parse(settingsRaw) : {};
+                settings.ghlLocationId = locId;
+                settings.displayName = userData.location_name || settings.displayName || '';
+                localStorage.setItem('nola_settings_account', JSON.stringify(settings));
+            } else {
+                localStorage.removeItem('nola_location_id');
+            }
+
+            if (coId) {
+                localStorage.setItem('nola_company_id', coId);
+            } else {
+                localStorage.removeItem('nola_company_id');
+            }
         }
     } catch (e) {
         // localStorage may be blocked (iframe/private mode) — still redirect,
