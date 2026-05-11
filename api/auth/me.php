@@ -86,7 +86,12 @@ if (!$jwt) {
     exit;
 }
 
-$jwtSecret = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
+$jwtSecret = getenv('JWT_SECRET');
+if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
+    http_response_code(500);
+    echo json_encode(['error' => 'Server misconfiguration: JWT secret missing.']);
+    exit;
+}
 $payload   = jwt_verify($jwt, $jwtSecret);
 
 if (!$payload) {
@@ -103,8 +108,18 @@ if (!$userId) {
 }
 
 try {
-    $db   = get_firestore();
-    $snap = $db->collection('users')->document($userId)->snapshot();
+    $db = get_firestore();
+    $role = (string)($payload['role'] ?? 'user');
+    $authCollection = (string)($payload['auth_collection'] ?? '');
+    $isAgency = $role === 'agency';
+    $collection = $authCollection !== '' ? $authCollection : ($isAgency ? 'agency_users' : 'users');
+    $snap = $db->collection($collection)->document($userId)->snapshot();
+
+    // Backward compatibility for legacy tokens and pre-migration docs.
+    if (!$snap->exists() && $collection !== 'users') {
+        $collection = 'users';
+        $snap = $db->collection($collection)->document($userId)->snapshot();
+    }
 
     if (!$snap->exists()) {
         http_response_code(404);
@@ -115,19 +130,21 @@ try {
     $d = $snap->data();
 
     $subaccounts = [];
-    try {
-        $subSnap = $db->collection('users')->document($userId)->collection('subaccounts')->documents();
-        foreach ($subSnap as $subDoc) {
-            if (!$subDoc->exists()) {
-                continue;
+    if ($collection === 'users') {
+        try {
+            $subSnap = $db->collection('users')->document($userId)->collection('subaccounts')->documents();
+            foreach ($subSnap as $subDoc) {
+                if (!$subDoc->exists()) {
+                    continue;
+                }
+                $subData = $subDoc->data();
+                if (!isset($subData['id'])) {
+                    $subData['id'] = $subDoc->id();
+                }
+                $subaccounts[] = $subData;
             }
-            $subData = $subDoc->data();
-            if (!isset($subData['id'])) {
-                $subData['id'] = $subDoc->id();
-            }
-            $subaccounts[] = $subData;
+        } catch (Exception $ignored) {
         }
-    } catch (Exception $ignored) {
     }
 
     echo json_encode([

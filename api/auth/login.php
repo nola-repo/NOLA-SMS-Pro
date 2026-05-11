@@ -29,24 +29,45 @@ if (!$email || !$password) {
     exit;
 }
 
-$jwtSecret = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
+$jwtSecret = getenv('JWT_SECRET');
+if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
+    http_response_code(500);
+    echo json_encode(['error' => 'Server misconfiguration: JWT secret missing.']);
+    exit;
+}
 
 try {
     $db = get_firestore();
 
-    // ── Find user by email ───────────────────────────────────────────────────
-    $results = $db->collection('users')
+    // ── Prefer agency_users for agency accounts, fallback to users ───────────
+    $results = $db->collection('agency_users')
         ->where('email', '=', $email)
         ->limit(1)
         ->documents();
 
     $userId   = null;
     $userData = null;
+    $authCollection = 'agency_users';
     foreach ($results as $doc) {
         if ($doc->exists()) {
             $userId   = $doc->id();
             $userData = $doc->data();
             break;
+        }
+    }
+
+    if (!$userData) {
+        $authCollection = 'users';
+        $results = $db->collection('users')
+            ->where('email', '=', $email)
+            ->limit(1)
+            ->documents();
+        foreach ($results as $doc) {
+            if ($doc->exists()) {
+                $userId   = $doc->id();
+                $userData = $doc->data();
+                break;
+            }
         }
     }
 
@@ -80,6 +101,7 @@ try {
         'role'       => $role,
         'company_id' => $companyId,
         'location_id' => $locationId,
+        'auth_collection' => $authCollection,
     ], $jwtSecret, 28800); // 8 hours
 
     echo json_encode([

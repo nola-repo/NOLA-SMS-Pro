@@ -33,7 +33,12 @@ $companyId = $input['company_id'] ?? null;
 $payloadLocName = $input['location_name'] ?? null;
 $payloadCompName = $input['company_name'] ?? null;
 
-$jwtSecret = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
+$jwtSecret = getenv('JWT_SECRET');
+if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
+    http_response_code(500);
+    echo json_encode(['error' => 'Server misconfiguration: JWT secret missing.']);
+    exit;
+}
 
 // ── Mandate and verify install_token (prevents location bypass) ──
 if (!$installToken) {
@@ -58,6 +63,220 @@ if ($type === 'install') {
     http_response_code(401);
     echo json_encode(['error' => 'Invalid install token type.']);
     exit;
+}
+
+if ($type === 'agency_install') {
+    $agencyErrors = [];
+    if (!$fullName) {
+        $agencyErrors[] = 'Full name is required.';
+    }
+    if (!$phone) {
+        $agencyErrors[] = 'Phone number is required.';
+    }
+    if (!$email) {
+        $agencyErrors[] = 'Email address is required.';
+    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $agencyErrors[] = 'A valid email address is required.';
+    }
+    if (!$password) {
+        $agencyErrors[] = 'Password is required.';
+    } elseif (strlen($password) < 8) {
+        $agencyErrors[] = 'Password must be at least 8 characters.';
+    }
+    if (!$companyId) {
+        $agencyErrors[] = 'A company_id is required for agency install.';
+    }
+
+    if (!empty($agencyErrors)) {
+        http_response_code(422);
+        echo json_encode(['error' => implode(' ', $agencyErrors)]);
+        exit;
+    }
+
+    try {
+        $db = get_firestore();
+        $now = new DateTimeImmutable();
+        $agencyUsersRef = $db->collection('agency_users');
+
+        $companyName = $payloadCompName ?: ($installPayload['company_name'] ?? null);
+
+        $existingQuery = $agencyUsersRef->where('email', '=', $email)->limit(1)->documents();
+        $existingDoc = null;
+        $existingId = null;
+        foreach ($existingQuery as $snap) {
+            if ($snap->exists()) {
+                $existingDoc = $snap->data();
+                $existingId = $snap->id();
+                break;
+            }
+        }
+
+        // Temporary migration fallback: legacy agency accounts in `users`.
+        if (!$existingDoc) {
+            $legacyQuery = $db->collection('users')
+                ->where('email', '=', $email)
+                ->where('role', '=', 'agency')
+                ->limit(1)
+                ->documents();
+            foreach ($legacyQuery as $legacySnap) {
+                if (!$legacySnap->exists()) {
+                    continue;
+                }
+                $legacyData = $legacySnap->data();
+                $migratedRef = $agencyUsersRef->newDocument();
+                $migratedRef->set([
+                    'name' => $legacyData['name'] ?? '',
+                    'firstName' => $legacyData['firstName'] ?? '',
+                    'lastName' => $legacyData['lastName'] ?? '',
+                    'email' => strtolower(trim((string)($legacyData['email'] ?? $email))),
+                    'phone' => $legacyData['phone'] ?? '',
+                    'password_hash' => $legacyData['password_hash'] ?? '',
+                    'role' => 'agency',
+                    'active' => isset($legacyData['active']) ? (bool)$legacyData['active'] : true,
+                    'source' => $legacyData['source'] ?? 'migrated_from_users',
+                    'company_id' => $legacyData['company_id'] ?? $companyId,
+                    'company_name' => $legacyData['company_name'] ?? $companyName,
+                    'created_at' => $legacyData['created_at'] ?? new \Google\Cloud\Core\Timestamp($now),
+                    'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+                    'legacy_user_id' => $legacySnap->id(),
+                    'migrated_from_users' => true,
+                ], ['merge' => true]);
+
+                $existingDoc = $migratedRef->snapshot()->data();
+                $existingId = $migratedRef->id();
+                break;
+            }
+        }
+
+        if ($companyId && !_owner_lock_available_for_email($db, 'company_owners', (string)$companyId, $email)) {
+            http_response_code(409);
+            echo json_encode(['error' => 'This agency company is already linked to another email. Please login with the existing account.']);
+            exit;
+        }
+
+        if (!$existingDoc && $companyId) {
+            $existingCompanyQuery = $agencyUsersRef->where('company_id', '=', (string)$companyId)->limit(1)->documents();
+            foreach ($existingCompanyQuery as $snap) {
+                if ($snap->exists()) {
+                    $companyDoc = $snap->data();
+                    $companyEmail = strtolower(trim((string)($companyDoc['email'] ?? '')));
+                    if ($companyEmail !== '' && $companyEmail !== $email) {
+                        http_response_code(409);
+                        echo json_encode(['error' => 'This agency company is already linked to another email. Please login with the existing account.']);
+                        exit;
+                    }
+                    $existingDoc = $companyDoc;
+                    $existingId = $snap->id();
+                    break;
+                }
+            }
+        }
+
+        $parts = auth_split_full_name($fullName);
+        if ($existingDoc) {
+            if (!empty($existingDoc['email']) && !empty($existingDoc['password_hash'])) {
+                if (!password_verify($password, (string)$existingDoc['password_hash'])) {
+                    http_response_code(401);
+                    echo json_encode(['error' => 'An account with this email already exists, but the password provided is incorrect.']);
+                    exit;
+                }
+            }
+
+            $updates = [
+                'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+                'role' => 'agency',
+                'active' => true,
+                'email' => $email,
+                'phone' => $phone,
+                'name' => $fullName,
+                'firstName' => $parts['firstName'],
+                'lastName' => $parts['lastName'],
+                'company_id' => $companyId,
+                'company_name' => $companyName,
+            ];
+            if (empty($existingDoc['password_hash'])) {
+                $updates['password_hash'] = password_hash($password, PASSWORD_BCRYPT);
+            }
+
+            $agencyUsersRef->document($existingId)->set($updates, ['merge' => true]);
+            $fresh = $agencyUsersRef->document($existingId)->snapshot();
+            $fd = $fresh->exists() ? $fresh->data() : array_merge($existingDoc, $updates);
+
+            $token = jwt_sign([
+                'sub' => $existingId,
+                'email' => $email,
+                'role' => 'agency',
+                'company_id' => $companyId ?? null,
+                'auth_collection' => 'agency_users',
+            ], $jwtSecret, 28800);
+            if ($companyId) {
+                _upsert_owner_lock($db, 'company_owners', (string)$companyId, $existingId, $email, $fullName, $now);
+            }
+
+            http_response_code(200);
+            echo json_encode([
+                'status' => 'linked',
+                'message' => 'Agency account setup complete.',
+                'token' => $token,
+                'role' => 'agency',
+                'location_id' => null,
+                'company_id' => $companyId ?? null,
+                'location_name' => null,
+                'company_name' => $companyName ?? null,
+                'user' => auth_user_payload_for_api($fd, $email),
+            ]);
+            exit;
+        }
+
+        $passwordHash = password_hash($password, PASSWORD_BCRYPT);
+        $newAgencyDoc = $agencyUsersRef->newDocument();
+        $agencyData = [
+            'name' => $fullName,
+            'firstName' => $parts['firstName'],
+            'lastName' => $parts['lastName'],
+            'email' => $email,
+            'phone' => $phone,
+            'password_hash' => $passwordHash,
+            'role' => 'agency',
+            'active' => true,
+            'source' => 'marketplace_install',
+            'company_id' => $companyId,
+            'company_name' => $companyName,
+            'created_at' => new \Google\Cloud\Core\Timestamp($now),
+            'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+        ];
+        $newAgencyDoc->set($agencyData);
+        $newAgencyId = $newAgencyDoc->id();
+        if ($companyId) {
+            _upsert_owner_lock($db, 'company_owners', (string)$companyId, $newAgencyId, $email, $fullName, $now);
+        }
+
+        $token = jwt_sign([
+            'sub' => $newAgencyId,
+            'email' => $email,
+            'role' => 'agency',
+            'company_id' => $companyId ?? null,
+            'auth_collection' => 'agency_users',
+        ], $jwtSecret, 28800);
+
+        http_response_code(201);
+        echo json_encode([
+            'status' => 'success',
+            'message' => 'Agency account ready.',
+            'token' => $token,
+            'role' => 'agency',
+            'location_id' => null,
+            'company_id' => $companyId ?? null,
+            'location_name' => null,
+            'company_name' => $companyName ?? null,
+            'user' => auth_user_payload_for_api($agencyData, $email),
+        ]);
+        exit;
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['error' => 'Registration failed.']);
+        exit;
+    }
 }
 
 // ── Per-field validation (return all errors at once) ─────────────────────────
@@ -122,6 +341,11 @@ try {
     $subaccountOwnerId = null;
     $subaccountOwnerEmail = null;
     if ($isLocationLevel) {
+        if (!_owner_lock_available_for_email($db, 'location_owners', (string)$locationId, $email)) {
+            http_response_code(409);
+            echo json_encode(['error' => 'This subaccount is already linked to another email. Please login with the existing account.']);
+            exit;
+        }
         $subaccountOwnerQuery = $usersRef->where('active_location_id', '=', $locationId)->limit(1)->documents();
         foreach ($subaccountOwnerQuery as $snap) {
             if ($snap->exists()) {
@@ -258,6 +482,9 @@ try {
             'role' => $role,
             'company_id' => $linkedCo,
         ], $jwtSecret, 28800); // 8 hours
+        if ($isLocationLevel && $locationId) {
+            _upsert_owner_lock($db, 'location_owners', (string)$locationId, $existingId, $email, $fullName, $now);
+        }
 
         http_response_code(200);
         echo json_encode([
@@ -326,6 +553,9 @@ try {
 
     $newUserDoc->set($userData);
     $newUserId = $newUserDoc->id();
+    if ($isLocationLevel && $locationId) {
+        _upsert_owner_lock($db, 'location_owners', (string)$locationId, $newUserId, $email, $fullName, $now);
+    }
 
     // Write user-owned subaccount entry
     if ($isLocationLevel && $locationId) {
@@ -432,5 +662,44 @@ function _prune_user_subaccounts_except($db, string $uid, string $keepEntityId):
         }
     } catch (Exception $e) {
         error_log("[register_from_install] _prune_user_subaccounts_except failed for uid={$uid}, keep={$keepEntityId}: " . $e->getMessage());
+    }
+}
+
+function _owner_lock_available_for_email($db, string $collection, string $entityId, string $email): bool
+{
+    if ($entityId === '') {
+        return true;
+    }
+    try {
+        $snap = $db->collection($collection)->document($entityId)->snapshot();
+        if (!$snap->exists()) {
+            return true;
+        }
+        $d = $snap->data();
+        $ownerEmail = strtolower(trim((string)($d['owner_email'] ?? '')));
+        return $ownerEmail === '' || $ownerEmail === strtolower(trim($email));
+    } catch (Exception $e) {
+        error_log("[register_from_install] _owner_lock_available_for_email failed for {$collection}/{$entityId}: " . $e->getMessage());
+        return true;
+    }
+}
+
+function _upsert_owner_lock($db, string $collection, string $entityId, string $ownerUserId, string $ownerEmail, string $ownerName, DateTimeImmutable $now): void
+{
+    if ($entityId === '') {
+        return;
+    }
+    try {
+        $ref = $db->collection($collection)->document($entityId);
+        $ref->set([
+            'entity_id' => $entityId,
+            'owner_user_id' => $ownerUserId,
+            'owner_email' => strtolower(trim($ownerEmail)),
+            'owner_name' => $ownerName,
+            'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+            'created_at' => new \Google\Cloud\Core\Timestamp($now),
+        ], ['merge' => true]);
+    } catch (Exception $e) {
+        error_log("[register_from_install] _upsert_owner_lock failed for {$collection}/{$entityId}: " . $e->getMessage());
     }
 }

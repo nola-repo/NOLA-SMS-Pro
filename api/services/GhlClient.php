@@ -91,12 +91,11 @@ class GhlClient
                     $attempt++;
                     continue;
                 } catch (\Exception $e) {
+                    // Never forward exception text to the client — it may echo upstream OAuth bodies.
+                    error_log('GhlClient refresh after 401: ' . $e->getMessage());
                     return [
                         'status' => 401,
-                        'body'   => json_encode([
-                            'error'   => 'Token refresh failed',
-                            'details' => $e->getMessage(),
-                        ]),
+                        'body'   => json_encode(['error' => 'Token refresh failed']),
                     ];
                 }
             }
@@ -133,6 +132,42 @@ class GhlClient
     }
 
     // ── Private helpers ─────────────────────────────────────────────────
+
+    /** @param array<string,mixed> $data */
+    private static function redactGhlSecretsInArray(array $data): array
+    {
+        $secretKeys = ['access_token', 'refresh_token', 'id_token', 'client_secret'];
+        $out = [];
+        foreach ($data as $k => $v) {
+            if (in_array($k, $secretKeys, true)) {
+                $out[$k] = ($v !== null && $v !== '') ? '[REDACTED]' : $v;
+            } elseif (is_array($v)) {
+                $out[$k] = self::redactGhlSecretsInArray($v);
+            } else {
+                $out[$k] = $v;
+            }
+        }
+        return $out;
+    }
+
+    private static function redactGhlResponseForLog(string $raw): string
+    {
+        $trim = trim($raw);
+        if ($trim === '') {
+            return '';
+        }
+        $decoded = json_decode($trim, true);
+        if (is_array($decoded)) {
+            return json_encode(self::redactGhlSecretsInArray($decoded));
+        }
+        $redacted = preg_replace(
+            '/eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/',
+            '[REDACTED_JWT]',
+            $trim
+        );
+
+        return $redacted !== null ? $redacted : $trim;
+    }
 
     /**
      * Load GHL integration from Firestore (same logic as getGHLIntegration).
@@ -405,10 +440,15 @@ class GhlClient
             $data = json_decode($response, true);
 
             if ($httpCode !== 200 || !is_array($data)) {
-                throw new \Exception(
-                    "GHL token refresh failed with code {$httpCode}: "
-                    . ($data['error_description'] ?? $response)
+                error_log(
+                    '[GhlClient] oauth/token refresh failed HTTP '
+                    . $httpCode . ': '
+                    . self::redactGhlResponseForLog((string)$response)
                 );
+                $hint = is_array($data)
+                    ? ($data['error_description'] ?? $data['error'] ?? 'invalid response')
+                    : 'invalid response';
+                throw new \Exception("GHL token refresh failed with code {$httpCode}: {$hint}");
             }
         }
 
@@ -449,7 +489,12 @@ class GhlClient
             $ltOk = $ltCode >= 200 && $ltCode < 300;
 
             if (!$ltOk || empty($ltData['access_token'])) {
-                throw new \Exception("GHL locationToken exchange failed after refresh: HTTP {$ltCode} - {$ltResp}");
+                error_log(
+                    '[GhlClient] locationToken after refresh failed HTTP '
+                    . $ltCode . ': '
+                    . self::redactGhlResponseForLog((string)$ltResp)
+                );
+                throw new \Exception("GHL locationToken exchange failed after refresh (HTTP {$ltCode})");
             }
 
             // Override the payload to use the Location token (but keep the Company refresh_token)

@@ -25,8 +25,13 @@ function validate_api_request(): void
         $receivedSecret = $_GET['secret'] ?? $_GET['token'] ?? '';
     }
 
-    // Use the value from CLOUD-RUN-SECRETS.md as fallback if env not set
-    $expectedSecret = getenv('WEBHOOK_SECRET') ?: 'f7RkQ2pL9zV3tX8cB1nS4yW6';
+    $expectedSecret = getenv('WEBHOOK_SECRET');
+    if ($expectedSecret === false || trim((string)$expectedSecret) === '') {
+        header('Content-Type: application/json');
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'message' => 'Server misconfiguration: WEBHOOK_SECRET missing']);
+        exit;
+    }
 
     if (!hash_equals($expectedSecret, (string)$receivedSecret)) {
         header('Content-Type: application/json');
@@ -102,7 +107,13 @@ function validate_jwt(): array
     }
 
     $token = substr($authHeader, 7); // strip "Bearer "
-    $secret = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
+    $secret = getenv('JWT_SECRET');
+    if ($secret === false || trim((string)$secret) === '') {
+        header('Content-Type: application/json');
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => 'Server misconfiguration: JWT secret missing.']);
+        exit;
+    }
 
     $payload = jwt_verify($token, $secret);
 

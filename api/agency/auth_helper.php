@@ -67,7 +67,12 @@ function validate_agency_request($require_agency_id = true): string {
         }
     }
 
-    $expectedSecret = getenv('WEBHOOK_SECRET') ?: 'f7RkQ2pL9zV3tX8cB1nS4yW6';
+    $expectedSecret = getenv('WEBHOOK_SECRET');
+    if ($expectedSecret === false || trim((string)$expectedSecret) === '') {
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'message' => 'Server misconfiguration: WEBHOOK_SECRET missing']);
+        exit;
+    }
 
     if (!$receivedSecret || !hash_equals($expectedSecret, $receivedSecret)) {
         http_response_code(403);
