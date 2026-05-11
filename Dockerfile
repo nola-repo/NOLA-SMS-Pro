@@ -37,6 +37,18 @@ RUN cd /var/www/html/laravel \
     && composer install --no-dev --optimize-autoloader --no-interaction \
     && chown -R www-data:www-data storage bootstrap/cache
 
+# Generate Laravel .env (gitignored — must be created at build time)
+RUN echo "APP_NAME=NolaSMSPro" > /var/www/html/laravel/.env \
+    && echo "APP_ENV=production" >> /var/www/html/laravel/.env \
+    && echo "APP_KEY=base64:TVYWBp+wDYGFX3vr+2pa5R2dNbk5+F8895AAL2OHvSI=" >> /var/www/html/laravel/.env \
+    && echo "APP_DEBUG=false" >> /var/www/html/laravel/.env \
+    && echo "APP_URL=https://sms-api-116662437564.asia-southeast1.run.app" >> /var/www/html/laravel/.env \
+    && echo "LOG_CHANNEL=stderr" >> /var/www/html/laravel/.env \
+    && echo "LOG_LEVEL=error" >> /var/www/html/laravel/.env \
+    && echo "SESSION_DRIVER=file" >> /var/www/html/laravel/.env \
+    && echo "CACHE_STORE=file" >> /var/www/html/laravel/.env \
+    && echo "QUEUE_CONNECTION=sync" >> /var/www/html/laravel/.env
+
 # Cloud Run sets PORT; Apache already configured for 8080
 ENV APACHE_HTTP_PORT=8080
 EXPOSE 8080
