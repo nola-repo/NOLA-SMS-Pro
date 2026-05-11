@@ -18,6 +18,11 @@
     RewriteCond %{REQUEST_FILENAME} -d
     RewriteRule ^ - [L]
 
+    # ── Laravel v2 (same container) ──────────────────────────────────────
+    # Route only /api/v2/* traffic to Laravel shim; keep legacy endpoints intact.
+    RewriteRule ^api/v2/?$ /api/v2/index.php [NC,L,QSA]
+    RewriteRule ^api/v2/(.*)$ /api/v2/index.php [NC,L,QSA]
+
     # ── OAuth ────────────────────────────────────────────────────────────
     # /oauth/callback         -> /ghl_callback.php          (subaccount app)
     # /oauth/agency-callback  -> /ghl_agency_callback.php   (agency app)

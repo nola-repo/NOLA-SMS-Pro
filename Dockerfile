@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install extensions for Composer and Firestore (bcmath is required by brick/math)
-RUN docker-php-ext-install zip bcmath
+RUN docker-php-ext-install zip bcmath fileinfo
 
 # Enable mod_rewrite and mod_headers for .htaccess and CORS
 RUN a2enmod rewrite headers
@@ -31,6 +31,11 @@ COPY composer.json composer.lock* ./
 RUN composer install --no-dev --optimize-autoloader --no-interaction
 
 COPY . .
+
+# Install Laravel dependencies for /api/v2 routes in same container.
+RUN cd /var/www/html/laravel \
+    && composer install --no-dev --optimize-autoloader --no-interaction \
+    && chown -R www-data:www-data storage bootstrap/cache
 
 # Cloud Run sets PORT; Apache already configured for 8080
 ENV APACHE_HTTP_PORT=8080
