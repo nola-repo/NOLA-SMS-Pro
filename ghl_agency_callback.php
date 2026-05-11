@@ -198,7 +198,8 @@ foreach ($allLocationIds as $locId) {
         curl_close($ltCh);
         $ltRes = ['code' => $ltCode, 'body' => json_decode($ltRespRaw, true), 'raw' => $ltRespRaw];
 
-        if ($ltRes['code'] === 200 && !empty($ltRes['body']['access_token'])) {
+        $ltHttpOk = $ltRes['code'] >= 200 && $ltRes['code'] < 300;
+        if ($ltHttpOk && !empty($ltRes['body']['access_token'])) {
             $ltToken     = $ltRes['body']['access_token'];
             $ltExpiresAt = time() + (int)($ltRes['body']['expires_in'] ?? 86400);
 

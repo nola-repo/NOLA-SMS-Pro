@@ -209,8 +209,10 @@ class GhlClient
                     curl_close($ltCh);
 
                     $ltData = json_decode($ltResp, true);
+                    // GHL may return 201 Created for successful token issuance; treat any 2xx as success.
+                    $ltOk = $ltCode >= 200 && $ltCode < 300;
 
-                    if ($ltCode === 200 && !empty($ltData['access_token'])) {
+                    if ($ltOk && !empty($ltData['access_token'])) {
                         // Save location-scoped token to Firestore
                         $now          = new \DateTimeImmutable();
                         $ltExpires    = time() + (int)($ltData['expires_in'] ?? 86400);
@@ -443,8 +445,10 @@ class GhlClient
             $ltCode = curl_getinfo($ltCh, CURLINFO_HTTP_CODE);
             curl_close($ltCh);
             $ltData = json_decode($ltResp, true);
+            // GHL may return 201 Created for successful token issuance; treat any 2xx as success.
+            $ltOk = $ltCode >= 200 && $ltCode < 300;
 
-            if ($ltCode !== 200 || empty($ltData['access_token'])) {
+            if (!$ltOk || empty($ltData['access_token'])) {
                 throw new \Exception("GHL locationToken exchange failed after refresh: HTTP {$ltCode} - {$ltResp}");
             }
 

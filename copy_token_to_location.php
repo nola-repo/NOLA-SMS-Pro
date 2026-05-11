@@ -97,7 +97,8 @@ curl_close($ch);
 
 $tokenData = json_decode($response, true);
 
-if ($httpCode !== 200 || empty($tokenData['access_token'])) {
+$tokenHttpOk = $httpCode >= 200 && $httpCode < 300;
+if (!$tokenHttpOk || empty($tokenData['access_token'])) {
     echo json_encode([
         'error'       => 'GHL locationToken exchange failed.',
         'http_code'   => $httpCode,
