@@ -6,10 +6,11 @@ use Symfony\Component\Process\Process;
 
 class LegacyPhpBridgeService
 {
-    public function call(string $legacyScriptPath, string $method, array $query = [], string $rawBody = ''): array
+    public function call(string $legacyScriptPath, string $method, array $query = [], string $rawBody = '', array $headers = []): array
     {
         $bridgeScript = base_path('bootstrap/legacy_bridge.php');
         $queryJson = json_encode($query);
+        $headersJson = json_encode($headers);
 
         $process = new Process([
             PHP_BINARY,
@@ -17,6 +18,7 @@ class LegacyPhpBridgeService
             $legacyScriptPath,
             strtoupper($method),
             $queryJson === false ? '{}' : $queryJson,
+            $headersJson === false ? '{}' : $headersJson,
         ], base_path('..'));
 
         $process->setInput($rawBody);

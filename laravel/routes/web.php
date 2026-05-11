@@ -36,6 +36,7 @@ Route::get('/api/v2/agency/locations', [AgencyV2LegacyBridgeController::class, '
 Route::get('/api/v2/agency/check_installs', [AgencyV2LegacyBridgeController::class, 'checkInstalls']);
 Route::get('/api/v2/agency/get_all_active', [AgencyV2LegacyBridgeController::class, 'getAllActive']);
 Route::get('/api/v2/agency/get_subaccounts', [AgencyV2LegacyBridgeController::class, 'getSubaccounts']);
+Route::get('/api/v2/agency/profile', [AgencyV2LegacyBridgeController::class, 'profile']);
 Route::match(['get', 'post', 'options'], '/api/v2/agency/ghl_agency_oauth', [AgencyV2LegacyBridgeController::class, 'ghlAgencyOauth']);
 Route::post('/api/v2/agency/ghl_autologin', [AgencyV2LegacyBridgeController::class, 'ghlAutologin']);
 Route::match(['post', 'options'], '/api/v2/agency/ghl_sso_decrypt', [AgencyV2LegacyBridgeController::class, 'ghlSsoDecrypt']);
@@ -99,4 +100,3 @@ Route::any('/api/v2/ghl_contacts', [GhlV2LegacyBridgeController::class, 'ghlCont
 Route::any('/api/v2/ghl-contacts', [GhlV2LegacyBridgeController::class, 'ghlContacts']); // Alias for .htaccess rule
 Route::any('/api/v2/ghl-conversations', [GhlV2LegacyBridgeController::class, 'ghlConversations']);
 Route::any('/api/v2/public/whitelabel', [GhlV2LegacyBridgeController::class, 'whitelabel']);
-

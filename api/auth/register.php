@@ -47,15 +47,33 @@ require_once __DIR__ . '/../webhook/firestore_client.php';
 $db = get_firestore();
 
 try {
-    // Check if email already exists
-    $query = $db->collection('users')->where('email', '=', $email)->limit(1);
-    $documents = $query->documents();
-    
     $exists = false;
-    foreach ($documents as $doc) {
-        if ($doc->exists()) {
-            $exists = true;
-            break;
+
+    if ($role === 'agency') {
+        $agencyQuery = $db->collection('agency_users')
+            ->where('email', '=', $email)
+            ->limit(1)
+            ->documents();
+
+        foreach ($agencyQuery as $doc) {
+            if ($doc->exists()) {
+                $exists = true;
+                break;
+            }
+        }
+    }
+
+    if (!$exists) {
+        $userQuery = $db->collection('users')
+            ->where('email', '=', $email)
+            ->limit(1)
+            ->documents();
+
+        foreach ($userQuery as $doc) {
+            if ($doc->exists()) {
+                $exists = true;
+                break;
+            }
         }
     }
 
@@ -95,7 +113,8 @@ try {
         $data['active_location_id'] = $locationId;
     }
 
-    $db->collection('users')->add($data);
+    $collection = ($role === 'agency') ? 'agency_users' : 'users';
+    $db->collection($collection)->add($data);
 
     http_response_code(201);
     echo json_encode(['status' => 'success', 'message' => 'Account created.']);

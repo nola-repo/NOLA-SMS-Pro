@@ -73,6 +73,34 @@ function auth_extract_bearer_token(): ?string
     return null;
 }
 
+function auth_resolve_agency_company_name($db, array $d): ?string
+{
+    $companyId = trim((string)($d['company_id'] ?? ''));
+    if ($companyId === '') {
+        return null;
+    }
+
+    foreach (['ghl_agency_tokens', 'ghl_tokens'] as $collection) {
+        try {
+            $snap = $db->collection($collection)->document($companyId)->snapshot();
+            if (!$snap->exists()) {
+                continue;
+            }
+            $tokenData = $snap->data();
+            $companyName = $tokenData['company_name']
+                ?? $tokenData['agency_name']
+                ?? $tokenData['location_name']
+                ?? null;
+            if ($companyName !== null && trim((string)$companyName) !== '') {
+                return trim((string)$companyName);
+            }
+        } catch (Exception $ignored) {
+        }
+    }
+
+    return null;
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     http_response_code(405);
     echo json_encode(['error' => 'Method not allowed']);
@@ -128,6 +156,12 @@ try {
     }
 
     $d = $snap->data();
+    if ($isAgency && empty($d['company_name'])) {
+        $companyName = auth_resolve_agency_company_name($db, $d);
+        if ($companyName !== null) {
+            $d['company_name'] = $companyName;
+        }
+    }
 
     $subaccounts = [];
     if ($collection === 'users') {

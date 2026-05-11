@@ -55,6 +55,11 @@ class AgencyV2LegacyBridgeController extends Controller
         return $this->forwardToLegacy(base_path('../api/agency/get_subaccounts.php'), $request->method(), $request->all(), (string) $request->getContent());
     }
 
+    public function profile(Request $request): Response
+    {
+        return $this->forwardToLegacy(base_path('../api/agency/profile.php'), $request->method(), $request->all(), (string) $request->getContent());
+    }
+
     public function ghlAgencyOauth(Request $request): Response
     {
         return $this->forwardToLegacy(base_path('../api/agency/ghl_agency_oauth.php'), $request->method(), $request->all(), (string) $request->getContent());
@@ -102,7 +107,7 @@ class AgencyV2LegacyBridgeController extends Controller
 
     private function forwardToLegacy(string $script, string $method, array $query = [], string $rawBody = ''): Response
     {
-        $result = $this->bridge->call($script, $method, $query, $rawBody);
+        $result = $this->bridge->call($script, $method, $query, $rawBody, request()->headers->all());
 
         return response($result['body'], $result['status'])
             ->header('Content-Type', 'application/json');

@@ -110,6 +110,13 @@ class AuthV2Controller extends Controller
             }
 
             $doc = $snap->data();
+            if ($role === 'agency' && empty($doc['company_name'])) {
+                $companyName = $this->resolveAgencyCompanyName($db, $doc);
+                if ($companyName !== null) {
+                    $doc['company_name'] = $companyName;
+                }
+            }
+
             $subaccounts = [];
             if ($collection === 'users') {
                 try {
@@ -163,6 +170,34 @@ class AuthV2Controller extends Controller
         }
 
         return [null, null, 'users'];
+    }
+
+    private function resolveAgencyCompanyName($db, array $doc): ?string
+    {
+        $companyId = trim((string) ($doc['company_id'] ?? ''));
+        if ($companyId === '') {
+            return null;
+        }
+
+        foreach (['ghl_agency_tokens', 'ghl_tokens'] as $collection) {
+            try {
+                $snap = $db->collection($collection)->document($companyId)->snapshot();
+                if (!$snap->exists()) {
+                    continue;
+                }
+                $tokenData = $snap->data();
+                $companyName = $tokenData['company_name']
+                    ?? $tokenData['agency_name']
+                    ?? $tokenData['location_name']
+                    ?? null;
+                if ($companyName !== null && trim((string) $companyName) !== '') {
+                    return trim((string) $companyName);
+                }
+            } catch (Throwable) {
+            }
+        }
+
+        return null;
     }
 
     private function extractBearerToken(Request $request): ?string
