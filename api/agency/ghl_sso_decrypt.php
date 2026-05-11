@@ -42,7 +42,13 @@ if (empty($encryptedPayload)) {
 }
 
 // ── Shared Secret from GHL Developer Portal ─────────────────────────────────
-$sharedSecret = getenv('GHL_SSO_SECRET') ?: '4d205fb2-9c8d-4575-a43d-f2f68280decd';
+$sharedSecret = getenv('GHL_SSO_SECRET') ?: '';
+if ($sharedSecret === '') {
+    error_log('[GHL_SSO] Missing GHL_SSO_SECRET environment variable.');
+    http_response_code(500);
+    echo json_encode(['success' => false, 'error' => 'SSO decrypt is not configured.']);
+    exit;
+}
 
 /**
  * Replicates OpenSSL's legacy EVP_BytesToKey using MD5.

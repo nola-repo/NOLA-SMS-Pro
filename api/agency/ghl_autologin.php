@@ -35,6 +35,39 @@ error_log('[GHL_AUTOLOGIN] Attempting auto-login for company_id: ' . $companyId)
 
 $jwtSecret = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
 
+function has_agency_token($db, string $companyId): bool
+{
+    $tokenDoc = $db->collection('ghl_tokens')->document($companyId)->snapshot();
+    if ($tokenDoc->exists()) {
+        $data = $tokenDoc->data();
+        $isAgencyApp = ($data['appType'] ?? '') === 'agency';
+        $isCompanyToken = ($data['userType'] ?? 'Company') === 'Company';
+        if ($isAgencyApp && $isCompanyToken) {
+            return true;
+        }
+    }
+
+    $tokenDocs = $db->collection('ghl_tokens')
+        ->where('companyId', '=', $companyId)
+        ->documents();
+
+    foreach ($tokenDocs as $doc) {
+        if (!$doc->exists()) {
+            continue;
+        }
+
+        $data = $doc->data();
+        $isAgencyApp = ($data['appType'] ?? '') === 'agency';
+        $isCompanyToken = ($data['userType'] ?? '') === 'Company' || $doc->id() === $companyId;
+
+        if ($isAgencyApp && $isCompanyToken) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 try {
     $db = get_firestore();
 
@@ -58,9 +91,8 @@ try {
     if (!$userData) {
         error_log('[GHL_AUTOLOGIN] No existing agency user found for company_id: ' . $companyId . '. Verifying ghl_tokens...');
 
-        $tokenDoc = $db->collection('ghl_tokens')->document($companyId)->snapshot();
-        if (!$tokenDoc->exists() || ($tokenDoc->data()['appType'] ?? '') !== 'agency') {
-            error_log('[GHL_AUTOLOGIN] Company is not a registered agency in ghl_tokens.');
+        if (!has_agency_token($db, $companyId)) {
+            error_log('[GHL_AUTOLOGIN] Company is not a registered agency-level install in ghl_tokens.');
             http_response_code(404);
             echo json_encode(['error' => 'No agency account is linked to this GHL company. Please install the Agency App first.']);
             exit;
@@ -73,7 +105,7 @@ try {
             'company_id' => $companyId,
             'createdAt'  => new \Google\Cloud\Core\Timestamp(new \DateTime()),
             'active'     => true,
-            'email'      => 'agency_' . $companyId . '@ghl.nolasmspro.com' // Placeholder email
+            'email'      => 'agency_' . $companyId . '@ghl.nolasmspro.com'
         ];
         // Insert into firestore and get the auto-generated ID
         $newUserRef = $db->collection('users')->add($userData);
