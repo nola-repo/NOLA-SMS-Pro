@@ -25,6 +25,8 @@ final class GhlOAuthRefreshException extends \RuntimeException
     private bool $hadRefreshToken;
     private bool $refreshAttemptedWithClientCreds;
     private bool $activeLockMayResolve;
+    /** @var array<string,mixed> */
+    private array $context;
 
     public function __construct(
         string $message,
@@ -33,6 +35,7 @@ final class GhlOAuthRefreshException extends \RuntimeException
         bool $hadRefreshToken = false,
         bool $refreshAttemptedWithClientCreds = false,
         bool $activeLockMayResolve = false,
+        array $context = [],
         int $code = 0,
         ?\Throwable $previous = null
     ) {
@@ -42,11 +45,18 @@ final class GhlOAuthRefreshException extends \RuntimeException
         $this->hadRefreshToken = $hadRefreshToken;
         $this->refreshAttemptedWithClientCreds = $refreshAttemptedWithClientCreds;
         $this->activeLockMayResolve = $activeLockMayResolve;
+        $this->context = $context;
     }
 
     public function getReasonCode(): string
     {
         return $this->reasonCode;
+    }
+
+    /** @return array<string,mixed> */
+    public function getContext(): array
+    {
+        return $this->context;
     }
 
     /**

@@ -225,6 +225,11 @@ class GhlClient
         if ($e) {
             $out['refresh_reason'] = $e->getReasonCode();
             $out['would_prompt_reconnect'] = $e->shouldPromptReconnect();
+            $ctx = $e->getContext();
+            if (!empty($ctx)) {
+                // Context must remain secret-safe (no access_token / refresh_token / client_secret).
+                $out['refresh_context'] = $ctx;
+            }
         }
 
         return $out;
@@ -397,7 +402,10 @@ class GhlClient
                 $canonicalExists,
                 false,
                 false,
-                false
+                false,
+                [
+                    'hint' => 'missing_refresh_token',
+                ]
             );
         }
 
@@ -420,7 +428,10 @@ class GhlClient
                 $canonicalExists,
                 $hadRefresh,
                 false,
-                true
+                true,
+                [
+                    'lock_key' => $lockKey,
+                ]
             );
         }
 
@@ -536,6 +547,8 @@ class GhlClient
             $lastHint = 'invalid response';
             $lastHttpCode = 0;
             $lastParsed = null;
+            $lastLabel = null;
+            $lastUserType = null;
             foreach ($credentialCandidates as $candidate) {
                 $ch = curl_init('https://services.leadconnectorhq.com/oauth/token');
                 curl_setopt_array($ch, [
@@ -562,6 +575,8 @@ class GhlClient
                 $parsed = json_decode((string) $response, true);
                 $lastHttpCode = $httpCode;
                 $lastParsed = is_array($parsed) ? $parsed : null;
+                $lastLabel = (string) ($candidate['label'] ?? '');
+                $lastUserType = (string) ($candidate['user_type'] ?? '');
 
                 if ($httpCode === 200 && is_array($parsed) && !empty($parsed['access_token'])) {
                     $data = $parsed;
@@ -585,13 +600,21 @@ class GhlClient
 
             if (!is_array($data) || empty($data['access_token'])) {
                 $reason = GhlTokenProvider::classifyOAuthRefreshFailure($lastHttpCode, $lastParsed);
+                $ctx = [
+                    'oauth_http_code' => $lastHttpCode,
+                    'oauth_candidate' => $lastLabel,
+                    'oauth_user_type' => $lastUserType,
+                    'oauth_error' => is_array($lastParsed) ? ($lastParsed['error'] ?? null) : null,
+                    'oauth_error_description' => is_array($lastParsed) ? ($lastParsed['error_description'] ?? null) : null,
+                ];
                 throw new GhlOAuthRefreshException(
                     'GHL token refresh failed: ' . $lastHint,
                     $reason,
                     $canonicalExists,
                     $hadRefresh,
                     $attemptedCredentialRefresh,
-                    false
+                    false,
+                    $ctx
                 );
             }
         }
@@ -643,7 +666,10 @@ class GhlClient
                     $canonicalExists,
                     $hadRefresh,
                     true,
-                    false
+                    false,
+                    [
+                        'location_token_http_code' => $ltCode,
+                    ]
                 );
             }
 
