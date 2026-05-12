@@ -16,8 +16,9 @@
  * Responses:
  *   200  { contacts: [...] }
  *   400  { error: "Missing locationId" }
- *   401  { error: "OAuth token invalid or expired" }
- *   404  { error: "No OAuth token found for this location" }
+ *   401  Forwarded GHL/auth failure body. When refresh fails after a 401 from GHL, GhlClient returns:
+ *        { "error": "Token refresh failed", "requires_reconnect": true } — UI should prompt reconnect, not empty state.
+ *   404  { error: "..." } (e.g. integration not found for location)
  *   405  { error: "Method not allowed" }
  *   500  { error: "..." }
  */

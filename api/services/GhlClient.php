@@ -172,6 +172,40 @@ class GhlClient
         return $redacted !== null ? $redacted : $trim;
     }
 
+    private function resolveCompanyIdForLocation(string $locationId, ?array $data = null): ?string
+    {
+        $candidates = [
+            $data['companyId'] ?? null,
+            $data['company_id'] ?? null,
+        ];
+
+        $agencySnap = $this->db->collection('agency_subaccounts')->document($locationId)->snapshot();
+        if ($agencySnap->exists()) {
+            $agencyData = $agencySnap->data();
+            $candidates[] = $agencyData['agency_id'] ?? null;
+            $candidates[] = $agencyData['companyId'] ?? null;
+            $candidates[] = $agencyData['company_id'] ?? null;
+        }
+
+        $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
+        $intSnap = $this->db->collection('integrations')->document($intDocId)->snapshot();
+        if ($intSnap->exists()) {
+            $intData = $intSnap->data();
+            $candidates[] = $intData['companyId'] ?? null;
+            $candidates[] = $intData['company_id'] ?? null;
+            $candidates[] = $intData['agency_id'] ?? null;
+        }
+
+        foreach ($candidates as $candidate) {
+            $companyId = trim((string)$candidate);
+            if ($companyId !== '' && $companyId !== $locationId) {
+                return $companyId;
+            }
+        }
+
+        return null;
+    }
+
     /**
      * Load GHL integration from Firestore (same logic as getGHLIntegration).
      *
@@ -216,6 +250,17 @@ class GhlClient
         // When found, automatically exchange for a location-scoped token via
         // GHL's /oauth/locationToken endpoint — which returns authClass:Location
         // tokens valid for /contacts/ and /conversations/.
+        if ($data && empty($data['companyId'])) {
+            $resolvedCompanyId = $this->resolveCompanyIdForLocation($locationId, $data);
+            if ($resolvedCompanyId) {
+                $data['companyId'] = $resolvedCompanyId;
+                $docId = $data['firestore_doc_id'] ?? $locationId;
+                $this->db->collection('ghl_tokens')->document($docId)->set([
+                    'companyId' => $resolvedCompanyId,
+                ], ['merge' => true]);
+            }
+        }
+
         $locationHasToken = !empty($data['access_token']) || !empty($data['refresh_token']);
 
         if ($data && !$locationHasToken && !empty($data['companyId'])) {
@@ -353,6 +398,12 @@ class GhlClient
         $refreshToken   = $this->integration['refresh_token'] ?? null;
         $docId          = $this->integration['firestore_doc_id'] ?? $this->locationId;
         $companyId      = $this->integration['companyId'] ?? null;
+        if (!$companyId) {
+            $companyId = $this->resolveCompanyIdForLocation($this->locationId, $this->integration);
+            if ($companyId) {
+                $this->integration['companyId'] = $companyId;
+            }
+        }
 
         $subaccountClientId = getenv('GHL_CLIENT_ID') ?: '6999da2b8f278296d95f7274-mmn30t4f';
         $subaccountSecret   = getenv('GHL_CLIENT_SECRET') ?: 'd91017ad-f4eb-461f-8967-b1d51cd1c1eb';
