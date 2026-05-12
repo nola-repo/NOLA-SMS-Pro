@@ -5,6 +5,7 @@ header('Content-Type: application/json');
 
 require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
+require_once __DIR__ . '/services/CreditManager.php';
 
 // Authentication: Admin-only secret or specialized check
 validate_api_request();
@@ -110,13 +111,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
 
-        $docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
+        $docId = CreditManager::integration_doc_id_for_location((string)$locId);
         $docRef = $db->collection('integrations')->document($docId);
-        $oldBalance = 0;
-        $snap = $docRef->snapshot();
-        if ($snap->exists()) {
-            $oldBalance = (int)($snap->data()['credit_balance'] ?? 0);
-        }
+
+        $creditManager = new CreditManager();
+        $oldBalance = $creditManager->get_balance((string)$locId);
 
         $updateData = [
             'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
@@ -129,14 +128,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $updateData['nola_pro_api_key']   = $payload['api_key'];
             $updateData['semaphore_api_key']  = $payload['api_key'];
         }
-        if (isset($payload['credit_balance'])) {
-            $updateData['credit_balance'] = (int)$payload['credit_balance'];
-        }
         if (isset($payload['free_credits_total'])) {
             $updateData['free_credits_total'] = (int)$payload['free_credits_total'];
         }
 
         $docRef->set($updateData, ['merge' => true]);
+
+        if (isset($payload['credit_balance'])) {
+            $balanceRef = $creditManager->resolveSubaccountBalanceDocument((string)$locId);
+            $balanceRef->set([
+                'credit_balance' => (int)$payload['credit_balance'],
+                'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+            ], ['merge' => true]);
+        }
 
         // Auto-add sender to dynamic master whitelist when admin sets one directly
         if (isset($payload['sender_id']) && !empty($payload['sender_id'])) {
@@ -399,6 +403,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
 
     // 1. Fetch all integrations (Master list)
     $integrationsRaw = $db->collection('integrations')->documents();
+    $cmAccounts = new CreditManager();
 
     foreach ($integrationsRaw as $intDoc) {
         $intData = $intDoc->data();
@@ -470,7 +475,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
                 'nola_pro_api_key'   => $intData['nola_pro_api_key'] ?? null,
                 'api_key'            => $intData['api_key'] ?? null,
                 'semaphore_api_key'  => $intData['semaphore_api_key'] ?? null,
-                'credit_balance'     => (int)($intData['credit_balance'] ?? 0),
+                'credit_balance'     => $cmAccounts->get_balance((string)$locId),
                 'free_usage_count'   => (int)($intData['free_usage_count'] ?? 0),
                 'free_credits_total' => (int)($intData['free_credits_total'] ?? 10),
                 'toggle_enabled'     => isset($tokData['toggle_enabled']) ? (bool)$tokData['toggle_enabled'] : true,

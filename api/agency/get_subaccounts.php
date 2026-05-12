@@ -9,6 +9,7 @@
 require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 require __DIR__ . '/../webhook/firestore_client.php';
+require_once __DIR__ . '/../services/CreditManager.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     http_response_code(405);
@@ -83,19 +84,16 @@ try {
         }
     }
 
+    $creditManager = new CreditManager();
+
     // 4. Merge and return
     $subaccounts = [];
     foreach ($locationIds as $locId) {
         $locName = $locationNames[$locId] ?? ($dbConfigs[$locId]['location_name'] ?? 'Unnamed Location');
         $config  = $dbConfigs[$locId] ?? [];
 
-        // Fetch credit_balance from integrations collection
-        $creditBalance = 0;
-        $intDocId  = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
-        $intSnap   = $db->collection('integrations')->document($intDocId)->snapshot();
-        if ($intSnap->exists()) {
-            $creditBalance = (int)($intSnap->data()['credit_balance'] ?? 0);
-        }
+        // Subaccount balance: users.credit_balance (via CreditManager) with legacy fallback
+        $creditBalance = $creditManager->get_balance((string)$locId);
 
         $subaccountData = [
             'location_id'             => $locId,

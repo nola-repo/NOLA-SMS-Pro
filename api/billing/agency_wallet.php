@@ -27,10 +27,15 @@ if (!$agency_id) {
     exit;
 }
 
-$agencyWalletRef = $db->collection('agency_wallet')->document($agency_id);
+$creditManager = new CreditManager();
+$agencyWalletRef = $creditManager->resolveAgencyBalanceDocument($agency_id);
+$agencyWalletLegacyRef = $db->collection('agency_wallet')->document($agency_id);
+
 // GET: ?action=balance is accepted per spec — GET always returns the full wallet state
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-    $snapshot = $agencyWalletRef->snapshot();
+    $balance = $creditManager->get_agency_balance($agency_id);
+
+    $snapshot = $agencyWalletLegacyRef->snapshot();
     $raw  = $snapshot->exists() ? $snapshot->data() : [];
 
     // Normalize keys — Firestore fields were saved with trailing spaces;
@@ -41,7 +46,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     }
 
     echo json_encode([
-        'balance'                     => $data['balance'] ?? 0,
+        'balance'                     => $balance,
         'auto_recharge_enabled'       => $data['auto_recharge_enabled'] ?? false,
         'auto_recharge_amount'        => $data['auto_recharge_amount'] ?? 500,
         'auto_recharge_threshold'     => $data['auto_recharge_threshold'] ?? 100,
@@ -57,7 +62,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $amount = isset($input['amount']) ? (int)$input['amount'] : 500;
         $threshold = isset($input['threshold']) ? (int)$input['threshold'] : 100;
 
-        $agencyWalletRef->set([
+        $agencyWalletLegacyRef->set([
             'auto_recharge_enabled' => $enabled,
             'auto_recharge_amount'  => $amount,
             'auto_recharge_threshold' => $threshold,
@@ -71,7 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'set_master_lock') {
         $enabled = isset($input['enabled']) ? (bool)$input['enabled'] : false;
 
-        $agencyWalletRef->set([
+        $agencyWalletLegacyRef->set([
             'enforce_master_balance_lock' => $enabled,
             'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
         ], ['merge' => true]);
@@ -91,8 +96,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
 
-        $docId = (strpos($location_id, 'ghl_') === 0) ? $location_id : 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $location_id);
-        $subaccountRef = $db->collection('integrations')->document($docId);
+        $subaccountRef = $creditManager->resolveSubaccountBalanceDocument($location_id);
         
         $txRefAgency = $db->collection('credit_transactions')->newDocument();
         $txRefSub = $db->collection('credit_transactions')->newDocument();
@@ -101,7 +105,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $ts = new \Google\Cloud\Core\Timestamp($now);
 
         try {
-            $result = $db->runTransaction(function ($transaction) use ($agencyWalletRef, $subaccountRef, $txRefAgency, $txRefSub, $amount, $note, $ts) {
+            $result = $db->runTransaction(function ($transaction) use ($agencyWalletRef, $subaccountRef, $txRefAgency, $txRefSub, $amount, $note, $ts, $agency_id, $location_id) {
                 $snapAgency = $transaction->snapshot($agencyWalletRef);
                 $snapSub = $transaction->snapshot($subaccountRef);
 
@@ -133,7 +137,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $transaction->create($txRefAgency, [
                     'transaction_id' => $txRefAgency->id(),
-                    'account_id'     => $agencyWalletRef->id(),
+                    'account_id'     => $agency_id,
                     'wallet_scope'   => 'agency',
                     'type'           => 'credit_distribution',
                     'deducted_from'  => 'agency',
@@ -143,9 +147,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'created_at'     => $ts,
                 ]);
 
+                $subTxAccountId = CreditManager::integration_doc_id_for_location($location_id);
+
                 $transaction->create($txRefSub, [
                     'transaction_id' => $txRefSub->id(),
-                    'account_id' => $subaccountRef->id(),
+                    'account_id' => $subTxAccountId,
                     'wallet_scope' => 'subaccount',
                     'type' => 'gift_received',
                     'amount' => $amount,

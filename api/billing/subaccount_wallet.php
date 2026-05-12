@@ -4,6 +4,7 @@ header('Content-Type: application/json');
 
 require_once __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/../jwt_helper.php';
+require_once __DIR__ . '/../services/CreditManager.php';
 
 // Try standard JWT check first
 $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
@@ -21,6 +22,7 @@ if (preg_match('/Bearer\s+(.+)/i', $authHeader, $m)) {
 }
 
 $db = get_firestore();
+$creditManager = new CreditManager();
 
 // Optional JWT decode
 if ($bearerToken) {
@@ -47,11 +49,12 @@ $docId = (strpos($location_id, 'ghl_') === 0) ? $location_id : 'ghl_' . preg_rep
 $subaccountRef = $db->collection('integrations')->document($docId);
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+    $balance = $creditManager->get_balance($location_id);
     $snapshot = $subaccountRef->snapshot();
     $data = $snapshot->exists() ? $snapshot->data() : [];
     
     echo json_encode([
-        'balance' => $data['credit_balance'] ?? 0,
+        'balance' => $balance,
         'auto_recharge_enabled' => $data['auto_recharge_enabled'] ?? false,
         'auto_recharge_amount' => $data['auto_recharge_amount'] ?? 250,
         'auto_recharge_threshold' => $data['auto_recharge_threshold'] ?? 25,

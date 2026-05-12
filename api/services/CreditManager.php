@@ -131,7 +131,8 @@ class CreditManager
     /**
      * PRIMARY SMS DEDUCTION METHOD — Single-Deduction Architecture.
      *
-     * Deducts ONLY from the subaccount wallet (integrations/{location_id}.credit_balance).
+     * Deducts ONLY from the subaccount wallet (users/{id}.credit_balance when linked by
+     * active_location_id; otherwise legacy integrations/{ghl_*}.credit_balance).
      * The agency wallet is NEVER touched here.
      *
      * Logs one credit_transactions entry with full profit-tracking metadata.
@@ -175,7 +176,7 @@ class CreditManager
 
         $result = $this->db->runTransaction(function ($transaction) use (
             $subaccountRef, $transactionRef, $amount, $reference_id, $description,
-            $agency_id, $provider_cost, $charged, $profit, $provider, $ts, $metadata
+            $agency_id, $location_id, $provider_cost, $charged, $profit, $provider, $ts, $metadata
         ) {
             $snap            = $transaction->snapshot($subaccountRef);
             $current_balance = $snap->exists() ? (int)($snap->data()['credit_balance'] ?? 0) : 0;
@@ -195,9 +196,11 @@ class CreditManager
                 'updated_at'     => $ts,
             ], ['merge' => true]);
 
+            $subTxAccountId = self::integration_doc_id_for_location($location_id);
+
             $transactionPayload = array_merge([
                 'transaction_id' => $transactionRef->id(),
-                'account_id'     => $subaccountRef->id(),
+                'account_id'     => $subTxAccountId,
                 'agency_id'      => $agency_id,
                 'wallet_scope'   => 'subaccount',
                 'type'           => 'sms_usage',
@@ -307,9 +310,11 @@ class CreditManager
             ], ['merge' => true]);
 
             // Subaccount Transaction Log
+            $subTxAccountId = self::integration_doc_id_for_location($location_id);
+
             $transactionPayloadSub = array_merge([
                 'transaction_id' => $transactionRefSub->id(),
-                'account_id'     => $subaccountRef->id(),
+                'account_id'     => $subTxAccountId,
                 'agency_id'      => $agency_id,
                 'wallet_scope'   => 'subaccount',
                 'type'           => 'sms_usage',
@@ -331,7 +336,7 @@ class CreditManager
             $transactionPayloadAgency = array_merge([
                 'transaction_id' => $transactionRefAgency->id(),
                 'account_id'     => $agency_id,
-                'target_account' => $subaccountRef->id(),
+                'target_account' => $subTxAccountId,
                 'wallet_scope'   => 'agency',
                 'type'           => 'agency_deduction',
                 'deducted_from'  => 'agency',
@@ -342,7 +347,7 @@ class CreditManager
                 'profit'         => $profit,
                 'provider'       => $provider,
                 'reference_id'   => $reference_id,
-                'description'    => $description . " (via " . $subaccountRef->id() . ")",
+                'description'    => $description . " (via " . $subTxAccountId . ")",
                 'created_at'     => $ts,
             ], $metadata);
 
@@ -364,9 +369,18 @@ class CreditManager
      */
     public function get_agency_master_lock(string $agency_id): bool
     {
-        if (empty($agency_id)) return false;
+        if (empty($agency_id)) {
+            return false;
+        }
         $snap = $this->get_agency_ref($agency_id)->snapshot();
-        return $snap->exists() ? (bool)($snap->data()['enforce_master_balance_lock'] ?? false) : false;
+        if ($snap->exists()) {
+            $data = $snap->data();
+            if (array_key_exists('enforce_master_balance_lock', $data)) {
+                return (bool)($data['enforce_master_balance_lock'] ?? false);
+            }
+        }
+        $fallback = $this->db->collection('agency_wallet')->document(trim((string)$agency_id))->snapshot();
+        return $fallback->exists() ? (bool)($fallback->data()['enforce_master_balance_lock'] ?? false) : false;
     }
 
     /**
@@ -387,7 +401,7 @@ class CreditManager
         $now = new \DateTimeImmutable();
         $ts = new Timestamp($now);
 
-        $result = $this->db->runTransaction(function ($transaction) use ($agencyRef, $subaccountRef, $transactionRefAgency, $transactionRefSub, $amount, $reference_id, $description, $ts) {
+        $result = $this->db->runTransaction(function ($transaction) use ($agencyRef, $subaccountRef, $transactionRefAgency, $transactionRefSub, $amount, $reference_id, $description, $ts, $agency_id, $location_id) {
             $snapAgency = $transaction->snapshot($agencyRef);
             $snapSub = $transaction->snapshot($subaccountRef);
 
@@ -418,7 +432,7 @@ class CreditManager
 
             $transaction->create($transactionRefAgency, [
                 'transaction_id' => $transactionRefAgency->id(),
-                'account_id' => $agencyRef->id(),
+                'account_id' => $agency_id,
                 'wallet_scope' => 'agency',
                 'type' => 'deduction',
                 'amount' => -$amount,
@@ -428,9 +442,11 @@ class CreditManager
                 'created_at' => $ts
             ]);
 
+            $subTxAccountId = self::integration_doc_id_for_location($location_id);
+
             $transaction->create($transactionRefSub, [
                 'transaction_id' => $transactionRefSub->id(),
-                'account_id' => $subaccountRef->id(),
+                'account_id' => $subTxAccountId,
                 'wallet_scope' => 'subaccount',
                 'type' => 'deduction',
                 'amount' => -$amount,
@@ -468,7 +484,9 @@ class CreditManager
         $now = new \DateTimeImmutable();
         $ts = new Timestamp($now);
 
-        $result = $this->db->runTransaction(function ($transaction) use ($accountRef, $transactionRef, $amount, $reference_id, $description, $ts) {
+        $txAccountId = self::integration_doc_id_for_location((string)$account_id);
+
+        $result = $this->db->runTransaction(function ($transaction) use ($accountRef, $transactionRef, $amount, $reference_id, $description, $ts, $txAccountId) {
             $snapshot = $transaction->snapshot($accountRef);
             $current_balance = 0;
 
@@ -489,7 +507,7 @@ class CreditManager
 
             $transaction->create($transactionRef, [
                 'transaction_id' => $transactionRef->id(),
-                'account_id' => $accountRef->id(),
+                'account_id' => $txAccountId,
                 'wallet_scope' => 'subaccount',
                 'type' => 'deduction',
                 'amount' => -$amount,
@@ -514,10 +532,14 @@ class CreditManager
         $accountRef = $wallet_scope === 'agency' ? $this->get_agency_ref($account_id) : $this->get_account_ref($account_id);
         $transactionRef = $this->db->collection('credit_transactions')->newDocument();
 
+        $txAccountId = $wallet_scope === 'agency'
+            ? trim((string)$account_id)
+            : self::integration_doc_id_for_location((string)$account_id);
+
         $now = new \DateTimeImmutable();
         $ts = new Timestamp($now);
 
-        $result = $this->db->runTransaction(function ($transaction) use ($accountRef, $transactionRef, $amount, $reference_id, $description, $type, $wallet_scope, $ts) {
+        $result = $this->db->runTransaction(function ($transaction) use ($accountRef, $transactionRef, $amount, $reference_id, $description, $type, $wallet_scope, $ts, $txAccountId) {
             $snapshot = $transaction->snapshot($accountRef);
             $current_balance = 0;
             $currency = 'PHP';
@@ -552,7 +574,7 @@ class CreditManager
 
             $transaction->create($transactionRef, [
                 'transaction_id' => $transactionRef->id(),
-                'account_id' => $accountRef->id(),
+                'account_id' => $txAccountId,
                 'wallet_scope' => $wallet_scope,
                 'type' => $type,
                 'amount' => $amount,
@@ -587,12 +609,14 @@ class CreditManager
             $currentBalance = (int)($snap->data()['credit_balance'] ?? 0);
         }
 
+        $txAccountId = self::integration_doc_id_for_location($account_id);
+
         // Simple batch to create the transaction record
         $batch = $this->db->batch();
 
         $batch->create($transactionRef, [
             'transaction_id' => $transactionRef->id(),
-            'account_id' => $accountRef->id(),
+            'account_id' => $txAccountId,
             'wallet_scope' => 'subaccount',
             'type' => 'deduction',
             'amount' => 0, // No paid credit deduction
@@ -610,35 +634,130 @@ class CreditManager
 
 
     /**
-     * Helper to get the correct account reference based on account_id.
-     * Uses 'integrations' collection with 'ghl_' prefix for GHL locations.
+     * Canonical integrations-style id (e.g. ghl_xxx) stored in credit_transactions.account_id for subaccount rows.
+     */
+    public static function integration_doc_id_for_location(string $locationOrDocId): string
+    {
+        $id = trim($locationOrDocId);
+        if ($id === '' || $id === 'default') {
+            return 'default';
+        }
+        if (strpos($id, 'ghl_') === 0) {
+            return $id;
+        }
+
+        return 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $id);
+    }
+
+    /**
+     * Firestore document used for subaccount credit_balance reads/writes (users or legacy integrations).
+     */
+    public function resolveSubaccountBalanceDocument(string $location_id)
+    {
+        return $this->get_account_ref($location_id);
+    }
+
+    /**
+     * Firestore document used for agency balance reads/writes (agency_users or legacy agency_wallet).
+     */
+    public function resolveAgencyBalanceDocument(string $agency_id)
+    {
+        return $this->get_agency_ref($agency_id);
+    }
+
+    /**
+     * @return \Google\Cloud\Firestore\DocumentReference|null
+     */
+    private function find_user_ref_for_subaccount_wallet(string $locationKey)
+    {
+        foreach ($this->activeLocationIdQueryCandidates($locationKey) as $loc) {
+            $query = $this->db->collection('users')->where('active_location_id', '=', $loc)->limit(1)->documents();
+            foreach ($query as $userDoc) {
+                if ($userDoc->exists()) {
+                    return $userDoc->reference();
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function activeLocationIdQueryCandidates(string $locationKey): array
+    {
+        $k = trim($locationKey);
+        if ($k === '') {
+            return [];
+        }
+        $out = [$k];
+        if (strpos($k, 'ghl_') === 0) {
+            $suffix = substr($k, 4);
+            if ($suffix !== '') {
+                $out[] = $suffix;
+            }
+        }
+
+        return array_values(array_unique($out));
+    }
+
+    /**
+     * @return \Google\Cloud\Firestore\DocumentReference|null
+     */
+    private function find_agency_user_ref(string $companyId)
+    {
+        $companyId = trim((string)$companyId);
+        if ($companyId === '') {
+            return null;
+        }
+        $query = $this->db->collection('agency_users')->where('company_id', '=', $companyId)->limit(1)->documents();
+        foreach ($query as $doc) {
+            if ($doc->exists()) {
+                return $doc->reference();
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Subaccount wallet: prefer users/{id} matched by active_location_id; fallback integrations/{ghl_...}.
      */
     private function get_account_ref($account_id)
     {
-        // Robust handling of $account_id: ensure it's a string, not an array
         if (is_array($account_id)) {
-            // Log this as it suggests a bug elsewhere or weird webhook payload
-            error_log("CreditManager: \$account_id is an array: " . print_r($account_id, true));
+            error_log('CreditManager: $account_id is an array: ' . print_r($account_id, true));
             $account_id = $account_id['id'] ?? $account_id['locationId'] ?? $account_id['location_id'] ?? $account_id[0] ?? 'default';
         }
 
         $account_id = trim((string)$account_id);
 
-        if ($account_id === 'default' || empty($account_id)) {
+        if ($account_id === 'default' || $account_id === '') {
             return $this->db->collection('accounts')->document('default');
         }
 
-        // Ensure ghl_ prefix
-        $docId = (strpos($account_id, 'ghl_') === 0)
-            ? $account_id
-            : 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $account_id);
+        $userRef = $this->find_user_ref_for_subaccount_wallet($account_id);
+        if ($userRef !== null) {
+            return $userRef;
+        }
+
+        $docId = self::integration_doc_id_for_location($account_id);
 
         return $this->db->collection('integrations')->document($docId);
     }
-    
+
+    /**
+     * Agency wallet: prefer agency_users matched by company_id; fallback agency_wallet/{company_id}.
+     */
     private function get_agency_ref($agency_id)
     {
         $agency_id = trim((string)$agency_id);
+        $ref = $this->find_agency_user_ref($agency_id);
+        if ($ref !== null) {
+            return $ref;
+        }
+
         return $this->db->collection('agency_wallet')->document($agency_id);
     }
 }

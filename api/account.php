@@ -10,6 +10,7 @@ header('Content-Type: application/json');
 require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
 require_once __DIR__ . '/jwt_helper.php';
+require_once __DIR__ . '/services/CreditManager.php';
 
 function account_extract_bearer_token(): ?string
 {
@@ -184,6 +185,8 @@ try {
         $userLastName  = count($nameParts) > 1 ? implode(' ', array_slice($nameParts, 1)) : null;
     }
 
+    $creditBalanceDisplay = (new CreditManager())->get_balance((string)$locId);
+
     // 4. Response format
     echo json_encode([
         'status' => 'success',
@@ -201,7 +204,7 @@ try {
             'approved_sender_id'  => $intData['approved_sender_id'] ?? null,
             'free_usage_count'    => $intData['free_usage_count'] ?? 0,
             'free_credits_total'  => $intData['free_credits_total'] ?? 10,
-            'credit_balance'      => (int)($intData['credit_balance'] ?? 0),
+            'credit_balance'      => $creditBalanceDisplay,
             'currency'            => $intData['currency'] ?? 'PHP'
         ]
     ]);

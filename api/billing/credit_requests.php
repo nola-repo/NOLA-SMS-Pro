@@ -94,9 +94,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'approve') {
-        $agencyWalletRef = $db->collection('agency_wallet')->document($agency_id);
-        $docId = (strpos($location_id, 'ghl_') === 0) ? $location_id : 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $location_id);
-        $subaccountRef = $db->collection('integrations')->document($docId);
+        $creditManager = new CreditManager();
+        $agencyWalletRef = $creditManager->resolveAgencyBalanceDocument($agency_id);
+        $subaccountRef = $creditManager->resolveSubaccountBalanceDocument($location_id);
 
         $txRefAgency = $db->collection('credit_transactions')->newDocument();
         $txRefSub = $db->collection('credit_transactions')->newDocument();
@@ -104,7 +104,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $ts = new \Google\Cloud\Core\Timestamp(new \DateTime());
 
         try {
-            $result = $db->runTransaction(function ($transaction) use ($agencyWalletRef, $subaccountRef, $requestRef, $txRefAgency, $txRefSub, $amount, $ts, $userId) {
+            $result = $db->runTransaction(function ($transaction) use ($agencyWalletRef, $subaccountRef, $requestRef, $txRefAgency, $txRefSub, $amount, $ts, $userId, $agency_id, $location_id) {
                 $snapAgency = $transaction->snapshot($agencyWalletRef);
                 $snapSub = $transaction->snapshot($subaccountRef);
 
@@ -143,7 +143,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $transaction->create($txRefAgency, [
                     'transaction_id' => $txRefAgency->id(),
-                    'account_id' => $agencyWalletRef->id(),
+                    'account_id' => $agency_id,
                     'wallet_scope' => 'agency',
                     'type' => 'credit_distribution',
                     'deducted_from' => 'agency',
@@ -153,9 +153,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'created_at' => $ts,
                 ]);
 
+                $subTxAccountId = CreditManager::integration_doc_id_for_location($location_id);
+
                 $transaction->create($txRefSub, [
                     'transaction_id' => $txRefSub->id(),
-                    'account_id' => $subaccountRef->id(),
+                    'account_id' => $subTxAccountId,
                     'wallet_scope' => 'subaccount',
                     'type' => 'request_approved',
                     'deducted_from' => 'agency',

@@ -9,6 +9,7 @@ header('Content-Type: application/json');
 
 require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
+require_once __DIR__ . '/services/CreditManager.php';
 
 validate_api_request();
 
@@ -69,7 +70,6 @@ try {
             exit;
         }
 
-        require_once __DIR__ . '/services/CreditManager.php';
         $creditManager = new CreditManager();
         $locId = get_ghl_location_id();
 
@@ -158,11 +158,13 @@ try {
     $docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
     $docRef = $db->collection('integrations')->document($docId);
 
+    $creditManager = new CreditManager();
+    $creditBalance = $creditManager->get_balance((string)$locId);
+
     $snapshot = $docRef->snapshot();
+    $data = $snapshot->exists() ? $snapshot->data() : [];
 
     if ($snapshot->exists()) {
-        $data = $snapshot->data();
-        $creditBalance = (int)($data['credit_balance'] ?? 0);
         $currency = $data['currency'] ?? 'PHP';
 
         // One-time migration: check if credits are orphaned in 'accounts' collection
@@ -174,7 +176,8 @@ try {
                 if ($accBal > 0) {
                     $creditBalance = $accBal;
                     $now = new \DateTimeImmutable();
-                    $docRef->set([
+                    $walletRef = $creditManager->resolveSubaccountBalanceDocument((string)$locId);
+                    $walletRef->set([
                         'credit_balance' => $accBal,
                         'updated_at' => new \Google\Cloud\Core\Timestamp($now),
                     ], ['merge' => true]);
@@ -195,16 +198,16 @@ try {
             : null;
     }
     else {
-        // Initialize with zero balance if not present
+        // Initialize with zero balance if not present (legacy integrations doc)
         $now = new DateTimeImmutable();
-        $creditBalance = 0;
         $currency = 'PHP';
         $docRef->set([
-            'credit_balance' => $creditBalance,
+            'credit_balance' => 0,
             'currency' => $currency,
             'created_at' => new \Google\Cloud\Core\Timestamp($now),
             'updated_at' => new \Google\Cloud\Core\Timestamp($now),
         ]);
+        $data = [];
         $createdAt = $now->format('Y-m-d H:i:s');
         $updatedAt = $createdAt;
     }

@@ -25,7 +25,7 @@ foreach ($agencyQuery as $doc) {
     if (!$doc->exists()) continue;
     $data = $doc->data();
     
-    $balance = (int)($data['balance'] ?? 0);
+    $balance = $creditManager->get_agency_balance($doc->id());
     $threshold = (int)($data['auto_recharge_threshold'] ?? 100);
     $amount = (int)($data['auto_recharge_amount'] ?? 500);
     
