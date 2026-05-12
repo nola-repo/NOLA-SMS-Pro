@@ -204,6 +204,8 @@ class GhlClient
         $out = [
             'api_location_id' => $this->locationId,
             'token_registry_id' => $this->tokenRegistryId,
+            'cloud_run_service' => getenv('K_SERVICE') ?: null,
+            'cloud_run_revision' => getenv('K_REVISION') ?: null,
             'canonical_doc_existed_at_load' => $this->canonicalDocExistedAtLoad,
             'integration_doc_id' => $this->integration['firestore_doc_id'] ?? null,
             'integration_user_type' => $this->integration['userType'] ?? null,
