@@ -18,8 +18,12 @@
     RewriteCond %{REQUEST_FILENAME} -d
     RewriteRule ^ - [L]
 
+    # ── v2 hot-path bypasses (avoid Laravel bridge process spawn) ────────
+    RewriteRule ^api/v2/ghl-contacts/?$ /api/ghl_contacts.php [NC,L,QSA]
+    RewriteRule ^api/v2/ghl-conversations/?$ /api/ghl-conversations.php [NC,L,QSA]
+
     # ── Laravel v2 (same container) ──────────────────────────────────────
-    # Route only /api/v2/* traffic to Laravel shim; keep legacy endpoints intact.
+    # Route remaining /api/v2/* traffic to Laravel shim; keep legacy endpoints intact.
     RewriteRule ^api/v2/?$ /api/v2/index.php [NC,L,QSA]
     RewriteRule ^api/v2/(.*)$ /api/v2/index.php [NC,L,QSA]
 

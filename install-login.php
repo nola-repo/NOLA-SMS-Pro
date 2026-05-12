@@ -179,13 +179,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // ── Build banner HTML ─────────────────────────────────────────────────────────
 $bannerHtml = '';
 if ($isWelcomeBack) {
-    // Reinstall/login banner should show agency/company branding only.
-    // Fall back to location name only when company is unavailable.
+    // Dynamic reinstall label: prefer selected subaccount/location, then fallback to company.
+    // This ensures reinstalling a different linked subaccount shows the correct target.
     $targetLabel = '';
-    if ($companyName) {
-        $targetLabel = "<strong>{$companyName}</strong>";
-    } elseif ($locationName) {
+    if ($locationName) {
         $targetLabel = "<strong>{$locationName}</strong>";
+    } elseif ($companyName) {
+        $targetLabel = "<strong>{$companyName}</strong>";
     }
     $loc = $targetLabel !== '' ? " {$targetLabel} has been" : 'Your app has been';
     $bannerHtml = <<<HTML

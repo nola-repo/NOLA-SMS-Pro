@@ -38,6 +38,21 @@ function ir_is_non_production(): bool {
         || str_contains($host, 'test');
 }
 
+/**
+ * Collection-group fallback is accurate but can be slow on cold starts.
+ * Keep it opt-in so install preload stays snappy in production.
+ */
+function ir_enable_deep_linked_user_fallback(): bool
+{
+    $flag = getenv('INSTALL_REGISTER_DEEP_LINK_CHECK');
+    if ($flag === false) {
+        return false;
+    }
+    $flag = strtolower(trim((string) $flag));
+
+    return in_array($flag, ['1', 'true', 'yes', 'on'], true);
+}
+
 // ── Verify install_token ──────────────────────────────────────────────────────
 $installToken = trim($_GET['install_token'] ?? $_POST['install_token'] ?? '');
 
@@ -199,6 +214,10 @@ function ir_has_linked_user_for_location($db, string $locationId): bool
         }
     } catch (Exception $e) {
         error_log('[install-register] active_location_id linked-user check failed: ' . $e->getMessage());
+    }
+
+    if (!ir_enable_deep_linked_user_fallback()) {
+        return false;
     }
 
     try {

@@ -929,27 +929,28 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         // Sign JWT for the registration path.
         require_once __DIR__ . '/api/jwt_helper.php';
         $jwtSecret2   = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
+        $companyNameCaseA = '';
+        if (!empty($companyId)) {
+            try {
+                $coSnapA = $db->collection('ghl_tokens')->document((string)$companyId)->snapshot();
+                if ($coSnapA->exists()) {
+                    $coDataA = $coSnapA->data();
+                    $companyNameCaseA = (string)($coDataA['company_name'] ?? $coDataA['agency_name'] ?? $coDataA['location_name'] ?? '');
+                }
+            } catch (Exception $e) {
+                error_log('[GHL_CALLBACK] Case A company name lookup failed: ' . $e->getMessage());
+            }
+        }
         $installToken2 = jwt_sign([
             'type'          => 'install',
             'location_id'   => $singleLocationId,
             'location_name' => $singleLocName ?: '',
             'company_id'    => $companyId,
+            'company_name'  => $companyNameCaseA ?: '',
             'resolution_source' => 'case_a_single_location',
         ], $jwtSecret2, 900);
 
         if ($hasLinkedUserCaseA) {
-            $companyNameCaseA = '';
-            if (!empty($companyId)) {
-                try {
-                    $coSnapA = $db->collection('ghl_tokens')->document((string)$companyId)->snapshot();
-                    if ($coSnapA->exists()) {
-                        $coDataA = $coSnapA->data();
-                        $companyNameCaseA = (string)($coDataA['company_name'] ?? $coDataA['agency_name'] ?? $coDataA['location_name'] ?? '');
-                    }
-                } catch (Exception $e) {
-                    error_log('[GHL_CALLBACK] Case A company name lookup failed: ' . $e->getMessage());
-                }
-            }
             $caseARedirect = 'https://smspro-api.nolacrm.io/login?welcome_back=1&name=' . urlencode($singleLocName ?: 'Your Sub-Account');
             if ($companyNameCaseA !== '') {
                 $caseARedirect .= '&company=' . urlencode($companyNameCaseA);
@@ -1487,28 +1488,30 @@ $locationNameEnc = urlencode($locationName ?: 'Your Sub-Account');
 // Check if any user already owns this location.
 $hasExistingUser = has_linked_user_for_location($db, (string)$locationId);
 
+    $companyName = '';
+    $companyId = (string)($data['companyId'] ?? '');
+    if ($companyId !== '') {
+        try {
+            $coSnap = $db->collection('ghl_tokens')->document($companyId)->snapshot();
+            if ($coSnap->exists()) {
+                $coData = $coSnap->data();
+                $companyName = (string)($coData['company_name'] ?? $coData['agency_name'] ?? $coData['location_name'] ?? '');
+            }
+        } catch (Exception $e) {
+            error_log('[GHL_CALLBACK] company name lookup failed: ' . $e->getMessage());
+        }
+    }
+
     $installToken = jwt_sign([
         'type'          => 'install',
         'location_id'   => $locationId,
         'location_name' => $locationName ?: '',
-        'company_id'    => $data['companyId'] ?? '',
+        'company_id'    => $companyId,
+        'company_name'  => $companyName ?: '',
         'resolution_source' => 'direct_location_callback',
     ], $jwtSecret, 900); // 15 minutes
 
     if ($hasExistingUser) {
-        $companyName = '';
-        $companyId = (string)($data['companyId'] ?? '');
-        if ($companyId !== '') {
-            try {
-                $coSnap = $db->collection('ghl_tokens')->document($companyId)->snapshot();
-                if ($coSnap->exists()) {
-                    $coData = $coSnap->data();
-                    $companyName = (string)($coData['company_name'] ?? $coData['agency_name'] ?? $coData['location_name'] ?? '');
-                }
-            } catch (Exception $e) {
-                error_log('[GHL_CALLBACK] company name lookup failed: ' . $e->getMessage());
-            }
-        }
         $redirectUrl = 'https://smspro-api.nolacrm.io/login?welcome_back=1&name=' . urlencode($locationName);
         if ($companyName !== '') {
             $redirectUrl .= '&company=' . urlencode($companyName);
