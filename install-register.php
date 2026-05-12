@@ -310,6 +310,9 @@ if ($locationId) {
         if (ir_has_linked_user_for_location($db, (string) $locationId)) {
             $loginName = $locationNameRaw !== '' ? $locationNameRaw : ($companyNameRaw !== '' ? $companyNameRaw : 'Your Sub-Account');
             $redirectUrl = 'https://smspro-api.nolacrm.io/login?welcome_back=1&name=' . urlencode($loginName);
+            if ($companyNameRaw !== '') {
+                $redirectUrl .= '&company=' . urlencode($companyNameRaw);
+            }
             header('Location: ' . $redirectUrl, true, 302);
             exit;
         }

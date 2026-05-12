@@ -938,7 +938,22 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         ], $jwtSecret2, 900);
 
         if ($hasLinkedUserCaseA) {
+            $companyNameCaseA = '';
+            if (!empty($companyId)) {
+                try {
+                    $coSnapA = $db->collection('ghl_tokens')->document((string)$companyId)->snapshot();
+                    if ($coSnapA->exists()) {
+                        $coDataA = $coSnapA->data();
+                        $companyNameCaseA = (string)($coDataA['company_name'] ?? $coDataA['agency_name'] ?? $coDataA['location_name'] ?? '');
+                    }
+                } catch (Exception $e) {
+                    error_log('[GHL_CALLBACK] Case A company name lookup failed: ' . $e->getMessage());
+                }
+            }
             $caseARedirect = 'https://smspro-api.nolacrm.io/login?welcome_back=1&name=' . urlencode($singleLocName ?: 'Your Sub-Account');
+            if ($companyNameCaseA !== '') {
+                $caseARedirect .= '&company=' . urlencode($companyNameCaseA);
+            }
             error_log("[GHL_CALLBACK] Case A: {$singleLocationId} already linked — redirecting to login.");
         } else {
             $caseARedirect = 'https://smspro-api.nolacrm.io/register?install_token=' . urlencode($installToken2);
@@ -1481,7 +1496,23 @@ $hasExistingUser = has_linked_user_for_location($db, (string)$locationId);
     ], $jwtSecret, 900); // 15 minutes
 
     if ($hasExistingUser) {
+        $companyName = '';
+        $companyId = (string)($data['companyId'] ?? '');
+        if ($companyId !== '') {
+            try {
+                $coSnap = $db->collection('ghl_tokens')->document($companyId)->snapshot();
+                if ($coSnap->exists()) {
+                    $coData = $coSnap->data();
+                    $companyName = (string)($coData['company_name'] ?? $coData['agency_name'] ?? $coData['location_name'] ?? '');
+                }
+            } catch (Exception $e) {
+                error_log('[GHL_CALLBACK] company name lookup failed: ' . $e->getMessage());
+            }
+        }
         $redirectUrl = 'https://smspro-api.nolacrm.io/login?welcome_back=1&name=' . urlencode($locationName);
+        if ($companyName !== '') {
+            $redirectUrl .= '&company=' . urlencode($companyName);
+        }
         error_log("[GHL_CALLBACK] Redirecting {$locationId} to login.");
     } else {
         $redirectUrl = 'https://smspro-api.nolacrm.io/register?install_token=' . urlencode($installToken);

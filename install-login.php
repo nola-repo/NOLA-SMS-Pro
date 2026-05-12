@@ -129,6 +129,7 @@ HTML;
 // ── Read query params ─────────────────────────────────────────────────────────
 $isWelcomeBack = isset($_GET['welcome_back']) && $_GET['welcome_back'] === '1';
 $locationName  = htmlspecialchars(trim($_GET['name'] ?? ''), ENT_QUOTES, 'UTF-8');
+$companyName   = htmlspecialchars(trim($_GET['company'] ?? ''), ENT_QUOTES, 'UTF-8');
 $isBulkInstall = isset($_GET['bulk_install']) && $_GET['bulk_install'] === '1';
 $bulkCount     = (int)($_GET['count'] ?? 0);
 
@@ -178,7 +179,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // ── Build banner HTML ─────────────────────────────────────────────────────────
 $bannerHtml = '';
 if ($isWelcomeBack) {
-    $loc = $locationName ? " <strong>{$locationName}</strong> has been" : 'Your app has been';
+    $targetLabel = '';
+    if ($companyName && $locationName) {
+        $targetLabel = "<strong>{$companyName}</strong> (<strong>{$locationName}</strong>)";
+    } elseif ($companyName) {
+        $targetLabel = "<strong>{$companyName}</strong>";
+    } elseif ($locationName) {
+        $targetLabel = "<strong>{$locationName}</strong>";
+    }
+    $loc = $targetLabel !== '' ? " {$targetLabel} has been" : 'Your app has been';
     $bannerHtml = <<<HTML
     <div class="banner-blue">
         <p>👋 Welcome back! {$loc} reinstalled.<br>Sign in to continue to your dashboard.</p>
