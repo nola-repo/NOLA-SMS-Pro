@@ -364,8 +364,16 @@ class GhlClient
         $refreshToken = $this->integration['refresh_token'] ?? null;
         $docId        = $this->integration['firestore_doc_id'] ?? $this->locationId;
 
-        $isBulkProvisioned = !empty($this->integration['provisioned_from_bulk']);
         $companyId         = $this->integration['companyId'] ?? null;
+        $isLocationDoc     = ($this->integration['userType'] ?? null) === 'Location'
+            && $companyId
+            && $companyId !== $this->locationId;
+        $isCompanyBackedLocation = $isLocationDoc && (
+            !empty($this->integration['provisioned_from_bulk'])
+            || !empty($this->integration['copied_from'])
+            || (($this->integration['appType'] ?? null) === 'agency')
+        );
+        $isBulkProvisioned = !empty($this->integration['provisioned_from_bulk']) || $isCompanyBackedLocation;
         $now               = new \DateTimeImmutable();
 
         // Check if we even need to refresh the Company token
@@ -378,7 +386,10 @@ class GhlClient
             if ($companyDoc->exists()) {
                 $companyData = $companyDoc->data();
                 $companyAccessToken = $companyData['access_token'] ?? null;
-                $companyExpiresAt   = $companyData['expires_at'] ?? 0;
+                $companyExpiresRaw  = $companyData['expires_at'] ?? 0;
+                $companyExpiresAt   = $companyExpiresRaw instanceof \Google\Cloud\Core\Timestamp
+                    ? $companyExpiresRaw->get()->getTimestamp()
+                    : (int)$companyExpiresRaw;
                 $companyRefresh     = $companyData['refresh_token'] ?? null;
 
                 // Always use the freshest refresh_token from the parent company doc
@@ -462,7 +473,7 @@ class GhlClient
 
             $this->db->collection('ghl_tokens')->document($companyId)->set([
                 'access_token'  => $data['access_token'] ?? null,
-                'refresh_token' => $data['refresh_token'] ?? null,
+                'refresh_token' => $data['refresh_token'] ?? $refreshToken,
                 'expires_at'    => $companyExpiresAtUnix,
                 'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
                 'raw_refresh'   => $data,
@@ -516,12 +527,17 @@ class GhlClient
             'appId'         => $clientId,   // Backward compat with callback-written docs
         ];
 
+        if ($isBulkProvisioned && $companyId) {
+            $updateData['provisioned_from_bulk'] = true;
+            $updateData['companyId'] = $companyId;
+        }
+
         // Write back to Firestore (ghl_tokens collection)
         $this->db->collection('ghl_tokens')->document($docId)->set($updateData, ['merge' => true]);
 
         // Update local state so the caller has the new token immediately
         $this->integration['access_token']  = $data['access_token'] ?? null;
-        $this->integration['refresh_token'] = $data['refresh_token'] ?? null;
+        $this->integration['refresh_token'] = $updateData['refresh_token'];
         $this->integration['expires_at']    = $expiresAtUnix;
 
         // Invalidate the in-memory/file cache so next request re-reads from Firestore

@@ -129,6 +129,7 @@ $locationPayload = [
     'toggle_enabled'=> true,
     'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
     'copied_from'   => $COMPANY_DOC_ID,
+    'provisioned_from_bulk' => true,
     'raw'           => $tokenData,
 ];
 
