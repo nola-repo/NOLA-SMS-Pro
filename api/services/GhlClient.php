@@ -95,7 +95,10 @@ class GhlClient
                     error_log('GhlClient refresh after 401: ' . $e->getMessage());
                     return [
                         'status' => 401,
-                        'body'   => json_encode(['error' => 'Token refresh failed']),
+                        'body'   => json_encode([
+                            'error' => 'Token refresh failed',
+                            'requires_reconnect' => true,
+                        ]),
                     ];
                 }
             }
@@ -346,120 +349,149 @@ class GhlClient
      */
     private function refreshToken(): void
     {
-        // Retrieve the client_id that generated this token
         $storedClientId = $this->integration['client_id'] ?? $this->integration['appId'] ?? null;
-        
-        // Choose the correct credentials
-        if ($storedClientId === (getenv('GHL_AGENCY_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3')) {
-            $clientId = getenv('GHL_AGENCY_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3';
-            $clientSecret = getenv('GHL_AGENCY_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322';
-        } else {
-            // Default to User App for legacy/unknown tokens
-            $clientId = getenv('GHL_CLIENT_ID') ?: '6999da2b8f278296d95f7274-mmn30t4f';
+        $refreshToken   = $this->integration['refresh_token'] ?? null;
+        $docId          = $this->integration['firestore_doc_id'] ?? $this->locationId;
+        $companyId      = $this->integration['companyId'] ?? null;
 
-            $clientSecret = getenv('GHL_CLIENT_SECRET') ?: 'd91017ad-f4eb-461f-8967-b1d51cd1c1eb';
+        $subaccountClientId = getenv('GHL_CLIENT_ID') ?: '6999da2b8f278296d95f7274-mmn30t4f';
+        $subaccountSecret   = getenv('GHL_CLIENT_SECRET') ?: 'd91017ad-f4eb-461f-8967-b1d51cd1c1eb';
+        $agencyClientId     = getenv('GHL_AGENCY_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3';
+        $agencySecret       = getenv('GHL_AGENCY_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322';
 
-        }
+        $companyData = null;
+        $companyAccessToken = null;
+        $companyExpiresAt = 0;
+        $companyRefresh = null;
 
-        $refreshToken = $this->integration['refresh_token'] ?? null;
-        $docId        = $this->integration['firestore_doc_id'] ?? $this->locationId;
-
-        $companyId         = $this->integration['companyId'] ?? null;
-        $isLocationDoc     = ($this->integration['userType'] ?? null) === 'Location'
-            && $companyId
-            && $companyId !== $this->locationId;
-        $isCompanyBackedLocation = $isLocationDoc && (
-            !empty($this->integration['provisioned_from_bulk'])
-            || !empty($this->integration['copied_from'])
-            || (($this->integration['appType'] ?? null) === 'agency')
-        );
-        $isBulkProvisioned = !empty($this->integration['provisioned_from_bulk']) || $isCompanyBackedLocation;
-        $now               = new \DateTimeImmutable();
-
-        // Check if we even need to refresh the Company token
-        $companyTokenSkippedRefresh = false;
-        $data = null;
-        $httpCode = 200;
-
-        if ($isBulkProvisioned && $companyId) {
+        if ($companyId) {
             $companyDoc = $this->db->collection('ghl_tokens')->document($companyId)->snapshot();
             if ($companyDoc->exists()) {
                 $companyData = $companyDoc->data();
                 $companyAccessToken = $companyData['access_token'] ?? null;
-                $companyExpiresRaw  = $companyData['expires_at'] ?? 0;
-                $companyExpiresAt   = $companyExpiresRaw instanceof \Google\Cloud\Core\Timestamp
+                $companyRefresh = $companyData['refresh_token'] ?? null;
+                $companyExpiresRaw = $companyData['expires_at'] ?? 0;
+                $companyExpiresAt = $companyExpiresRaw instanceof \Google\Cloud\Core\Timestamp
                     ? $companyExpiresRaw->get()->getTimestamp()
                     : (int)$companyExpiresRaw;
-                $companyRefresh     = $companyData['refresh_token'] ?? null;
-
-                // Always use the freshest refresh_token from the parent company doc
-                if ($companyRefresh) {
-                    $refreshToken = $companyRefresh;
-                }
-
-                // If the company access_token is still valid (e.g. refreshed by another subaccount),
-                // we can skip the refresh and immediately exchange it for a location token!
-                if ($companyAccessToken && time() < ($companyExpiresAt - 300)) {
-                    $companyTokenSkippedRefresh = true;
-                    $data = [
-                        'access_token'  => $companyAccessToken,
-                        'refresh_token' => $companyRefresh,
-                        'expires_in'    => $companyExpiresAt - time(),
-                    ];
-                }
             }
         }
 
-        if (!$clientId || !$clientSecret || !$refreshToken) {
-            $missing = [];
-            if (!$clientId)     $missing[] = 'GHL_CLIENT_ID';
-            if (!$clientSecret) $missing[] = 'GHL_CLIENT_SECRET';
-            if (!$refreshToken) $missing[] = 'refresh_token (in Firestore)';
+        $isLocationDoc = ($this->integration['userType'] ?? null) === 'Location'
+            && $companyId
+            && $companyId !== $this->locationId;
+        $usesCompanyRefresh = $companyRefresh && $refreshToken && hash_equals((string)$companyRefresh, (string)$refreshToken);
+        $isCompanyBackedLocation = $isLocationDoc && (
+            !empty($this->integration['provisioned_from_bulk'])
+            || !empty($this->integration['copied_from'])
+            || (($this->integration['appType'] ?? null) === 'agency')
+            || $usesCompanyRefresh
+        );
+        $isBulkProvisioned = !empty($this->integration['provisioned_from_bulk']) || $isCompanyBackedLocation;
 
-            throw new \Exception('GHL Refresh Error: Missing ' . implode(', ', $missing));
+        if ($isBulkProvisioned && $companyRefresh) {
+            $refreshToken = $companyRefresh;
         }
 
-        // Only perform the actual refresh if we couldn't skip it
-        if (!$companyTokenSkippedRefresh) {
-            $userTypeForRefresh = $isBulkProvisioned ? 'Company' : ($this->integration['userType'] ?? 'Location');
+        if (!$refreshToken) {
+            throw new \Exception('GHL Refresh Error: Missing refresh_token (in Firestore)');
+        }
 
-            $tokenUrl = 'https://services.leadconnectorhq.com/oauth/token';
-            $postData = [
-                'client_id'     => $clientId,
-                'client_secret' => $clientSecret,
-                'grant_type'    => 'refresh_token',
-                'refresh_token' => $refreshToken,
-                'user_type'     => $userTypeForRefresh,
+        $companyTokenSkippedRefresh = false;
+        $data = null;
+        $clientId = $storedClientId ?: $subaccountClientId;
+
+        if ($isBulkProvisioned && $companyAccessToken && time() < ($companyExpiresAt - 300)) {
+            $companyTokenSkippedRefresh = true;
+            $data = [
+                'access_token'  => $companyAccessToken,
+                'refresh_token' => $companyRefresh,
+                'expires_in'    => $companyExpiresAt - time(),
             ];
+            $clientId = $companyData['client_id'] ?? $companyData['appId'] ?? $clientId;
+        }
 
-            $ch = curl_init($tokenUrl);
-            curl_setopt_array($ch, [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_POST           => true,
-                CURLOPT_POSTFIELDS     => http_build_query($postData),
-                CURLOPT_HTTPHEADER     => [
-                    'Accept: application/json',
-                    'Content-Type: application/x-www-form-urlencoded',
-                    'Version: 2021-07-28',
-                ],
-            ]);
+        if (!$companyTokenSkippedRefresh) {
+            $preferredUserType = $isBulkProvisioned ? 'Company' : ($this->integration['userType'] ?? 'Location');
+            $credentialCandidates = [];
+            $addCandidate = static function (array &$items, string $id, string $secret, string $userType, string $label): void {
+                if ($id === '' || $secret === '') {
+                    return;
+                }
+                $key = $id . ':' . $userType;
+                if (isset($items[$key])) {
+                    return;
+                }
+                $items[$key] = [
+                    'client_id' => $id,
+                    'client_secret' => $secret,
+                    'user_type' => $userType,
+                    'label' => $label,
+                ];
+            };
 
-            $response = curl_exec($ch);
-            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            curl_close($ch);
+            if ($storedClientId === $agencyClientId) {
+                $addCandidate($credentialCandidates, $agencyClientId, $agencySecret, $preferredUserType, 'stored-agency');
+            } else {
+                $addCandidate($credentialCandidates, $subaccountClientId, $subaccountSecret, $preferredUserType, 'stored-subaccount');
+            }
 
-            $data = json_decode($response, true);
+            if ($isBulkProvisioned || $companyId) {
+                $addCandidate($credentialCandidates, $subaccountClientId, $subaccountSecret, 'Company', 'subaccount-company');
+                $addCandidate($credentialCandidates, $agencyClientId, $agencySecret, 'Company', 'agency-company');
+            }
 
-            if ($httpCode !== 200 || !is_array($data)) {
+            if (!$isBulkProvisioned) {
+                $addCandidate($credentialCandidates, $subaccountClientId, $subaccountSecret, 'Location', 'subaccount-location');
+            }
+
+            $lastHint = 'invalid response';
+            foreach ($credentialCandidates as $candidate) {
+                $ch = curl_init('https://services.leadconnectorhq.com/oauth/token');
+                curl_setopt_array($ch, [
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_POST           => true,
+                    CURLOPT_POSTFIELDS     => http_build_query([
+                        'client_id'     => $candidate['client_id'],
+                        'client_secret' => $candidate['client_secret'],
+                        'grant_type'    => 'refresh_token',
+                        'refresh_token' => $refreshToken,
+                        'user_type'     => $candidate['user_type'],
+                    ]),
+                    CURLOPT_HTTPHEADER     => [
+                        'Accept: application/json',
+                        'Content-Type: application/x-www-form-urlencoded',
+                        'Version: 2021-07-28',
+                    ],
+                ]);
+
+                $response = curl_exec($ch);
+                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                curl_close($ch);
+
+                $parsed = json_decode((string)$response, true);
+                if ($httpCode === 200 && is_array($parsed) && !empty($parsed['access_token'])) {
+                    $data = $parsed;
+                    $clientId = $candidate['client_id'];
+                    error_log('[GhlClient] oauth/token refresh succeeded via ' . $candidate['label']);
+                    break;
+                }
+
+                $lastHint = is_array($parsed)
+                    ? ($parsed['error_description'] ?? $parsed['message'] ?? $parsed['error'] ?? 'invalid response')
+                    : 'invalid response';
                 error_log(
-                    '[GhlClient] oauth/token refresh failed HTTP '
-                    . $httpCode . ': '
+                    '[GhlClient] oauth/token refresh candidate failed via '
+                    . $candidate['label']
+                    . ' HTTP '
+                    . $httpCode
+                    . ': '
                     . self::redactGhlResponseForLog((string)$response)
                 );
-                $hint = is_array($data)
-                    ? ($data['error_description'] ?? $data['error'] ?? 'invalid response')
-                    : 'invalid response';
-                throw new \Exception("GHL token refresh failed with code {$httpCode}: {$hint}");
+            }
+
+            if (!is_array($data) || empty($data['access_token'])) {
+                throw new \Exception("GHL token refresh failed: {$lastHint}");
             }
         }
 

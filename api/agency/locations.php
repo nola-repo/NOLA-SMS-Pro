@@ -2,10 +2,10 @@
 require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 
-require_once __DIR__ . '/../auth_helpers.php';
 require_once __DIR__ . '/../webhook/firestore_client.php';
+require_once __DIR__ . '/auth_helper.php';
 
-validate_jwt();
+$agencyId = validate_agency_request(true);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     http_response_code(405);
@@ -13,7 +13,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     exit;
 }
 
-$companyId = trim((string)($_GET['company_id'] ?? ''));
+$companyId = trim((string)($_GET['company_id'] ?? $agencyId));
 if ($companyId === '') {
     http_response_code(422);
     echo json_encode(['error' => 'company_id is required']);
