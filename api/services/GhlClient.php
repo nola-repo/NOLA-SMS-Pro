@@ -373,12 +373,13 @@ class GhlClient
         $isLocationDoc = ($this->integration['userType'] ?? null) === 'Location'
             && $companyId
             && $companyId !== $this->locationId;
-        $usesCompanyRefresh = $companyRefresh && $refreshToken && hash_equals((string) $companyRefresh, (string) $refreshToken);
+        // IMPORTANT: Do NOT infer "company-backed" purely from refresh_token equality.
+        // Some installs copy the same refresh_token into both company+location docs; treating
+        // that as bulk/company-backed incorrectly forces a locationToken exchange, which can 400.
         $isCompanyBackedLocation = $isLocationDoc && (
             !empty($this->integration['provisioned_from_bulk'])
             || !empty($this->integration['copied_from'])
             || (($this->integration['appType'] ?? null) === 'agency')
-            || $usesCompanyRefresh
         );
         $isBulkProvisioned = !empty($this->integration['provisioned_from_bulk']) || $isCompanyBackedLocation;
 
