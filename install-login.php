@@ -114,6 +114,16 @@ function il_page(string $title, string $body): void {
         var inp = document.getElementById('password');
         inp.type = inp.type === 'password' ? 'text' : 'password';
       });
+      var lockedEmailInput = document.getElementById('email-display');
+      if (lockedEmailInput && lockedEmailInput.dataset.lockedEmail) {
+        var keepLockedEmail = function() {
+          lockedEmailInput.value = lockedEmailInput.dataset.lockedEmail;
+        };
+        keepLockedEmail();
+        lockedEmailInput.addEventListener('input', keepLockedEmail);
+        setTimeout(keepLockedEmail, 100);
+        setTimeout(keepLockedEmail, 600);
+      }
       var form = document.getElementById('login-form');
       if (form) form.addEventListener('submit', function() {
         var btn = document.getElementById('submit-btn');
@@ -169,14 +179,82 @@ function il_login_user_linked_to_location($db, string $uid, string $locationId):
     return false;
 }
 
+function il_linked_account_for_location($db, string $locationId): ?array
+{
+    $locationId = trim($locationId);
+    if ($locationId === '') {
+        return null;
+    }
+
+    try {
+        $ownerSnap = $db->collection('location_owners')->document($locationId)->snapshot();
+        if ($ownerSnap->exists()) {
+            $ownerData = $ownerSnap->data();
+            $ownerEmail = strtolower(trim((string)($ownerData['owner_email'] ?? '')));
+            if ($ownerEmail !== '') {
+                return [
+                    'email' => $ownerEmail,
+                    'name' => trim((string)($ownerData['owner_name'] ?? '')),
+                ];
+            }
+        }
+    } catch (Exception $e) {
+        error_log('[install-login] linked owner lookup failed: ' . $e->getMessage());
+    }
+
+    try {
+        $userQuery = $db->collection('users')
+            ->where('active_location_id', '=', $locationId)
+            ->limit(1)
+            ->documents();
+
+        foreach ($userQuery as $userDoc) {
+            if (!$userDoc->exists()) {
+                continue;
+            }
+            $userData = $userDoc->data();
+            $userEmail = strtolower(trim((string)($userData['email'] ?? '')));
+            if ($userEmail !== '') {
+                return [
+                    'email' => $userEmail,
+                    'name' => trim((string)($userData['name'] ?? '')),
+                ];
+            }
+        }
+    } catch (Exception $e) {
+        error_log('[install-login] linked user lookup failed: ' . $e->getMessage());
+    }
+
+    return null;
+}
+
 // ── Handle POST ───────────────────────────────────────────────────────────────
 $formError = null;
 $emailVal  = '';
+$linkedAccount = null;
+
+if ($locationIdRaw !== '') {
+    try {
+        $linkedAccount = il_linked_account_for_location(get_firestore(), $locationIdRaw);
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST' && !empty($linkedAccount['email'])) {
+            $emailVal = htmlspecialchars((string)$linkedAccount['email'], ENT_QUOTES, 'UTF-8');
+        }
+    } catch (Exception $e) {
+        error_log('[install-login] linked account preload failed: ' . $e->getMessage());
+    }
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $email    = strtolower(trim($_POST['email']    ?? ''));
     $password = $_POST['password'] ?? '';
     $emailVal = htmlspecialchars($email, ENT_QUOTES, 'UTF-8');
+
+    if (!empty($linkedAccount['email']) && $email !== (string)$linkedAccount['email']) {
+        $linkedEmailSafe = htmlspecialchars((string)$linkedAccount['email'], ENT_QUOTES, 'UTF-8');
+        $formError = "This subaccount is linked to {$linkedEmailSafe}. Please sign in with that email.";
+        $emailVal = $linkedEmailSafe;
+        goto render_login_form;
+    }
 
     $ch = curl_init($apiBase . '/api/auth/login');
     curl_setopt_array($ch, [
@@ -255,24 +333,59 @@ HTML;
 }
 
 $errorHtml = $formError ? "<div class=\"error-box\">{$formError}</div>" : '';
+$linkedEmailSafe = !empty($linkedAccount['email'])
+    ? htmlspecialchars((string)$linkedAccount['email'], ENT_QUOTES, 'UTF-8')
+    : '';
+$linkedNameSafe = !empty($linkedAccount['name'])
+    ? htmlspecialchars((string)$linkedAccount['name'], ENT_QUOTES, 'UTF-8')
+    : '';
+$linkedAccountHtml = '';
+if ($linkedEmailSafe !== '') {
+    $linkedLabel = $linkedNameSafe !== '' ? "{$linkedNameSafe} &lt;{$linkedEmailSafe}&gt;" : $linkedEmailSafe;
+    $linkedAccountHtml = <<<HTML
+    <div class="banner-blue">
+        <p>This subaccount is linked to <strong>{$linkedLabel}</strong>. Use that account password to continue.</p>
+    </div>
+HTML;
+}
+
+$emailFieldHtml = '';
+$emailLabelFor = 'email';
+if ($linkedEmailSafe !== '') {
+    $emailLabelFor = 'email-display';
+    $emailFieldHtml = <<<HTML
+            <input id="email" name="email" type="hidden" value="{$linkedEmailSafe}">
+            <input id="email-display" type="email" readonly
+                placeholder="you@company.com" value="{$linkedEmailSafe}" autocomplete="off"
+                data-lpignore="true" data-1p-ignore data-locked-email="{$linkedEmailSafe}">
+HTML;
+} else {
+    $emailFieldHtml = <<<HTML
+            <input id="email" name="email" type="email" required
+                placeholder="you@company.com" value="{$emailVal}" autocomplete="email">
+HTML;
+}
+$passwordAutocompleteAttrs = $linkedEmailSafe !== ''
+    ? 'autocomplete="off" data-lpignore="true" data-1p-ignore'
+    : 'autocomplete="current-password"';
 
 il_page('Sign In', <<<HTML
     <h1>Welcome back</h1>
     <p class="subtitle">Sign in to your NOLA SMS Pro account.</p>
     {$bannerHtml}
+    {$linkedAccountHtml}
     {$errorHtml}
     <form id="login-form" method="POST" action="/login">
         <input type="hidden" name="location_id" value="{$locationIdSafe}">
         <div class="field">
-            <label for="email">Email Address</label>
-            <input id="email" name="email" type="email" required
-                placeholder="you@company.com" value="{$emailVal}" autocomplete="email">
+            <label for="{$emailLabelFor}">Email Address</label>
+{$emailFieldHtml}
         </div>
         <div class="field">
             <label for="password">Password</label>
             <div class="pw-wrap">
                 <input id="password" name="password" type="password" required
-                    placeholder="••••••••" autocomplete="current-password">
+                    placeholder="••••••••" {$passwordAutocompleteAttrs}>
                 <button type="button" id="toggle-pw" class="pw-toggle" aria-label="Show/hide password">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                 </button>
