@@ -11,6 +11,7 @@
  */
 
 require_once __DIR__ . '/api/jwt_helper.php';
+require_once __DIR__ . '/api/webhook/firestore_client.php';
 
 $apiBase  = 'https://smspro-api.nolacrm.io';
 $reactApp = 'https://app.nolasmspro.com';
@@ -130,8 +131,43 @@ HTML;
 $isWelcomeBack = isset($_GET['welcome_back']) && $_GET['welcome_back'] === '1';
 $locationName  = htmlspecialchars(trim($_GET['name'] ?? ''), ENT_QUOTES, 'UTF-8');
 $companyName   = htmlspecialchars(trim($_GET['company'] ?? ''), ENT_QUOTES, 'UTF-8');
+$locationIdRaw = trim((string)($_GET['location_id'] ?? $_POST['location_id'] ?? ''));
+$locationIdSafe = htmlspecialchars($locationIdRaw, ENT_QUOTES, 'UTF-8');
 $isBulkInstall = isset($_GET['bulk_install']) && $_GET['bulk_install'] === '1';
 $bulkCount     = (int)($_GET['count'] ?? 0);
+
+function il_login_user_linked_to_location($db, string $uid, string $locationId): bool
+{
+    $uid = trim($uid);
+    $locationId = trim($locationId);
+    if ($uid === '' || $locationId === '') {
+        return false;
+    }
+
+    try {
+        $userSnap = $db->collection('users')->document($uid)->snapshot();
+        if (!$userSnap->exists()) {
+            return false;
+        }
+        $userData = $userSnap->data();
+        if ((string)($userData['active_location_id'] ?? '') === $locationId) {
+            return true;
+        }
+    } catch (Exception $e) {
+        error_log('[install-login] linked check users doc failed: ' . $e->getMessage());
+    }
+
+    try {
+        $subSnap = $db->collection('users')->document($uid)->collection('subaccounts')->document($locationId)->snapshot();
+        if ($subSnap->exists()) {
+            return true;
+        }
+    } catch (Exception $e) {
+        error_log('[install-login] linked check subaccounts doc failed: ' . $e->getMessage());
+    }
+
+    return false;
+}
 
 // ── Handle POST ───────────────────────────────────────────────────────────────
 $formError = null;
@@ -157,6 +193,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $result = json_decode($resp, true);
 
     if ($code === 200 && !empty($result['token'])) {
+        if ($locationIdRaw !== '') {
+            $db = get_firestore();
+            $jwtSecret = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
+            $payload = jwt_verify((string)$result['token'], $jwtSecret);
+            $authUid = (string)($payload['sub'] ?? '');
+            if (!il_login_user_linked_to_location($db, $authUid, $locationIdRaw)) {
+                $formError = 'This account is not linked to the selected subaccount. Please sign in with the correct linked account.';
+                goto render_login_form;
+            }
+        }
+
         // Agency account — redirect to agency portal
         if (($result['role'] ?? '') === 'agency') {
             header('Location: https://agency.nolasmspro.com', true, 302);
@@ -175,6 +222,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $formError = htmlspecialchars($result['error'] ?? 'Invalid email or password.', ENT_QUOTES, 'UTF-8');
     }
 }
+render_login_form:
 
 // ── Build banner HTML ─────────────────────────────────────────────────────────
 $bannerHtml = '';
@@ -214,6 +262,7 @@ il_page('Sign In', <<<HTML
     {$bannerHtml}
     {$errorHtml}
     <form id="login-form" method="POST" action="/login">
+        <input type="hidden" name="location_id" value="{$locationIdSafe}">
         <div class="field">
             <label for="email">Email Address</label>
             <input id="email" name="email" type="email" required

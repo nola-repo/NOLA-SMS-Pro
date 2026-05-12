@@ -328,7 +328,8 @@ if ($locationId) {
         $db = isset($db) ? $db : get_firestore();
         if (ir_has_linked_user_for_location($db, (string) $locationId)) {
             $loginName = $locationNameRaw !== '' ? $locationNameRaw : ($companyNameRaw !== '' ? $companyNameRaw : 'Your Sub-Account');
-            $redirectUrl = 'https://smspro-api.nolacrm.io/login?welcome_back=1&name=' . urlencode($loginName);
+            $redirectUrl = 'https://smspro-api.nolacrm.io/login?welcome_back=1&name=' . urlencode($loginName)
+                . '&location_id=' . urlencode((string)$locationId);
             if ($companyNameRaw !== '') {
                 $redirectUrl .= '&company=' . urlencode($companyNameRaw);
             }

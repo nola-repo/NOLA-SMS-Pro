@@ -952,6 +952,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
 
         if ($hasLinkedUserCaseA) {
             $caseARedirect = 'https://smspro-api.nolacrm.io/login?welcome_back=1&name=' . urlencode($singleLocName ?: 'Your Sub-Account');
+            $caseARedirect .= '&location_id=' . urlencode((string)$singleLocationId);
             if ($companyNameCaseA !== '') {
                 $caseARedirect .= '&company=' . urlencode($companyNameCaseA);
             }
@@ -1512,7 +1513,8 @@ $hasExistingUser = has_linked_user_for_location($db, (string)$locationId);
     ], $jwtSecret, 900); // 15 minutes
 
     if ($hasExistingUser) {
-        $redirectUrl = 'https://smspro-api.nolacrm.io/login?welcome_back=1&name=' . urlencode($locationName);
+        $redirectUrl = 'https://smspro-api.nolacrm.io/login?welcome_back=1&name=' . urlencode($locationName)
+            . '&location_id=' . urlencode((string)$locationId);
         if ($companyName !== '') {
             $redirectUrl .= '&company=' . urlencode($companyName);
         }
