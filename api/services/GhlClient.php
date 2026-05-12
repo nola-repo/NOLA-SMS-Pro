@@ -318,7 +318,14 @@ class GhlClient
         );
         $isBulkProvisioned = !empty($this->integration['provisioned_from_bulk']) || $isCompanyBackedLocation;
 
-        if ($isBulkProvisioned && $companyRefresh) {
+        // Recovery path: some legacy / partially-provisioned location docs can have an access_token
+        // but no refresh_token, while the linked company doc still has a valid refresh_token.
+        // In that case, refresh as Company and exchange to a Location token.
+        if ((!$refreshToken || $refreshToken === '') && $companyId && $companyId !== $this->tokenRegistryId && $companyRefresh) {
+            $refreshToken = $companyRefresh;
+            $isBulkProvisioned = true;
+            error_log('[GHL_TOKEN] refresh_token_missing_using_company_refresh registry_key=' . $this->tokenRegistryId . ' companyId=' . $companyId);
+        } elseif ($isBulkProvisioned && $companyRefresh) {
             $refreshToken = $companyRefresh;
         }
 
