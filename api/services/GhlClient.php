@@ -383,6 +383,16 @@ class GhlClient
         );
         $isBulkProvisioned = !empty($this->integration['provisioned_from_bulk']) || $isCompanyBackedLocation;
 
+        // If this is a Location token doc and it already has its own refresh_token,
+        // always attempt a Location refresh first. Some docs keep provisioned_from_bulk=true
+        // even after a location-scoped token is established; forcing the company->locationToken
+        // exchange in that state can 400 and causes 503 loops.
+        $forceLocationRefresh = (($this->integration['userType'] ?? null) === 'Location')
+            && !empty($this->integration['refresh_token']);
+        if ($forceLocationRefresh) {
+            $isBulkProvisioned = false;
+        }
+
         // Recovery path: some legacy / partially-provisioned location docs can have an access_token
         // but no refresh_token, while the linked company doc still has a valid refresh_token.
         // In that case, refresh as Company and exchange to a Location token.
@@ -390,7 +400,7 @@ class GhlClient
             $refreshToken = $companyRefresh;
             $isBulkProvisioned = true;
             error_log('[GHL_TOKEN] refresh_token_missing_using_company_refresh registry_key=' . $this->tokenRegistryId . ' companyId=' . $companyId);
-        } elseif ($isBulkProvisioned && $companyRefresh) {
+        } elseif ($isBulkProvisioned && !$forceLocationRefresh && $companyRefresh) {
             $refreshToken = $companyRefresh;
         }
 
