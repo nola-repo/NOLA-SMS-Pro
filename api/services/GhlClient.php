@@ -560,6 +560,7 @@ class GhlClient
             $lastParsed = null;
             $lastLabel = null;
             $lastUserType = null;
+            $successUserType = null;
             foreach ($credentialCandidates as $candidate) {
                 $ch = curl_init('https://services.leadconnectorhq.com/oauth/token');
                 curl_setopt_array($ch, [
@@ -593,6 +594,7 @@ class GhlClient
                     $data = $parsed;
                     $clientId = $candidate['client_id'];
                     error_log('[GhlClient] oauth/token refresh succeeded via ' . $candidate['label']);
+                    $successUserType = (string) ($candidate['user_type'] ?? '');
                     break;
                 }
 
@@ -627,6 +629,55 @@ class GhlClient
                     false,
                     $ctx
                 );
+            }
+
+            // If refresh succeeded with a Company token but our API calls require a Location token,
+            // exchange it now to avoid "authClass type is not allowed to access this scope" 401s.
+            $desired = (string) ($this->integration['userType'] ?? 'Location');
+            if ($successUserType === 'Company' && $desired === 'Location' && $companyId) {
+                $ltCh = curl_init('https://services.leadconnectorhq.com/oauth/locationToken');
+                curl_setopt_array($ltCh, [
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_POST           => true,
+                    CURLOPT_POSTFIELDS     => http_build_query(['companyId' => $companyId, 'locationId' => $this->locationId]),
+                    CURLOPT_HTTPHEADER     => [
+                        'Authorization: Bearer ' . ($data['access_token'] ?? ''),
+                        'Content-Type: application/x-www-form-urlencoded',
+                        'Accept: application/json',
+                        'Version: 2021-07-28',
+                    ],
+                ]);
+                $ltResp = curl_exec($ltCh);
+                $ltCode = curl_getinfo($ltCh, CURLINFO_HTTP_CODE);
+                curl_close($ltCh);
+                $ltData = json_decode($ltResp, true);
+                $ltOk = $ltCode >= 200 && $ltCode < 300;
+
+                if (!$ltOk || empty($ltData['access_token'])) {
+                    error_log(
+                        '[GhlClient] locationToken after company-refresh failed HTTP '
+                        . $ltCode . ': '
+                        . self::redactGhlResponseForLog((string) $ltResp)
+                    );
+                    $ltReason = ($ltCode >= 500 || $ltCode === 0 || $ltCode === 429)
+                        ? GhlOAuthRefreshException::REASON_TRANSIENT
+                        : GhlOAuthRefreshException::REASON_OTHER;
+                    throw new GhlOAuthRefreshException(
+                        "GHL locationToken exchange failed after company refresh (HTTP {$ltCode})",
+                        $ltReason,
+                        $canonicalExists,
+                        $hadRefresh,
+                        true,
+                        false,
+                        [
+                            'location_token_http_code' => $ltCode,
+                        ]
+                    );
+                }
+
+                // Replace access token payload with a location-scoped token; keep refresh_token.
+                $data['access_token'] = $ltData['access_token'];
+                $data['expires_in'] = $ltData['expires_in'] ?? 86400;
             }
         }
 
