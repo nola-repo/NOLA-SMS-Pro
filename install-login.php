@@ -179,10 +179,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // ── Build banner HTML ─────────────────────────────────────────────────────────
 $bannerHtml = '';
 if ($isWelcomeBack) {
+    // Reinstall/login banner should show agency/company branding only.
+    // Fall back to location name only when company is unavailable.
     $targetLabel = '';
-    if ($companyName && $locationName) {
-        $targetLabel = "<strong>{$companyName}</strong> (<strong>{$locationName}</strong>)";
-    } elseif ($companyName) {
+    if ($companyName) {
         $targetLabel = "<strong>{$companyName}</strong>";
     } elseif ($locationName) {
         $targetLabel = "<strong>{$locationName}</strong>";
