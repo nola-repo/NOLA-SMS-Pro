@@ -126,25 +126,10 @@ try {
 
 } catch (\Throwable $e) {
     $msg = $e->getMessage();
-
-    // Detect stale / revoked token errors so the frontend can prompt re-install
-    $isTokenError = stripos($msg, 'refresh token') !== false
-                 || stripos($msg, 'Invalid JWT') !== false
-                 || stripos($msg, 'token refresh failed') !== false;
-
-    if ($isTokenError) {
-        http_response_code(401);
-        echo json_encode([
-            'error'              => 'Your GoHighLevel connection has expired.',
-            'requires_reconnect' => true,
-            'details'            => $msg
-        ]);
-    } else {
-        http_response_code(500);
-        echo json_encode([
-            'error' => 'Fetch failed: ' . $msg,
-            'line'  => $e->getLine(),
-            'file'  => $e->getFile()
-        ]);
-    }
+    http_response_code(500);
+    echo json_encode([
+        'error' => 'Fetch failed: ' . $msg,
+        'line'  => $e->getLine(),
+        'file'  => $e->getFile()
+    ]);
 }

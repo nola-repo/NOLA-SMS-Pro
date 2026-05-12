@@ -186,6 +186,9 @@ if (!$locId) {
 }
 
 $db = get_firestore();
+$jwtCtx = auth_get_optional_jwt_context($db);
+auth_assert_ghl_api_location_allowed($db, $jwtCtx, (string) $locId);
+$ghlTokenRegistryId = auth_resolve_ghl_token_registry_id($db, $jwtCtx, (string) $locId);
 
 // ── Dynamic MASTER_APPROVED_SENDERS from Firestore ──────────────────────────
 // Replaces the old static config whitelist. Admin-approved senders are auto-added
@@ -618,7 +621,7 @@ if (!empty($all_results)) {
     // ── GHL Bidirectional Sync (Best-Effort) ─────────────────────────────────
     if (!$isBulk && $locId) {
         try {
-            $ghlSync = new \Nola\Services\GhlSyncService($db, $locId);
+            $ghlSync = new \Nola\Services\GhlSyncService($db, $locId, $ghlTokenRegistryId);
             $ghlSync->syncOutboundMessage($validNumbers[0], $message, $contactId);
         } catch (\Throwable $e) {
             error_log('[GHL Sync] Failed (non-fatal): ' . $e->getMessage());
@@ -631,7 +634,7 @@ if (!empty($all_results)) {
         $tagsToApply = $customData['tagsToApply'] ?? [];
         if (!empty($tagsToApply) && is_array($tagsToApply) && $contactId) {
             try {
-                $ghlClient = new GhlClient($db, $locId);
+                $ghlClient = new GhlClient($db, $locId, $ghlTokenRegistryId);
                 $tagsResp  = $ghlClient->request(
                     'POST',
                     "/contacts/{$contactId}/tags",

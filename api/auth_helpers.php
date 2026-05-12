@@ -190,14 +190,277 @@ function auth_location_belongs_to_company($db, string $locationId, string $compa
         return false;
     }
     $snap = $db->collection('ghl_tokens')->document($locationId)->snapshot();
-    if (!$snap->exists()) {
-        return false;
-    }
-    $data = $snap->data();
-    if (($data['appType'] ?? '') === 'agency') {
-        return false;
-    }
-    $co = $data['companyId'] ?? $data['company_id'] ?? null;
+    if ($snap->exists()) {
+        $data = $snap->data();
+        if (($data['appType'] ?? '') === 'agency') {
+            return false;
+        }
+        $co = $data['companyId'] ?? $data['company_id'] ?? null;
 
-    return $co !== null && (string) $co === $companyId;
+        return $co !== null && (string) $co === $companyId;
+    }
+
+    $subSnap = $db->collection('agency_subaccounts')->document($locationId)->snapshot();
+    if ($subSnap->exists()) {
+        $aid = trim((string) ($subSnap->data()['agency_id'] ?? ''));
+
+        return $aid !== '' && $aid === $companyId;
+    }
+
+    return false;
+}
+
+/**
+ * Bearer token extractor (multiple header forms). Returns raw JWT without "Bearer ".
+ */
+function auth_extract_bearer_token_optional(): ?string
+{
+    $headerCandidates = [
+        $_SERVER['HTTP_AUTHORIZATION'] ?? '',
+        $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '',
+        $_SERVER['Authorization'] ?? '',
+        $_SERVER['HTTP_X_AUTHORIZATION'] ?? '',
+        $_SERVER['HTTP_X_AUTH_TOKEN'] ?? '',
+    ];
+
+    if (function_exists('getallheaders')) {
+        try {
+            foreach (getallheaders() ?: [] as $key => $value) {
+                if (!is_string($key) || !is_string($value)) {
+                    continue;
+                }
+                if (strcasecmp($key, 'Authorization') === 0) {
+                    $headerCandidates[] = $value;
+                }
+                if (strcasecmp($key, 'X-Authorization') === 0 || strcasecmp($key, 'X-Auth-Token') === 0) {
+                    $headerCandidates[] = $value;
+                }
+            }
+        } catch (\Throwable $ignored) {
+        }
+    }
+
+    foreach ($headerCandidates as $candidate) {
+        if (!is_string($candidate) || trim($candidate) === '') {
+            continue;
+        }
+        if (preg_match('/^Bearer\s+(.+)$/i', trim($candidate), $m)) {
+            return trim((string) $m[1]);
+        }
+        if (substr_count($candidate, '.') === 2) {
+            return trim($candidate);
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Parses `ghl_tokens/{documentId}` reference stored on profile docs.
+ *
+ * @return array{collection:string,id:string}|null
+ */
+function auth_parse_ghl_token_ref(string $ref): ?array
+{
+    $ref = trim($ref);
+    if ($ref === '') {
+        return null;
+    }
+    if (!preg_match('#^ghl_tokens/([^/]+)$#', $ref, $m)) {
+        return null;
+    }
+
+    return ['collection' => 'ghl_tokens', 'id' => $m[1]];
+}
+
+/**
+ * When `Authorization` is omitted: returns null (webhook-secret-only callers unchanged).
+ * When present: verifies JWT + loads Firestore profile; exits on 401/404/500 as appropriate.
+ *
+ * @return array{payload: array, profile: array, firestore_collection: string, uid: string}|null
+ */
+function auth_get_optional_jwt_context($db): ?array
+{
+    $jwt = auth_extract_bearer_token_optional();
+    if ($jwt === null || $jwt === '') {
+        return null;
+    }
+
+    require_once __DIR__ . '/jwt_helper.php';
+
+    $secret = getenv('JWT_SECRET');
+    if ($secret === false || trim((string) $secret) === '') {
+        header('Content-Type: application/json');
+        http_response_code(500);
+        echo json_encode(['error' => 'Server misconfiguration: JWT secret missing.']);
+        exit;
+    }
+
+    $payload = jwt_verify($jwt, $secret);
+    if (!$payload) {
+        header('Content-Type: application/json');
+        http_response_code(401);
+        echo json_encode(['error' => 'Invalid or expired token.']);
+        exit;
+    }
+
+    $userId = $payload['sub'] ?? null;
+    if (!$userId) {
+        header('Content-Type: application/json');
+        http_response_code(401);
+        echo json_encode(['error' => 'Invalid token payload.']);
+        exit;
+    }
+
+    $role = (string) ($payload['role'] ?? 'user');
+    $authCollection = (string) ($payload['auth_collection'] ?? '');
+    $collection = $authCollection !== '' ? $authCollection : ($role === 'agency' ? 'agency_users' : 'users');
+    $snap = $db->collection($collection)->document((string) $userId)->snapshot();
+
+    if (!$snap->exists() && $collection !== 'users') {
+        $collection = 'users';
+        $snap = $db->collection('users')->document((string) $userId)->snapshot();
+    }
+
+    if (!$snap->exists()) {
+        header('Content-Type: application/json');
+        http_response_code(404);
+        echo json_encode(['error' => 'User profile not found.']);
+        exit;
+    }
+
+    return [
+        'payload' => $payload,
+        'profile' => $snap->data(),
+        'firestore_collection' => $collection,
+        'uid' => (string) $userId,
+    ];
+}
+
+/**
+ * Enforces GHL multi-tenant access when JWT context is present.
+ *
+ * @param array{payload: array, profile: array, firestore_collection: string, uid: string}|null $jwtCtx
+ */
+function auth_assert_ghl_api_location_allowed($db, ?array $jwtCtx, string $requestedLocationId): void
+{
+    if ($jwtCtx === null) {
+        return;
+    }
+
+    $requestedLocationId = trim($requestedLocationId);
+    $profile = $jwtCtx['profile'];
+    $collection = $jwtCtx['firestore_collection'];
+
+    $refRaw = trim((string) ($profile['ghl_token_ref'] ?? ''));
+    $refParsed = $refRaw !== '' ? auth_parse_ghl_token_ref($refRaw) : null;
+
+    if ($refRaw !== '' && $refParsed === null) {
+        header('Content-Type: application/json');
+        http_response_code(400);
+        echo json_encode([
+            'error' => 'Invalid ghl_token_ref on profile; expected ghl_tokens/{id}.',
+            'hint' => 'ghl_tokens/{documentId}',
+        ]);
+        exit;
+    }
+
+    if ($collection === 'agency_users') {
+        $companyId = trim((string) ($profile['company_id'] ?? ''));
+        if ($companyId === '') {
+            header('Content-Type: application/json');
+            http_response_code(403);
+            echo json_encode(['error' => 'Agency profile missing company_id.']);
+            exit;
+        }
+        if ($refParsed !== null && $refParsed['id'] !== $companyId) {
+            header('Content-Type: application/json');
+            http_response_code(403);
+            echo json_encode(['error' => 'ghl_token_ref does not match company_id for agency profile.']);
+            exit;
+        }
+        if (!auth_location_belongs_to_company($db, $requestedLocationId, $companyId)) {
+            header('Content-Type: application/json');
+            http_response_code(403);
+            echo json_encode(['error' => 'Not allowed to access this GHL location.']);
+            exit;
+        }
+
+        return;
+    }
+
+    $active = trim((string) ($profile['active_location_id'] ?? ''));
+    if ($active !== '' && $active !== $requestedLocationId) {
+        header('Content-Type: application/json');
+        http_response_code(403);
+        echo json_encode(['error' => 'Location does not match your active_location_id.']);
+        exit;
+    }
+    if ($refParsed !== null && $refParsed['id'] !== $requestedLocationId) {
+        header('Content-Type: application/json');
+        http_response_code(403);
+        echo json_encode(['error' => 'Location does not match ghl_token_ref.']);
+        exit;
+    }
+    if ($active !== '' && $refParsed !== null && $active !== $refParsed['id']) {
+        header('Content-Type: application/json');
+        http_response_code(403);
+        echo json_encode(['error' => 'active_location_id and ghl_token_ref disagree.']);
+        exit;
+    }
+    if ($active === '' && $refParsed === null) {
+        header('Content-Type: application/json');
+        http_response_code(403);
+        echo json_encode(['error' => 'Profile missing active_location_id and ghl_token_ref; cannot authorize GHL access.']);
+        exit;
+    }
+}
+
+/**
+ * Firestore document ID under `ghl_tokens/` used for OAuth load/refresh.
+ *
+ * Agency users prefer `ghl_tokens/{requestedLocation}` when that row exists for the agency
+ * (contacts need location scope); otherwise `ghl_token_ref` / `company_id` company doc.
+ *
+ * @param array{payload: array, profile: array, firestore_collection: string, uid: string}|null $jwtCtx
+ */
+function auth_resolve_ghl_token_registry_id($db, ?array $jwtCtx, string $apiLocationId): string
+{
+    $apiLocationId = trim($apiLocationId);
+    if ($jwtCtx === null) {
+        return $apiLocationId;
+    }
+
+    $profile = $jwtCtx['profile'];
+    $collection = $jwtCtx['firestore_collection'];
+    $refParsed = auth_parse_ghl_token_ref(trim((string) ($profile['ghl_token_ref'] ?? '')));
+
+    if ($collection === 'agency_users') {
+        $companyId = trim((string) ($profile['company_id'] ?? ''));
+
+        $locSnap = $db->collection('ghl_tokens')->document($apiLocationId)->snapshot();
+        if ($locSnap->exists()) {
+            $ld = $locSnap->data();
+            if (($ld['appType'] ?? '') !== 'agency') {
+                $co = trim((string) ($ld['companyId'] ?? $ld['company_id'] ?? ''));
+                if ($companyId !== '' && $co === $companyId) {
+                    error_log('[GHL_JWT] token_registry agency prefers location OAuth doc location_id=' . $apiLocationId);
+
+                    return $apiLocationId;
+                }
+            }
+        }
+
+        if ($refParsed !== null && ($refParsed['id'] ?? '') !== '') {
+            return $refParsed['id'];
+        }
+
+        return $companyId !== '' ? $companyId : $apiLocationId;
+    }
+
+    if ($refParsed !== null && ($refParsed['id'] ?? '') !== '') {
+        return $refParsed['id'];
+    }
+
+    return $apiLocationId;
 }

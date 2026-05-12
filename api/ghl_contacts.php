@@ -16,8 +16,10 @@
  * Responses:
  *   200  { contacts: [...] }
  *   400  { error: "Missing locationId" }
- *   401  Forwarded GHL/auth failure body. When refresh fails after a 401 from GHL, GhlClient returns:
- *        { "error": "Token refresh failed", "requires_reconnect": true } — UI should prompt reconnect, not empty state.
+ *   401  When refresh fails with non-transient auth after a GHL 401 — GhlClient may return
+ *        { "error": "Token refresh failed", "requires_reconnect": true }; transient cases use 503.
+ * JWT: Authorization: Bearer + profile `active_location_id` / `company_id` and `ghl_token_ref`
+ * constrain which location may be queried and where OAuth docs are loaded.
  *   404  { error: "..." } (e.g. integration not found for location)
  *   405  { error: "Method not allowed" }
  *   500  { error: "..." }
@@ -37,6 +39,9 @@ require __DIR__ . '/services/GhlClient.php';
 // ── Standardized Auth Check ────────────────────────────────────────────────
 validate_api_request();
 
+$db = get_firestore();
+$jwtCtx = auth_get_optional_jwt_context($db);
+
 // ── 1. Read & validate locationId ─────────────────────────────────────────
 // Accept from header (preferred for multi-tenant) or query param
 $locationId = get_ghl_location_id()
@@ -50,11 +55,12 @@ if (empty($locationId)) {
     exit;
 }
 
-// ── 2. Initialize GHL Client (Handles Token Lookup & Refresh) ──────────────
-$db = get_firestore();
+auth_assert_ghl_api_location_allowed($db, $jwtCtx, (string) $locationId);
+$tokenRegistryId = auth_resolve_ghl_token_registry_id($db, $jwtCtx, (string) $locationId);
 
+// ── 2. Initialize GHL Client (Handles Token Lookup & Refresh) ──────────────
 try {
-    $ghlClient = new GhlClient($db, (string)$locationId);
+    $ghlClient = new GhlClient($db, (string) $locationId, $tokenRegistryId);
 } catch (\Exception $e) {
     error_log("[ghl_contacts] Client initialization failed: " . $e->getMessage());
     http_response_code(404);

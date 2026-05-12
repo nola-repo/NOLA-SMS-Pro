@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/GhlTokenProvider.php';
+
 /**
  * GhlClient — Reusable GHL API client.
  *
@@ -10,23 +12,37 @@
 class GhlClient
 {
     private $db;
+
+    /** GHL Location ID passed to API URLs and locationToken exchanges. */
     private string $locationId;
+
+    /** Firestore `ghl_tokens/{id}` primary key used to load OAuth state (JWT `ghl_token_ref` overrides). */
+    private string $tokenRegistryId;
+
     private array $integration;
     private string $apiUrl = 'https://services.leadconnectorhq.com';
 
+    /** Canonical ghl_tokens/{tokenRegistryId} existed before legacy merge (internal telemetry). */
+    private bool $canonicalDocExistedAtLoad = false;
+
     /**
      * @param \Google\Cloud\Firestore\FirestoreClient $db
-     * @param string $locationId  GHL Location ID (required — no single-tenant fallback)
+     * @param string $locationId         GHL location id for `/contacts/` etc.
+     * @param string|null $tokenRegistryId  Optional Firestore OAuth doc id (defaults to $locationId)
      * @throws \RuntimeException if integration not found in Firestore
      */
-    public function __construct($db, string $locationId)
+    public function __construct($db, string $locationId, ?string $tokenRegistryId = null)
     {
         $this->db = $db;
         $this->locationId = $locationId;
+        $this->tokenRegistryId = $tokenRegistryId ?? $locationId;
 
-        $integration = $this->loadIntegration($locationId);
+        $integration = $this->loadIntegration($this->tokenRegistryId);
         if (!$integration) {
-            throw new \RuntimeException("GHL integration not found for location: {$locationId}");
+            throw new \RuntimeException(
+                'GHL integration not found for token_registry_key: ' . $this->tokenRegistryId
+                . ' (api_location=' . $this->locationId . ')'
+            );
         }
 
         $this->integration = $integration;
@@ -90,14 +106,33 @@ class GhlClient
                     $headers[0] = 'Authorization: Bearer ' . $this->integration['access_token'];
                     $attempt++;
                     continue;
-                } catch (\Exception $e) {
-                    // Never forward exception text to the client — it may echo upstream OAuth bodies.
-                    error_log('GhlClient refresh after 401: ' . $e->getMessage());
+                } catch (GhlOAuthRefreshException $e) {
+                    error_log('GhlClient refresh after 401 (classified): ' . $e->getReasonCode() . ' ' . $e->getMessage());
+                    if ($e->shouldPromptReconnect()) {
+                        return [
+                            'status' => 401,
+                            'body'   => json_encode([
+                                'error' => 'Token refresh failed',
+                                'requires_reconnect' => true,
+                            ]),
+                        ];
+                    }
+
                     return [
-                        'status' => 401,
+                        'status' => 503,
                         'body'   => json_encode([
-                            'error' => 'Token refresh failed',
-                            'requires_reconnect' => true,
+                            'error' => 'GHL token temporarily unavailable',
+                            'requires_reconnect' => false,
+                        ]),
+                    ];
+                } catch (\Exception $e) {
+                    error_log('GhlClient refresh after 401: ' . $e->getMessage());
+
+                    return [
+                        'status' => 503,
+                        'body'   => json_encode([
+                            'error' => 'GHL token temporarily unavailable',
+                            'requires_reconnect' => false,
                         ]),
                     ];
                 }
@@ -172,177 +207,18 @@ class GhlClient
         return $redacted !== null ? $redacted : $trim;
     }
 
-    private function resolveCompanyIdForLocation(string $locationId, ?array $data = null): ?string
-    {
-        $candidates = [
-            $data['companyId'] ?? null,
-            $data['company_id'] ?? null,
-        ];
-
-        $agencySnap = $this->db->collection('agency_subaccounts')->document($locationId)->snapshot();
-        if ($agencySnap->exists()) {
-            $agencyData = $agencySnap->data();
-            $candidates[] = $agencyData['agency_id'] ?? null;
-            $candidates[] = $agencyData['companyId'] ?? null;
-            $candidates[] = $agencyData['company_id'] ?? null;
-        }
-
-        $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
-        $intSnap = $this->db->collection('integrations')->document($intDocId)->snapshot();
-        if ($intSnap->exists()) {
-            $intData = $intSnap->data();
-            $candidates[] = $intData['companyId'] ?? null;
-            $candidates[] = $intData['company_id'] ?? null;
-            $candidates[] = $intData['agency_id'] ?? null;
-        }
-
-        foreach ($candidates as $candidate) {
-            $companyId = trim((string)$candidate);
-            if ($companyId !== '' && $companyId !== $locationId) {
-                return $companyId;
-            }
-        }
-
-        return null;
-    }
-
     /**
-     * Load GHL integration from Firestore (same logic as getGHLIntegration).
+     * Load GHL integration from Firestore via {@see GhlTokenProvider} (canonical path + legacy fallback).
      *
      * @return array|null  Integration data or null if not found
      */
-    private function loadIntegration(string $locationId): ?array
+    private function loadIntegration(string $registryKey): ?array
     {
-        require_once __DIR__ . '/Cache.php';
-        $cache = new Cache('tokens');
-        $cacheKey = 'token_' . $locationId;
-        $cacheTTL = 300; // 5 minutes buffer — matches proactive refresh window
-
-        // 1. File cache disabled — unsafe across Cloud Run multi-instance deployments.
-        // Each container has an independent filesystem; a token refreshed by Instance A
-        // will not be visible to Instance B's cache, leading to stale refresh_token 400s.
-        // $cachedData = $cache->get($cacheKey, $cacheTTL); // DISABLED
-        // if ($cachedData) { return $cachedData; }         // DISABLED
-
-        // 2. Not in cache? Hit Firestore (Primary: doc ID = raw locationId)
-        $data = null;
-        $doc = $this->db->collection('ghl_tokens')->document($locationId)->snapshot();
-        if ($doc->exists()) {
-            $data = $doc->data();
-            $data['firestore_doc_id'] = $locationId;
-        } else {
-            // Fallback: search by location_id field (handles legacy docs)
-            $query = $this->db->collection('ghl_tokens')
-                ->where('location_id', '==', $locationId)
-                ->limit(1)
-                ->documents();
-            foreach ($query as $d) {
-                if ($d->exists()) {
-                    $data = $d->data();
-                    $data['firestore_doc_id'] = $d->id();
-                    break;
-                }
-            }
-        }
-
-        // 2.5. Agency-Level Fallback (SCOPE-SAFE):
-        // Only use the company token when the location document has NO usable token.
-        // When found, automatically exchange for a location-scoped token via
-        // GHL's /oauth/locationToken endpoint — which returns authClass:Location
-        // tokens valid for /contacts/ and /conversations/.
-        if ($data && empty($data['companyId'])) {
-            $resolvedCompanyId = $this->resolveCompanyIdForLocation($locationId, $data);
-            if ($resolvedCompanyId) {
-                $data['companyId'] = $resolvedCompanyId;
-                $docId = $data['firestore_doc_id'] ?? $locationId;
-                $this->db->collection('ghl_tokens')->document($docId)->set([
-                    'companyId' => $resolvedCompanyId,
-                ], ['merge' => true]);
-            }
-        }
-
-        $locationHasToken = !empty($data['access_token']) || !empty($data['refresh_token']);
-
-        if ($data && !$locationHasToken && !empty($data['companyId'])) {
-            $companyId  = $data['companyId'];
-            $companyDoc = $this->db->collection('ghl_tokens')->document($companyId)->snapshot();
-            if ($companyDoc->exists()) {
-                $companyData = $companyDoc->data();
-                $companyAccessToken = $companyData['access_token'] ?? null;
-
-                if ($companyAccessToken) {
-                    // Try to exchange for a location-scoped token automatically
-                    $ltCh = curl_init('https://services.leadconnectorhq.com/oauth/locationToken');
-                    curl_setopt_array($ltCh, [
-                        CURLOPT_RETURNTRANSFER => true,
-                        CURLOPT_POST           => true,
-                        CURLOPT_POSTFIELDS     => http_build_query([
-                            'companyId'  => $companyId,
-                            'locationId' => $locationId,
-                        ]),
-                        CURLOPT_HTTPHEADER => [
-                            'Authorization: Bearer ' . $companyAccessToken,
-                            'Content-Type: application/x-www-form-urlencoded',
-                            'Accept: application/json',
-                            'Version: 2021-07-28',
-                        ],
-                    ]);
-                    $ltResp = curl_exec($ltCh);
-                    $ltCode = curl_getinfo($ltCh, CURLINFO_HTTP_CODE);
-                    curl_close($ltCh);
-
-                    $ltData = json_decode($ltResp, true);
-                    // GHL may return 201 Created for successful token issuance; treat any 2xx as success.
-                    $ltOk = $ltCode >= 200 && $ltCode < 300;
-
-                    if ($ltOk && !empty($ltData['access_token'])) {
-                        // Save location-scoped token to Firestore
-                        $now          = new \DateTimeImmutable();
-                        $ltExpires    = time() + (int)($ltData['expires_in'] ?? 86400);
-                        $locationPayload = [
-                            'access_token'          => $ltData['access_token'],
-                            'refresh_token'         => $companyData['refresh_token'] ?? null,
-                            'expires_at'            => $ltExpires,
-                            'client_id'             => $companyData['client_id'] ?? $companyData['appId'] ?? null,
-                            'appId'                 => $companyData['appId']      ?? $companyData['client_id'] ?? null,
-                            'appType'               => $companyData['appType']    ?? 'subaccount',
-                            'userType'              => 'Location',
-                            'location_id'           => $locationId,
-                            'companyId'             => $companyId,
-                            'scope'                 => $companyData['scope']      ?? null,
-                            'is_live'               => true,
-                            'toggle_enabled'        => true,
-                            'updated_at'            => new \Google\Cloud\Core\Timestamp($now),
-                            'provisioned_from_bulk' => true,
-                        ];
-                        $this->db->collection('ghl_tokens')->document($locationId)->set($locationPayload, ['merge' => true]);
-                        error_log("[GhlClient] Auto-provisioned location token for {$locationId} via /oauth/locationToken.");
-
-                        $locationPayload['firestore_doc_id'] = $locationId;
-                        $data = $locationPayload;
-                    } else {
-                        // locationToken exchange failed — fall back to company token as read-only context
-                        error_log("[GhlClient] locationToken exchange failed for {$locationId} (HTTP {$ltCode}). Using company token fallback.");
-                        $companyData['firestore_doc_id'] = $companyId;
-                        $companyData['location_id']      = $locationId;
-                        $data = $companyData;
-                    }
-                } else {
-                    // Company doc has no access_token — still use it if it has a refresh token
-                    if (!empty($companyData['access_token']) || !empty($companyData['refresh_token'])) {
-                        $companyData['firestore_doc_id'] = $companyId;
-                        $companyData['location_id']      = $locationId;
-                        $data = $companyData;
-                        error_log("[GhlClient] Using company token fallback for location {$locationId} (location token missing).");
-                    }
-                }
-            }
-        }
-
-
-        // 3. Cache write disabled — see note above re: Cloud Run multi-instance.
-        // $cache->set($cacheKey, $data); // DISABLED
+        $data = GhlTokenProvider::loadIntegration($this->db, $registryKey);
         if ($data) {
+            $this->canonicalDocExistedAtLoad = !empty($data['_canonical_preload_existed']);
+            unset($data['_lookup_source'], $data['_canonical_preload_existed']);
+
             return $data;
         }
 
@@ -356,7 +232,7 @@ class GhlClient
     {
         require_once __DIR__ . '/Cache.php';
         $cache = new Cache('tokens');
-        $cache->delete('token_' . $this->locationId);
+        $cache->delete('token_' . $this->tokenRegistryId);
     }
 
     /**
@@ -379,7 +255,7 @@ class GhlClient
         if ($expiresSeconds - $now < 300) {
             try {
                 $this->refreshToken();
-            } catch (\Exception $e) {
+            } catch (\Throwable $e) {
                 // Log but continue — old token may still work (clock skew)
                 error_log('GhlClient proactive refresh failed: ' . $e->getMessage());
             }
@@ -388,27 +264,29 @@ class GhlClient
 
     /**
      * Refresh GHL OAuth token and update Firestore.
-     * Same logic as refreshGHLToken() in ghl_contacts.php.
      *
-     * @throws \Exception on refresh failure
+     * @throws GhlOAuthRefreshException
      */
     private function refreshToken(): void
     {
+        $canonicalExists = GhlTokenProvider::canonicalDocumentExists($this->db, $this->tokenRegistryId)
+            || $this->canonicalDocExistedAtLoad;
+
         $storedClientId = $this->integration['client_id'] ?? $this->integration['appId'] ?? null;
-        $refreshToken   = $this->integration['refresh_token'] ?? null;
-        $docId          = $this->integration['firestore_doc_id'] ?? $this->locationId;
-        $companyId      = $this->integration['companyId'] ?? null;
+        $refreshToken = $this->integration['refresh_token'] ?? null;
+        $docId = $this->integration['firestore_doc_id'] ?? $this->tokenRegistryId;
+        $companyId = $this->integration['companyId'] ?? null;
         if (!$companyId) {
-            $companyId = $this->resolveCompanyIdForLocation($this->locationId, $this->integration);
+            $companyId = GhlTokenProvider::resolveCompanyIdForLocation($this->db, $this->locationId, $this->integration);
             if ($companyId) {
                 $this->integration['companyId'] = $companyId;
             }
         }
 
         $subaccountClientId = getenv('GHL_CLIENT_ID') ?: '6999da2b8f278296d95f7274-mmn30t4f';
-        $subaccountSecret   = getenv('GHL_CLIENT_SECRET') ?: 'd91017ad-f4eb-461f-8967-b1d51cd1c1eb';
-        $agencyClientId     = getenv('GHL_AGENCY_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3';
-        $agencySecret       = getenv('GHL_AGENCY_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322';
+        $subaccountSecret = getenv('GHL_CLIENT_SECRET') ?: 'd91017ad-f4eb-461f-8967-b1d51cd1c1eb';
+        $agencyClientId = getenv('GHL_AGENCY_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3';
+        $agencySecret = getenv('GHL_AGENCY_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322';
 
         $companyData = null;
         $companyAccessToken = null;
@@ -424,14 +302,14 @@ class GhlClient
                 $companyExpiresRaw = $companyData['expires_at'] ?? 0;
                 $companyExpiresAt = $companyExpiresRaw instanceof \Google\Cloud\Core\Timestamp
                     ? $companyExpiresRaw->get()->getTimestamp()
-                    : (int)$companyExpiresRaw;
+                    : (int) $companyExpiresRaw;
             }
         }
 
         $isLocationDoc = ($this->integration['userType'] ?? null) === 'Location'
             && $companyId
             && $companyId !== $this->locationId;
-        $usesCompanyRefresh = $companyRefresh && $refreshToken && hash_equals((string)$companyRefresh, (string)$refreshToken);
+        $usesCompanyRefresh = $companyRefresh && $refreshToken && hash_equals((string) $companyRefresh, (string) $refreshToken);
         $isCompanyBackedLocation = $isLocationDoc && (
             !empty($this->integration['provisioned_from_bulk'])
             || !empty($this->integration['copied_from'])
@@ -444,8 +322,98 @@ class GhlClient
             $refreshToken = $companyRefresh;
         }
 
-        if (!$refreshToken) {
-            throw new \Exception('GHL Refresh Error: Missing refresh_token (in Firestore)');
+        $hadRefresh = $refreshToken !== null && $refreshToken !== '';
+
+        if (!$hadRefresh) {
+            throw new GhlOAuthRefreshException(
+                'GHL Refresh Error: Missing refresh_token (in Firestore)',
+                GhlOAuthRefreshException::REASON_MISSING_REFRESH,
+                $canonicalExists,
+                false,
+                false,
+                false
+            );
+        }
+
+        $lockKey = ($isBulkProvisioned && $companyId) ? 'company_' . $companyId : 'token_' . $docId;
+
+        $lockAcquired = GhlTokenRefreshLock::tryAcquire($this->db, $lockKey);
+        if (!$lockAcquired) {
+            error_log('[GHL_TOKEN_LOCK] blocked registry_key=' . $this->tokenRegistryId . ' api_location=' . $this->locationId . ' lock=' . $lockKey);
+            $reloaded = GhlTokenRefreshLock::waitAndReloadIntegration($this->db, $this->tokenRegistryId);
+            if ($reloaded) {
+                unset($reloaded['_lookup_source'], $reloaded['_canonical_preload_existed']);
+                $this->integration = $reloaded;
+                $this->clearCache();
+
+                return;
+            }
+            throw new GhlOAuthRefreshException(
+                'Peer OAuth refresh did not complete in time',
+                GhlOAuthRefreshException::REASON_LOCK_ACTIVE,
+                $canonicalExists,
+                $hadRefresh,
+                false,
+                true
+            );
+        }
+
+        try {
+            $this->runOAuthRefreshBody(
+                $canonicalExists,
+                $hadRefresh,
+                $storedClientId,
+                $refreshToken,
+                $docId,
+                $companyId,
+                $companyData,
+                $companyAccessToken,
+                $companyExpiresAt,
+                $companyRefresh,
+                $isBulkProvisioned,
+                $subaccountClientId,
+                $subaccountSecret,
+                $agencyClientId,
+                $agencySecret
+            );
+        } finally {
+            GhlTokenRefreshLock::release($this->db, $lockKey);
+        }
+    }
+
+    /**
+     * @param array<string,mixed>|null $companyData
+     */
+    private function runOAuthRefreshBody(
+        bool $canonicalExists,
+        bool $hadRefresh,
+        ?string $storedClientId,
+        string $refreshToken,
+        string $docId,
+        ?string $companyId,
+        ?array $companyData,
+        ?string $companyAccessToken,
+        int $companyExpiresAt,
+        ?string $companyRefresh,
+        bool $isBulkProvisioned,
+        string $subaccountClientId,
+        string $subaccountSecret,
+        string $agencyClientId,
+        string $agencySecret
+    ): void {
+        $peek = GhlTokenProvider::loadIntegration($this->db, $this->tokenRegistryId);
+        if ($peek) {
+            $expiresRaw = $peek['expires_at'] ?? 0;
+            $expiresSec = $expiresRaw instanceof \Google\Cloud\Core\Timestamp
+                ? $expiresRaw->get()->getTimestamp()
+                : (int) $expiresRaw;
+            if (!empty($peek['access_token']) && $expiresSec > time() + 120) {
+                unset($peek['_lookup_source'], $peek['_canonical_preload_existed']);
+                $this->integration = $peek;
+                $this->clearCache();
+
+                return;
+            }
         }
 
         $companyTokenSkippedRefresh = false;
@@ -462,7 +430,10 @@ class GhlClient
             $clientId = $companyData['client_id'] ?? $companyData['appId'] ?? $clientId;
         }
 
+        $attemptedCredentialRefresh = false;
+
         if (!$companyTokenSkippedRefresh) {
+            $attemptedCredentialRefresh = true;
             $preferredUserType = $isBulkProvisioned ? 'Company' : ($this->integration['userType'] ?? 'Location');
             $credentialCandidates = [];
             $addCandidate = static function (array &$items, string $id, string $secret, string $userType, string $label): void {
@@ -497,6 +468,8 @@ class GhlClient
             }
 
             $lastHint = 'invalid response';
+            $lastHttpCode = 0;
+            $lastParsed = null;
             foreach ($credentialCandidates as $candidate) {
                 $ch = curl_init('https://services.leadconnectorhq.com/oauth/token');
                 curl_setopt_array($ch, [
@@ -520,7 +493,10 @@ class GhlClient
                 $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
                 curl_close($ch);
 
-                $parsed = json_decode((string)$response, true);
+                $parsed = json_decode((string) $response, true);
+                $lastHttpCode = $httpCode;
+                $lastParsed = is_array($parsed) ? $parsed : null;
+
                 if ($httpCode === 200 && is_array($parsed) && !empty($parsed['access_token'])) {
                     $data = $parsed;
                     $clientId = $candidate['client_id'];
@@ -537,21 +513,27 @@ class GhlClient
                     . ' HTTP '
                     . $httpCode
                     . ': '
-                    . self::redactGhlResponseForLog((string)$response)
+                    . self::redactGhlResponseForLog((string) $response)
                 );
             }
 
             if (!is_array($data) || empty($data['access_token'])) {
-                throw new \Exception("GHL token refresh failed: {$lastHint}");
+                $reason = GhlTokenProvider::classifyOAuthRefreshFailure($lastHttpCode, $lastParsed);
+                throw new GhlOAuthRefreshException(
+                    'GHL token refresh failed: ' . $lastHint,
+                    $reason,
+                    $canonicalExists,
+                    $hadRefresh,
+                    $attemptedCredentialRefresh,
+                    false
+                );
             }
         }
 
         $now = new \DateTimeImmutable();
 
-        // If this was a bulk-provisioned token, $data now contains a COMPANY token.
-        // We must save it to the Company doc, and then exchange it for a LOCATION token.
         if ($isBulkProvisioned && $companyId) {
-            $companyExpires = (int)($data['expires_in'] ?? 0);
+            $companyExpires = (int) ($data['expires_in'] ?? 0);
             $companyExpiresAtUnix = time() + $companyExpires;
 
             $this->db->collection('ghl_tokens')->document($companyId)->set([
@@ -562,7 +544,6 @@ class GhlClient
                 'raw_refresh'   => $data,
             ], ['merge' => true]);
 
-            // Exchange Company token -> Location token
             $ltCh = curl_init('https://services.leadconnectorhq.com/oauth/locationToken');
             curl_setopt_array($ltCh, [
                 CURLOPT_RETURNTRANSFER => true,
@@ -579,35 +560,42 @@ class GhlClient
             $ltCode = curl_getinfo($ltCh, CURLINFO_HTTP_CODE);
             curl_close($ltCh);
             $ltData = json_decode($ltResp, true);
-            // GHL may return 201 Created for successful token issuance; treat any 2xx as success.
             $ltOk = $ltCode >= 200 && $ltCode < 300;
 
             if (!$ltOk || empty($ltData['access_token'])) {
                 error_log(
                     '[GhlClient] locationToken after refresh failed HTTP '
                     . $ltCode . ': '
-                    . self::redactGhlResponseForLog((string)$ltResp)
+                    . self::redactGhlResponseForLog((string) $ltResp)
                 );
-                throw new \Exception("GHL locationToken exchange failed after refresh (HTTP {$ltCode})");
+                $ltReason = ($ltCode >= 500 || $ltCode === 0)
+                    ? GhlOAuthRefreshException::REASON_TRANSIENT
+                    : GhlOAuthRefreshException::REASON_OTHER;
+                throw new GhlOAuthRefreshException(
+                    "GHL locationToken exchange failed after refresh (HTTP {$ltCode})",
+                    $ltReason,
+                    $canonicalExists,
+                    $hadRefresh,
+                    true,
+                    false
+                );
             }
 
-            // Override the payload to use the Location token (but keep the Company refresh_token)
             $data['access_token'] = $ltData['access_token'];
-            $data['expires_in']   = $ltData['expires_in'] ?? 86400;
+            $data['expires_in'] = $ltData['expires_in'] ?? 86400;
         }
 
-        $expires        = (int) ($data['expires_in'] ?? 0);
-        $expiresAtUnix  = time() + $expires;
+        $expires = (int) ($data['expires_in'] ?? 0);
+        $expiresAtUnix = time() + $expires;
 
         $updateData = [
             'access_token'  => $data['access_token'] ?? null,
-            // Preserve current refresh token when provider omits a new one.
             'refresh_token' => $data['refresh_token'] ?? ($this->integration['refresh_token'] ?? null),
             'expires_at'    => $expiresAtUnix,
             'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
             'raw_refresh'   => $data,
-            'client_id'     => $clientId,   // Ensures credential routing field is always fresh
-            'appId'         => $clientId,   // Backward compat with callback-written docs
+            'client_id'     => $clientId,
+            'appId'         => $clientId,
         ];
 
         if ($isBulkProvisioned && $companyId) {
@@ -615,15 +603,12 @@ class GhlClient
             $updateData['companyId'] = $companyId;
         }
 
-        // Write back to Firestore (ghl_tokens collection)
         $this->db->collection('ghl_tokens')->document($docId)->set($updateData, ['merge' => true]);
 
-        // Update local state so the caller has the new token immediately
-        $this->integration['access_token']  = $data['access_token'] ?? null;
+        $this->integration['access_token'] = $data['access_token'] ?? null;
         $this->integration['refresh_token'] = $updateData['refresh_token'];
-        $this->integration['expires_at']    = $expiresAtUnix;
+        $this->integration['expires_at'] = $expiresAtUnix;
 
-        // Invalidate the in-memory/file cache so next request re-reads from Firestore
         $this->clearCache();
     }
 }

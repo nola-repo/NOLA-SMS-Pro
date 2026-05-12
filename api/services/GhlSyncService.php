@@ -13,11 +13,11 @@ class GhlSyncService
     private $ghlClient;
     private string $locationId;
 
-    public function __construct($db, string $locationId)
+    public function __construct($db, string $locationId, ?string $tokenRegistryId = null)
     {
         $this->db = $db;
         $this->locationId = $locationId;
-        $this->ghlClient = new \GhlClient($db, $locationId);
+        $this->ghlClient = new \GhlClient($db, $locationId, $tokenRegistryId);
     }
 
     /**

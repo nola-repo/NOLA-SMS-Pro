@@ -30,10 +30,11 @@ Today, **`user/src/api/contacts.ts`** treats any `!res.ok` as a silent failure a
 | **Endpoint** | `GET` same URL as today: `API_CONFIG.ghl_contacts` (e.g. `/api/ghl-contacts` on the app host; legacy API may use `https://smspro-api.nolacrm.io` per env). |
 | **Auth** | `Authorization: Bearer <JWT>` (session) plus `X-GHL-Location-ID` and query `locationId` / `location_id` as already implemented. |
 | **Success 200** | `{ "contacts": [ ... ] }` (array may be empty — that is the real “no contacts” case). |
-| **Reconnect 401** | Body includes `"requires_reconnect": true` when token refresh fails (`api/services/GhlClient.php`). Other 401 shapes may exist; treat `requires_reconnect === true` as the reconnect banner case. |
+| **Reconnect 401** | Body includes `"requires_reconnect": true` only for **non-transient** OAuth failures (e.g. revoked refresh / `invalid_grant`) after a real refresh attempt. Mere expiry is refreshed silently. |
+| **503** | May occur when refresh is **temporarily** unavailable (e.g. peer lock wait timeout, upstream 5xx). Body includes `"requires_reconnect": false` — **do not** show the reconnect banner; prefer retry. |
 | **Other errors** | Non-JSON or other 4xx/5xx — show a generic error, not the empty CRM state. |
 
-**Other endpoint:** `api/agency/get_subaccounts.php` can also return `requires_reconnect` for agency flows — apply the same UX pattern anywhere subaccounts or GHL-backed lists are loaded.
+**Other endpoints:** Subaccount lists that **do not** call the GHL API (e.g. `get_subaccounts` / Firestore-only) do not emit `requires_reconnect`. Use the same reconnect UX only where the backend explicitly returns it from GHL token refresh failures.
 
 ---
 

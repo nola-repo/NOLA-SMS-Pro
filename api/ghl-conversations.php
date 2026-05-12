@@ -23,6 +23,7 @@ require __DIR__ . '/services/GhlClient.php';
 validate_api_request();
 
 $db     = get_firestore();
+$jwtCtx = auth_get_optional_jwt_context($db);
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 $locId  = get_ghl_location_id();
 
@@ -50,8 +51,11 @@ if (!$locId) {
     exit;
 }
 
+auth_assert_ghl_api_location_allowed($db, $jwtCtx, (string) $locId);
+$tokenRegistryId = auth_resolve_ghl_token_registry_id($db, $jwtCtx, (string) $locId);
+
 try {
-    $client = new GhlClient($db, $locId);
+    $client = new GhlClient($db, $locId, $tokenRegistryId);
 
     // ── 1. Create conversation on GHL ───────────────────────────────────
     $payload = json_encode([
