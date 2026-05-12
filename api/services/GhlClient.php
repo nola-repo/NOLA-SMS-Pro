@@ -109,31 +109,46 @@ class GhlClient
                 } catch (GhlOAuthRefreshException $e) {
                     error_log('GhlClient refresh after 401 (classified): ' . $e->getReasonCode() . ' ' . $e->getMessage());
                     if ($e->shouldPromptReconnect()) {
+                        $body = [
+                            'error' => 'Token refresh failed',
+                            'requires_reconnect' => true,
+                        ];
+                        if (self::shouldIncludeDebug()) {
+                            $body['debug'] = $this->buildSafeDebugPayload($e);
+                        }
+
                         return [
                             'status' => 401,
-                            'body'   => json_encode([
-                                'error' => 'Token refresh failed',
-                                'requires_reconnect' => true,
-                            ]),
+                            'body'   => json_encode($body),
                         ];
+                    }
+
+                    $body = [
+                        'error' => 'GHL token temporarily unavailable',
+                        'requires_reconnect' => false,
+                    ];
+                    if (self::shouldIncludeDebug()) {
+                        $body['debug'] = $this->buildSafeDebugPayload($e);
                     }
 
                     return [
                         'status' => 503,
-                        'body'   => json_encode([
-                            'error' => 'GHL token temporarily unavailable',
-                            'requires_reconnect' => false,
-                        ]),
+                        'body'   => json_encode($body),
                     ];
                 } catch (\Exception $e) {
                     error_log('GhlClient refresh after 401: ' . $e->getMessage());
 
+                    $body = [
+                        'error' => 'GHL token temporarily unavailable',
+                        'requires_reconnect' => false,
+                    ];
+                    if (self::shouldIncludeDebug()) {
+                        $body['debug'] = $this->buildSafeDebugPayload(null);
+                    }
+
                     return [
                         'status' => 503,
-                        'body'   => json_encode([
-                            'error' => 'GHL token temporarily unavailable',
-                            'requires_reconnect' => false,
-                        ]),
+                        'body'   => json_encode($body),
                     ];
                 }
             }
@@ -170,6 +185,50 @@ class GhlClient
     }
 
     // ── Private helpers ─────────────────────────────────────────────────
+
+    private static function shouldIncludeDebug(): bool
+    {
+        $flag = getenv('DEBUG_GHL_TOKEN');
+        if ($flag === false) {
+            return false;
+        }
+
+        $flag = strtolower(trim((string) $flag));
+
+        return $flag === '1' || $flag === 'true' || $flag === 'yes' || $flag === 'on';
+    }
+
+    /** @return array<string,mixed> */
+    private function buildSafeDebugPayload(?GhlOAuthRefreshException $e = null): array
+    {
+        $out = [
+            'api_location_id' => $this->locationId,
+            'token_registry_id' => $this->tokenRegistryId,
+            'canonical_doc_existed_at_load' => $this->canonicalDocExistedAtLoad,
+            'integration_doc_id' => $this->integration['firestore_doc_id'] ?? null,
+            'integration_user_type' => $this->integration['userType'] ?? null,
+            'integration_app_type' => $this->integration['appType'] ?? null,
+            'integration_company_id' => $this->integration['companyId'] ?? null,
+            'has_refresh_token' => !empty($this->integration['refresh_token']),
+            'has_access_token' => !empty($this->integration['access_token']),
+        ];
+
+        $expiresAt = $this->integration['expires_at'] ?? null;
+        $expiresSeconds = $expiresAt instanceof \Google\Cloud\Core\Timestamp
+            ? $expiresAt->get()->getTimestamp()
+            : (int) $expiresAt;
+        if ($expiresSeconds > 0) {
+            $out['expires_at_unix'] = $expiresSeconds;
+            $out['expires_in_sec'] = $expiresSeconds - time();
+        }
+
+        if ($e) {
+            $out['refresh_reason'] = $e->getReasonCode();
+            $out['would_prompt_reconnect'] = $e->shouldPromptReconnect();
+        }
+
+        return $out;
+    }
 
     /** @param array<string,mixed> $data */
     private static function redactGhlSecretsInArray(array $data): array
