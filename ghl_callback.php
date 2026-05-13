@@ -882,47 +882,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
             $singleLocName = json_decode($lnResp2 ?: '', true)['location']['name'] ?? '';
         }
 
-        // Decide destination immediately:
-        // - existing linked user -> login (welcome_back)
-        // - otherwise -> registration with install token
-        $hasLinkedUserCaseA = false;
-        $installToken2 = '';
-        $companyNameCaseA = '';
-        if (!empty($companyId)) {
-            try {
-                $coSnapA = $db->collection('ghl_tokens')->document((string)$companyId)->snapshot();
-                if ($coSnapA->exists()) {
-                    $coDataA = $coSnapA->data();
-                    $companyNameCaseA = (string)($coDataA['company_name'] ?? $coDataA['agency_name'] ?? $coDataA['location_name'] ?? '');
-                }
-            } catch (Exception $e) {
-                error_log('[GHL_CALLBACK] Case A company name lookup failed: ' . $e->getMessage());
-            }
-        }
-
-        if ($hasLinkedUserCaseA) {
-            $caseARedirect = 'https://smspro-api.nolacrm.io/login?welcome_back=1&name=' . urlencode($singleLocName ?: 'Your Sub-Account');
-            $caseARedirect .= '&location_id=' . urlencode((string)$singleLocationId);
-            if ($companyNameCaseA !== '') {
-                $caseARedirect .= '&company=' . urlencode($companyNameCaseA);
-            }
-            error_log("[GHL_CALLBACK] Case A: {$singleLocationId} already linked — redirecting to login.");
-        } else {
-            $caseARedirect = 'https://smspro-api.nolacrm.io/register?install_token=' . urlencode($installToken2);
-            error_log("[GHL_CALLBACK] Case A: {$singleLocationId} new link — redirecting to registration.");
-        }
-        // Redirect is decided after the exact selected location token is saved.
-
-        // ── Flush response to browser NOW — user is already navigating away ───
-        // On platforms without fastcgi_finish_request(), continue best-effort.
-        if (false && function_exists('fastcgi_finish_request')) {
-            fastcgi_finish_request();
-        } elseif (false) {
-            ignore_user_abort(true);
-            ob_start();
-            ob_end_flush();
-            flush();
-        }
+        // Save selected-location tokens first; redirect is decided after classification below.
 
         // ── Background: Save Location-scoped token ────────────────────────────
         try {
@@ -1282,6 +1242,12 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         $onlyLocId = $caseBResolution['location_id'];
         $resolvedSource = (string)($caseBResolution['source'] ?? $resolvedSource);
         $onlyLocName = $successfulLocNames[$onlyLocId] ?? ($caseBResolution['location_names'][$onlyLocId] ?? '');
+    }
+    if (!$onlyLocId && count($needsRegistration) === 1) {
+        $onlyLocId = array_key_first($needsRegistration);
+        $resolvedSource = 'single_unregistered_location';
+        $onlyLocName = $needsRegistration[$onlyLocId] ?? ($successfulLocNames[$onlyLocId] ?? '');
+        error_log("[GHL_CALLBACK] Case B: no explicit selected location; using the only unregistered location {$onlyLocId}.");
     }
 
     // If we still don't have the name (e.g. came from $directLocFromToken), try ghl_tokens
