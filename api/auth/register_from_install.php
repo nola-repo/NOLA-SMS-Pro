@@ -13,6 +13,7 @@ header('Content-Type: application/json');
 require __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/../jwt_helper.php';
 require_once __DIR__ . '/../auth_helpers.php';
+require_once __DIR__ . '/../install_helpers.php';
 require_once __DIR__ . '/user_profile_helper.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -57,6 +58,11 @@ $type = $installPayload['type'] ?? '';
 if ($type === 'install') {
     $locationId = $installPayload['location_id'] ?? $locationId;
     $companyId = $installPayload['company_id'] ?? $companyId;
+    if (!$locationId) {
+        http_response_code(422);
+        echo json_encode(['error' => 'A reliable location_id is required for sub-account installation. Please reinstall from the selected GHL sub-account.']);
+        exit;
+    }
 } elseif ($type === 'agency_install') {
     $companyId = $installPayload['company_id'] ?? $companyId;
 } else {
@@ -305,6 +311,12 @@ if (!empty($errors)) {
 try {
     $db = get_firestore();
     $now = new DateTimeImmutable();
+
+    if ($type === 'install' && $locationId && $companyId && install_location_company_mismatch($db, (string)$locationId, (string)$companyId)) {
+        http_response_code(422);
+        echo json_encode(['error' => 'This installation does not match the selected sub-account. Open NOLA SMS Pro from inside the correct GHL sub-account and try again.']);
+        exit;
+    }
 
     if ($type === 'agency_install' && $locationId && $companyId) {
         if (!auth_location_belongs_to_company($db, (string) $locationId, (string) $companyId)) {

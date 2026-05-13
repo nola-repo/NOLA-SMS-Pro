@@ -7,6 +7,7 @@
 require_once __DIR__ . '/api/jwt_helper.php';
 require_once __DIR__ . '/api/webhook/firestore_client.php';
 require_once __DIR__ . '/api/auth_helpers.php';
+require_once __DIR__ . '/api/install_helpers.php';
 
 $jwtSecret   = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
 $apiBase     = 'https://smspro-api.nolacrm.io';
@@ -276,16 +277,6 @@ try {
     if ($locationId || $companyId) {
         $db = get_firestore();
 
-        if (!$locationId && $companyId && $tokenType === 'agency_install') {
-            $inferred = auth_infer_single_location_for_company($db, (string) $companyId);
-            if ($inferred) {
-                $locationId = $inferred['location_id'];
-                if ($locationName === '') {
-                    $locationName = htmlspecialchars((string) ($inferred['location_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-                }
-            }
-        }
-
         if ($locationName === '' || $companyNameRaw === '') {
             if ($locationId) {
                 $locSnap = $db->collection('ghl_tokens')->document((string) $locationId)->snapshot();
@@ -326,7 +317,11 @@ if ($tokenType !== 'install' && $tokenType !== 'agency_install') {
 if ($locationId) {
     try {
         $db = isset($db) ? $db : get_firestore();
-        if (ir_has_linked_user_for_location($db, (string) $locationId)) {
+        $installClass = install_classify_location($db, (string)$locationId, $companyId ? (string)$companyId : null);
+        if (($installClass['status'] ?? '') === 'ambiguous_or_mismatch') {
+            ir_page('Sub-account Mismatch', '<div style="text-align:center;"><h1>Sub-account Mismatch</h1><p class="subtitle">This install link does not match the selected GoHighLevel sub-account. Please reinstall from the correct sub-account.</p></div>');
+        }
+        if (!empty($installClass['linked'])) {
             $loginName = $locationNameRaw !== '' ? $locationNameRaw : ($companyNameRaw !== '' ? $companyNameRaw : 'Your Sub-Account');
             $redirectUrl = 'https://smspro-api.nolacrm.io/login?welcome_back=1&name=' . urlencode($loginName)
                 . '&location_id=' . urlencode((string)$locationId);
@@ -339,6 +334,14 @@ if ($locationId) {
     } catch (Exception $e) {
         error_log('[install-register] pre-form linked-user redirect guard failed: ' . $e->getMessage());
     }
+} elseif ($tokenType === 'install') {
+    ir_page('Select Sub-account Again', <<<HTML
+        <div style="text-align:center;">
+            <h1>Sub-account Not Detected</h1>
+            <p class="subtitle">This install link does not include a reliable GoHighLevel location. Open the target sub-account in GHL and reinstall NOLA SMS Pro from there.</p>
+            <a href="{$marketplace}" class="btn-submit" style="display:inline-flex; width:auto; padding:12px 24px; text-decoration:none;">Reinstall from Marketplace</a>
+        </div>
+HTML);
 }
 
 $locDisplay = $locationName ?: $companyName ?: $locationId ?: '—';

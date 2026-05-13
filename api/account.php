@@ -10,6 +10,7 @@ header('Content-Type: application/json');
 require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
 require_once __DIR__ . '/jwt_helper.php';
+require_once __DIR__ . '/install_helpers.php';
 require_once __DIR__ . '/services/CreditManager.php';
 
 function account_extract_bearer_token(): ?string
@@ -174,6 +175,14 @@ try {
                 break;
             }
         }
+
+        if ($userName === null && $userEmail === null && $userPhone === null) {
+            $linked = install_linked_account_for_location($db, (string)$locId, false);
+            if ($linked !== null) {
+                $userName = $linked['name'] !== '' ? $linked['name'] : null;
+                $userEmail = $linked['email'] !== '' ? $linked['email'] : null;
+            }
+        }
     } catch (\Throwable $e) {
         error_log("[api/account.php] Failed to fetch user credentials: " . $e->getMessage());
     }
@@ -186,6 +195,7 @@ try {
     }
 
     $creditBalanceDisplay = (new CreditManager())->get_balance((string)$locId);
+    $registrationStatus = install_registration_status_for_account($db, (string)$locId);
 
     // 4. Response format
     echo json_encode([
@@ -201,6 +211,8 @@ try {
             'email_address'     => $userEmail,
             'phone'             => $userPhone,
             'phone_number'      => $userPhone,
+            'registration_status' => $registrationStatus,
+            'is_registered'       => $registrationStatus === 'registered',
             'approved_sender_id'  => $intData['approved_sender_id'] ?? null,
             'free_usage_count'    => $intData['free_usage_count'] ?? 0,
             'free_credits_total'  => $intData['free_credits_total'] ?? 10,

@@ -12,6 +12,7 @@
 
 require_once __DIR__ . '/api/jwt_helper.php';
 require_once __DIR__ . '/api/webhook/firestore_client.php';
+require_once __DIR__ . '/api/install_helpers.php';
 
 $apiBase  = 'https://smspro-api.nolacrm.io';
 $reactApp = 'https://app.nolasmspro.com';
@@ -235,9 +236,23 @@ $linkedAccount = null;
 
 if ($locationIdRaw !== '') {
     try {
-        $linkedAccount = il_linked_account_for_location(get_firestore(), $locationIdRaw);
+        $dbForInstall = get_firestore();
+        $linkedAccount = install_linked_account_for_location($dbForInstall, $locationIdRaw);
         if ($_SERVER['REQUEST_METHOD'] !== 'POST' && !empty($linkedAccount['email'])) {
             $emailVal = htmlspecialchars((string)$linkedAccount['email'], ENT_QUOTES, 'UTF-8');
+        }
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST' && empty($linkedAccount['email']) && !$isBulkInstall) {
+            $class = install_classify_location($dbForInstall, $locationIdRaw);
+            if (!empty($class['token_exists']) && empty($class['linked'])) {
+                $locSnap = $dbForInstall->collection('ghl_tokens')->document($locationIdRaw)->snapshot();
+                $locData = $locSnap->exists() ? $locSnap->data() : [];
+                $locName = (string)($locData['location_name'] ?? $locationName ?? '');
+                $coId = (string)($locData['companyId'] ?? $locData['company_id'] ?? '');
+                $coName = (string)($locData['company_name'] ?? $locData['agency_name'] ?? $companyName ?? '');
+                $jwtSecretLogin = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
+                header('Location: ' . install_build_registration_url($jwtSecretLogin, $locationIdRaw, $locName, $coId ?: null, $coName, 'login_unregistered_reinstall', (string)($class['status'] ?? 'reinstall_unregistered')), true, 302);
+                exit;
+            }
         }
     } catch (Exception $e) {
         error_log('[install-login] linked account preload failed: ' . $e->getMessage());
@@ -276,7 +291,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $jwtSecret = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
             $payload = jwt_verify((string)$result['token'], $jwtSecret);
             $authUid = (string)($payload['sub'] ?? '');
-            if (!il_login_user_linked_to_location($db, $authUid, $locationIdRaw)) {
+            if (!install_user_linked_to_location($db, $authUid, $locationIdRaw)) {
                 $formError = 'This account is not linked to the selected subaccount. Please sign in with the correct linked account.';
                 goto render_login_form;
             }
