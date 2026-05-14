@@ -59,13 +59,13 @@ function agency_curl_json(string $url, string $token): array
 
 function agency_trigger_provision_async(string $baseUrl, string $sessionId, string $secret): void
 {
-    $url = rtrim($baseUrl, '/') . '/api/agency/install/provision?session_id=' . urlencode($sessionId) . '&token=' . urlencode($secret);
+    $url = rtrim($baseUrl, '/') . '/api/agency/install/provision?session_id=' . urlencode($sessionId);
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT_MS => 700,
-        CURLOPT_CONNECTTIMEOUT_MS => 300,
-        CURLOPT_HTTPHEADER => ['Accept: application/json'],
+        CURLOPT_TIMEOUT_MS => 2000,
+        CURLOPT_CONNECTTIMEOUT_MS => 1000,
+        CURLOPT_HTTPHEADER => ['Accept: application/json', 'X-Webhook-Secret: ' . $secret],
     ]);
     curl_exec($ch);
     curl_close($ch);

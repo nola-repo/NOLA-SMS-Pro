@@ -13,6 +13,34 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST' && $_SERVER['REQUEST_METHOD'] !== 'GET
     exit;
 }
 
+ignore_user_abort(true);
+if (function_exists('set_time_limit')) {
+    @set_time_limit(0);
+}
+@ini_set('max_execution_time', '0');
+
+function provision_maybe_update_session($sessionRef, int $processed, int $total, int $provisioned, int $failed, array $errors): void
+{
+    if ($processed !== 1 && $processed % 10 !== 0 && $processed !== $total) {
+        return;
+    }
+
+    try {
+        $sessionRef->set([
+            'status' => 'provisioning',
+            'progress' => [
+                'total_locations' => $total,
+                'provisioned' => $provisioned,
+                'failed' => $failed,
+            ],
+            'errors' => array_slice($errors, 0, 25),
+            'updated_at' => new \Google\Cloud\Core\Timestamp(new DateTimeImmutable()),
+        ], ['merge' => true]);
+    } catch (Exception $e) {
+        error_log('[install_provision] progress update failed: ' . $e->getMessage());
+    }
+}
+
 function provision_fetch_locations(string $companyId, string $companyToken): array
 {
     $all = [];
@@ -23,6 +51,8 @@ function provision_fetch_locations(string $companyId, string $companyToken): arr
         $ch = curl_init($url);
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => 3,
+            CURLOPT_TIMEOUT => 8,
             CURLOPT_HTTPHEADER => [
                 'Authorization: Bearer ' . $companyToken,
                 'Accept: application/json',
@@ -111,6 +141,15 @@ try {
     $provisioned = 0;
     $failed = 0;
     $errors = [];
+    $processed = 0;
+    $sessionRef->set([
+        'progress' => [
+            'total_locations' => $totalLocations,
+            'provisioned' => 0,
+            'failed' => 0,
+        ],
+        'updated_at' => new \Google\Cloud\Core\Timestamp(new DateTimeImmutable()),
+    ], ['merge' => true]);
 
     foreach ($locations as $locId => $locNameHint) {
         try {
@@ -119,6 +158,8 @@ try {
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_POST => true,
                 CURLOPT_POSTFIELDS => http_build_query(['companyId' => $companyId, 'locationId' => $locId]),
+                CURLOPT_CONNECTTIMEOUT => 3,
+                CURLOPT_TIMEOUT => 8,
                 CURLOPT_HTTPHEADER => [
                     'Authorization: Bearer ' . $companyToken,
                     'Content-Type: application/x-www-form-urlencoded',
@@ -135,6 +176,8 @@ try {
             if (!$ltOk) {
                 $failed++;
                 $errors[] = "locationToken failed for {$locId} (HTTP {$ltCode})";
+                $processed++;
+                provision_maybe_update_session($sessionRef, $processed, $totalLocations, $provisioned, $failed, $errors);
                 continue;
             }
 
@@ -145,6 +188,8 @@ try {
             $locFetch = curl_init("https://services.leadconnectorhq.com/locations/{$locId}");
             curl_setopt_array($locFetch, [
                 CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_CONNECTTIMEOUT => 3,
+                CURLOPT_TIMEOUT => 6,
                 CURLOPT_HTTPHEADER => [
                     'Authorization: Bearer ' . $ltToken,
                     'Accept: application/json',
@@ -166,7 +211,7 @@ try {
                 'expires_at' => $ltExpiresAt,
                 'client_id' => $companyData['client_id'] ?? $companyData['appId'] ?? null,
                 'appId' => $companyData['appId'] ?? $companyData['client_id'] ?? null,
-                'appType' => 'agency',
+                'appType' => $companyData['appType'] ?? 'agency',
                 'userType' => 'Location',
                 'location_id' => (string)$locId,
                 'location_name' => $locName,
@@ -201,9 +246,13 @@ try {
                 ], ['merge' => true]);
             }
             $provisioned++;
+            $processed++;
+            provision_maybe_update_session($sessionRef, $processed, $totalLocations, $provisioned, $failed, $errors);
         } catch (Exception $e) {
             $failed++;
             $errors[] = "Provisioning exception for {$locId}";
+            $processed++;
+            provision_maybe_update_session($sessionRef, $processed, $totalLocations, $provisioned, $failed, $errors);
         }
     }
 

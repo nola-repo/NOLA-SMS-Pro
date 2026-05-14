@@ -5,6 +5,8 @@
  *
  * GET  ?welcome_back=1&name=<loc>  → shows login form with welcome-back banner
  * GET  ?bulk_install=1&count=N     → shows login form with bulk banner
+ * GET  ?bulk_install=1&provisioning=1&session_id=<id>
+ *                                    → shows login form with provisioning banner
  * POST (form submit)               → calls /api/auth/login, redirects to auth-handoff.html
  *
  * Drop this file in the repo root alongside ghl_callback.php.
@@ -145,6 +147,7 @@ $companyName   = htmlspecialchars(trim($_GET['company'] ?? ''), ENT_QUOTES, 'UTF
 $locationIdRaw = trim((string)($_GET['location_id'] ?? $_POST['location_id'] ?? ''));
 $locationIdSafe = htmlspecialchars($locationIdRaw, ENT_QUOTES, 'UTF-8');
 $isBulkInstall = isset($_GET['bulk_install']) && $_GET['bulk_install'] === '1';
+$isBulkProvisioning = isset($_GET['provisioning']) && $_GET['provisioning'] === '1';
 $bulkCount     = (int)($_GET['count'] ?? 0);
 
 // ── Handle POST ───────────────────────────────────────────────────────────────
@@ -259,6 +262,14 @@ if ($isWelcomeBack) {
     $bannerHtml = <<<HTML
     <div class="banner-blue">
         <p>👋 Welcome back! {$loc} reinstalled.<br>Sign in to continue to your dashboard.</p>
+    </div>
+HTML;
+} elseif ($isBulkInstall && $isBulkProvisioning) {
+    $bannerHtml = <<<HTML
+    <div class="banner-amber">
+        <p><strong>Installation is being prepared.</strong><br>
+        We are provisioning the selected company in the background, so the OAuth page no longer has to stay open and wait.<br><br>
+        If you are setting up one sub-account, open NOLA SMS Pro again from that GHL sub-account after a moment to finish registration or sign in.</p>
     </div>
 HTML;
 } elseif ($isBulkInstall) {

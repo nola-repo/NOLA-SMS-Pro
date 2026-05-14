@@ -625,6 +625,27 @@ function exchange_location_token(string $companyToken, string $companyId, string
     ];
 }
 
+function trigger_install_provision_async(string $sessionId): void
+{
+    $secret = getenv('WEBHOOK_SECRET');
+    if ($secret === false || trim((string)$secret) === '') {
+        error_log('[GHL_CALLBACK] WEBHOOK_SECRET missing; cannot trigger async install provisioning.');
+        return;
+    }
+
+    $baseUrl = rtrim((string)(getenv('APP_BASE_URL') ?: 'https://smspro-api.nolacrm.io'), '/');
+    $url = $baseUrl . '/api/agency/install/provision?session_id=' . urlencode($sessionId);
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT_MS => 2000,
+        CURLOPT_CONNECTTIMEOUT_MS => 1000,
+        CURLOPT_HTTPHEADER => ['Accept: application/json', 'X-Webhook-Secret: ' . (string)$secret],
+    ]);
+    curl_exec($ch);
+    curl_close($ch);
+}
+
 /**
  * Returns true if any user is already linked to this location.
  * Checks both root denormalized field and user-owned subaccounts model.
@@ -971,368 +992,33 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
 
     // ── CASE B: True bulk install — provision ALL company locations ───────────
     error_log("[GHL_CALLBACK] Case B: true bulk install — companyId={$companyId}");
-    $allLocationIds = [];
-    if (!empty($approvedLocationIds)) {
-        // If agency picker gave explicit approvedLocations, trust that over full search.
-        $allLocationIds = $approvedLocationIds;
-    } elseif (!empty($data['locations']) && is_array($data['locations'])) {
-        foreach ($data['locations'] as $loc) {
-            $lid = $loc['id'] ?? $loc['locationId'] ?? null;
-            if ($lid) $allLocationIds[] = $lid;
-        }
+    try {
+        $sessionRef = $db->collection('install_sessions')->newDocument();
+        $sessionId = $sessionRef->id();
+        $sessionRef->set([
+            'session_id' => $sessionId,
+            'company_id' => (string)$companyId,
+            'company_name' => $companyNameFromToken,
+            'status' => 'pending',
+            'source' => 'subaccount_bulk_callback',
+            'progress' => ['total_locations' => 0, 'provisioned' => 0, 'failed' => 0],
+            'errors' => [],
+            'created_at' => new \Google\Cloud\Core\Timestamp($now),
+            'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+            'expires_at' => new \Google\Cloud\Core\Timestamp((new DateTimeImmutable('+1 day'))),
+        ], ['merge' => true]);
+        trigger_install_provision_async($sessionId);
+        error_log("[GHL_CALLBACK] Case B: queued async bulk provisioning session {$sessionId}; returning immediately.");
+        header('Location: https://smspro-api.nolacrm.io/login?bulk_install=1&provisioning=1&session_id=' . urlencode($sessionId), true, 302);
+        exit;
+    } catch (Exception $e) {
+        error_log('[GHL_CALLBACK] Case B: failed to queue async bulk provisioning: ' . $e->getMessage());
+        header('Location: https://smspro-api.nolacrm.io/login?bulk_install=1&provisioning=1', true, 302);
+        exit;
     }
-    if (empty($allLocationIds)) {
-        $skip = 0; $limit = 100;
-        do {
-            $locCurl = curl_init("https://services.leadconnectorhq.com/locations/search?companyId={$companyId}&skip={$skip}&limit={$limit}");
-            curl_setopt_array($locCurl, [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_CONNECTTIMEOUT => 3,
-                CURLOPT_TIMEOUT        => 8,
-                CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $companyToken, 'Accept: application/json', 'Version: 2021-07-28'],
-            ]);
-            $locResp  = curl_exec($locCurl);
-            curl_close($locCurl);
-            $fetched  = json_decode($locResp, true)['locations'] ?? [];
-            foreach ($fetched as $loc) { if ($loc['id'] ?? null) $allLocationIds[] = $loc['id']; }
-            $skip += $limit;
-        } while (count($fetched) === $limit && count($allLocationIds) < 500);
-    }
-
-    // If GHL search returns zero, fall back to location context from callback state.
-    // This prevents false "bulk_install count=0" outcomes for single-location installs.
-    if (false && empty($allLocationIds)) {
-        $stateLocId = extract_location_id_from_state($state);
-        if ($stateLocId) {
-            $allLocationIds[] = $stateLocId;
-            error_log("[GHL_CALLBACK] Case B fallback: using locationId from state — {$stateLocId}");
-        }
-    }
-
-    $allLocationIds = array_values(array_unique($allLocationIds));
-
-    // If GHL gave multiple candidate locations but OAuth state pins exactly one of them,
-    // treat this as a single-sub-account install (registration + install_token), not bulk login.
-    $statePinned = extract_location_id_from_state($state);
-    if ($statePinned !== null && count($allLocationIds) > 1 && in_array($statePinned, $allLocationIds, true)) {
-        error_log('[GHL_CALLBACK] Case B: state pins ' . $statePinned . ' among ' . count($allLocationIds) . ' candidates — narrowing to single-location flow.');
-        $allLocationIds = [$statePinned];
-    }
-
-    // ── FAST PATH: Single sub-account selected from GHL picker ───────────────
-    // GHL sends $data['locationId'] when the user picks exactly one sub-account.
-    // Skip the bulk provisioning loop (which tries all 90 locations = ~90s wait)
-    // and provision only the selected location immediately.
-    $directLocFromTokenEarly = $data['locationId'] ?? $data['location_id'] ?? null;
-    if (false && $directLocFromTokenEarly && count($allLocationIds) > 1) {
-        error_log("[GHL_CALLBACK] Case B FAST PATH: single locationId detected ({$directLocFromTokenEarly}) — skipping bulk loop.");
-        $allLocationIds = [$directLocFromTokenEarly];
-    }
-
-    error_log('[GHL_CALLBACK_DEBUG] bulk_caseB_location_candidates=' . json_encode([
-        'count' => count($allLocationIds),
-        'first' => $allLocationIds[0] ?? null,
-    ]));
-
-    $successfulLocIds = [];
-    $successfulLocNames = [];
-    $tokenExistedBeforeByLoc = [];
-    foreach ($allLocationIds as $candidateLocId) {
-        $tokenExistedBeforeByLoc[(string)$candidateLocId] = install_token_doc_exists($db, (string)$candidateLocId);
-    }
-
-    // Provision per-location tokens
-    foreach ($allLocationIds as $locId) {
-
-        try {
-            if (install_location_company_mismatch($db, (string)$locId, (string)$companyId)) {
-                error_log("[GHL_CALLBACK] Bulk: skipping {$locId}; existing token belongs to a different company.");
-                continue;
-            }
-            $ltResult = exchange_location_token($companyToken, $companyId, $locId);
-            $ltData   = $ltResult['data'];
-
-            if ($ltResult['ok']) {
-                $successfulLocIds[] = $locId;
-                $ltExpires = time() + (int)($ltData['expires_in'] ?? 86400);
-
-                // Fetch location name
-                $lnCurl = curl_init('https://services.leadconnectorhq.com/locations/' . $locId);
-                curl_setopt_array($lnCurl, [
-                    CURLOPT_RETURNTRANSFER => true,
-                    CURLOPT_CONNECTTIMEOUT => 3,
-                    CURLOPT_TIMEOUT        => 6,
-                    CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $ltData['access_token'], 'Accept: application/json', 'Version: 2021-07-28'],
-                ]);
-                $lnResp  = curl_exec($lnCurl); curl_close($lnCurl);
-                $locName = json_decode($lnResp, true)['location']['name'] ?? '';
-                $successfulLocNames[$locId] = $locName;
-
-                $db->collection('ghl_tokens')->document($locId)->set([
-                    'access_token'          => $ltData['access_token'],
-                    'refresh_token'         => $ltData['refresh_token'] ?? $companyRefresh,
-                    'expires_at'            => $ltExpires,
-                    'client_id'             => $subaccountClientId,
-                    'appId'                 => $subaccountClientId,
-                    'appType'               => 'subaccount',
-                    'userType'              => 'Location',
-                    'location_id'           => $locId,
-                    'location_name'         => $locName,
-                    'companyId'             => $companyId,
-                    'company_name'          => $companyNameFromToken,
-                    'is_live'               => true,
-                    'toggle_enabled'        => true,
-                    'provisioned_from_bulk' => true,
-                    'updated_at'            => new \Google\Cloud\Core\Timestamp($now),
-                ], ['merge' => true]);
-
-                // Provision integrations doc (credits etc.)
-                $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locId);
-                $intRef   = $db->collection('integrations')->document($intDocId);
-                $intSnap  = $intRef->snapshot();
-                if (!$intSnap->exists()) {
-                    $intRef->set([
-                        'location_id'           => $locId,
-                        'location_name'         => $locName,
-                        'companyId'             => $companyId,
-                        'company_name'          => $companyNameFromToken,
-                        'free_credits_total'    => 10,
-                        'free_usage_count'      => 0,
-                        'credit_balance'        => 0,
-                        'system_default_sender' => 'NOLASMSPro',
-                        'installed_at'          => new \Google\Cloud\Core\Timestamp($now),
-                        'updated_at'            => new \Google\Cloud\Core\Timestamp($now),
-                    ]);
-                } else {
-                    $intRef->set([
-                        'access_token'  => $ltData['access_token'],
-                        'expires_at'    => $ltExpires,
-                        'location_name' => $locName,
-                        'company_name'  => $companyNameFromToken,
-                        'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
-                    ], ['merge' => true]);
-                }
-
-                error_log("[GHL_CALLBACK] Bulk: provisioned location token for {$locId} ({$locName}) via {$ltResult['format']} format");
-            } else {
-                error_log('[GHL_CALLBACK_DEBUG] caseB_locationToken_fail=' . json_encode([
-                    'locationId' => $locId,
-                    'failures' => $ltResult['failures'] ?? [],
-                ]));
-                error_log("[GHL_CALLBACK] Bulk: locationToken failed for {$locId} after trying all formats.");
-            }
-        } catch (Exception $e) {
-            error_log("[GHL_CALLBACK] Bulk: exception for {$locId}: " . $e->getMessage());
-        }
-    }
-
-    // ── Redirect to React app after bulk provisioning ────────────────────────
-    // Classify every provisioned location into one of three tiers using two
-    // Firestore checks:
-    //
-    //   Tier 1 — Brand new: no ghl_tokens/{locationId} doc exists at all
-    //             → Highest priority for registration
-    //   Tier 2 — Installed before but never registered: token doc exists,
-    //             users has no account linked to this active location
-    //             → Also needs registration
-    //   Tier 3 — Fully set up: token doc exists AND user exists for location
-    //             → Redirect to welcome_back login
-    //
-    // Tier 1 + Tier 2 → needsRegistration[]
-    // Tier 3          → alreadyRegistered[]
-    error_log("[GHL_CALLBACK] Case B: provisioned " . count($successfulLocIds) . " of " . count($allLocationIds) . " locations.");
-    error_log('[GHL_CALLBACK_DEBUG] bulk_caseB_provision_result=' . json_encode([
-        'successful_count' => count($successfulLocIds),
-        'candidate_count'  => count($allLocationIds),
-        'successful_first' => $successfulLocIds[0] ?? null,
-    ]));
-
-    require_once __DIR__ . '/api/jwt_helper.php';
-    $jwtSecretB = getenv('JWT_SECRET');
-    if ($jwtSecretB === false || trim((string)$jwtSecretB) === '') {
-        error_log('[GHL_CALLBACK] JWT_SECRET missing; cannot generate install token.');
-        render_error('Server configuration error: JWT secret missing.');
-    }
-    $reactAppUrlB = 'https://app.nolacrm.io';
-
-    if (count($successfulLocIds) === 0) {
-        render_error('Installation completed, but no location tokens were provisioned. Please reinstall from a specific sub-account.', [
-            'companyId'          => $companyId,
-            'hint'               => 'No location-scoped token could be created from this callback context.',
-            'isBulkInstallation' => $data['isBulkInstallation'] ?? null,
-            'state'              => $state,
-        ]);
-    }
-
-    $needsRegistration = [];  // [ locationId => locationName ]
-    $alreadyRegistered = [];  // [ locationId => locationName ]
-
-    foreach ($successfulLocIds as $locId) {
-        $locName = $successfulLocNames[$locId] ?? '';
-
-        // ── Tier 1 check: does ghl_tokens/{locationId} doc exist? ────────────
-        $tokenDocExists = (bool)($tokenExistedBeforeByLoc[(string)$locId] ?? false);
-
-        if (!$tokenDocExists) {
-            // Tier 1 — brand new location, never installed before
-            error_log("[GHL_CALLBACK] Case B: {$locId} is Tier 1 (no ghl_tokens doc) — needs registration.");
-            $needsRegistration[$locId] = $locName;
-            continue;
-        }
-
-        // ── Tier 2 / Tier 3 check: does users have a linked account? ─────────
-        $hasLinkedUser = has_linked_user_for_location($db, (string)$locId);
-
-        if ($hasLinkedUser) {
-            // Tier 3 — fully registered
-            error_log("[GHL_CALLBACK] Case B: {$locId} is Tier 3 (linked user exists) — welcome_back.");
-            $alreadyRegistered[$locId] = $locName;
-        } else {
-            // Tier 2 — token doc exists but registration never completed
-            error_log("[GHL_CALLBACK] Case B: {$locId} is Tier 2 (token exists, no linked user) — needs registration.");
-            $needsRegistration[$locId] = $locName;
-        }
-    }
-
-    error_log('[GHL_CALLBACK_DEBUG] bulk_caseB_registration_split=' . json_encode([
-        'needs_registration' => array_keys($needsRegistration),
-        'already_registered' => array_keys($alreadyRegistered),
-    ]));
-
-    // ── Route to Registration ────────────────────────────────────────────────
-    // Route the selected location only. Registration status can never prove
-    // what the user selected; if GHL does not give us one reliable target,
-    // keep the outcome as bulk/ambiguous rather than guessing.
-
-    // ── Detect the selected sub-account from ALL possible GHL signals ─────────
-    // GHL can communicate the selected sub-account in multiple ways:
-    //   1. $data['locations']  — array of selected subs (bulk picker, multiple selection)
-    //   2. $data['locationId'] — single sub-account selected from the picker
-    //   3. $data['location_id'] — alternate casing
-    //   4. $statePinned        — location ID embedded in the OAuth state
-    //   5. $successfulLocIds   — fallback: exactly 1 location was provisioned
-    $caseBResolution = install_resolve_selected_location([
-        'token_location_id' => $data['locationId'] ?? ($data['location_id'] ?? null),
-        'query_location_id' => $queryLocationId,
-        'approved_location_ids' => $approvedLocationIds,
-        'query_approved_location_ids' => $queryApprovedLocationIds,
-        'locations' => $data['locations'] ?? [],
-        'state_location_id' => $statePinned,
-    ]);
-    $statePinned = null;
-    $directLocFromToken = null;
-
-    // ── Resolve the single target location ───────────────────────────────────
-    // Priority: state-pinned > direct token field > single provisioned loc
-    $singleCandidateFromAll = count($allLocationIds) === 1 ? $allLocationIds[0] : null;
-    $singleApprovedLoc = count($approvedLocationIds) === 1 ? $approvedLocationIds[0] : null;
-    $resolvedSource = null;
-    if ($statePinned) {
-        $resolvedSource = 'state_pinned';
-    } elseif ($directLocFromToken) {
-        $resolvedSource = 'token_location_field';
-    } elseif ($singleApprovedLoc) {
-        $resolvedSource = 'approved_locations_single';
-    } elseif ($singleCandidateFromAll) {
-        $resolvedSource = 'all_locations_single';
-    } elseif (!empty($successfulLocIds)) {
-        $resolvedSource = 'successful_locations_fallback';
-    } else {
-        $resolvedSource = 'unresolved';
-    }
-    $onlyLocId = $statePinned
-        ?? $directLocFromToken
-        ?? $singleApprovedLoc
-        ?? $singleCandidateFromAll
-        ?? null;
-    $onlyLocName = $onlyLocId ? ($successfulLocNames[$onlyLocId] ?? '') : '';
-    if (!empty($caseBResolution['ok'])) {
-        $caseBSource = (string)($caseBResolution['source'] ?? '');
-        $caseBCandidates = is_array($caseBResolution['candidate_ids'] ?? null) ? $caseBResolution['candidate_ids'] : [];
-        $tokenOnlyWithoutPicker = $caseBSource === 'token_location_field'
-            && empty($caseBCandidates)
-            && count($allLocationIds) > 1;
-
-        if ($tokenOnlyWithoutPicker) {
-            error_log('[GHL_CALLBACK] Case B: token location field was present without a picker candidate; refusing to infer selected sub-account from company token.');
-        } else {
-            $onlyLocId = $caseBResolution['location_id'];
-            $resolvedSource = $caseBSource !== '' ? $caseBSource : (string)$resolvedSource;
-            $onlyLocName = $successfulLocNames[$onlyLocId] ?? ($caseBResolution['location_names'][$onlyLocId] ?? '');
-        }
-    }
-    if (!$onlyLocId && count($needsRegistration) === 1 && count($successfulLocIds) > 1) {
-        error_log('[GHL_CALLBACK] Case B: exactly one unregistered location exists, but no selected-location signal was trusted; refusing to infer selection from registration status.');
-    }
-
-    // If we still don't have the name (e.g. came from $directLocFromToken), try ghl_tokens
-    if ($onlyLocId && $onlyLocName === '') {
-        try {
-            $ltSnap = $db->collection('ghl_tokens')->document($onlyLocId)->snapshot();
-            if ($ltSnap->exists()) {
-                $onlyLocName = $ltSnap->data()['location_name'] ?? '';
-            }
-        } catch (Exception $e) {
-            error_log("[GHL_CALLBACK] Case B: could not resolve location name for {$onlyLocId}: " . $e->getMessage());
-        }
-    }
-
-    if ($onlyLocId && !in_array($onlyLocId, $successfulLocIds, true)) {
-        render_error('Could not create a location token for the selected sub-account. Please retry the installation from that GHL sub-account.', [
-            'companyId' => $companyId,
-            'locationId' => $onlyLocId,
-            'resolution' => $caseBResolution,
-        ]);
-    }
-
-    if ($onlyLocId) {
-        $companyNameB = '';
-        try {
-            $coSnapB = $db->collection('ghl_tokens')->document((string)$companyId)->snapshot();
-            if ($coSnapB->exists()) {
-                $coDataB = $coSnapB->data();
-                $companyNameB = (string)($coDataB['company_name'] ?? $coDataB['agency_name'] ?? $coDataB['location_name'] ?? '');
-            }
-        } catch (Exception $e) {
-            error_log('[GHL_CALLBACK] Case B company name lookup failed: ' . $e->getMessage());
-        }
-
-        $caseBDecision = install_decide_location_redirect(
-            $db,
-            $jwtSecretB,
-            (string)$onlyLocId,
-            (string)$onlyLocName,
-            (string)$companyId,
-            $companyNameB,
-            (string)$resolvedSource,
-            (bool)($tokenExistedBeforeByLoc[(string)$onlyLocId] ?? false)
-        );
-
-        error_log('[GHL_CALLBACK_DEBUG] caseB_install_decision=' . json_encode([
-            'locationId' => $onlyLocId,
-            'resolution' => $caseBResolution,
-            'decision' => $caseBDecision['kind'],
-            'status' => $caseBDecision['status'],
-            'classification' => $caseBDecision['classification'],
-        ]));
-
-        if ($caseBDecision['kind'] === 'error') {
-            render_error('The selected sub-account does not match the saved GoHighLevel token. Please reinstall from the selected GHL sub-account.', [
-                'locationId' => $onlyLocId,
-                'companyId' => $companyId,
-                'classification' => $caseBDecision['classification'],
-            ]);
-        }
-
-        header('Location: ' . $caseBDecision['url'], true, 302);
-    } else {
-        error_log('[GHL_CALLBACK] Case B: no single selected sub-account; bulk provisioning complete.');
-        header('Location: https://smspro-api.nolacrm.io/login?bulk_install=1&count=' . urlencode((string)count($successfulLocIds)), true, 302);
-    }
-    exit;
 }
 
-// ─── Determine Location ID ────────────────────────────────────────────────────
+// ─── Determine Location ID ────────────────────────────────────────────────────────────────
 // Prefer explicit token/query fields; never use opaque state as a standalone location id.
 $finalResolution = install_resolve_selected_location([
     'token_location_id' => $data['locationId'] ?? ($data['location_id'] ?? null),
