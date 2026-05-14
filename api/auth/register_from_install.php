@@ -369,6 +369,15 @@ try {
             echo json_encode(['error' => 'This subaccount is already linked to another email. Please login with the existing account.']);
             exit;
         }
+
+        $linkedAccount = install_linked_account_for_location($db, (string)$locationId);
+        $linkedEmail = strtolower(trim((string)($linkedAccount['email'] ?? '')));
+        if ($linkedEmail !== '' && $linkedEmail !== $email) {
+            http_response_code(409);
+            echo json_encode(['error' => 'This subaccount is already linked to another email. Please login with the existing account.']);
+            exit;
+        }
+
         $subaccountOwnerQuery = $usersRef->where('active_location_id', '=', $locationId)->limit(1)->documents();
         foreach ($subaccountOwnerQuery as $snap) {
             if ($snap->exists()) {
@@ -448,6 +457,8 @@ try {
 
         if ($isLocationLevel) {
             $updates['active_location_id'] = $locationId;
+            $updates['location_id'] = $locationId;
+            $updates['ghl_token_ref'] = 'ghl_tokens/' . $locationId;
         } elseif (!empty($companyId)) {
             $updates['company_id'] = $companyId;
         }
@@ -520,6 +531,7 @@ try {
         ], $jwtSecret, 28800); // 8 hours
         if ($isLocationLevel && $locationId) {
             _upsert_owner_lock($db, 'location_owners', (string)$locationId, $existingId, $email, $fullName, $now);
+            _sync_location_owner_metadata($db, (string)$locationId, $existingId, $email, $fullName, $phone, $now);
         }
 
         http_response_code(200);
@@ -590,6 +602,8 @@ try {
 
     if ($isLocationLevel) {
         $userData['active_location_id'] = $locationId;
+        $userData['location_id'] = $locationId;
+        $userData['ghl_token_ref'] = 'ghl_tokens/' . $locationId;
     }
     if (!empty($companyId)) {
         $userData['company_id'] = $companyId;
@@ -602,6 +616,7 @@ try {
     $newUserId = $newUserDoc->id();
     if ($isLocationLevel && $locationId) {
         _upsert_owner_lock($db, 'location_owners', (string)$locationId, $newUserId, $email, $fullName, $now);
+        _sync_location_owner_metadata($db, (string)$locationId, $newUserId, $email, $fullName, $phone, $now);
     }
 
     // Write user-owned subaccount entry
@@ -660,8 +675,9 @@ try {
     ]);
 
 } catch (Exception $e) {
+    error_log("[api/auth/register_from_install.php] Registration exception: {$e->getMessage()}\n{$e->getTraceAsString()}");
     http_response_code(500);
-    echo json_encode(['error' => 'Registration failed: ' . $e->getMessage()]);
+    echo json_encode(['error' => 'Registration failed.']);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -740,15 +756,51 @@ function _upsert_owner_lock($db, string $collection, string $entityId, string $o
     }
     try {
         $ref = $db->collection($collection)->document($entityId);
-        $ref->set([
+        $payload = [
             'entity_id' => $entityId,
             'owner_user_id' => $ownerUserId,
             'owner_email' => strtolower(trim($ownerEmail)),
             'owner_name' => $ownerName,
             'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-            'created_at' => new \Google\Cloud\Core\Timestamp($now),
-        ], ['merge' => true]);
+        ];
+
+        $existingSnap = $ref->snapshot();
+        if (!$existingSnap->exists()) {
+            $payload['created_at'] = new \Google\Cloud\Core\Timestamp($now);
+        }
+
+        $ref->set($payload, ['merge' => true]);
     } catch (Exception $e) {
         error_log("[register_from_install] _upsert_owner_lock failed for {$collection}/{$entityId}: " . $e->getMessage());
+    }
+}
+
+function _sync_location_owner_metadata($db, string $locationId, string $ownerUserId, string $ownerEmail, string $ownerName, string $ownerPhone, DateTimeImmutable $now): void
+{
+    if ($locationId === '') {
+        return;
+    }
+
+    $payload = [
+        'location_id' => $locationId,
+        'owner_user_id' => $ownerUserId,
+        'owner_uid' => $ownerUserId,
+        'owner_email' => strtolower(trim($ownerEmail)),
+        'owner_name' => $ownerName,
+        'owner_phone' => $ownerPhone,
+        'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+    ];
+
+    try {
+        $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
+        $db->collection('integrations')->document($intDocId)->set($payload, ['merge' => true]);
+    } catch (Exception $e) {
+        error_log("[register_from_install] _sync_location_owner_metadata integrations failed for {$locationId}: " . $e->getMessage());
+    }
+
+    try {
+        $db->collection('ghl_tokens')->document($locationId)->set($payload, ['merge' => true]);
+    } catch (Exception $e) {
+        error_log("[register_from_install] _sync_location_owner_metadata ghl_tokens failed for {$locationId}: " . $e->getMessage());
     }
 }

@@ -93,7 +93,37 @@ try {
 
     $role        = $userData['role']               ?? 'user';
     $companyId   = $userData['company_id']          ?? null;
-    $locationId  = $userData['active_location_id']  ?? null;
+    $locationId  = $userData['active_location_id'] ?? null;
+
+    if ($locationId === null) {
+        if (!empty($userData['location_id'])) {
+            error_log("[api/auth/login.php] legacy location_id used for {$email}");
+            $locationId = $userData['location_id'];
+        } elseif (!empty($userData['locationId'])) {
+            error_log("[api/auth/login.php] legacy locationId used for {$email}");
+            $locationId = $userData['locationId'];
+        }
+    }
+
+    if ($locationId !== null && $role !== 'agency') {
+        if (empty($companyId)) {
+            http_response_code(400);
+            echo json_encode(['error' => 'Login failed: user location metadata is incomplete.']);
+            exit;
+        }
+
+        $locationDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locationId);
+        $locationSnap = $db->collection('integrations')->document($locationDocId)->snapshot();
+        if ($locationSnap->exists()) {
+            $locationData = $locationSnap->data();
+            $locationCompanyId = $locationData['companyId'] ?? $locationData['company_id'] ?? null;
+            if ($locationCompanyId !== null && (string)$locationCompanyId !== (string)$companyId) {
+                http_response_code(403);
+                echo json_encode(['error' => 'Login failed: location is not authorized for this account.']);
+                exit;
+            }
+        }
+    }
     // ── Sign JWT ─────────────────────────────────────────────────────────────
     $token = jwt_sign([
         'sub'        => $userId,
@@ -113,6 +143,7 @@ try {
     ]);
 
 } catch (Exception $e) {
+    error_log('[api/auth/login.php] Login exception: ' . $e->getMessage() . '\n' . $e->getTraceAsString());
     http_response_code(500);
-    echo json_encode(['error' => 'Login failed: ' . $e->getMessage()]);
+    echo json_encode(['error' => 'Login failed']);
 }

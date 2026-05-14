@@ -9,7 +9,12 @@ require_once __DIR__ . '/api/webhook/firestore_client.php';
 require_once __DIR__ . '/api/auth_helpers.php';
 require_once __DIR__ . '/api/install_helpers.php';
 
-$jwtSecret   = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
+$jwtSecret   = getenv('JWT_SECRET');
+if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
+    error_log('[install-register.php] JWT_SECRET missing; cannot start registration.');
+    http_response_code(500);
+    exit('Server configuration error: JWT secret missing.');
+}
 $apiBase     = 'https://smspro-api.nolacrm.io';
 $reactApp    = 'https://app.nolasmspro.com';
 $marketplace = 'https://marketplace.leadconnectorhq.com/apps/overview/68118e8f9f1bac2ffc84ed23';
@@ -324,7 +329,9 @@ if ($locationId) {
         if (!empty($installClass['linked'])) {
             $loginName = $locationNameRaw !== '' ? $locationNameRaw : ($companyNameRaw !== '' ? $companyNameRaw : 'Your Sub-Account');
             $redirectUrl = 'https://smspro-api.nolacrm.io/login?welcome_back=1&name=' . urlencode($loginName)
-                . '&location_id=' . urlencode((string)$locationId);
+                . '&location_id=' . urlencode((string)$locationId)
+                . '&install_status=' . urlencode('reinstall_registered')
+                . '&resolution_source=' . urlencode('register_pre_form_guard');
             if ($companyNameRaw !== '') {
                 $redirectUrl .= '&company=' . urlencode($companyNameRaw);
             }

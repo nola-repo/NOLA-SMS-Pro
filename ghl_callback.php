@@ -442,32 +442,19 @@ function extract_location_id_from_state(?string $state): ?string
  */
 function extract_location_id_from_query(array $query): ?string
 {
-    $directKeys = ['locationId', 'location_id', 'selectedLocationId'];
+    $directKeys = ['locationId', 'location_id', 'selectedLocationId', 'selected_location_id', 'activeLocationId', 'active_location_id'];
     foreach ($directKeys as $key) {
         $val = $query[$key] ?? null;
-        if (is_string($val) && preg_match('/^[A-Za-z0-9_-]{12,}$/', $val)) {
-            return $val;
+        $clean = install_clean_location_id($val);
+        if ($clean !== null) {
+            return $clean;
         }
     }
 
     // approvedLocations can be an array or CSV with one selected sub-account.
-    $approved = $query['approvedLocations'] ?? null;
-    if (is_array($approved)) {
-        $ids = array_values(array_filter($approved, static function ($v) {
-            return is_string($v) && preg_match('/^[A-Za-z0-9_-]{12,}$/', $v);
-        }));
-        if (count($ids) === 1) {
-            return $ids[0];
-        }
-    }
-    if (is_string($approved) && $approved !== '') {
-        $parts = array_values(array_filter(array_map('trim', explode(',', $approved))));
-        $ids = array_values(array_filter($parts, static function ($v) {
-            return preg_match('/^[A-Za-z0-9_-]{12,}$/', $v);
-        }));
-        if (count($ids) === 1) {
-            return $ids[0];
-        }
+    $approvedIds = extract_location_ids_from_mixed($query['approvedLocations'] ?? null);
+    if (count($approvedIds) === 1) {
+        return $approvedIds[0];
     }
 
     return null;
@@ -482,26 +469,47 @@ function extract_location_id_from_query(array $query): ?string
 function extract_location_ids_from_mixed($value): array
 {
     $ids = [];
-    $addIfValid = static function ($candidate) use (&$ids): void {
-        if (is_string($candidate) && preg_match('/^[A-Za-z0-9_-]{12,}$/', $candidate)) {
-            $ids[] = $candidate;
+    $walk = null;
+    $walk = static function ($candidate) use (&$ids, &$walk): void {
+        $clean = install_clean_location_id($candidate);
+        if ($clean !== null) {
+            $ids[] = $clean;
+            return;
+        }
+
+        if (!is_array($candidate)) {
+            return;
+        }
+
+        foreach (['id', 'locationId', 'location_id', 'selectedLocationId', 'selected_location_id'] as $key) {
+            if (!array_key_exists($key, $candidate)) {
+                continue;
+            }
+            $clean = install_clean_location_id($candidate[$key]);
+            if ($clean !== null) {
+                $ids[] = $clean;
+            }
+        }
+
+        foreach (['locations', 'approvedLocations', 'locationIds', 'location_ids'] as $key) {
+            if (isset($candidate[$key]) && is_array($candidate[$key])) {
+                foreach ($candidate[$key] as $nested) {
+                    $walk($nested);
+                }
+            }
         }
     };
 
     if (is_array($value)) {
-        foreach ($value as $item) {
-            $addIfValid($item);
-        }
+        $walk($value);
     } elseif (is_string($value) && trim($value) !== '') {
         $raw = trim($value);
         $decoded = json_decode($raw, true);
         if (is_array($decoded)) {
-            foreach ($decoded as $item) {
-                $addIfValid($item);
-            }
+            $walk($decoded);
         } else {
             foreach (array_map('trim', explode(',', $raw)) as $item) {
-                $addIfValid($item);
+                $walk($item);
             }
         }
     }
@@ -595,14 +603,16 @@ function exchange_location_token(string $companyToken, string $companyId, string
             ];
         }
 
+        $rawText = is_string($raw) ? $raw : '';
+        $sanitizedRaw = preg_replace('/"(access_token|refresh_token)"\s*:\s*"[^"]*"/i', '"$1":"[REDACTED]"', $rawText);
         $failures[] = [
             'format' => $attempt['format'],
             'code' => $code,
             'json_decode_ok' => $jsonDecodeOk,
             'has_access_token_field' => !empty($data['access_token']) || (is_string($raw) && strpos($raw, '"access_token"') !== false),
-            'raw' => is_string($raw) ? substr($raw, 0, 400) : '',
+            'raw' => substr($sanitizedRaw, 0, 400),
         ];
-        error_log("[GHL_CALLBACK] locationToken {$attempt['format']} failed for {$locationId}: HTTP {$code} — {$raw}");
+        error_log("[GHL_CALLBACK] locationToken {$attempt['format']} failed for {$locationId}: HTTP {$code} — {$sanitizedRaw}");
     }
 
     return [
@@ -621,50 +631,20 @@ function exchange_location_token(string $companyToken, string $companyId, string
  */
 function has_linked_user_for_location($db, string $locationId): bool
 {
-    try {
-        foreach (
-            $db->collection('users')
-                ->where('active_location_id', '=', $locationId)
-                ->limit(1)
-                ->documents()
-            as $userDoc
-        ) {
-            if ($userDoc->exists()) {
-                return true;
-            }
-        }
-    } catch (Exception $e) {
-        error_log("[GHL_CALLBACK] has_linked_user_for_location active_location_id check failed for {$locationId}: " . $e->getMessage());
-    }
-
-    try {
-        foreach (
-            $db->collectionGroup('subaccounts')
-                ->where('location_id', '=', $locationId)
-                ->limit(1)
-                ->documents()
-            as $subDoc
-        ) {
-            if ($subDoc->exists()) {
-                return true;
-            }
-        }
-    } catch (Exception $e) {
-        error_log("[GHL_CALLBACK] has_linked_user_for_location subaccounts check failed for {$locationId}: " . $e->getMessage());
-    }
-
-    return false;
+    return install_linked_account_for_location($db, $locationId) !== null;
 }
 
 // ─── OAuth Config ──────────────────────────────────────────────────────────────
 // Subaccount app only — NO agency fallback.
 // Agency installs use /oauth/agency-callback → ghl_agency_callback.php
-$clientId     = getenv('GHL_CLIENT_ID')     ?: '6999da2b8f278296d95f7274-mmn30t4f';
-$clientSecret = getenv('GHL_CLIENT_SECRET') ?: 'd91017ad-f4eb-461f-8967-b1d51cd1c1eb';
+$clientId     = getenv('GHL_CLIENT_ID');
+$clientSecret = getenv('GHL_CLIENT_SECRET');
 $redirectUri  = 'https://smspro-api.nolacrm.io/oauth/callback'; // HARDCODED
 
-if (!$clientId || !$clientSecret)
+if (!$clientId || !$clientSecret) {
+    error_log('[GHL_CALLBACK] Server configuration error: GHL client credentials are not set.');
     render_error('Server configuration error: GHL credentials are not set up.');
+}
 if (!isset($_GET['code']))
     render_error('No authorization code was received.');
 
@@ -718,8 +698,8 @@ $usedAppType = 'subaccount';
 // ─── App credentials map (mirrors oauth_exchange.php) ────────────────────────
 $ghlApps = [
     'subaccount' => [
-        'clientId'     => getenv('GHL_CLIENT_ID')     ?: '6999da2b8f278296d95f7274-mmn30t4f',
-        'clientSecret' => getenv('GHL_CLIENT_SECRET') ?: 'd91017ad-f4eb-461f-8967-b1d51cd1c1eb',
+        'clientId'     => $clientId,
+        'clientSecret' => $clientSecret,
         'userType'     => 'Location',
     ],
     'agency' => [
@@ -772,8 +752,6 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         'state_preview'      => $state ? substr($state, 0, 120) : null,
     ];
     error_log('[GHL_CALLBACK_DEBUG] ghl_token_response_structure=' . json_encode($debugPayload));
-    // Write to /tmp which is always writable — read via /tmp_inspect.php?secret=nola_debug_2026
-    @file_put_contents('/tmp/ghl_debug_install.json', json_encode($debugPayload, JSON_PRETTY_PRINT));
 
     $db  = get_firestore();
     $now = new DateTimeImmutable();
@@ -942,7 +920,11 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         }
 
         require_once __DIR__ . '/api/jwt_helper.php';
-        $jwtSecret2 = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
+        $jwtSecret2 = getenv('JWT_SECRET');
+        if ($jwtSecret2 === false || trim((string)$jwtSecret2) === '') {
+            error_log('[GHL_CALLBACK] JWT_SECRET missing; cannot generate install token.');
+            render_error('Server configuration error: JWT secret missing.');
+        }
         $companyNameCaseA = $companyNameFromToken;
         if ($companyNameCaseA === '') {
             try {
@@ -1166,7 +1148,11 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     ]));
 
     require_once __DIR__ . '/api/jwt_helper.php';
-    $jwtSecretB   = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
+    $jwtSecretB = getenv('JWT_SECRET');
+    if ($jwtSecretB === false || trim((string)$jwtSecretB) === '') {
+        error_log('[GHL_CALLBACK] JWT_SECRET missing; cannot generate install token.');
+        render_error('Server configuration error: JWT secret missing.');
+    }
     $reactAppUrlB = 'https://app.nolacrm.io';
 
     if (count($successfulLocIds) === 0) {
@@ -1214,8 +1200,9 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     ]));
 
     // ── Route to Registration ────────────────────────────────────────────────
-    // Even if locations are already registered, an install action should
-    // always land on the registration/confirmation form.
+    // Route the selected location only. Registration status can never prove
+    // what the user selected; if GHL does not give us one reliable target,
+    // keep the outcome as bulk/ambiguous rather than guessing.
 
     // ── Detect the selected sub-account from ALL possible GHL signals ─────────
     // GHL can communicate the selected sub-account in multiple ways:
@@ -1258,17 +1245,24 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         ?? $singleApprovedLoc
         ?? $singleCandidateFromAll
         ?? null;
-    $onlyLocName = $successfulLocNames[$onlyLocId] ?? '';
+    $onlyLocName = $onlyLocId ? ($successfulLocNames[$onlyLocId] ?? '') : '';
     if (!empty($caseBResolution['ok'])) {
-        $onlyLocId = $caseBResolution['location_id'];
-        $resolvedSource = (string)($caseBResolution['source'] ?? $resolvedSource);
-        $onlyLocName = $successfulLocNames[$onlyLocId] ?? ($caseBResolution['location_names'][$onlyLocId] ?? '');
+        $caseBSource = (string)($caseBResolution['source'] ?? '');
+        $caseBCandidates = is_array($caseBResolution['candidate_ids'] ?? null) ? $caseBResolution['candidate_ids'] : [];
+        $tokenOnlyWithoutPicker = $caseBSource === 'token_location_field'
+            && empty($caseBCandidates)
+            && count($allLocationIds) > 1;
+
+        if ($tokenOnlyWithoutPicker) {
+            error_log('[GHL_CALLBACK] Case B: token location field was present without a picker candidate; refusing to infer selected sub-account from company token.');
+        } else {
+            $onlyLocId = $caseBResolution['location_id'];
+            $resolvedSource = $caseBSource !== '' ? $caseBSource : (string)$resolvedSource;
+            $onlyLocName = $successfulLocNames[$onlyLocId] ?? ($caseBResolution['location_names'][$onlyLocId] ?? '');
+        }
     }
-    if (!$onlyLocId && count($needsRegistration) === 1) {
-        $onlyLocId = array_key_first($needsRegistration);
-        $resolvedSource = 'single_unregistered_location';
-        $onlyLocName = $needsRegistration[$onlyLocId] ?? ($successfulLocNames[$onlyLocId] ?? '');
-        error_log("[GHL_CALLBACK] Case B: no explicit selected location; using the only unregistered location {$onlyLocId}.");
+    if (!$onlyLocId && count($needsRegistration) === 1 && count($successfulLocIds) > 1) {
+        error_log('[GHL_CALLBACK] Case B: exactly one unregistered location exists, but no selected-location signal was trusted; refusing to infer selection from registration status.');
     }
 
     // If we still don't have the name (e.g. came from $directLocFromToken), try ghl_tokens
@@ -1524,7 +1518,11 @@ catch (Exception $e) {
 
 require_once __DIR__ . '/api/jwt_helper.php';
 
-$jwtSecret       = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
+$jwtSecret = getenv('JWT_SECRET');
+if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
+    error_log('[GHL_CALLBACK] JWT_SECRET missing; cannot generate install token.');
+    render_error('Server configuration error: JWT secret missing.');
+}
 $reactAppUrl     = 'https://app.nolacrm.io';
 $locationNameEnc = urlencode($locationName ?: 'Your Sub-Account');
 

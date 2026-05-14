@@ -37,13 +37,20 @@ validate_api_request();
 
 // 2. Get Location ID
 $locId = get_ghl_location_id();
+$requestedLocId = $locId;
 
 try {
     $db = get_firestore();
     $authUserData = null;
     $authJwt = account_extract_bearer_token();
     if ($authJwt) {
-        $jwtSecret = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
+        $jwtSecret = getenv('JWT_SECRET');
+        if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
+            error_log('[api/account.php] JWT_SECRET missing; cannot verify auth token.');
+            http_response_code(500);
+            echo json_encode(['status' => 'error', 'message' => 'Server configuration error']);
+            exit;
+        }
         $payload = jwt_verify($authJwt, $jwtSecret);
         $authUserId = $payload['sub'] ?? null;
         if ($authUserId) {
@@ -51,7 +58,8 @@ try {
             if ($authSnap->exists()) {
                 $candidate = $authSnap->data();
                 $candidateRole = $candidate['role'] ?? 'user';
-                $candidateLoc = $candidate['active_location_id'] ?? null;
+                $candidateLocs = install_user_location_ids($candidate);
+                $candidateLoc = $candidateLocs[0] ?? null;
                 $candidateActive = !array_key_exists('active', $candidate) || !empty($candidate['active']);
                 if ($candidateActive && $candidateRole !== 'agency' && $candidateLoc) {
                     $authUserData = $candidate;
@@ -102,7 +110,7 @@ try {
     $userLastName  = null;
 
     try {
-        if ($authUserData !== null && (string)($authUserData['active_location_id'] ?? '') === (string)$locId) {
+        if ($authUserData !== null && (string)($authUserData['active_location_id'] ?? '') === (string)$requestedLocId) {
             $userName      = isset($authUserData['name'])      ? trim((string)$authUserData['name'])      : '';
             $userFirstName = isset($authUserData['firstName']) ? trim((string)$authUserData['firstName']) : null;
             $userLastName  = isset($authUserData['lastName'])  ? trim((string)$authUserData['lastName'])  : null;
@@ -117,7 +125,7 @@ try {
 
         if ($userName === null && $userEmail === null && $userPhone === null) {
             $userQuery = $db->collection('users')
-            ->where('active_location_id', '=', (string)$locId)
+            ->where('active_location_id', '=', (string)$requestedLocId)
             ->limit(1)
             ->documents();
 
@@ -143,7 +151,7 @@ try {
         // Fallback for migrated records that may rely on subaccounts linkage.
         if ($userName === null && $userEmail === null && $userPhone === null) {
             $subQuery = $db->collectionGroup('subaccounts')
-                ->where('location_id', '=', (string)$locId)
+                ->where('location_id', '=', (string)$requestedLocId)
                 ->limit(1)
                 ->documents();
 
@@ -177,7 +185,7 @@ try {
         }
 
         if ($userName === null && $userEmail === null && $userPhone === null) {
-            $linked = install_linked_account_for_location($db, (string)$locId, false);
+            $linked = install_linked_account_for_location($db, (string)$requestedLocId, false);
             if ($linked !== null) {
                 $userName = $linked['name'] !== '' ? $linked['name'] : null;
                 $userEmail = $linked['email'] !== '' ? $linked['email'] : null;
@@ -222,10 +230,10 @@ try {
     ]);
 
 } catch (\Throwable $e) {
+    error_log('[api/account.php] Internal error: ' . $e->getMessage() . '\n' . $e->getTraceAsString());
     http_response_code(500);
     echo json_encode([
         'status' => 'error',
         'message' => 'Internal Server Error',
-        'details' => $e->getMessage()
     ]);
 }

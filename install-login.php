@@ -147,88 +147,6 @@ $locationIdSafe = htmlspecialchars($locationIdRaw, ENT_QUOTES, 'UTF-8');
 $isBulkInstall = isset($_GET['bulk_install']) && $_GET['bulk_install'] === '1';
 $bulkCount     = (int)($_GET['count'] ?? 0);
 
-function il_login_user_linked_to_location($db, string $uid, string $locationId): bool
-{
-    $uid = trim($uid);
-    $locationId = trim($locationId);
-    if ($uid === '' || $locationId === '') {
-        return false;
-    }
-
-    try {
-        $userSnap = $db->collection('users')->document($uid)->snapshot();
-        if (!$userSnap->exists()) {
-            return false;
-        }
-        $userData = $userSnap->data();
-        if ((string)($userData['active_location_id'] ?? '') === $locationId) {
-            return true;
-        }
-    } catch (Exception $e) {
-        error_log('[install-login] linked check users doc failed: ' . $e->getMessage());
-    }
-
-    try {
-        $subSnap = $db->collection('users')->document($uid)->collection('subaccounts')->document($locationId)->snapshot();
-        if ($subSnap->exists()) {
-            return true;
-        }
-    } catch (Exception $e) {
-        error_log('[install-login] linked check subaccounts doc failed: ' . $e->getMessage());
-    }
-
-    return false;
-}
-
-function il_linked_account_for_location($db, string $locationId): ?array
-{
-    $locationId = trim($locationId);
-    if ($locationId === '') {
-        return null;
-    }
-
-    try {
-        $ownerSnap = $db->collection('location_owners')->document($locationId)->snapshot();
-        if ($ownerSnap->exists()) {
-            $ownerData = $ownerSnap->data();
-            $ownerEmail = strtolower(trim((string)($ownerData['owner_email'] ?? '')));
-            if ($ownerEmail !== '') {
-                return [
-                    'email' => $ownerEmail,
-                    'name' => trim((string)($ownerData['owner_name'] ?? '')),
-                ];
-            }
-        }
-    } catch (Exception $e) {
-        error_log('[install-login] linked owner lookup failed: ' . $e->getMessage());
-    }
-
-    try {
-        $userQuery = $db->collection('users')
-            ->where('active_location_id', '=', $locationId)
-            ->limit(1)
-            ->documents();
-
-        foreach ($userQuery as $userDoc) {
-            if (!$userDoc->exists()) {
-                continue;
-            }
-            $userData = $userDoc->data();
-            $userEmail = strtolower(trim((string)($userData['email'] ?? '')));
-            if ($userEmail !== '') {
-                return [
-                    'email' => $userEmail,
-                    'name' => trim((string)($userData['name'] ?? '')),
-                ];
-            }
-        }
-    } catch (Exception $e) {
-        error_log('[install-login] linked user lookup failed: ' . $e->getMessage());
-    }
-
-    return null;
-}
-
 // ── Handle POST ───────────────────────────────────────────────────────────────
 $formError = null;
 $emailVal  = '';
@@ -249,7 +167,11 @@ if ($locationIdRaw !== '') {
                 $locName = (string)($locData['location_name'] ?? $locationName ?? '');
                 $coId = (string)($locData['companyId'] ?? $locData['company_id'] ?? '');
                 $coName = (string)($locData['company_name'] ?? $locData['agency_name'] ?? $companyName ?? '');
-                $jwtSecretLogin = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
+                $jwtSecretLogin = getenv('JWT_SECRET');
+                if ($jwtSecretLogin === false || trim((string)$jwtSecretLogin) === '') {
+                    error_log('[install-login] JWT_SECRET missing; cannot build registration URL.');
+                    render_error('Server configuration error: JWT secret missing.');
+                }
                 header('Location: ' . install_build_registration_url($jwtSecretLogin, $locationIdRaw, $locName, $coId ?: null, $coName, 'login_unregistered_reinstall', (string)($class['status'] ?? 'reinstall_unregistered')), true, 302);
                 exit;
             }
@@ -288,10 +210,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($code === 200 && !empty($result['token'])) {
         if ($locationIdRaw !== '') {
             $db = get_firestore();
-            $jwtSecret = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
+            $jwtSecret = getenv('JWT_SECRET');
+            if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
+                $formError = 'Server configuration error: JWT secret missing.';
+                goto render_login_form;
+            }
             $payload = jwt_verify((string)$result['token'], $jwtSecret);
             $authUid = (string)($payload['sub'] ?? '');
-            if (!install_user_linked_to_location($db, $authUid, $locationIdRaw)) {
+            $authEmail = (string)($payload['email'] ?? $email);
+            if (!install_user_linked_to_location($db, $authUid, $locationIdRaw, $authEmail)) {
                 $formError = 'This account is not linked to the selected subaccount. Please sign in with the correct linked account.';
                 goto render_login_form;
             }

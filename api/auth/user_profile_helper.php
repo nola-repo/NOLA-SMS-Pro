@@ -98,7 +98,12 @@ function auth_user_payload_for_api(array $d, string $emailFallback = ''): array
         'email_address'        => $email,
         'phone'                => isset($d['phone']) ? (string) $d['phone'] : '',
         'phone_number'         => isset($d['phone']) ? (string) $d['phone'] : '',
-        'location_id'          => $d['active_location_id'] ?? null,
+        'location_id'          => $d['active_location_id']
+            ?? $d['location_id']
+            ?? $d['locationId']
+            ?? $d['ghl_location_id']
+            ?? $d['ghlLocationId']
+            ?? null,
         'company_id'           => $d['company_id'] ?? null,
         'location_name'        => $d['location_name'] ?? null,
         'company_name'         => $d['company_name'] ?? null,

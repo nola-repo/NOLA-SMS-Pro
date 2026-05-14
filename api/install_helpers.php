@@ -264,6 +264,136 @@ function install_location_company_mismatch($db, string $locationId, ?string $com
     }
 }
 
+function install_norm_email($value): string
+{
+    return strtolower(trim((string)$value));
+}
+
+function install_is_active_user(array $data): bool
+{
+    return !array_key_exists('active', $data) || !empty($data['active']);
+}
+
+function install_user_location_ids(array $data): array
+{
+    $ids = [];
+    foreach ([
+        'active_location_id',
+        'location_id',
+        'locationId',
+        'ghl_location_id',
+        'ghlLocationId',
+        'selected_location_id',
+        'selectedLocationId',
+    ] as $key) {
+        $clean = install_clean_location_id($data[$key] ?? null);
+        if ($clean !== null) {
+            $ids[] = $clean;
+        }
+    }
+
+    $tokenRef = trim((string)($data['ghl_token_ref'] ?? ''));
+    if ($tokenRef !== '' && preg_match('#^ghl_tokens/([^/]+)$#', $tokenRef, $m)) {
+        $clean = install_clean_location_id($m[1]);
+        if ($clean !== null) {
+            $ids[] = $clean;
+        }
+    }
+
+    return array_values(array_unique($ids));
+}
+
+/**
+ * @return array{id:string,email:string,name:string,source:string}|null
+ */
+function install_linked_account_from_user_doc($doc, string $locationId, string $source): ?array
+{
+    if (!$doc || !$doc->exists()) {
+        return null;
+    }
+
+    $data = $doc->data();
+    if (!is_array($data) || !install_is_active_user($data)) {
+        return null;
+    }
+
+    $role = strtolower(trim((string)($data['role'] ?? 'user')));
+    if ($role === 'agency') {
+        return null;
+    }
+
+    if (!in_array($locationId, install_user_location_ids($data), true)) {
+        return null;
+    }
+
+    $email = install_norm_email($data['email'] ?? '');
+    if ($email === '') {
+        return null;
+    }
+
+    return [
+        'id' => $doc->id(),
+        'email' => $email,
+        'name' => trim((string)($data['name'] ?? trim((string)($data['firstName'] ?? '') . ' ' . (string)($data['lastName'] ?? '')))),
+        'source' => $source,
+    ];
+}
+
+/**
+ * @return array{id:string,email:string,name:string,source:string}|null
+ */
+function install_linked_account_from_owner_like_doc($doc, string $source): ?array
+{
+    if (!$doc || !$doc->exists()) {
+        return null;
+    }
+
+    $data = $doc->data();
+    if (!is_array($data)) {
+        return null;
+    }
+
+    $email = install_norm_email(
+        $data['owner_email']
+            ?? $data['email']
+            ?? $data['user_email']
+            ?? $data['account_email']
+            ?? ''
+    );
+    if ($email === '') {
+        return null;
+    }
+
+    return [
+        'id' => trim((string)($data['owner_user_id'] ?? $data['owner_uid'] ?? $data['user_id'] ?? $data['uid'] ?? '')),
+        'email' => $email,
+        'name' => trim((string)($data['owner_name'] ?? $data['name'] ?? $data['full_name'] ?? '')),
+        'source' => $source,
+    ];
+}
+
+function install_backfill_location_owner($db, string $locationId, ?array $linkedAccount): void
+{
+    if ($locationId === '' || empty($linkedAccount['email'])) {
+        return;
+    }
+
+    try {
+        $now = new DateTimeImmutable();
+        $db->collection('location_owners')->document($locationId)->set([
+            'entity_id' => $locationId,
+            'owner_user_id' => (string)($linkedAccount['id'] ?? ''),
+            'owner_email' => install_norm_email($linkedAccount['email']),
+            'owner_name' => trim((string)($linkedAccount['name'] ?? '')),
+            'source' => 'install_self_heal:' . (string)($linkedAccount['source'] ?? 'unknown'),
+            'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+            'created_at' => new \Google\Cloud\Core\Timestamp($now),
+        ], ['merge' => true]);
+    } catch (Exception $e) {
+        error_log("[install_helpers] owner backfill failed for {$locationId}: " . $e->getMessage());
+    }
+}
+
 /**
  * @return array{id:string,email:string,name:string,source:string}|null
  */
@@ -276,89 +406,174 @@ function install_linked_account_for_location($db, string $locationId, bool $deep
 
     try {
         $ownerSnap = $db->collection('location_owners')->document($locationId)->snapshot();
-        if ($ownerSnap->exists()) {
-            $ownerData = $ownerSnap->data();
-            $email = strtolower(trim((string)($ownerData['owner_email'] ?? '')));
-            if ($email !== '') {
-                return [
-                    'id' => trim((string)($ownerData['owner_user_id'] ?? '')),
-                    'email' => $email,
-                    'name' => trim((string)($ownerData['owner_name'] ?? '')),
-                    'source' => 'location_owners',
-                ];
-            }
+        $linked = install_linked_account_from_owner_like_doc($ownerSnap, 'location_owners');
+        if ($linked !== null) {
+            return $linked;
         }
     } catch (Exception $e) {
         error_log("[install_helpers] owner lookup failed for {$locationId}: " . $e->getMessage());
     }
 
-    try {
-        $userQuery = $db->collection('users')
-            ->where('active_location_id', '=', $locationId)
-            ->limit(1)
-            ->documents();
-        foreach ($userQuery as $doc) {
-            if (!$doc->exists()) {
-                continue;
+    foreach ([
+        'active_location_id',
+        'location_id',
+        'locationId',
+        'ghl_location_id',
+        'ghlLocationId',
+        'selected_location_id',
+        'selectedLocationId',
+    ] as $field) {
+        try {
+            $userQuery = $db->collection('users')
+                ->where($field, '=', $locationId)
+                ->limit(1)
+                ->documents();
+            foreach ($userQuery as $doc) {
+                $linked = install_linked_account_from_user_doc($doc, $locationId, 'users.' . $field);
+                if ($linked !== null) {
+                    install_backfill_location_owner($db, $locationId, $linked);
+                    return $linked;
+                }
             }
-            $data = $doc->data();
-            $email = strtolower(trim((string)($data['email'] ?? '')));
-            if ($email !== '') {
-                return [
-                    'id' => $doc->id(),
-                    'email' => $email,
-                    'name' => trim((string)($data['name'] ?? '')),
-                    'source' => 'users.active_location_id',
-                ];
-            }
+        } catch (Exception $e) {
+            error_log("[install_helpers] user {$field} lookup failed for {$locationId}: " . $e->getMessage());
         }
-    } catch (Exception $e) {
-        error_log("[install_helpers] active_location lookup failed for {$locationId}: " . $e->getMessage());
     }
 
     if (!$deepFallback) {
-        return null;
+        return install_linked_account_for_location_owner_fallbacks($db, $locationId);
+    }
+
+    foreach ([
+        'location_id',
+        'locationId',
+        'entity_id',
+        'id',
+    ] as $field) {
+        try {
+            $subQuery = $db->collectionGroup('subaccounts')
+                ->where($field, '=', $locationId)
+                ->limit(1)
+                ->documents();
+            foreach ($subQuery as $subDoc) {
+                $linked = install_linked_account_from_subaccount_doc($subDoc, $locationId, 'users.subaccounts.' . $field);
+                if ($linked !== null) {
+                    install_backfill_location_owner($db, $locationId, $linked);
+                    return $linked;
+                }
+            }
+        } catch (Exception $e) {
+            error_log("[install_helpers] subaccount {$field} lookup failed for {$locationId}: " . $e->getMessage());
+        }
     }
 
     try {
         $subQuery = $db->collectionGroup('subaccounts')
-            ->where('location_id', '=', $locationId)
+            ->where(\Google\Cloud\Firestore\FieldPath::documentId(), '=', $locationId)
             ->limit(1)
             ->documents();
         foreach ($subQuery as $subDoc) {
-            if (!$subDoc->exists()) {
-                continue;
-            }
-
-            $parentUserRef = $subDoc->reference()->parent()->parent();
-            if ($parentUserRef === null) {
-                continue;
-            }
-
-            $parentSnap = $parentUserRef->snapshot();
-            if (!$parentSnap->exists()) {
-                continue;
-            }
-
-            $data = $parentSnap->data();
-            $email = strtolower(trim((string)($data['email'] ?? '')));
-            if ($email !== '') {
-                return [
-                    'id' => $parentSnap->id(),
-                    'email' => $email,
-                    'name' => trim((string)($data['name'] ?? '')),
-                    'source' => 'users.subaccounts',
-                ];
+            $linked = install_linked_account_from_subaccount_doc($subDoc, $locationId, 'users.subaccounts.document_id');
+            if ($linked !== null) {
+                install_backfill_location_owner($db, $locationId, $linked);
+                return $linked;
             }
         }
     } catch (Exception $e) {
-        error_log("[install_helpers] subaccount lookup failed for {$locationId}: " . $e->getMessage());
+        error_log("[install_helpers] subaccount document-id lookup failed for {$locationId}: " . $e->getMessage());
+    }
+
+    $linked = install_linked_account_for_location_owner_fallbacks($db, $locationId);
+    if ($linked !== null) {
+        install_backfill_location_owner($db, $locationId, $linked);
+    }
+
+    return $linked;
+}
+
+/**
+ * @return array{id:string,email:string,name:string,source:string}|null
+ */
+function install_linked_account_from_subaccount_doc($subDoc, string $locationId, string $source): ?array
+{
+    if (!$subDoc || !$subDoc->exists()) {
+        return null;
+    }
+
+    $subData = $subDoc->data();
+    $subLoc = install_clean_location_id($subData['location_id'] ?? $subData['locationId'] ?? $subData['entity_id'] ?? $subData['id'] ?? null);
+    if ($subLoc !== null && $subLoc !== $locationId) {
+        return null;
+    }
+
+    $parentUserRef = $subDoc->reference()->parent()->parent();
+    if ($parentUserRef === null) {
+        return null;
+    }
+
+    try {
+        $parentSnap = $parentUserRef->snapshot();
+        if (!$parentSnap->exists()) {
+            return null;
+        }
+
+        $data = $parentSnap->data();
+        if (!is_array($data) || !install_is_active_user($data)) {
+            return null;
+        }
+
+        $role = strtolower(trim((string)($data['role'] ?? 'user')));
+        if ($role === 'agency') {
+            return null;
+        }
+
+        $email = install_norm_email($data['email'] ?? '');
+        if ($email === '') {
+            return null;
+        }
+
+        return [
+            'id' => $parentSnap->id(),
+            'email' => $email,
+            'name' => trim((string)($data['name'] ?? trim((string)($data['firstName'] ?? '') . ' ' . (string)($data['lastName'] ?? '')))),
+            'source' => $source,
+        ];
+    } catch (Exception $e) {
+        error_log("[install_helpers] subaccount parent lookup failed for {$locationId}: " . $e->getMessage());
+        return null;
+    }
+}
+
+/**
+ * @return array{id:string,email:string,name:string,source:string}|null
+ */
+function install_linked_account_for_location_owner_fallbacks($db, string $locationId): ?array
+{
+    try {
+        $tokenSnap = $db->collection('ghl_tokens')->document($locationId)->snapshot();
+        $linked = install_linked_account_from_owner_like_doc($tokenSnap, 'ghl_tokens.owner');
+        if ($linked !== null) {
+            return $linked;
+        }
+    } catch (Exception $e) {
+        error_log("[install_helpers] token owner fallback failed for {$locationId}: " . $e->getMessage());
+    }
+
+    try {
+        $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
+        $intSnap = $db->collection('integrations')->document($intDocId)->snapshot();
+        $linked = install_linked_account_from_owner_like_doc($intSnap, 'integrations.owner');
+        if ($linked !== null) {
+            return $linked;
+        }
+    } catch (Exception $e) {
+        error_log("[install_helpers] integration owner fallback failed for {$locationId}: " . $e->getMessage());
     }
 
     return null;
 }
 
-function install_user_linked_to_location($db, string $uid, string $locationId): bool
+function install_user_linked_to_location($db, string $uid, string $locationId, ?string $email = null): bool
 {
     $uid = trim($uid);
     $locationId = trim($locationId);
@@ -372,7 +587,7 @@ function install_user_linked_to_location($db, string $uid, string $locationId): 
             return false;
         }
         $userData = $userSnap->data();
-        if ((string)($userData['active_location_id'] ?? '') === $locationId) {
+        if (in_array($locationId, install_user_location_ids($userData), true)) {
             return true;
         }
     } catch (Exception $e) {
@@ -383,6 +598,39 @@ function install_user_linked_to_location($db, string $uid, string $locationId): 
         return $db->collection('users')->document($uid)->collection('subaccounts')->document($locationId)->snapshot()->exists();
     } catch (Exception $e) {
         error_log("[install_helpers] user linked subaccount check failed for {$uid}/{$locationId}: " . $e->getMessage());
+    }
+
+    try {
+        foreach (['location_id', 'locationId', 'entity_id', 'id'] as $field) {
+            $subQuery = $db->collection('users')->document($uid)->collection('subaccounts')
+                ->where($field, '=', $locationId)
+                ->limit(1)
+                ->documents();
+            foreach ($subQuery as $subDoc) {
+                if ($subDoc->exists()) {
+                    return true;
+                }
+            }
+        }
+    } catch (Exception $e) {
+        error_log("[install_helpers] user linked subaccount field check failed for {$uid}/{$locationId}: " . $e->getMessage());
+    }
+
+    try {
+        $ownerSnap = $db->collection('location_owners')->document($locationId)->snapshot();
+        if ($ownerSnap->exists()) {
+            $ownerData = $ownerSnap->data();
+            $ownerUid = trim((string)($ownerData['owner_user_id'] ?? ''));
+            $ownerEmail = install_norm_email($ownerData['owner_email'] ?? '');
+            if ($ownerUid !== '' && $ownerUid === $uid) {
+                return true;
+            }
+            if ($email !== null && $ownerEmail !== '' && $ownerEmail === install_norm_email($email)) {
+                return true;
+            }
+        }
+    } catch (Exception $e) {
+        error_log("[install_helpers] user linked owner check failed for {$uid}/{$locationId}: " . $e->getMessage());
     }
 
     return false;
@@ -398,6 +646,9 @@ function install_classify_location($db, string $locationId, ?string $companyId =
     $mismatch = install_location_company_mismatch($db, $locationId, $companyId);
     $linkedAccount = install_linked_account_for_location($db, $locationId);
     $linked = $linkedAccount !== null;
+    if ($linked) {
+        install_backfill_location_owner($db, $locationId, $linkedAccount);
+    }
 
     if ($mismatch) {
         $status = 'ambiguous_or_mismatch';
@@ -481,7 +732,9 @@ function install_decide_location_redirect(
 
     if (!empty($classification['linked'])) {
         $url = 'https://smspro-api.nolacrm.io/login?welcome_back=1&name=' . urlencode($locationName ?: 'Your Sub-Account')
-            . '&location_id=' . urlencode($locationId);
+            . '&location_id=' . urlencode($locationId)
+            . '&install_status=' . urlencode('reinstall_registered')
+            . '&resolution_source=' . urlencode($resolutionSource);
         if ($companyName !== '') {
             $url .= '&company=' . urlencode($companyName);
         }
