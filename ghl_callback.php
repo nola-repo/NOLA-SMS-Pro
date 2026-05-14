@@ -937,6 +937,18 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
 
         require_once __DIR__ . '/api/jwt_helper.php';
         $jwtSecret2 = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
+        $companyNameCaseA = (string)($data['companyName'] ?? $data['company_name'] ?? $data['agencyName'] ?? '');
+        if ($companyNameCaseA === '') {
+            try {
+                $coSnapA = $db->collection('ghl_tokens')->document((string)$companyId)->snapshot();
+                if ($coSnapA->exists()) {
+                    $coDataA = $coSnapA->data();
+                    $companyNameCaseA = (string)($coDataA['company_name'] ?? $coDataA['agency_name'] ?? $coDataA['location_name'] ?? '');
+                }
+            } catch (Exception $e) {
+                error_log('[GHL_CALLBACK] Case A company name lookup failed: ' . $e->getMessage());
+            }
+        }
 
         $caseADecision = install_decide_location_redirect(
             $db,
