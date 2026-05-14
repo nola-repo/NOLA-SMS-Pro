@@ -68,6 +68,15 @@ function il_page(string $title, string $body): void {
         }
         .banner-amber p { font-size: 13px; color: #92400e; line-height: 1.5; }
         .banner-amber strong { font-weight: 700; }
+        .install-progress { height: 8px; border-radius: 999px; background: rgba(146,64,14,0.16); overflow: hidden; margin: 12px 0 10px; }
+        .install-progress-fill { display: block; height: 100%; width: 0%; border-radius: inherit; background: #2b83fa; transition: width 0.35s ease; }
+        .install-status-detail { font-size: 12px !important; color: #92400e !important; margin-top: 8px; }
+        .install-next {
+            display: none; margin-top: 12px; width: 100%; text-align: center;
+            padding: 11px 12px; border-radius: 12px; background: #2b83fa;
+            color: #fff; text-decoration: none; font-size: 13px; font-weight: 800;
+        }
+        .install-next:hover { background: #1d6bd4; }
         /* Form */
         label { display: block; font-size: 11px; font-weight: 800; text-transform: uppercase; color: #9aa0a6; margin-bottom: 7px; letter-spacing: 0.05em; }
         .field { margin-bottom: 18px; }
@@ -149,6 +158,8 @@ $locationIdSafe = htmlspecialchars($locationIdRaw, ENT_QUOTES, 'UTF-8');
 $isBulkInstall = isset($_GET['bulk_install']) && $_GET['bulk_install'] === '1';
 $isBulkProvisioning = isset($_GET['provisioning']) && $_GET['provisioning'] === '1';
 $bulkCount     = (int)($_GET['count'] ?? 0);
+$sessionIdRaw  = trim((string)($_GET['session_id'] ?? ''));
+$installTokenRaw = trim((string)($_GET['install_token'] ?? ''));
 
 // ── Handle POST ───────────────────────────────────────────────────────────────
 $formError = null;
@@ -265,13 +276,24 @@ if ($isWelcomeBack) {
     </div>
 HTML;
 } elseif ($isBulkInstall && $isBulkProvisioning) {
-    $bannerHtml = <<<HTML
+    if ($sessionIdRaw !== '' && $installTokenRaw !== '') {
+        $bannerHtml = <<<HTML
     <div class="banner-amber">
-        <p><strong>Installation is being prepared.</strong><br>
-        We are provisioning the selected company in the background, so the OAuth page no longer has to stay open and wait.<br><br>
-        If you are setting up one sub-account, open NOLA SMS Pro again from that GHL sub-account after a moment to finish registration or sign in.</p>
+        <p><strong id="install-status-title">Installation is being prepared.</strong><br>
+        <span id="install-status-copy">Provisioning is running in the background. This page will update automatically.</span></p>
+        <div class="install-progress" aria-hidden="true"><span id="install-progress-fill" class="install-progress-fill"></span></div>
+        <p id="install-status-detail" class="install-status-detail">Checking provisioning status...</p>
+        <a id="install-next-link" class="install-next" href="#">Continue setup</a>
     </div>
 HTML;
+    } else {
+        $bannerHtml = <<<HTML
+    <div class="banner-amber">
+        <p><strong>Installation is being prepared.</strong><br>
+        This install link is missing the signed status token, so this page cannot verify progress. Open NOLA SMS Pro again from the target GoHighLevel sub-account after a moment to continue setup.</p>
+    </div>
+HTML;
+    }
 } elseif ($isBulkInstall) {
     $countLabel = $bulkCount > 0
         ? "{$bulkCount} sub-account" . ($bulkCount !== 1 ? 's' : '') . ' provisioned'
@@ -322,13 +344,113 @@ $passwordAutocompleteAttrs = $linkedEmailSafe !== ''
     ? 'autocomplete="off" data-lpignore="true" data-1p-ignore'
     : 'autocomplete="current-password"';
 
+$queryStringForAction = (string)($_SERVER['QUERY_STRING'] ?? '');
+$formAction = '/login';
+if ($queryStringForAction !== '') {
+    $formAction .= '?' . htmlspecialchars($queryStringForAction, ENT_QUOTES, 'UTF-8');
+}
+
+$footerHtml = $isBulkInstall
+    ? '<p class="footer" style="margin-top:16px;">After provisioning, open NOLA SMS Pro from the target GoHighLevel sub-account to finish setup.</p>'
+    : '<p class="footer" style="margin-top:16px;">New installation? <a href="/register" style="color:#2b83fa;font-weight:600;">Create account</a></p>';
+
+$bulkStatusScript = '';
+if ($isBulkInstall && $isBulkProvisioning && $sessionIdRaw !== '' && $installTokenRaw !== '') {
+    $sessionIdJson = json_encode($sessionIdRaw, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT);
+    $installTokenJson = json_encode($installTokenRaw, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT);
+    $bulkStatusScript = <<<HTML
+    <script>
+      (function() {
+        var sessionId = {$sessionIdJson};
+        var installToken = {$installTokenJson};
+        var title = document.getElementById('install-status-title');
+        var copy = document.getElementById('install-status-copy');
+        var detail = document.getElementById('install-status-detail');
+        var fill = document.getElementById('install-progress-fill');
+        var link = document.getElementById('install-next-link');
+        if (!sessionId || !installToken || !detail) return;
+
+        var attempts = 0;
+        var stopped = false;
+        function setText(el, value) { if (el) el.textContent = value; }
+        function setProgress(progress) {
+          var total = Number(progress && progress.total_locations ? progress.total_locations : 0);
+          var provisioned = Number(progress && progress.provisioned ? progress.provisioned : 0);
+          var failed = Number(progress && progress.failed ? progress.failed : 0);
+          var percent = total > 0 ? Math.min(100, Math.round(((provisioned + failed) / total) * 100)) : Math.min(92, 8 + attempts * 3);
+          if (fill) fill.style.width = percent + '%';
+          return total > 0
+            ? provisioned + ' of ' + total + ' sub-account' + (total === 1 ? '' : 's') + ' provisioned' + (failed > 0 ? ', ' + failed + ' failed' : '')
+            : 'Finding selected sub-accounts...';
+        }
+        function showNext(action) {
+          if (!action || !action.url || !link) return false;
+          link.href = action.url;
+          link.textContent = action.label || 'Continue setup';
+          link.style.display = 'block';
+          if (fill) fill.style.width = '100%';
+          window.setTimeout(function() { window.location.assign(action.url); }, 1200);
+          return true;
+        }
+        async function poll() {
+          if (stopped) return;
+          attempts += 1;
+          try {
+            var url = '/api/agency/install/status?session_id=' + encodeURIComponent(sessionId) + '&install_token=' + encodeURIComponent(installToken);
+            var res = await fetch(url, { headers: { 'Accept': 'application/json' }, cache: 'no-store' });
+            var data = await res.json().catch(function() { return {}; });
+            if (!res.ok) throw new Error(data.error || 'Status check failed');
+
+            var summary = setProgress(data.progress || {});
+            var action = data.next_action || {};
+            setText(detail, summary);
+
+            if (action.kind === 'register' || action.kind === 'login') {
+              stopped = true;
+              setText(title, action.kind === 'login' ? 'Installation ready.' : 'Ready to finish setup.');
+              setText(copy, action.message || 'Continue to finish setup.');
+              showNext(action);
+              return;
+            }
+
+            if (action.kind === 'open_subaccount' || action.kind === 'complete') {
+              stopped = true;
+              setText(title, 'Installation complete.');
+              setText(copy, action.message || 'Open NOLA SMS Pro from the target GoHighLevel sub-account to finish setup.');
+              if (fill) fill.style.width = '100%';
+              return;
+            }
+
+            if (action.kind === 'failed' || action.kind === 'error') {
+              stopped = true;
+              setText(title, action.label || 'Installation needs attention.');
+              setText(copy, action.message || 'Provisioning could not finish.');
+              setText(detail, 'Please reinstall from the selected GoHighLevel sub-account or check backend logs.');
+              return;
+            }
+          } catch (err) {
+            setText(detail, 'Could not verify provisioning yet. Retrying...');
+          }
+
+          if (attempts < 120) {
+            window.setTimeout(poll, 2500);
+          } else {
+            setText(detail, 'Still provisioning. Open NOLA SMS Pro again from the target GoHighLevel sub-account in a moment.');
+          }
+        }
+        window.setTimeout(poll, 300);
+      })();
+    </script>
+HTML;
+}
+
 il_page('Sign In', <<<HTML
     <h1>Welcome back</h1>
     <p class="subtitle">Sign in to your NOLA SMS Pro account.</p>
     {$bannerHtml}
     {$linkedAccountHtml}
     {$errorHtml}
-    <form id="login-form" method="POST" action="/login">
+    <form id="login-form" method="POST" action="{$formAction}">
         <input type="hidden" name="location_id" value="{$locationIdSafe}">
         <div class="field">
             <label for="{$emailLabelFor}">Email Address</label>
@@ -346,5 +468,6 @@ il_page('Sign In', <<<HTML
         </div>
         <button id="submit-btn" type="submit" class="btn-submit">Sign In</button>
     </form>
-    <p class="footer" style="margin-top:16px;">New installation? <a href="/register" style="color:#2b83fa;font-weight:600;">Create account</a></p>
+    {$footerHtml}
+    {$bulkStatusScript}
 HTML);

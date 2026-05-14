@@ -161,9 +161,20 @@ function install_resolve_selected_location(array $signals): array
         return $result;
     }
 
+    if ($stateLocationId !== null && in_array($stateLocationId, $candidateIds, true)) {
+        return [
+            'ok' => true,
+            'location_id' => $stateLocationId,
+            'source' => 'state_matched_candidate',
+            'reason' => 'oauth_state_matched_known_candidate',
+            'candidate_ids' => $candidateIds,
+            'location_names' => $locationNames,
+        ];
+    }
+
     foreach ([
-        'token_location_field' => $tokenLocationId,
         'query_location_field' => $queryLocationId,
+        'token_location_field' => $tokenLocationId,
     ] as $source => $directId) {
         if ($directId === null) {
             continue;
@@ -186,17 +197,6 @@ function install_resolve_selected_location(array $signals): array
             'location_id' => $directId,
             'source' => $source,
             'reason' => 'direct_location_signal',
-            'candidate_ids' => $candidateIds,
-            'location_names' => $locationNames,
-        ];
-    }
-
-    if ($stateLocationId !== null && in_array($stateLocationId, $candidateIds, true)) {
-        return [
-            'ok' => true,
-            'location_id' => $stateLocationId,
-            'source' => 'state_matched_candidate',
-            'reason' => 'oauth_state_matched_known_candidate',
             'candidate_ids' => $candidateIds,
             'location_names' => $locationNames,
         ];

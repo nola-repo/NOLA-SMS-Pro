@@ -328,25 +328,40 @@ function location_id_from_assoc_json(?array $json): ?string
     if (!$json) {
         return null;
     }
-    foreach (['locationId', 'location_id', 'selectedLocationId'] as $key) {
+    foreach (['locationId', 'location_id', 'selectedLocationId', 'selected_location_id', 'activeLocationId', 'active_location_id'] as $key) {
         $v = $json[$key] ?? null;
-        if (is_string($v) && $v !== '') {
-            return $v;
+        $clean = install_clean_location_id($v);
+        if ($clean !== null) {
+            return $clean;
         }
     }
-    $locIds = $json['location_ids'] ?? null;
-    if (is_array($locIds) && count($locIds) === 1) {
-        $only = $locIds[0];
-        if (is_string($only) && $only !== '') {
-            return $only;
+    foreach (['location_ids', 'locationIds', 'approvedLocations'] as $listKey) {
+        $locIds = $json[$listKey] ?? null;
+        $cleanListValue = install_clean_location_id($locIds);
+        if ($cleanListValue !== null) {
+            return $cleanListValue;
+        }
+        if (is_array($locIds) && count($locIds) === 1) {
+            $clean = install_clean_location_id($locIds[0] ?? null);
+            if ($clean !== null) {
+                return $clean;
+            }
         }
     }
     $nested = $json['locations'] ?? null;
     if (is_array($nested) && count($nested) === 1 && is_array($nested[0])) {
         $row = $nested[0];
-        $lid = $row['id'] ?? $row['locationId'] ?? null;
-        if (is_string($lid) && $lid !== '') {
-            return $lid;
+        $clean = install_clean_location_id($row['id'] ?? $row['locationId'] ?? $row['location_id'] ?? null);
+        if ($clean !== null) {
+            return $clean;
+        }
+    }
+    foreach (['location', 'selectedLocation', 'subaccount', 'subAccount', 'context'] as $nestedKey) {
+        if (isset($json[$nestedKey]) && is_array($json[$nestedKey])) {
+            $nestedLocation = location_id_from_assoc_json($json[$nestedKey]);
+            if ($nestedLocation !== null) {
+                return $nestedLocation;
+            }
         }
     }
     return null;
@@ -380,8 +395,9 @@ function extract_location_id_from_state(?string $state): ?string
         $parsed = [];
         parse_str($trimmed, $parsed);
         $fromQuery = $parsed['locationId'] ?? $parsed['location_id'] ?? $parsed['selectedLocationId'] ?? null;
-        if (is_string($fromQuery) && $fromQuery !== '') {
-            return $fromQuery;
+        $fromQueryClean = install_clean_location_id($fromQuery);
+        if ($fromQueryClean !== null) {
+            return $fromQueryClean;
         }
 
         // Case 1: JSON payload in state (direct)
@@ -481,7 +497,7 @@ function extract_location_ids_from_mixed($value): array
             return;
         }
 
-        foreach (['id', 'locationId', 'location_id', 'selectedLocationId', 'selected_location_id'] as $key) {
+        foreach (['id', 'locationId', 'location_id', 'selectedLocationId', 'selected_location_id', 'activeLocationId', 'active_location_id'] as $key) {
             if (!array_key_exists($key, $candidate)) {
                 continue;
             }
@@ -491,7 +507,7 @@ function extract_location_ids_from_mixed($value): array
             }
         }
 
-        foreach (['locations', 'approvedLocations', 'locationIds', 'location_ids'] as $key) {
+        foreach (['locations', 'approvedLocations', 'locationIds', 'location_ids', 'location', 'selectedLocation', 'subaccount', 'subAccount', 'context'] as $key) {
             if (isset($candidate[$key]) && is_array($candidate[$key])) {
                 foreach ($candidate[$key] as $nested) {
                     $walk($nested);
@@ -993,8 +1009,22 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     // ── CASE B: True bulk install — provision ALL company locations ───────────
     error_log("[GHL_CALLBACK] Case B: true bulk install — companyId={$companyId}");
     try {
+        require_once __DIR__ . '/api/jwt_helper.php';
+        $jwtSecretBulk = getenv('JWT_SECRET');
+        if ($jwtSecretBulk === false || trim((string)$jwtSecretBulk) === '') {
+            error_log('[GHL_CALLBACK] JWT_SECRET missing; cannot generate bulk install session token.');
+            render_error('Server configuration error: JWT secret missing.');
+        }
+
         $sessionRef = $db->collection('install_sessions')->newDocument();
         $sessionId = $sessionRef->id();
+        $bulkInstallToken = jwt_sign([
+            'type' => 'bulk_install_session',
+            'company_id' => (string)$companyId,
+            'company_name' => $companyNameFromToken,
+            'session_id' => $sessionId,
+            'source' => 'subaccount_bulk_callback',
+        ], (string)$jwtSecretBulk, 86400);
         $sessionRef->set([
             'session_id' => $sessionId,
             'company_id' => (string)$companyId,
@@ -1009,7 +1039,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         ], ['merge' => true]);
         trigger_install_provision_async($sessionId);
         error_log("[GHL_CALLBACK] Case B: queued async bulk provisioning session {$sessionId}; returning immediately.");
-        header('Location: https://smspro-api.nolacrm.io/login?bulk_install=1&provisioning=1&session_id=' . urlencode($sessionId), true, 302);
+        header('Location: https://smspro-api.nolacrm.io/login?bulk_install=1&provisioning=1&session_id=' . urlencode($sessionId) . '&install_token=' . urlencode($bulkInstallToken), true, 302);
         exit;
     } catch (Exception $e) {
         error_log('[GHL_CALLBACK] Case B: failed to queue async bulk provisioning: ' . $e->getMessage());

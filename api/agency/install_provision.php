@@ -19,14 +19,14 @@ if (function_exists('set_time_limit')) {
 }
 @ini_set('max_execution_time', '0');
 
-function provision_maybe_update_session($sessionRef, int $processed, int $total, int $provisioned, int $failed, array $errors): void
+function provision_maybe_update_session($sessionRef, int $processed, int $total, int $provisioned, int $failed, array $errors, array $provisionedLocations = []): void
 {
     if ($processed !== 1 && $processed % 10 !== 0 && $processed !== $total) {
         return;
     }
 
     try {
-        $sessionRef->set([
+        $update = [
             'status' => 'provisioning',
             'progress' => [
                 'total_locations' => $total,
@@ -35,7 +35,13 @@ function provision_maybe_update_session($sessionRef, int $processed, int $total,
             ],
             'errors' => array_slice($errors, 0, 25),
             'updated_at' => new \Google\Cloud\Core\Timestamp(new DateTimeImmutable()),
-        ], ['merge' => true]);
+        ];
+        if (!empty($provisionedLocations)) {
+            $update['provisioned_locations'] = array_slice($provisionedLocations, 0, 100);
+            $update['first_location'] = $provisionedLocations[0];
+            $update['single_location'] = count($provisionedLocations) === 1 ? $provisionedLocations[0] : null;
+        }
+        $sessionRef->set($update, ['merge' => true]);
     } catch (Exception $e) {
         error_log('[install_provision] progress update failed: ' . $e->getMessage());
     }
@@ -142,12 +148,16 @@ try {
     $failed = 0;
     $errors = [];
     $processed = 0;
+    $provisionedLocations = [];
     $sessionRef->set([
         'progress' => [
             'total_locations' => $totalLocations,
             'provisioned' => 0,
             'failed' => 0,
         ],
+        'provisioned_locations' => [],
+        'first_location' => null,
+        'single_location' => null,
         'updated_at' => new \Google\Cloud\Core\Timestamp(new DateTimeImmutable()),
     ], ['merge' => true]);
 
@@ -177,7 +187,7 @@ try {
                 $failed++;
                 $errors[] = "locationToken failed for {$locId} (HTTP {$ltCode})";
                 $processed++;
-                provision_maybe_update_session($sessionRef, $processed, $totalLocations, $provisioned, $failed, $errors);
+                provision_maybe_update_session($sessionRef, $processed, $totalLocations, $provisioned, $failed, $errors, $provisionedLocations);
                 continue;
             }
 
@@ -246,13 +256,17 @@ try {
                 ], ['merge' => true]);
             }
             $provisioned++;
+            $provisionedLocations[] = [
+                'location_id' => (string)$locId,
+                'location_name' => $locName,
+            ];
             $processed++;
-            provision_maybe_update_session($sessionRef, $processed, $totalLocations, $provisioned, $failed, $errors);
+            provision_maybe_update_session($sessionRef, $processed, $totalLocations, $provisioned, $failed, $errors, $provisionedLocations);
         } catch (Exception $e) {
             $failed++;
             $errors[] = "Provisioning exception for {$locId}";
             $processed++;
-            provision_maybe_update_session($sessionRef, $processed, $totalLocations, $provisioned, $failed, $errors);
+            provision_maybe_update_session($sessionRef, $processed, $totalLocations, $provisioned, $failed, $errors, $provisionedLocations);
         }
     }
 
@@ -271,6 +285,9 @@ try {
             'failed' => $failed,
         ],
         'errors' => array_slice($errors, 0, 25),
+        'provisioned_locations' => array_slice($provisionedLocations, 0, 100),
+        'first_location' => $provisionedLocations[0] ?? null,
+        'single_location' => count($provisionedLocations) === 1 ? $provisionedLocations[0] : null,
         'updated_at' => new \Google\Cloud\Core\Timestamp(new DateTimeImmutable()),
     ], ['merge' => true]);
 
@@ -279,6 +296,7 @@ try {
         'session_id' => $sessionId,
         'status' => $status,
         'progress' => ['total_locations' => $totalLocations, 'provisioned' => $provisioned, 'failed' => $failed],
+        'provisioned_locations' => array_slice($provisionedLocations, 0, 100),
     ]);
 } catch (Exception $e) {
     http_response_code(500);
