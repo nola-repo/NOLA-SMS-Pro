@@ -753,27 +753,6 @@ function exchange_location_token(string $companyToken, string $companyId, string
     ];
 }
 
-function trigger_install_provision_async(string $sessionId): void
-{
-    $secret = getenv('WEBHOOK_SECRET');
-    if ($secret === false || trim((string)$secret) === '') {
-        error_log('[GHL_CALLBACK] WEBHOOK_SECRET missing; cannot trigger async install provisioning.');
-        return;
-    }
-
-    $baseUrl = rtrim((string)(getenv('APP_BASE_URL') ?: 'https://smspro-api.nolacrm.io'), '/');
-    $url = $baseUrl . '/api/agency/install/provision?session_id=' . urlencode($sessionId);
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT_MS => 2000,
-        CURLOPT_CONNECTTIMEOUT_MS => 1000,
-        CURLOPT_HTTPHEADER => ['Accept: application/json', 'X-Webhook-Secret: ' . (string)$secret],
-    ]);
-    curl_exec($ch);
-    curl_close($ch);
-}
-
 /**
  * Returns true if any user is already linked to this location.
  * Checks both root denormalized field and user-owned subaccounts model.
@@ -858,13 +837,14 @@ $ghlApps = [
     ],
 ];
 
-// ─── Bulk-install guard ───────────────────────────────────────────────────────
-// When an agency admin installs the sub-account app in bulk, GHL sends a
-// Company-scoped token (isBulkInstallation=true, userType=Company) with NO
-// locationId. We exchange it for per-location tokens and redirect to app.nolacrm.io.
+// Company-scoped selected-install guard.
+// GHL may return a Company-scoped token even for a Marketplace install where
+// the user selected one subaccount. This callback is still single-location
+// only: resolve the selected location, exchange only that location token, or
+// stop/ask for explicit selection. Never provision the whole company here.
 if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Company') {
-    error_log('[GHL_CALLBACK_DEBUG] branch=bulk_guard_entered companyId=' . ($data['companyId'] ?? ''));
-    // This is the sub-account app bulk install — use sub-account credentials throughout.
+    error_log('[GHL_CALLBACK_DEBUG] branch=company_scoped_selected_install companyId=' . ($data['companyId'] ?? ''));
+    // This is the subaccount app; use subaccount credentials throughout.
     $companyId          = $data['companyId'] ?? null;
     $subaccountClientId = $ghlApps['subaccount']['clientId'];
     $companyToken       = $data['access_token'];
@@ -874,10 +854,10 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     $companyNameFromToken = install_extract_company_name($data);
 
     if (!$companyId) {
-        render_error('Bulk install received but no companyId in token response.', $data);
+        render_error('Company-scoped install received no companyId in token response.', $data);
     }
 
-    error_log("[GHL_CALLBACK] Sub-account bulk install detected — companyId={$companyId}. Provisioning location tokens.");
+    error_log("[GHL_CALLBACK] Company-scoped selected install detected; resolving one selected location for companyId={$companyId}.");
 
     // ── CRITICAL DEBUG: log exactly what GHL sent us ──────────────────────────
     $locationsPreview = [];
@@ -948,7 +928,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         $caseAResolution['reason'] = 'company_token_direct_location_requires_picker_confirmation';
     }
 
-    error_log('[GHL_CALLBACK_DEBUG] bulk_caseA_candidate=' . json_encode([
+    error_log('[GHL_CALLBACK_DEBUG] selected_location_candidate=' . json_encode([
         'singleLocationId' => $singleLocationId,
         'resolution' => $caseAResolution,
         'state_present' => $state !== null && $state !== '',
@@ -1030,7 +1010,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
                 'company_name'          => $companyNameFromToken,
                 'is_live'               => true,
                 'toggle_enabled'        => true,
-                'provisioned_from_bulk' => true,
+                'provisioned_from_selection' => true,
                 'updated_at'            => new \Google\Cloud\Core\Timestamp($now),
             ], ['merge' => true]);
         } catch (Exception $e) {
@@ -1114,7 +1094,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         }
 
         header('Location: ' . $caseADecision['url'], true, 302);
-        error_log("[GHL_CALLBACK] Case A: provisioning done for {$singleLocationId} ({$singleLocName}); redirect={$caseADecision['kind']}.");
+        error_log("[GHL_CALLBACK] Single-location install done for {$singleLocationId} ({$singleLocName}); redirect={$caseADecision['kind']}.");
         exit;
     }
 
@@ -1148,46 +1128,13 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         );
     }
 
-    // ── CASE B: True bulk install — provision ALL company locations ───────────
-    error_log("[GHL_CALLBACK] Case B: true bulk install — companyId={$companyId}");
-    try {
-        require_once __DIR__ . '/api/jwt_helper.php';
-        $jwtSecretBulk = getenv('JWT_SECRET');
-        if ($jwtSecretBulk === false || trim((string)$jwtSecretBulk) === '') {
-            error_log('[GHL_CALLBACK] JWT_SECRET missing; cannot generate bulk install session token.');
-            render_error('Server configuration error: JWT secret missing.');
-        }
-
-        $sessionRef = $db->collection('install_sessions')->newDocument();
-        $sessionId = $sessionRef->id();
-        $bulkInstallToken = jwt_sign([
-            'type' => 'bulk_install_session',
-            'company_id' => (string)$companyId,
-            'company_name' => $companyNameFromToken,
-            'session_id' => $sessionId,
-            'source' => 'subaccount_bulk_callback',
-        ], (string)$jwtSecretBulk, 86400);
-        $sessionRef->set([
-            'session_id' => $sessionId,
-            'company_id' => (string)$companyId,
-            'company_name' => $companyNameFromToken,
-            'status' => 'pending',
-            'source' => 'subaccount_bulk_callback',
-            'progress' => ['total_locations' => 0, 'provisioned' => 0, 'failed' => 0],
-            'errors' => [],
-            'created_at' => new \Google\Cloud\Core\Timestamp($now),
-            'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-            'expires_at' => new \Google\Cloud\Core\Timestamp((new DateTimeImmutable('+1 day'))),
-        ], ['merge' => true]);
-        trigger_install_provision_async($sessionId);
-        error_log("[GHL_CALLBACK] Case B: queued async bulk provisioning session {$sessionId}; returning immediately.");
-        header('Location: https://smspro-api.nolacrm.io/login?bulk_install=1&provisioning=1&session_id=' . urlencode($sessionId) . '&install_token=' . urlencode($bulkInstallToken), true, 302);
-        exit;
-    } catch (Exception $e) {
-        error_log('[GHL_CALLBACK] Case B: failed to queue async bulk provisioning: ' . $e->getMessage());
-        header('Location: https://smspro-api.nolacrm.io/login?bulk_install=1&provisioning=1', true, 302);
-        exit;
-    }
+    error_log('[GHL_CALLBACK] Subaccount callback refused bulk provisioning without an exact selected location.');
+    render_error('No reliable selected sub-account was returned by GoHighLevel. Please reinstall and select exactly one sub-account from the Marketplace install modal.', [
+        'state' => INSTALL_STATE_AMBIGUOUS,
+        'companyId' => $companyId,
+        'resolution' => $caseAResolution,
+        'candidate_count' => count($locationsArrayIds),
+    ]);
 }
 
 // ─── Determine Location ID ────────────────────────────────────────────────────────────────
@@ -1334,8 +1281,6 @@ try {
     }
 
     $db->collection('ghl_tokens')->document((string)$id)->set($tokenPayload, ['merge' => true]);
-
-    // (Removed legacy duplicate bulk install logic)
 
     // 2b. Register the subaccount in ghl_tokens for the Agency Dashboard to track
     if ($userType === 'Location') {

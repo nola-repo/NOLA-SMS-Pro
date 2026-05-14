@@ -92,20 +92,40 @@ Direct location install:
 4. Classify using pre-save token existence plus canonical ownership.
 5. Redirect to registration or login.
 
-Company/bulk token with one exact selected location:
+Company-scoped token with one exact selected location:
 
 1. Save company token.
-2. Exchange company token for selected location token.
-3. Save location token and integration.
-4. Classify and redirect.
+2. Stop all bulk logic.
+3. Exchange company token only for the selected location token.
+4. Save location token and integration.
+5. Classify and redirect.
 
-Company/bulk token with multiple candidates and no exact selection:
+Company-scoped token with multiple candidates and no exact selection:
 
 1. Save company token.
 2. Create `install_sessions/{sessionId}` with `type=ambiguous_install_selection`.
 3. Sign an `install_selection_session` JWT.
 4. Show selection screen.
-5. `/api/auth/resolve-install-selection` validates session and selected location, exchanges the token, saves docs, classifies, and returns the redirect URL.
+5. `/api/auth/resolve-install-selection` validates session and selected location, exchanges only that selected location token, saves docs, classifies, and returns the redirect URL.
+
+Company-scoped token with no exact selection and no usable candidates:
+
+1. Stop with an error.
+2. Do not create a bulk provisioning session.
+3. Do not call `/api/agency/install/provision`.
+4. Do not redirect to `/login?bulk_install=1`.
+
+## Bulk Provisioning Boundary
+
+Normal Marketplace selected subaccount installs are not bulk installs. `/oauth/callback` must never iterate all company locations, create `bulk_install_session`, show provisioning progress, or route to the generic bulk login page.
+
+Bulk provisioning is only allowed outside the normal selected subaccount Marketplace callback, such as:
+
+- agency-wide installs through `/oauth/agency-callback`
+- explicit internal admin provisioning tools
+- explicit agency provisioning endpoints
+
+The selected subaccount callback may receive a Company-scoped token from GHL, but it must still operate in single-location mode once a selected location signal exists.
 
 ## Edge Cases
 
