@@ -742,6 +742,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
     $companyRefresh     = $data['refresh_token'] ?? null;
     $expiresIn          = (int)($data['expires_in'] ?? 86400);
     $companyExpiresAt   = time() + $expiresIn;
+    $companyNameFromToken = install_extract_company_name($data);
 
     if (!$companyId) {
         render_error('Bulk install received but no companyId in token response.', $data);
@@ -788,6 +789,8 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
             'appType'       => 'subaccount',
             'userType'      => 'Company',
             'companyId'     => $companyId,
+            'company_name'  => $companyNameFromToken,
+            'agency_name'   => $companyNameFromToken,
             'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
         ], ['merge' => true]);
     } catch (Exception $e) {
@@ -897,6 +900,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
                 'location_id'           => $singleLocationId,
                 'location_name'         => $singleLocName,
                 'companyId'             => $companyId,
+                'company_name'          => $companyNameFromToken,
                 'is_live'               => true,
                 'toggle_enabled'        => true,
                 'provisioned_from_bulk' => true,
@@ -916,6 +920,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
                     'location_id'           => $singleLocationId,
                     'location_name'         => $singleLocName,
                     'companyId'             => $companyId,
+                    'company_name'          => $companyNameFromToken,
                     'free_credits_total'    => 10,
                     'free_usage_count'      => 0,
                     'credit_balance'        => 0,
@@ -928,6 +933,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
                     'access_token'  => $ltData2['access_token'],
                     'expires_at'    => $ltExpires2,
                     'location_name' => $singleLocName,
+                    'company_name'  => $companyNameFromToken,
                     'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
                 ], ['merge' => true]);
             }
@@ -937,7 +943,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
 
         require_once __DIR__ . '/api/jwt_helper.php';
         $jwtSecret2 = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
-        $companyNameCaseA = (string)($data['companyName'] ?? $data['company_name'] ?? $data['agencyName'] ?? '');
+        $companyNameCaseA = $companyNameFromToken;
         if ($companyNameCaseA === '') {
             try {
                 $coSnapA = $db->collection('ghl_tokens')->document((string)$companyId)->snapshot();
@@ -1091,6 +1097,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
                     'location_id'           => $locId,
                     'location_name'         => $locName,
                     'companyId'             => $companyId,
+                    'company_name'          => $companyNameFromToken,
                     'is_live'               => true,
                     'toggle_enabled'        => true,
                     'provisioned_from_bulk' => true,
@@ -1106,6 +1113,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
                         'location_id'           => $locId,
                         'location_name'         => $locName,
                         'companyId'             => $companyId,
+                        'company_name'          => $companyNameFromToken,
                         'free_credits_total'    => 10,
                         'free_usage_count'      => 0,
                         'credit_balance'        => 0,
@@ -1118,6 +1126,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
                         'access_token'  => $ltData['access_token'],
                         'expires_at'    => $ltExpires,
                         'location_name' => $locName,
+                        'company_name'  => $companyNameFromToken,
                         'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
                     ], ['merge' => true]);
                 }
@@ -1395,6 +1404,7 @@ $now = new DateTimeImmutable();
 $expiresAtUnix = time() + (int)($data['expires_in'] ?? 0);
 $tokenExistedBeforeDirect = install_token_doc_exists($db, (string)$locationId);
 $companyIdForDirect = (string)($data['companyId'] ?? '');
+$companyNameDirect = install_extract_company_name($data);
 if (install_location_company_mismatch($db, (string)$locationId, $companyIdForDirect)) {
     render_error('The selected sub-account is already linked to a different GoHighLevel company. Please reinstall from the correct GHL sub-account.', [
         'locationId' => $locationId,
@@ -1411,6 +1421,7 @@ try {
         'expires_at' => $expiresAtUnix,
         'userType' => $userType,
         'companyId' => $data['companyId'] ?? '',
+        'company_name' => $companyNameDirect,
         'hashed_companyId' => $data['hashedCompanyId'] ?? '',
         'userId' => $data['userId'] ?? '',
         'appId'     => $ghlApps[$usedAppType]['clientId'], // Store which app provided this token
@@ -1438,6 +1449,7 @@ try {
             'location_id' => $id,
             'location_name' => $displayName,
             'companyId' => $data['companyId'] ?? '',
+            'company_name' => $companyNameDirect,
             'userType' => $data['userType'] ?? 'Location',
             'is_live' => true,
             'toggle_enabled' => true,
@@ -1454,6 +1466,8 @@ try {
         $integrationData = [
             'location_id' => $id,
             'location_name' => $displayName,
+            'companyId' => $data['companyId'] ?? '',
+            'company_name' => $companyNameDirect,
             'updated_at' => new \Google\Cloud\Core\Timestamp($now),
             'access_token' => $data['access_token'] ?? null,
             'refresh_token' => $data['refresh_token'] ?? null,
@@ -1514,7 +1528,7 @@ $jwtSecret       = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_pr
 $reactAppUrl     = 'https://app.nolacrm.io';
 $locationNameEnc = urlencode($locationName ?: 'Your Sub-Account');
 
-    $companyName = '';
+    $companyName = $companyNameDirect;
     $companyId = (string)($data['companyId'] ?? '');
     if ($companyId !== '') {
         try {

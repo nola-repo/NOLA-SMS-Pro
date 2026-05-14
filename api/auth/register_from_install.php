@@ -105,6 +105,17 @@ if ($type === 'agency_install') {
         $agencyUsersRef = $db->collection('agency_users');
 
         $companyName = $payloadCompName ?: ($installPayload['company_name'] ?? null);
+        if ($companyId && !$companyName) {
+            try {
+                $companySnap = $db->collection('ghl_tokens')->document((string)$companyId)->snapshot();
+                if ($companySnap->exists()) {
+                    $companyData = $companySnap->data();
+                    $companyName = install_extract_company_name($companyData)
+                        ?: (trim((string)($companyData['location_name'] ?? '')) ?: $companyName);
+                }
+            } catch (Exception $ignored) {
+            }
+        }
 
         $existingQuery = $agencyUsersRef->where('email', '=', $email)->limit(1)->documents();
         $existingDoc = null;
@@ -413,7 +424,18 @@ try {
                 if ($tokenSnap->exists()) {
                     $tokenData = $tokenSnap->data();
                     $newLocationName = $tokenData['location_name'] ?? $payloadLocName;
-                    $newCompanyName = $tokenData['company_name'] ?? $payloadCompName;
+                    $newCompanyName = install_extract_company_name($tokenData) ?: $payloadCompName;
+                }
+            } catch (Exception $ignored) {
+            }
+        }
+        if (!$newCompanyName && $companyId) {
+            try {
+                $companySnap = $db->collection('ghl_tokens')->document((string)$companyId)->snapshot();
+                if ($companySnap->exists()) {
+                    $companyData = $companySnap->data();
+                    $newCompanyName = install_extract_company_name($companyData)
+                        ?: (trim((string)($companyData['location_name'] ?? '')) ?: $newCompanyName);
                 }
             } catch (Exception $ignored) {
             }
@@ -451,7 +473,7 @@ try {
                 $existingId,
                 $locationId,
                 [
-                    'company_id' => $existingDoc['company_id'] ?? $companyId ?? '',
+                    'company_id' => $companyId ?? ($existingDoc['company_id'] ?? ''),
                     'company_name' => $newCompanyName ?? ($existingDoc['company_name'] ?? ''),
                     'location_name' => $newLocationName ?? ($existingDoc['location_name'] ?? ''),
                     'role' => $existingDoc['role'] ?? 'user',
@@ -493,6 +515,8 @@ try {
             'email' => $email,
             'role' => $role,
             'company_id' => $linkedCo,
+            'location_id' => $linkedLoc,
+            'auth_collection' => 'users',
         ], $jwtSecret, 28800); // 8 hours
         if ($isLocationLevel && $locationId) {
             _upsert_owner_lock($db, 'location_owners', (string)$locationId, $existingId, $email, $fullName, $now);
@@ -527,7 +551,18 @@ try {
             if ($tokenSnap->exists()) {
                 $tokenData = $tokenSnap->data();
                 $locationName = $tokenData['location_name'] ?? $payloadLocName;
-                $companyName = $tokenData['company_name'] ?? $payloadCompName;
+                $companyName = install_extract_company_name($tokenData) ?: $payloadCompName;
+            }
+        } catch (Exception $ignored) {
+        }
+    }
+    if (!$companyName && $companyId) {
+        try {
+            $companySnap = $db->collection('ghl_tokens')->document((string)$companyId)->snapshot();
+            if ($companySnap->exists()) {
+                $companyData = $companySnap->data();
+                $companyName = install_extract_company_name($companyData)
+                    ?: (trim((string)($companyData['location_name'] ?? '')) ?: $companyName);
             }
         } catch (Exception $ignored) {
         }
@@ -605,6 +640,8 @@ try {
         'email' => $email,
         'role' => $role,
         'company_id' => $companyId ?? null,
+        'location_id' => $locationId ?? null,
+        'auth_collection' => 'users',
     ], $jwtSecret, 28800);
 
     $userApiNew = auth_user_payload_for_api($userData, $email);

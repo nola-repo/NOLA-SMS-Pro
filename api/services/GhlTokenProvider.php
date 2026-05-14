@@ -292,6 +292,7 @@ final class GhlTokenProvider
                             'userType'              => 'Location',
                             'location_id'           => $registryKey,
                             'companyId'             => $companyId,
+                            'company_name'          => $companyData['company_name'] ?? ($companyData['agency_name'] ?? null),
                             'scope'                 => $companyData['scope'] ?? null,
                             'is_live'               => true,
                             'toggle_enabled'        => true,

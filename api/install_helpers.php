@@ -34,6 +34,26 @@ function install_unique_ids(array $ids): array
     return $out;
 }
 
+function install_extract_company_name(array $data): string
+{
+    foreach (['companyName', 'company_name', 'agencyName', 'agency_name'] as $key) {
+        if (!isset($data[$key])) {
+            continue;
+        }
+
+        if (!is_scalar($data[$key])) {
+            continue;
+        }
+
+        $value = trim((string)$data[$key]);
+        if ($value !== '') {
+            return $value;
+        }
+    }
+
+    return '';
+}
+
 /**
  * @return array{ids: array<int,string>, names: array<string,string>}
  */
