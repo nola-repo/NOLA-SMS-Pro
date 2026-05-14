@@ -361,34 +361,10 @@ try {
     }
 
     // ── 1b. Enforce strict 1:1 (subaccount -> email) before creating/linking ─
-    $subaccountOwnerId = null;
-    $subaccountOwnerEmail = null;
     if ($isLocationLevel) {
-        if (!_owner_lock_available_for_email($db, 'location_owners', (string)$locationId, $email)) {
-            http_response_code(409);
-            echo json_encode(['error' => 'This subaccount is already linked to another email. Please login with the existing account.']);
-            exit;
-        }
-
         $linkedAccount = install_linked_account_for_location($db, (string)$locationId);
         $linkedEmail = strtolower(trim((string)($linkedAccount['email'] ?? '')));
         if ($linkedEmail !== '' && $linkedEmail !== $email) {
-            http_response_code(409);
-            echo json_encode(['error' => 'This subaccount is already linked to another email. Please login with the existing account.']);
-            exit;
-        }
-
-        $subaccountOwnerQuery = $usersRef->where('active_location_id', '=', $locationId)->limit(1)->documents();
-        foreach ($subaccountOwnerQuery as $snap) {
-            if ($snap->exists()) {
-                $ownerData = $snap->data();
-                $subaccountOwnerId = $snap->id();
-                $subaccountOwnerEmail = strtolower(trim((string)($ownerData['email'] ?? '')));
-                break;
-            }
-        }
-
-        if ($subaccountOwnerId !== null && $subaccountOwnerEmail !== '' && $subaccountOwnerEmail !== $email) {
             http_response_code(409);
             echo json_encode(['error' => 'This subaccount is already linked to another email. Please login with the existing account.']);
             exit;
@@ -418,6 +394,14 @@ try {
             if (!password_verify($password, $existingDoc['password_hash'])) {
                 http_response_code(401);
                 echo json_encode(['error' => 'An account with this email already exists, but the password provided is incorrect.']);
+                exit;
+            }
+        }
+
+        if ($isLocationLevel && $locationId) {
+            if (!install_claim_owner_lock($db, 'location_owners', (string)$locationId, $existingId, $email, $fullName, $now, 'register_from_install_existing')) {
+                http_response_code(409);
+                echo json_encode(['error' => 'This subaccount is already linked to another owner. Please login with the existing linked account.']);
                 exit;
             }
         }
@@ -553,6 +537,7 @@ try {
     $role = $isLocationLevel ? 'user' : 'agency';
     $passwordHash = password_hash($password, PASSWORD_BCRYPT);
     $newUserDoc = $usersRef->newDocument();
+    $newUserId = $newUserDoc->id();
 
     // ── Fetch location_name and company_name from ghl_tokens ─────────────────
     $locationName = $payloadLocName;
@@ -612,10 +597,16 @@ try {
         }
     }
 
-    $newUserDoc->set($userData);
-    $newUserId = $newUserDoc->id();
     if ($isLocationLevel && $locationId) {
-        _upsert_owner_lock($db, 'location_owners', (string)$locationId, $newUserId, $email, $fullName, $now);
+        if (!install_claim_owner_lock($db, 'location_owners', (string)$locationId, $newUserId, $email, $fullName, $now, 'register_from_install_new')) {
+            http_response_code(409);
+            echo json_encode(['error' => 'This subaccount is already linked to another owner. Please login with the existing linked account.']);
+            exit;
+        }
+    }
+
+    $newUserDoc->set($userData);
+    if ($isLocationLevel && $locationId) {
         _sync_location_owner_metadata($db, (string)$locationId, $newUserId, $email, $fullName, $phone, $now);
     }
 
@@ -754,24 +745,8 @@ function _upsert_owner_lock($db, string $collection, string $entityId, string $o
     if ($entityId === '') {
         return;
     }
-    try {
-        $ref = $db->collection($collection)->document($entityId);
-        $payload = [
-            'entity_id' => $entityId,
-            'owner_user_id' => $ownerUserId,
-            'owner_email' => strtolower(trim($ownerEmail)),
-            'owner_name' => $ownerName,
-            'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-        ];
-
-        $existingSnap = $ref->snapshot();
-        if (!$existingSnap->exists()) {
-            $payload['created_at'] = new \Google\Cloud\Core\Timestamp($now);
-        }
-
-        $ref->set($payload, ['merge' => true]);
-    } catch (Exception $e) {
-        error_log("[register_from_install] _upsert_owner_lock failed for {$collection}/{$entityId}: " . $e->getMessage());
+    if (!install_claim_owner_lock($db, $collection, $entityId, $ownerUserId, $ownerEmail, $ownerName, $now, 'register_from_install_upsert')) {
+        error_log("[register_from_install] _upsert_owner_lock conflict for {$collection}/{$entityId}");
     }
 }
 

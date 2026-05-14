@@ -323,14 +323,14 @@ if ($locationId) {
     try {
         $db = isset($db) ? $db : get_firestore();
         $installClass = install_classify_location($db, (string)$locationId, $companyId ? (string)$companyId : null);
-        if (($installClass['status'] ?? '') === 'ambiguous_or_mismatch') {
+        if (($installClass['status'] ?? '') === INSTALL_STATE_COMPANY_MISMATCH) {
             ir_page('Sub-account Mismatch', '<div style="text-align:center;"><h1>Sub-account Mismatch</h1><p class="subtitle">This install link does not match the selected GoHighLevel sub-account. Please reinstall from the correct sub-account.</p></div>');
         }
         if (!empty($installClass['linked'])) {
             $loginName = $locationNameRaw !== '' ? $locationNameRaw : ($companyNameRaw !== '' ? $companyNameRaw : 'Your Sub-Account');
             $redirectUrl = 'https://smspro-api.nolacrm.io/login?welcome_back=1&name=' . urlencode($loginName)
                 . '&location_id=' . urlencode((string)$locationId)
-                . '&install_status=' . urlencode('reinstall_registered')
+                . '&install_status=' . urlencode(INSTALL_STATE_LINKED_ACCOUNT)
                 . '&resolution_source=' . urlencode('register_pre_form_guard');
             if ($companyNameRaw !== '') {
                 $redirectUrl .= '&company=' . urlencode($companyNameRaw);

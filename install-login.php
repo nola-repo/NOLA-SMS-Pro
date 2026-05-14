@@ -18,6 +18,7 @@ require_once __DIR__ . '/api/install_helpers.php';
 
 $apiBase  = 'https://smspro-api.nolacrm.io';
 $reactApp = 'https://app.nolasmspro.com';
+$marketplace = 'https://marketplace.leadconnectorhq.com/apps/overview/68118e8f9f1bac2ffc84ed23';
 
 // ── Shared page renderer (matches install-register.php / ghl_callback.php) ───
 function il_page(string $title, string $body): void {
@@ -165,6 +166,7 @@ $installTokenRaw = trim((string)($_GET['install_token'] ?? ''));
 $formError = null;
 $emailVal  = '';
 $linkedAccount = null;
+$loginInstallClass = null;
 
 if ($locationIdRaw !== '') {
     try {
@@ -174,8 +176,11 @@ if ($locationIdRaw !== '') {
             $emailVal = htmlspecialchars((string)$linkedAccount['email'], ENT_QUOTES, 'UTF-8');
         }
         if ($_SERVER['REQUEST_METHOD'] !== 'POST' && empty($linkedAccount['email']) && !$isBulkInstall) {
-            $class = install_classify_location($dbForInstall, $locationIdRaw);
-            if (!empty($class['token_exists']) && empty($class['linked'])) {
+            $loginInstallClass = install_classify_location($dbForInstall, $locationIdRaw);
+            if (($loginInstallClass['status'] ?? '') === INSTALL_STATE_COMPANY_MISMATCH) {
+                il_page('Sub-account Mismatch', '<div class="error-box">This login link does not match the selected GoHighLevel sub-account. Please reinstall from the correct sub-account.</div>');
+            }
+            if (!empty($loginInstallClass['token_exists']) && empty($loginInstallClass['linked'])) {
                 $locSnap = $dbForInstall->collection('ghl_tokens')->document($locationIdRaw)->snapshot();
                 $locData = $locSnap->exists() ? $locSnap->data() : [];
                 $locName = (string)($locData['location_name'] ?? $locationName ?? '');
@@ -184,9 +189,9 @@ if ($locationIdRaw !== '') {
                 $jwtSecretLogin = getenv('JWT_SECRET');
                 if ($jwtSecretLogin === false || trim((string)$jwtSecretLogin) === '') {
                     error_log('[install-login] JWT_SECRET missing; cannot build registration URL.');
-                    render_error('Server configuration error: JWT secret missing.');
+                    il_page('Configuration Error', '<div class="error-box">Server configuration error: JWT secret missing.</div>');
                 }
-                header('Location: ' . install_build_registration_url($jwtSecretLogin, $locationIdRaw, $locName, $coId ?: null, $coName, 'login_unregistered_reinstall', (string)($class['status'] ?? 'reinstall_unregistered')), true, 302);
+                header('Location: ' . install_build_registration_url($jwtSecretLogin, $locationIdRaw, $locName, $coId ?: null, $coName, 'login_unregistered_reinstall', (string)($loginInstallClass['status'] ?? INSTALL_STATE_TOKEN_ONLY)), true, 302);
                 exit;
             }
         }
@@ -350,9 +355,36 @@ if ($queryStringForAction !== '') {
     $formAction .= '?' . htmlspecialchars($queryStringForAction, ENT_QUOTES, 'UTF-8');
 }
 
-$footerHtml = $isBulkInstall
-    ? '<p class="footer" style="margin-top:16px;">After provisioning, open NOLA SMS Pro from the target GoHighLevel sub-account to finish setup.</p>'
-    : '<p class="footer" style="margin-top:16px;">New installation? <a href="/register" style="color:#2b83fa;font-weight:600;">Create account</a></p>';
+$footerHtml = '<p class="footer" style="margin-top:16px;">New installation? <a href="' . htmlspecialchars($marketplace, ENT_QUOTES, 'UTF-8') . '" style="color:#2b83fa;font-weight:600;">Open Marketplace</a></p>';
+if ($isBulkInstall) {
+    $footerHtml = '<p class="footer" style="margin-top:16px;">After provisioning, open NOLA SMS Pro from the target GoHighLevel sub-account to finish setup.</p>';
+} elseif ($linkedEmailSafe !== '') {
+    $footerHtml = '<p class="footer" style="margin-top:16px;">This subaccount already has an owner. Sign in with the linked email above.</p>';
+} elseif ($locationIdRaw !== '') {
+    try {
+        $dbForFooter = isset($dbForInstall) ? $dbForInstall : get_firestore();
+        $footerClass = $loginInstallClass ?: install_classify_location($dbForFooter, $locationIdRaw);
+        if (!empty($footerClass['token_exists']) && empty($footerClass['linked'])) {
+            $locSnap = $dbForFooter->collection('ghl_tokens')->document($locationIdRaw)->snapshot();
+            $locData = $locSnap->exists() ? $locSnap->data() : [];
+            $jwtSecretFooter = getenv('JWT_SECRET');
+            if ($jwtSecretFooter !== false && trim((string)$jwtSecretFooter) !== '') {
+                $registerUrl = install_build_registration_url(
+                    (string)$jwtSecretFooter,
+                    $locationIdRaw,
+                    (string)($locData['location_name'] ?? $locationName ?? ''),
+                    (string)($locData['companyId'] ?? $locData['company_id'] ?? '') ?: null,
+                    (string)($locData['company_name'] ?? $locData['agency_name'] ?? $companyName ?? ''),
+                    'login_create_account_link',
+                    (string)($footerClass['status'] ?? INSTALL_STATE_TOKEN_ONLY)
+                );
+                $footerHtml = '<p class="footer" style="margin-top:16px;">Need to finish setup? <a href="' . htmlspecialchars($registerUrl, ENT_QUOTES, 'UTF-8') . '" style="color:#2b83fa;font-weight:600;">Create account</a></p>';
+            }
+        }
+    } catch (Exception $e) {
+        error_log('[install-login] footer registration link failed: ' . $e->getMessage());
+    }
+}
 
 $bulkStatusScript = '';
 if ($isBulkInstall && $isBulkProvisioning && $sessionIdRaw !== '' && $installTokenRaw !== '') {

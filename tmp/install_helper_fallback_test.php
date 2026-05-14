@@ -92,7 +92,7 @@ $stateMatched = install_resolve_selected_location([
     'approved_location_ids' => [$locationId, $otherLocationId],
     'state_location_id' => $otherLocationId,
 ]);
-if (empty($stateMatched['ok']) || ($stateMatched['location_id'] ?? '') !== $otherLocationId || ($stateMatched['source'] ?? '') !== 'state_matched_candidate') {
+if (empty($stateMatched['ok']) || ($stateMatched['location_id'] ?? '') !== $otherLocationId || ($stateMatched['source'] ?? '') !== 'oauth_state') {
     fwrite(STDERR, "state matched candidate resolution failed\n");
     exit(1);
 }
@@ -103,6 +103,23 @@ $conflict = install_resolve_selected_location([
 ]);
 if (empty($conflict['ok']) || ($conflict['location_id'] ?? '') !== $locationId || empty($conflict['conflict']['token_location_id'])) {
     fwrite(STDERR, "picker-over-token conflict resolution failed\n");
+    exit(1);
+}
+
+$ambiguous = install_resolve_selected_location([
+    'approved_location_ids' => [$locationId, $otherLocationId],
+]);
+if (!empty($ambiguous['ok']) || ($ambiguous['reason'] ?? '') !== 'ambiguous_location_candidates') {
+    fwrite(STDERR, "ambiguous candidate resolution failed\n");
+    exit(1);
+}
+
+$sessionSelected = install_resolve_selected_location([
+    'approved_location_ids' => [$locationId, $otherLocationId],
+    'session_location_id' => $locationId,
+]);
+if (empty($sessionSelected['ok']) || ($sessionSelected['location_id'] ?? '') !== $locationId || ($sessionSelected['source'] ?? '') !== 'signed_install_session') {
+    fwrite(STDERR, "signed session resolution failed\n");
     exit(1);
 }
 

@@ -320,6 +320,118 @@ HTML;
     exit;
 }
 
+function create_install_selection_session(
+    $db,
+    string $jwtSecret,
+    string $companyId,
+    string $companyName,
+    array $candidateIds,
+    array $locationNames,
+    string $reason,
+    array $debug = []
+): array {
+    $candidateIds = install_unique_ids($candidateIds);
+    $rows = [];
+    foreach ($candidateIds as $candidateId) {
+        $rows[] = [
+            'location_id' => $candidateId,
+            'location_name' => trim((string)($locationNames[$candidateId] ?? '')),
+        ];
+    }
+
+    $now = new DateTimeImmutable();
+    $sessionRef = $db->collection('install_sessions')->newDocument();
+    $sessionId = $sessionRef->id();
+    $sessionRef->set([
+        'type' => 'ambiguous_install_selection',
+        'session_id' => $sessionId,
+        'company_id' => $companyId,
+        'company_name' => $companyName,
+        'status' => 'needs_selection',
+        'reason' => $reason,
+        'candidate_locations' => $rows,
+        'debug' => $debug,
+        'created_at' => new \Google\Cloud\Core\Timestamp($now),
+        'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+        'expires_at' => new \Google\Cloud\Core\Timestamp((new DateTimeImmutable('+15 minutes'))),
+    ], ['merge' => true]);
+
+    $sessionToken = jwt_sign([
+        'type' => 'install_selection_session',
+        'session_id' => $sessionId,
+        'company_id' => $companyId,
+        'company_name' => $companyName,
+        'candidate_hash' => hash('sha256', implode('|', $candidateIds)),
+    ], $jwtSecret, 900);
+
+    return [
+        'session_id' => $sessionId,
+        'session_token' => $sessionToken,
+        'candidate_locations' => $rows,
+    ];
+}
+
+function render_ambiguous_selection(string $sessionToken, array $candidateLocations, string $companyName = ''): void
+{
+    $sessionTokenJson = json_encode($sessionToken, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT);
+    $buttons = '';
+    foreach ($candidateLocations as $row) {
+        $id = install_clean_location_id($row['location_id'] ?? null);
+        if ($id === null) {
+            continue;
+        }
+        $name = trim((string)($row['location_name'] ?? ''));
+        $label = $name !== '' ? $name : 'Unnamed Sub-account';
+        $safeLabel = htmlspecialchars($label, ENT_QUOTES, 'UTF-8');
+        $safeId = htmlspecialchars($id, ENT_QUOTES, 'UTF-8');
+        $buttons .= <<<HTML
+            <button type="button" class="btn-submit" style="margin:8px 0 0; text-align:left; display:block;" data-location-id="{$safeId}" onclick="selectLocation(this)">
+                <span style="display:block; font-weight:800;">{$safeLabel}</span>
+                <span style="display:block; font-size:11px; opacity:.85; margin-top:2px; word-break:break-all;">{$safeId}</span>
+            </button>
+HTML;
+    }
+
+    $companyLine = $companyName !== ''
+        ? '<p class="subtitle" style="margin-bottom:18px;">Choose the exact subaccount for ' . htmlspecialchars($companyName, ENT_QUOTES, 'UTF-8') . '.</p>'
+        : '<p class="subtitle" style="margin-bottom:18px;">Choose the exact subaccount to continue installation.</p>';
+
+    $body = <<<HTML
+        <h1>Select Sub-account</h1>
+        {$companyLine}
+        <div id="selection-error" class="error-pre hidden"></div>
+        <div style="margin-top:10px;">{$buttons}</div>
+        <p style="font-size:11px;color:#6e6e73;line-height:1.45;margin-top:18px;">We could not verify which subaccount GoHighLevel selected, so NOLA SMS Pro needs one explicit confirmation before continuing.</p>
+        <script>
+          const INSTALL_SELECTION_TOKEN = {$sessionTokenJson};
+          async function selectLocation(btn) {
+            const locationId = btn.getAttribute('data-location-id');
+            const err = document.getElementById('selection-error');
+            document.querySelectorAll('[data-location-id]').forEach(b => { b.disabled = true; b.style.opacity = '.65'; });
+            btn.textContent = 'Continuing...';
+            err.classList.add('hidden');
+            try {
+              const res = await fetch('/api/auth/resolve-install-selection', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                body: JSON.stringify({ session_token: INSTALL_SELECTION_TOKEN, location_id: locationId })
+              });
+              const data = await res.json().catch(() => ({}));
+              if (!res.ok || !data.url) throw new Error(data.error || 'Could not continue installation.');
+              window.location.assign(data.url);
+            } catch (e) {
+              err.textContent = e.message || 'Could not continue installation.';
+              err.classList.remove('hidden');
+              document.querySelectorAll('[data-location-id]').forEach(b => { b.disabled = false; b.style.opacity = '1'; });
+              btn.innerHTML = '<span style="display:block; font-weight:800;">Try again</span><span style="display:block; font-size:11px; opacity:.85; margin-top:2px; word-break:break-all;">' + locationId + '</span>';
+            }
+          }
+        </script>
+HTML;
+    render_page('Select Sub-account', $body);
+    exit;
+}
+
 /**
  * Pull a GHL location id from an associative JSON-decoded payload (OAuth state body).
  */
@@ -1006,6 +1118,36 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         exit;
     }
 
+    if (count($locationsArrayIds) > 1) {
+        require_once __DIR__ . '/api/jwt_helper.php';
+        $jwtSecretSelect = getenv('JWT_SECRET');
+        if ($jwtSecretSelect === false || trim((string)$jwtSecretSelect) === '') {
+            error_log('[GHL_CALLBACK] JWT_SECRET missing; cannot generate ambiguous selection session.');
+            render_error('Server configuration error: JWT secret missing.');
+        }
+
+        $selectionSession = create_install_selection_session(
+            $db,
+            (string)$jwtSecretSelect,
+            (string)$companyId,
+            $companyNameFromToken,
+            $locationsArrayIds,
+            $caseAResolution['location_names'] ?? [],
+            (string)($caseAResolution['reason'] ?? 'ambiguous_location_candidates'),
+            [
+                'resolution_source' => $caseAResolution['source'] ?? 'unresolved',
+                'token_userType' => $data['userType'] ?? null,
+                'isBulkInstallation' => $data['isBulkInstallation'] ?? null,
+            ]
+        );
+        error_log('[GHL_CALLBACK] Ambiguous install selection required session=' . $selectionSession['session_id']);
+        render_ambiguous_selection(
+            (string)$selectionSession['session_token'],
+            $selectionSession['candidate_locations'],
+            $companyNameFromToken
+        );
+    }
+
     // ── CASE B: True bulk install — provision ALL company locations ───────────
     error_log("[GHL_CALLBACK] Case B: true bulk install — companyId={$companyId}");
     try {
@@ -1049,7 +1191,7 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
 }
 
 // ─── Determine Location ID ────────────────────────────────────────────────────────────────
-// Prefer explicit token/query fields; never use opaque state as a standalone location id.
+// Resolve only from trusted OAuth/GHL selection signals; never infer from registration status.
 $finalResolution = install_resolve_selected_location([
     'token_location_id' => $data['locationId'] ?? ($data['location_id'] ?? null),
     'query_location_id' => $queryLocationId,
@@ -1066,11 +1208,53 @@ error_log('[GHL_CALLBACK_DEBUG] final_location_resolution=' . json_encode([
     'resolution' => $finalResolution,
     'state_present' => $state !== null && $state !== '',
 ]));
-if (!$locationId)
+if (!$locationId) {
+    $finalCandidateIds = $finalResolution['candidate_ids'] ?? [];
+    $finalCompanyId = trim((string)($data['companyId'] ?? ''));
+    if (count($finalCandidateIds) > 1 && $finalCompanyId !== '' && ($data['userType'] ?? '') === 'Company') {
+        require_once __DIR__ . '/api/jwt_helper.php';
+        $jwtSecretSelect = getenv('JWT_SECRET');
+        if ($jwtSecretSelect === false || trim((string)$jwtSecretSelect) === '') {
+            error_log('[GHL_CALLBACK] JWT_SECRET missing; cannot generate final ambiguous selection session.');
+            render_error('Server configuration error: JWT secret missing.');
+        }
+        $db = get_firestore();
+        $now = new DateTimeImmutable();
+        $finalCompanyName = install_extract_company_name($data);
+        $db->collection('ghl_tokens')->document($finalCompanyId)->set([
+            'access_token' => $data['access_token'] ?? null,
+            'refresh_token' => $data['refresh_token'] ?? null,
+            'expires_at' => time() + (int)($data['expires_in'] ?? 86400),
+            'client_id' => $ghlApps[$usedAppType]['clientId'],
+            'appId' => $ghlApps[$usedAppType]['clientId'],
+            'appType' => 'subaccount',
+            'userType' => 'Company',
+            'companyId' => $finalCompanyId,
+            'company_name' => $finalCompanyName,
+            'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+        ], ['merge' => true]);
+        $selectionSession = create_install_selection_session(
+            $db,
+            (string)$jwtSecretSelect,
+            $finalCompanyId,
+            $finalCompanyName,
+            $finalCandidateIds,
+            $finalResolution['location_names'] ?? [],
+            (string)($finalResolution['reason'] ?? 'ambiguous_location_candidates'),
+            ['resolution_source' => $finalResolution['source'] ?? 'unresolved']
+        );
+        render_ambiguous_selection(
+            (string)$selectionSession['session_token'],
+            $selectionSession['candidate_locations'],
+            $finalCompanyName
+        );
+    }
+
     render_error('No reliable Location ID returned. Please reinstall from the selected GHL sub-account.', [
         'token_response' => $data,
         'resolution' => $finalResolution,
     ]);
+}
 
 $locationIdSafe = htmlspecialchars((string)$locationId, ENT_QUOTES, 'UTF-8');
 
