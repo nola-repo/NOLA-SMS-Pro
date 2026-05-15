@@ -100,6 +100,46 @@ function install_extract_company_name(array $data): string
 }
 
 /**
+ * Merge OAuth token `locations` with a single nested `location` object when present.
+ *
+ * @return array<int, mixed>
+ */
+function install_oauth_locations_array_for_resolver(array $data): array
+{
+    $out = [];
+    if (!empty($data['location']) && is_array($data['location'])) {
+        $out[] = $data['location'];
+    }
+    if (!empty($data['locations']) && is_array($data['locations'])) {
+        foreach ($data['locations'] as $row) {
+            $out[] = $row;
+        }
+    }
+
+    return $out;
+}
+
+/**
+ * Marketplace / chooser may return the pick as selectedLocationId or nested location{}.
+ */
+function install_oauth_marketplace_selected_location_id(array $data): ?string
+{
+    foreach (['selectedLocationId', 'selected_location_id', 'selectedLocation', 'selected_location'] as $k) {
+        $id = install_clean_location_id($data[$k] ?? null);
+        if ($id !== null) {
+            return $id;
+        }
+    }
+    if (!empty($data['location']) && is_array($data['location'])) {
+        return install_clean_location_id(
+            $data['location']['id'] ?? $data['location']['locationId'] ?? $data['location']['location_id'] ?? null
+        );
+    }
+
+    return null;
+}
+
+/**
  * @return array{ids: array<int,string>, names: array<string,string>}
  */
 function install_location_rows_from_ghl($locations): array
@@ -388,13 +428,15 @@ function install_resolve_selected_location(array $signals): array
     $queryLocationId = install_clean_location_id($signals['query_location_id'] ?? null);
     $stateLocationId = install_clean_location_id($signals['state_location_id'] ?? null);
     $sessionLocationId = install_clean_location_id($signals['session_location_id'] ?? null);
+    $marketplaceSelectedId = install_clean_location_id($signals['token_marketplace_selected_id'] ?? null);
 
-    // Priority: signed session > query > OAuth state > merged approvedLocations (unique)
-    // > locations[] unique > token root locationId (last; weaker for Company installs).
+    // Priority: signed session > query > OAuth state > GHL marketplace selected fields
+    // > merged approvedLocations (unique) > locations[] unique > token root locationId.
     $tier1Order = [
         'signed_install_session' => $sessionLocationId,
         'query_location_field' => $queryLocationId,
         'oauth_state' => $stateLocationId,
+        'ghl_token_marketplace_selected' => $marketplaceSelectedId,
     ];
     $tier1SourcesById = [];
     $tier1Ids = [];

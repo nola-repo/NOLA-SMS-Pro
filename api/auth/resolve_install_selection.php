@@ -9,6 +9,8 @@
 require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 
+@set_time_limit(120);
+
 require_once __DIR__ . '/../jwt_helper.php';
 require_once __DIR__ . '/../install_helpers.php';
 require_once __DIR__ . '/../webhook/firestore_client.php';

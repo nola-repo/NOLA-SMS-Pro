@@ -132,4 +132,13 @@ if (empty($sessionSelected['ok']) || ($sessionSelected['location_id'] ?? '') !==
     exit(1);
 }
 
+$marketplaceTier = install_resolve_selected_location([
+    'token_marketplace_selected_id' => $locationId,
+    'approved_location_ids' => [$locationId, $otherLocationId],
+]);
+if (empty($marketplaceTier['ok']) || ($marketplaceTier['location_id'] ?? '') !== $locationId || strpos((string)($marketplaceTier['source'] ?? ''), 'ghl_token_marketplace_selected') === false) {
+    fwrite(STDERR, "marketplace token tier resolution failed\n");
+    exit(1);
+}
+
 echo "helper fallback and resolution checks passed\n";

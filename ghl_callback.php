@@ -149,6 +149,36 @@ function render_page(string $title, string $body_html): void
             text-align: left;
             padding-right: 4px;
         }
+
+        .selection-search-input {
+            width: 100%;
+            padding: 12px 14px 12px 40px;
+            border-radius: 14px;
+            border: 1px solid rgba(0,0,0,0.08);
+            background: #f7f7f7;
+            font-family: inherit;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            margin-bottom: 4px;
+        }
+        .selection-search-input:focus {
+            border-color: #2b83fa;
+            background: #fff;
+            box-shadow: 0 0 0 3px rgba(43,131,250,0.12);
+        }
+        .selection-search-wrap { position: relative; text-align: left; margin-bottom: 6px; }
+        .selection-search-icon {
+            position: absolute;
+            left: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 18px;
+            height: 18px;
+            color: #9aa0a6;
+            pointer-events: none;
+        }
+        .selection-option-btn { margin-top: 8px !important; }
         
         .error-pre { margin-top: 12px; font-size: 10px; color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; border-radius: 10px; padding: 10px; overflow: auto; max-height: 120px; text-align: left; white-space: pre-wrap; word-break: break-all; font-family: monospace; }
     </style>
@@ -527,6 +557,9 @@ function render_company_location_recovery_selection(
 
 function render_ambiguous_selection(string $sessionToken, array $candidateLocations, string $companyName = ''): void
 {
+    global $backendApiUrl;
+    $resolveUrl = rtrim((string)$backendApiUrl, '/') . '/api/auth/resolve-install-selection';
+    $resolveUrlJson = json_encode($resolveUrl, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT);
     $sessionTokenJson = json_encode($sessionToken, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT);
     $buttons = '';
     foreach ($candidateLocations as $row) {
@@ -535,54 +568,98 @@ function render_ambiguous_selection(string $sessionToken, array $candidateLocati
             continue;
         }
         $name = trim((string)($row['location_name'] ?? ''));
-        $label = $name !== '' ? $name : 'Unnamed Sub-account';
+        $label = $name !== '' ? $name : 'Workspace';
         $safeLabel = htmlspecialchars($label, ENT_QUOTES, 'UTF-8');
         $safeId = htmlspecialchars($id, ENT_QUOTES, 'UTF-8');
+        $searchHaystack = strtolower($label . ' ' . $name);
+        $safeSearch = htmlspecialchars($searchHaystack, ENT_QUOTES, 'UTF-8');
         $buttons .= <<<HTML
-            <button type="button" class="btn-submit" style="margin:8px 0 0; text-align:left; display:block;" data-location-id="{$safeId}" onclick="selectLocation(this)">
+            <button type="button" class="btn-submit selection-option-btn" style="text-align:left; display:block;" data-location-id="{$safeId}" data-search="{$safeSearch}" data-label="{$safeLabel}" onclick="selectLocation(this)">
                 <span style="display:block; font-weight:800;">{$safeLabel}</span>
-                <span style="display:block; font-size:11px; opacity:.85; margin-top:2px; word-break:break-all;">{$safeId}</span>
             </button>
 HTML;
     }
 
-    $companyLine = $companyName !== ''
-        ? '<p class="subtitle" style="margin-bottom:18px;">Choose the exact subaccount for ' . htmlspecialchars($companyName, ENT_QUOTES, 'UTF-8') . '.</p>'
-        : '<p class="subtitle" style="margin-bottom:18px;">Choose the exact subaccount to continue installation.</p>';
+    $companyEsc = $companyName !== '' ? htmlspecialchars($companyName, ENT_QUOTES, 'UTF-8') : '';
+    $companyLine = $companyEsc !== ''
+        ? '<p class="subtitle" style="margin-bottom:14px; line-height:1.45;">Pick the workspace you&rsquo;re finishing setup for under <strong style="color:#111;">' . $companyEsc . '</strong>.</p>'
+        : '<p class="subtitle" style="margin-bottom:14px; line-height:1.45;">Pick the workspace you&rsquo;re finishing setup for right now.</p>';
 
     $body = <<<HTML
-        <h1>Select Sub-account</h1>
+        <h1>Finish setup</h1>
         {$companyLine}
         <div id="selection-error" class="error-pre hidden"></div>
-        <div class="selection-container">{$buttons}</div>
-        <p style="font-size:11px;color:#6e6e73;line-height:1.45;margin-top:18px;">We could not verify which subaccount GoHighLevel selected, so NOLA SMS Pro needs one explicit confirmation before continuing.</p>
+        <div class="selection-search-wrap">
+            <svg class="selection-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            <label for="selection-search" class="hidden">Search workspaces</label>
+            <input type="search" id="selection-search" class="selection-search-input" placeholder="Search by workspace name…" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="search">
+        </div>
+        <div class="selection-container" id="selection-list">{$buttons}</div>
+        <p style="font-size:11px;color:#6e6e73;line-height:1.45;margin-top:14px;">If the list is long, use search to find your workspace quickly. This step keeps NOLA SMS Pro aligned with the right place in GoHighLevel.</p>
         <script>
           const INSTALL_SELECTION_TOKEN = {$sessionTokenJson};
+          const RESOLVE_SELECTION_URL = {$resolveUrlJson};
+          const searchEl = document.getElementById('selection-search');
+          (function() {
+            if (!searchEl) return;
+            searchEl.addEventListener('input', function() {
+              var q = (this.value || '').trim().toLowerCase();
+              document.querySelectorAll('.selection-option-btn').forEach(function(btn) {
+                var hay = (btn.getAttribute('data-search') || '').toLowerCase();
+                btn.style.display = !q || hay.indexOf(q) !== -1 ? 'block' : 'none';
+              });
+            });
+          })();
           async function selectLocation(btn) {
             const locationId = btn.getAttribute('data-location-id');
+            const labelRestore = btn.getAttribute('data-label') || 'Workspace';
             const err = document.getElementById('selection-error');
-            document.querySelectorAll('[data-location-id]').forEach(b => { b.disabled = true; b.style.opacity = '.65'; });
-            btn.textContent = 'Continuing...';
+            document.querySelectorAll('.selection-option-btn').forEach(b => { b.disabled = true; b.style.opacity = '.65'; });
+            if (searchEl) searchEl.disabled = true;
+            btn.textContent = '';
+            var c1 = document.createElement('span');
+            c1.style.cssText = 'display:block;font-weight:800;';
+            c1.textContent = 'Connecting your workspace…';
+            var c2 = document.createElement('span');
+            c2.style.cssText = 'display:block;font-size:12px;opacity:0.8;margin-top:6px;font-weight:500;';
+            c2.textContent = 'This can take a moment.';
+            btn.appendChild(c1);
+            btn.appendChild(c2);
             err.classList.add('hidden');
+            const ctl = new AbortController();
+            const to = setTimeout(function() { ctl.abort(); }, 90000);
             try {
-              const res = await fetch('/api/auth/resolve-install-selection', {
+              const res = await fetch(RESOLVE_SELECTION_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                body: JSON.stringify({ session_token: INSTALL_SELECTION_TOKEN, location_id: locationId })
+                body: JSON.stringify({ session_token: INSTALL_SELECTION_TOKEN, location_id: locationId }),
+                signal: ctl.signal,
+                credentials: 'same-origin'
               });
+              clearTimeout(to);
               const data = await res.json().catch(() => ({}));
-              if (!res.ok || !data.url) throw new Error(data.error || 'Could not continue installation.');
+              if (!res.ok || !data.url) throw new Error(data.error || ('Could not continue installation (' + res.status + ').'));
               window.location.assign(data.url);
             } catch (e) {
-              err.textContent = e.message || 'Could not continue installation.';
+              clearTimeout(to);
+              err.textContent = (e && e.name === 'AbortError') ? 'That step took too long. Please try again, or reopen NOLA SMS Pro from GoHighLevel.' : (e.message || 'Could not continue installation.');
               err.classList.remove('hidden');
-              document.querySelectorAll('[data-location-id]').forEach(b => { b.disabled = false; b.style.opacity = '1'; });
-              btn.innerHTML = '<span style="display:block; font-weight:800;">Try again</span><span style="display:block; font-size:11px; opacity:.85; margin-top:2px; word-break:break-all;">' + locationId + '</span>';
+              document.querySelectorAll('.selection-option-btn').forEach(b => { b.disabled = false; b.style.opacity = '1'; });
+              if (searchEl) searchEl.disabled = false;
+              btn.textContent = '';
+              var r1 = document.createElement('span');
+              r1.style.cssText = 'display:block;font-weight:800;';
+              r1.textContent = 'Try again';
+              var r2 = document.createElement('span');
+              r2.style.cssText = 'display:block;font-size:12px;opacity:0.75;margin-top:4px;';
+              r2.textContent = labelRestore;
+              btn.appendChild(r1);
+              btn.appendChild(r2);
             }
           }
         </script>
 HTML;
-    render_page('Select Sub-account', $body);
+    render_page('Finish setup', $body);
     exit;
 }
 
@@ -1042,6 +1119,10 @@ if (($data['userType'] ?? '') === 'Company') {
         'data_keys'          => array_keys($data),
         'locationId_root'    => $data['locationId'] ?? null,
         'location_id_root'   => $data['location_id'] ?? null,
+        'selectedLocationId' => $data['selectedLocationId'] ?? ($data['selected_location_id'] ?? null),
+        'location_object_id' => is_array($data['location'] ?? null)
+            ? ($data['location']['id'] ?? $data['location']['locationId'] ?? null)
+            : null,
         'approvedLocations'  => $data['approvedLocations'] ?? null,
         'locations_count'    => isset($data['locations']) ? count($data['locations']) : 0,
         'locations_preview'  => $locationsPreview,
@@ -1079,7 +1160,8 @@ if (($data['userType'] ?? '') === 'Company') {
     // ── CASE A: Single-location install from agency view ─────────────────────
     // Resolve the selected sub-account once, using trusted picker signals. This
     // avoids stale token/state values selecting a different location.
-    $hasLocationsArray = !empty($data['locations']) && is_array($data['locations']);
+    $oauthLocations = install_oauth_locations_array_for_resolver($data);
+    $hasLocationsArray = $oauthLocations !== [];
     $approvedLocationIds = install_unique_ids(array_merge(
         install_extract_location_ids_from_mixed($data['approvedLocations'] ?? null),
         install_extract_location_ids_from_mixed($data['approvedLocationIds'] ?? null)
@@ -1090,10 +1172,11 @@ if (($data['userType'] ?? '') === 'Company') {
     $stateLocationId = extract_location_id_from_state($state);
     $caseAResolution = install_resolve_selected_location([
         'token_location_id' => $data['locationId'] ?? ($data['location_id'] ?? null),
+        'token_marketplace_selected_id' => install_oauth_marketplace_selected_location_id($data),
         'query_location_id' => $queryLocationId,
         'approved_location_ids' => $approvedLocationIds,
         'query_approved_location_ids' => $queryApprovedLocationIds,
-        'locations' => $data['locations'] ?? [],
+        'locations' => $oauthLocations,
         'state_location_id' => $stateLocationId,
     ]);
     $locationsArrayIds = $caseAResolution['candidate_ids'];
@@ -1147,7 +1230,7 @@ if (($data['userType'] ?? '') === 'Company') {
         // (free — avoids a round-trip to the GHL /locations/{id} API before redirect).
         $singleLocName = '';
         if ($hasLocationsArray) {
-            foreach ($data['locations'] as $loc) {
+            foreach ($oauthLocations as $loc) {
                 if (!is_array($loc)) continue;
                 $lid = $loc['id'] ?? $loc['locationId'] ?? null;
                 if ((string)$lid === (string)$singleLocationId) {
@@ -1333,13 +1416,14 @@ if (($data['userType'] ?? '') === 'Company') {
 // Resolve only from trusted OAuth/GHL selection signals; never infer from registration status.
 $finalResolution = install_resolve_selected_location([
     'token_location_id' => $data['locationId'] ?? ($data['location_id'] ?? null),
+    'token_marketplace_selected_id' => install_oauth_marketplace_selected_location_id($data),
     'query_location_id' => $queryLocationId,
     'approved_location_ids' => install_unique_ids(array_merge(
         install_extract_location_ids_from_mixed($data['approvedLocations'] ?? null),
         install_extract_location_ids_from_mixed($data['approvedLocationIds'] ?? null)
     )),
     'query_approved_location_ids' => $queryApprovedLocationIds,
-    'locations' => $data['locations'] ?? [],
+    'locations' => install_oauth_locations_array_for_resolver($data),
     'state_location_id' => extract_location_id_from_state($state),
 ]);
 $finalResolutionMode = (string)($finalResolution['resolutionMode'] ?? ($finalResolution['status'] ?? ''));
