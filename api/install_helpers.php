@@ -12,6 +12,7 @@ if (!defined('INSTALL_STATE_FRESH_INSTALL')) {
     define('INSTALL_STATE_TOKEN_ONLY', 'TOKEN_ONLY');
     define('INSTALL_STATE_LINKED_ACCOUNT', 'LINKED_ACCOUNT');
     define('INSTALL_STATE_AMBIGUOUS', 'AMBIGUOUS');
+    define('INSTALL_STATE_SELECTION_REQUIRED', 'SELECTION_REQUIRED');
     define('INSTALL_STATE_COMPANY_MISMATCH', 'COMPANY_MISMATCH');
 }
 
@@ -95,6 +96,205 @@ function install_location_rows_from_ghl($locations): array
     }
 
     return ['ids' => $ids, 'names' => $names];
+}
+
+/**
+ * Pull one explicit GHL location id from an associative callback/state payload.
+ */
+function install_location_id_from_assoc_payload(?array $payload): ?string
+{
+    if (!$payload) {
+        return null;
+    }
+
+    foreach (['locationId', 'location_id', 'selectedLocationId', 'selected_location_id', 'activeLocationId', 'active_location_id'] as $key) {
+        $clean = install_clean_location_id($payload[$key] ?? null);
+        if ($clean !== null) {
+            return $clean;
+        }
+    }
+
+    foreach (['location_ids', 'locationIds', 'approvedLocations', 'approvedLocationIds'] as $listKey) {
+        $value = $payload[$listKey] ?? null;
+        $clean = install_clean_location_id($value);
+        if ($clean !== null) {
+            return $clean;
+        }
+        if (is_array($value) && count($value) === 1) {
+            $clean = install_clean_location_id($value[0] ?? null);
+            if ($clean !== null) {
+                return $clean;
+            }
+            if (is_array($value[0] ?? null)) {
+                $nested = install_location_id_from_assoc_payload($value[0]);
+                if ($nested !== null) {
+                    return $nested;
+                }
+            }
+        }
+    }
+
+    $locations = $payload['locations'] ?? null;
+    if (is_array($locations) && count($locations) === 1 && is_array($locations[0] ?? null)) {
+        $clean = install_clean_location_id($locations[0]['id'] ?? $locations[0]['locationId'] ?? $locations[0]['location_id'] ?? null);
+        if ($clean !== null) {
+            return $clean;
+        }
+    }
+
+    foreach (['location', 'selectedLocation', 'subaccount', 'subAccount', 'context'] as $nestedKey) {
+        if (isset($payload[$nestedKey]) && is_array($payload[$nestedKey])) {
+            $nested = install_location_id_from_assoc_payload($payload[$nestedKey]);
+            if ($nested !== null) {
+                return $nested;
+            }
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Normalize location IDs from mixed callback payload formats.
+ *
+ * @return array<int,string>
+ */
+function install_extract_location_ids_from_mixed($value): array
+{
+    $ids = [];
+    $walk = null;
+    $walk = static function ($candidate) use (&$ids, &$walk): void {
+        $clean = install_clean_location_id($candidate);
+        if ($clean !== null) {
+            $ids[] = $clean;
+            return;
+        }
+
+        if (!is_array($candidate)) {
+            return;
+        }
+
+        foreach (['id', 'locationId', 'location_id', 'selectedLocationId', 'selected_location_id', 'activeLocationId', 'active_location_id'] as $key) {
+            if (!array_key_exists($key, $candidate)) {
+                continue;
+            }
+            $clean = install_clean_location_id($candidate[$key]);
+            if ($clean !== null) {
+                $ids[] = $clean;
+            }
+        }
+
+        foreach (['locations', 'approvedLocations', 'approvedLocationIds', 'locationIds', 'location_ids', 'location', 'selectedLocation', 'subaccount', 'subAccount', 'context'] as $key) {
+            if (isset($candidate[$key]) && is_array($candidate[$key])) {
+                foreach ($candidate[$key] as $nested) {
+                    $walk($nested);
+                }
+            }
+        }
+    };
+
+    if (is_array($value)) {
+        $walk($value);
+    } elseif (is_string($value) && trim($value) !== '') {
+        $raw = trim($value);
+        $decoded = json_decode($raw, true);
+        if (is_array($decoded)) {
+            $walk($decoded);
+        } else {
+            foreach (array_map('trim', explode(',', $raw)) as $item) {
+                $walk($item);
+            }
+        }
+    }
+
+    return array_values(array_unique($ids));
+}
+
+function install_extract_location_id_from_query(array $query): ?string
+{
+    foreach (['locationId', 'location_id', 'selectedLocationId', 'selected_location_id', 'activeLocationId', 'active_location_id'] as $key) {
+        $clean = install_clean_location_id($query[$key] ?? null);
+        if ($clean !== null) {
+            return $clean;
+        }
+    }
+
+    $approvedIds = install_extract_location_ids_from_mixed($query['approvedLocations'] ?? ($query['approvedLocationIds'] ?? null));
+    if (count($approvedIds) === 1) {
+        return $approvedIds[0];
+    }
+
+    return null;
+}
+
+function install_extract_location_id_from_oauth_state(?string $state, bool $allowPlainId = true): ?string
+{
+    if (!$state) {
+        return null;
+    }
+
+    $candidates = [$state];
+    $decoded = urldecode($state);
+    if ($decoded !== $state) {
+        $candidates[] = $decoded;
+    }
+
+    foreach ($candidates as $candidate) {
+        if (!is_string($candidate) || trim($candidate) === '') {
+            continue;
+        }
+
+        $trimmed = trim($candidate);
+
+        $parsed = [];
+        parse_str($trimmed, $parsed);
+        if (!empty($parsed)) {
+            $fromQuery = install_location_id_from_assoc_payload($parsed);
+            if ($fromQuery !== null) {
+                return $fromQuery;
+            }
+        }
+
+        $json = json_decode($trimmed, true);
+        if (is_array($json)) {
+            $fromJson = install_location_id_from_assoc_payload($json);
+            if ($fromJson !== null) {
+                return $fromJson;
+            }
+        }
+
+        foreach ([$trimmed, strtr($trimmed, '-_', '+/')] as $encoded) {
+            $padded = $encoded;
+            $padLen = strlen($padded) % 4;
+            if ($padLen > 0) {
+                $padded .= str_repeat('=', 4 - $padLen);
+            }
+            $decodedPayload = base64_decode($padded, true);
+            if ($decodedPayload === false || $decodedPayload === '') {
+                continue;
+            }
+            $decodedJson = json_decode($decodedPayload, true);
+            if (is_array($decodedJson)) {
+                $fromEncodedJson = install_location_id_from_assoc_payload($decodedJson);
+                if ($fromEncodedJson !== null) {
+                    return $fromEncodedJson;
+                }
+            }
+        }
+
+        if (preg_match('/(?:locationId|location_id|selectedLocationId|selected_location_id)["=: ]+([A-Za-z0-9_-]{8,})/i', $trimmed, $m)) {
+            return $m[1];
+        }
+
+        if ($allowPlainId) {
+            $clean = install_clean_location_id($trimmed);
+            if ($clean !== null) {
+                return $clean;
+            }
+        }
+    }
+
+    return null;
 }
 
 /**
@@ -327,13 +527,20 @@ function install_location_company_mismatch($db, string $locationId, ?string $com
             return false;
         }
         $data = $snap->data();
-        if (($data['appType'] ?? '') === 'agency') {
+        $storedLocation = install_clean_location_id($data['location_id'] ?? ($data['locationId'] ?? null));
+        $storedCompany = trim((string)($data['companyId'] ?? $data['company_id'] ?? ''));
+        $isAgencyLevelDoc = (($data['appType'] ?? '') === 'agency')
+            && (($data['userType'] ?? '') !== 'Location')
+            && ($storedLocation === null || $storedLocation === $storedCompany || $locationId === $storedCompany);
+        if ($isAgencyLevelDoc) {
+            return true;
+        }
+        if ($storedLocation !== null && $storedLocation !== $locationId) {
             return true;
         }
         if ($companyId === '') {
             return false;
         }
-        $storedCompany = trim((string)($data['companyId'] ?? $data['company_id'] ?? ''));
         return $storedCompany !== '' && $storedCompany !== $companyId;
     } catch (Exception $e) {
         error_log("[install_helpers] company mismatch check failed for {$locationId}: " . $e->getMessage());

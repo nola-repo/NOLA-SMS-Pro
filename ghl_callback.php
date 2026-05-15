@@ -328,7 +328,8 @@ function create_install_selection_session(
     array $candidateIds,
     array $locationNames,
     string $reason,
-    array $debug = []
+    array $debug = [],
+    string $selectionState = INSTALL_STATE_AMBIGUOUS
 ): array {
     $candidateIds = install_unique_ids($candidateIds);
     $rows = [];
@@ -347,6 +348,7 @@ function create_install_selection_session(
         'session_id' => $sessionId,
         'company_id' => $companyId,
         'company_name' => $companyName,
+        'state' => $selectionState,
         'status' => 'needs_selection',
         'reason' => $reason,
         'candidate_locations' => $rows,
@@ -369,6 +371,142 @@ function create_install_selection_session(
         'session_token' => $sessionToken,
         'candidate_locations' => $rows,
     ];
+}
+
+/**
+ * Fetch available company locations only so the user can choose one explicitly.
+ * This function never exchanges tokens, saves subaccount tokens, or provisions.
+ *
+ * @return array{ok:bool, ids:array<int,string>, names:array<string,string>, failures:array<int,array<string,mixed>>}
+ */
+function fetch_company_locations_for_selection(string $companyId, string $companyToken): array
+{
+    $ids = [];
+    $names = [];
+    $failures = [];
+    $skip = 0;
+    $limit = 100;
+
+    do {
+        $url = 'https://services.leadconnectorhq.com/locations/search?companyId='
+            . urlencode($companyId)
+            . '&skip=' . urlencode((string)$skip)
+            . '&limit=' . urlencode((string)$limit);
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => 3,
+            CURLOPT_TIMEOUT => 10,
+            CURLOPT_HTTPHEADER => [
+                'Authorization: Bearer ' . $companyToken,
+                'Accept: application/json',
+                'Version: 2021-07-28',
+            ],
+        ]);
+        $raw = curl_exec($ch);
+        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError = curl_error($ch);
+        curl_close($ch);
+
+        if ($code < 200 || $code >= 300) {
+            $failures[] = [
+                'code' => $code,
+                'skip' => $skip,
+                'error' => $curlError,
+                'raw' => substr((string)$raw, 0, 400),
+            ];
+            break;
+        }
+
+        $body = json_decode((string)$raw, true);
+        if (!is_array($body)) {
+            $failures[] = [
+                'code' => $code,
+                'skip' => $skip,
+                'error' => 'invalid_json',
+                'raw' => substr((string)$raw, 0, 400),
+            ];
+            break;
+        }
+
+        $batch = $body['locations'] ?? [];
+        if (!is_array($batch)) {
+            $batch = [];
+        }
+
+        foreach ($batch as $loc) {
+            if (!is_array($loc)) {
+                continue;
+            }
+            $id = install_clean_location_id($loc['id'] ?? $loc['locationId'] ?? $loc['location_id'] ?? null);
+            if ($id === null || in_array($id, $ids, true)) {
+                continue;
+            }
+            $ids[] = $id;
+            $name = trim((string)($loc['name'] ?? $loc['location_name'] ?? $loc['locationName'] ?? ''));
+            if ($name !== '') {
+                $names[$id] = $name;
+            }
+        }
+
+        $skip += $limit;
+    } while (!empty($batch) && count($batch) === $limit && count($ids) < 1000);
+
+    return [
+        'ok' => empty($failures) && !empty($ids),
+        'ids' => $ids,
+        'names' => $names,
+        'failures' => $failures,
+    ];
+}
+
+function render_company_location_recovery_selection(
+    $db,
+    string $jwtSecret,
+    string $companyId,
+    string $companyName,
+    string $companyToken,
+    array $resolution,
+    array $debug = []
+): void {
+    $available = fetch_company_locations_for_selection($companyId, $companyToken);
+    error_log('[GHL_CALLBACK] selection_required_locations_fetch=' . json_encode([
+        'companyId' => $companyId,
+        'ok' => $available['ok'],
+        'count' => count($available['ids']),
+        'failures' => $available['failures'],
+    ]));
+
+    if (!$available['ok']) {
+        render_error('GoHighLevel did not identify the selected sub-account, and NOLA SMS Pro could not load the company sub-account list for explicit selection. Please try the Marketplace install again.', [
+            'state' => INSTALL_STATE_SELECTION_REQUIRED,
+            'companyId' => $companyId,
+            'resolution' => $resolution,
+            'location_fetch_failures' => $available['failures'],
+        ]);
+    }
+
+    $selectionSession = create_install_selection_session(
+        $db,
+        $jwtSecret,
+        $companyId,
+        $companyName,
+        $available['ids'],
+        $available['names'],
+        (string)($resolution['reason'] ?? 'no_location_signal'),
+        $debug + [
+            'resolution_source' => $resolution['source'] ?? 'unresolved',
+            'recovery' => 'company_locations_search',
+        ],
+        INSTALL_STATE_SELECTION_REQUIRED
+    );
+
+    error_log('[GHL_CALLBACK] Selection-required install recovery session=' . $selectionSession['session_id']);
+    render_ambiguous_selection(
+        (string)$selectionSession['session_token'],
+        $selectionSession['candidate_locations'],
+        $companyName
+    );
 }
 
 function render_ambiguous_selection(string $sessionToken, array $candidateLocations, string $companyName = ''): void
@@ -842,12 +980,12 @@ $ghlApps = [
 // the user selected one subaccount. This callback is still single-location
 // only: resolve the selected location, exchange only that location token, or
 // stop/ask for explicit selection. Never provision the whole company here.
-if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Company') {
+if (($data['userType'] ?? '') === 'Company') {
     error_log('[GHL_CALLBACK_DEBUG] branch=company_scoped_selected_install companyId=' . ($data['companyId'] ?? ''));
     // This is the subaccount app; use subaccount credentials throughout.
     $companyId          = $data['companyId'] ?? null;
     $subaccountClientId = $ghlApps['subaccount']['clientId'];
-    $companyToken       = $data['access_token'];
+    $companyToken       = (string)($data['access_token'] ?? '');
     $companyRefresh     = $data['refresh_token'] ?? null;
     $expiresIn          = (int)($data['expires_in'] ?? 86400);
     $companyExpiresAt   = time() + $expiresIn;
@@ -855,6 +993,9 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
 
     if (!$companyId) {
         render_error('Company-scoped install received no companyId in token response.', $data);
+    }
+    if ($companyToken === '') {
+        render_error('Company-scoped install received no company access token.', $data);
     }
 
     error_log("[GHL_CALLBACK] Company-scoped selected install detected; resolving one selected location for companyId={$companyId}.");
@@ -1128,6 +1269,29 @@ if (!empty($data['isBulkInstallation']) && ($data['userType'] ?? '') === 'Compan
         );
     }
 
+    if (empty($locationsArrayIds)) {
+        require_once __DIR__ . '/api/jwt_helper.php';
+        $jwtSecretSelect = getenv('JWT_SECRET');
+        if ($jwtSecretSelect === false || trim((string)$jwtSecretSelect) === '') {
+            error_log('[GHL_CALLBACK] JWT_SECRET missing; cannot generate selection-required recovery session.');
+            render_error('Server configuration error: JWT secret missing.');
+        }
+
+        render_company_location_recovery_selection(
+            $db,
+            (string)$jwtSecretSelect,
+            (string)$companyId,
+            $companyNameFromToken,
+            (string)$companyToken,
+            $caseAResolution,
+            [
+                'token_userType' => $data['userType'] ?? null,
+                'isBulkInstallation' => $data['isBulkInstallation'] ?? null,
+                'state_present' => $state !== null && $state !== '',
+            ]
+        );
+    }
+
     error_log('[GHL_CALLBACK] Subaccount callback refused bulk provisioning without an exact selected location.');
     render_error('No reliable selected sub-account was returned by GoHighLevel. Please reinstall and select exactly one sub-account from the Marketplace install modal.', [
         'state' => INSTALL_STATE_AMBIGUOUS,
@@ -1158,11 +1322,11 @@ error_log('[GHL_CALLBACK_DEBUG] final_location_resolution=' . json_encode([
 if (!$locationId) {
     $finalCandidateIds = $finalResolution['candidate_ids'] ?? [];
     $finalCompanyId = trim((string)($data['companyId'] ?? ''));
-    if (count($finalCandidateIds) > 1 && $finalCompanyId !== '' && ($data['userType'] ?? '') === 'Company') {
+    if ($finalCompanyId !== '' && ($data['userType'] ?? '') === 'Company') {
         require_once __DIR__ . '/api/jwt_helper.php';
         $jwtSecretSelect = getenv('JWT_SECRET');
         if ($jwtSecretSelect === false || trim((string)$jwtSecretSelect) === '') {
-            error_log('[GHL_CALLBACK] JWT_SECRET missing; cannot generate final ambiguous selection session.');
+            error_log('[GHL_CALLBACK] JWT_SECRET missing; cannot generate final selection session.');
             render_error('Server configuration error: JWT secret missing.');
         }
         $db = get_firestore();
@@ -1180,21 +1344,39 @@ if (!$locationId) {
             'company_name' => $finalCompanyName,
             'updated_at' => new \Google\Cloud\Core\Timestamp($now),
         ], ['merge' => true]);
-        $selectionSession = create_install_selection_session(
-            $db,
-            (string)$jwtSecretSelect,
-            $finalCompanyId,
-            $finalCompanyName,
-            $finalCandidateIds,
-            $finalResolution['location_names'] ?? [],
-            (string)($finalResolution['reason'] ?? 'ambiguous_location_candidates'),
-            ['resolution_source' => $finalResolution['source'] ?? 'unresolved']
-        );
-        render_ambiguous_selection(
-            (string)$selectionSession['session_token'],
-            $selectionSession['candidate_locations'],
-            $finalCompanyName
-        );
+
+        if (count($finalCandidateIds) > 1) {
+            $selectionSession = create_install_selection_session(
+                $db,
+                (string)$jwtSecretSelect,
+                $finalCompanyId,
+                $finalCompanyName,
+                $finalCandidateIds,
+                $finalResolution['location_names'] ?? [],
+                (string)($finalResolution['reason'] ?? 'ambiguous_location_candidates'),
+                ['resolution_source' => $finalResolution['source'] ?? 'unresolved']
+            );
+            render_ambiguous_selection(
+                (string)$selectionSession['session_token'],
+                $selectionSession['candidate_locations'],
+                $finalCompanyName
+            );
+        }
+
+        if (empty($finalCandidateIds) && !empty($data['access_token'])) {
+            render_company_location_recovery_selection(
+                $db,
+                (string)$jwtSecretSelect,
+                $finalCompanyId,
+                $finalCompanyName,
+                (string)$data['access_token'],
+                $finalResolution,
+                [
+                    'token_userType' => $data['userType'] ?? null,
+                    'state_present' => $state !== null && $state !== '',
+                ]
+            );
+        }
     }
 
     render_error('No reliable Location ID returned. Please reinstall from the selected GHL sub-account.', [

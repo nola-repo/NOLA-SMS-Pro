@@ -22,14 +22,16 @@ Agency installs are separate and enter through `/oauth/agency-callback`.
    - `approvedLocations` with exactly one location
    - `locations[]` with exactly one location
 3. If multiple candidate locations remain and no exact signal chooses one, return `AMBIGUOUS` and show the explicit selection screen.
-4. After one selected `locationId` is known, check company ownership against `ghl_tokens/{locationId}`.
-5. Save or refresh the location token idempotently.
-6. Classify install state from token existence plus canonical ownership.
-7. Route:
+4. If a company token was returned but no selected location signal or callback candidates exist, return `SELECTION_REQUIRED`, fetch company locations for display only, and show the explicit selection screen.
+5. After one selected `locationId` is known, check company ownership against `ghl_tokens/{locationId}`.
+6. Save or refresh the location token idempotently.
+7. Classify install state from token existence plus canonical ownership.
+8. Route:
    - `FRESH_INSTALL` -> `/register?install_token=...`
    - `TOKEN_ONLY` -> `/register?install_token=...`
    - `LINKED_ACCOUNT` -> `/login?welcome_back=1&location_id=...`
    - `AMBIGUOUS` -> selection screen
+   - `SELECTION_REQUIRED` -> selection screen populated from company locations
    - `COMPANY_MISMATCH` -> hard-stop error
 
 Registration status is never used as a location selection signal.
@@ -42,6 +44,7 @@ Registration status is never used as a location selection signal.
 | `TOKEN_ONLY` | `ghl_tokens/{locationId}` exists and no canonical owner | registration continuation |
 | `LINKED_ACCOUNT` | canonical owner exists | login |
 | `AMBIGUOUS` | multiple candidates and no exact selected location | explicit selection |
+| `SELECTION_REQUIRED` | OAuth succeeded with a company token/companyId but no exact selected location signal | fetch company locations and require explicit user selection |
 | `COMPANY_MISMATCH` | selected location token belongs to another company | hard-stop error |
 
 ## Corrected PHP Architecture
@@ -108,12 +111,15 @@ Company-scoped token with multiple candidates and no exact selection:
 4. Show selection screen.
 5. `/api/auth/resolve-install-selection` validates session and selected location, exchanges only that selected location token, saves docs, classifies, and returns the redirect URL.
 
-Company-scoped token with no exact selection and no usable candidates:
+Company-scoped token with no exact selection and no usable callback candidates:
 
-1. Stop with an error.
-2. Do not create a bulk provisioning session.
-3. Do not call `/api/agency/install/provision`.
-4. Do not redirect to `/login?bulk_install=1`.
+1. Save the company token.
+2. Create `install_sessions/{sessionId}` with `state=SELECTION_REQUIRED`.
+3. Fetch available locations from GHL using `/locations/search?companyId=...` for display only.
+4. Show the explicit selection screen.
+5. `/api/auth/resolve-install-selection` validates the signed session and exchanges only the selected location token.
+6. Continue through the normal deterministic register/login routing.
+7. Do not create a bulk provisioning session, call `/api/agency/install/provision`, or redirect to `/login?bulk_install=1`.
 
 ## Bulk Provisioning Boundary
 
@@ -130,6 +136,7 @@ The selected subaccount callback may receive a Company-scoped token from GHL, bu
 ## Edge Cases
 
 - Multiple candidates, no exact signal: never choose the unregistered/newest/first location.
+- No candidates from the callback but a company token exists: never fail install or guess; fetch company locations and require the user to select one.
 - Token exists, no owner: continue registration, not login.
 - Owner exists: login, even if stale aliases disagree.
 - Canonical owner conflicts with submitted registration email/user id: return ownership conflict.
