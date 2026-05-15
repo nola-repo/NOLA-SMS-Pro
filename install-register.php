@@ -326,6 +326,9 @@ if ($locationId) {
         if (($installClass['status'] ?? '') === INSTALL_STATE_COMPANY_MISMATCH) {
             ir_page('Sub-account Mismatch', '<div style="text-align:center;"><h1>Sub-account Mismatch</h1><p class="subtitle">This install link does not match the selected GoHighLevel sub-account. Please reinstall from the correct sub-account.</p></div>');
         }
+        if (($installClass['status'] ?? '') === INSTALL_STATE_INSTALL_PENDING) {
+            ir_page('Install Pending', '<div style="text-align:center;"><h1>Install Pending</h1><p class="subtitle">OAuth is still being resolved for this sub-account. Please restart the Marketplace install if this page does not continue.</p></div>');
+        }
         if (!empty($installClass['linked'])) {
             $loginName = $locationNameRaw !== '' ? $locationNameRaw : ($companyNameRaw !== '' ? $companyNameRaw : 'Your Sub-Account');
             $redirectUrl = 'https://smspro-api.nolacrm.io/login?welcome_back=1&name=' . urlencode($loginName)

@@ -14,6 +14,10 @@ if (!defined('INSTALL_STATE_FRESH_INSTALL')) {
     define('INSTALL_STATE_AMBIGUOUS', 'AMBIGUOUS');
     define('INSTALL_STATE_SELECTION_REQUIRED', 'SELECTION_REQUIRED');
     define('INSTALL_STATE_COMPANY_MISMATCH', 'COMPANY_MISMATCH');
+    define('INSTALL_STATE_PENDING_OAUTH', 'PENDING_OAUTH');
+    define('INSTALL_STATE_INSTALLED', 'INSTALLED');
+    define('INSTALL_STATE_INSTALL_PENDING', 'INSTALL_PENDING');
+    define('INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION', 'EXACT_SINGLE_LOCATION');
 }
 
 function install_clean_location_id($value): ?string
@@ -107,7 +111,7 @@ function install_location_id_from_assoc_payload(?array $payload): ?string
         return null;
     }
 
-    foreach (['locationId', 'location_id', 'selectedLocationId', 'selected_location_id', 'activeLocationId', 'active_location_id'] as $key) {
+    foreach (['locationId', 'location_id', 'selected_location_id'] as $key) {
         $clean = install_clean_location_id($payload[$key] ?? null);
         if ($clean !== null) {
             return $clean;
@@ -174,7 +178,7 @@ function install_extract_location_ids_from_mixed($value): array
             return;
         }
 
-        foreach (['id', 'locationId', 'location_id', 'selectedLocationId', 'selected_location_id', 'activeLocationId', 'active_location_id'] as $key) {
+        foreach (['id', 'locationId', 'location_id', 'selected_location_id'] as $key) {
             if (!array_key_exists($key, $candidate)) {
                 continue;
             }
@@ -212,7 +216,7 @@ function install_extract_location_ids_from_mixed($value): array
 
 function install_extract_location_id_from_query(array $query): ?string
 {
-    foreach (['locationId', 'location_id', 'selectedLocationId', 'selected_location_id', 'activeLocationId', 'active_location_id'] as $key) {
+    foreach (['locationId', 'location_id', 'selected_location_id'] as $key) {
         $clean = install_clean_location_id($query[$key] ?? null);
         if ($clean !== null) {
             return $clean;
@@ -227,7 +231,7 @@ function install_extract_location_id_from_query(array $query): ?string
     return null;
 }
 
-function install_extract_location_id_from_oauth_state(?string $state, bool $allowPlainId = true): ?string
+function install_extract_location_id_from_oauth_state(?string $state, bool $allowPlainId = false): ?string
 {
     if (!$state) {
         return null;
@@ -282,7 +286,7 @@ function install_extract_location_id_from_oauth_state(?string $state, bool $allo
             }
         }
 
-        if (preg_match('/(?:locationId|location_id|selectedLocationId|selected_location_id)["=: ]+([A-Za-z0-9_-]{8,})/i', $trimmed, $m)) {
+        if (preg_match('/(?:locationId|location_id|selected_location_id)["=: ]+([A-Za-z0-9_-]{8,})/i', $trimmed, $m)) {
             return $m[1];
         }
 
@@ -319,184 +323,216 @@ function install_resolve_selected_location(array $signals): array
     $locationIds = $rows['ids'];
     $locationNames = $rows['names'];
 
-    $approvedIds = install_unique_ids(array_merge(
-        is_array($signals['approved_location_ids'] ?? null) ? $signals['approved_location_ids'] : [],
+    $approvedSignalIds = install_unique_ids(
+        is_array($signals['approved_location_ids'] ?? null) ? $signals['approved_location_ids'] : []
+    );
+    $queryApprovedSignalIds = install_unique_ids(
         is_array($signals['query_approved_location_ids'] ?? null) ? $signals['query_approved_location_ids'] : []
-    ));
+    );
+    $approvedIds = install_unique_ids(array_merge($approvedSignalIds, $queryApprovedSignalIds));
 
-    $candidateIds = install_unique_ids(array_merge($locationIds, $approvedIds));
     $tokenLocationId = install_clean_location_id($signals['token_location_id'] ?? null);
     $queryLocationId = install_clean_location_id($signals['query_location_id'] ?? null);
     $stateLocationId = install_clean_location_id($signals['state_location_id'] ?? null);
     $sessionLocationId = install_clean_location_id($signals['session_location_id'] ?? null);
 
-    $selectedFromList = null;
-    $selectedSource = '';
-
-    if (count($locationIds) === 1) {
-        $selectedFromList = $locationIds[0];
-        $selectedSource = 'locations_single';
-    }
-
-    if (count($approvedIds) === 1) {
-        $approvedOnly = $approvedIds[0];
-        if (empty($locationIds) || in_array($approvedOnly, $locationIds, true)) {
-            $selectedFromList = $approvedOnly;
-            $selectedSource = 'approved_locations_single';
-        } elseif ($selectedFromList !== null && $selectedFromList !== $approvedOnly) {
-            return [
-                'ok' => false,
-                'location_id' => null,
-                'source' => 'picker_conflict',
-                'reason' => 'locations_single_conflicts_with_approved_locations_single',
-                'candidate_ids' => $candidateIds,
-                'location_names' => $locationNames,
-                'conflict' => [
-                    'locations_single' => $selectedFromList,
-                    'approved_locations_single' => $approvedOnly,
-                ],
-            ];
+    $exactCandidates = [];
+    $sourcesById = [];
+    $addExactCandidate = static function (?string $id, string $source) use (&$exactCandidates, &$sourcesById): void {
+        $clean = install_clean_location_id($id);
+        if ($clean === null) {
+            return;
         }
-    }
-
-    if ($selectedFromList !== null) {
-        $conflict = [];
-        foreach ([
-            'session_location_id' => $sessionLocationId,
-            'query_location_id' => $queryLocationId,
-            'state_location_id' => $stateLocationId,
-        ] as $key => $directId) {
-            if ($directId !== null && $directId !== $selectedFromList) {
-                return [
-                    'ok' => false,
-                    'location_id' => null,
-                    'source' => $key,
-                    'reason' => 'exact_location_signal_conflicts_with_picker',
-                    'candidate_ids' => $candidateIds,
-                    'location_names' => $locationNames,
-                    'conflict' => [
-                        'picker_location_id' => $selectedFromList,
-                        $key => $directId,
-                    ],
-                ];
-            }
+        $exactCandidates[] = $clean;
+        if (!isset($sourcesById[$clean])) {
+            $sourcesById[$clean] = [];
         }
-        if ($tokenLocationId !== null && $tokenLocationId !== $selectedFromList) {
-            $conflict['token_location_id'] = $tokenLocationId;
+        if (!in_array($source, $sourcesById[$clean], true)) {
+            $sourcesById[$clean][] = $source;
         }
+    };
 
-        $result = [
-            'ok' => true,
-            'location_id' => $selectedFromList,
-            'source' => $selectedSource,
-            'reason' => empty($conflict) ? 'selected_from_ghl_picker' : 'selected_picker_value_overrode_conflicting_direct_signal',
-            'candidate_ids' => $candidateIds,
-            'location_names' => $locationNames,
-        ];
-        if (!empty($conflict)) {
-            $result['conflict'] = $conflict;
-        }
-
-        return $result;
-    }
-
-    $trustedDirectSignals = [];
     foreach ([
         'signed_install_session' => $sessionLocationId,
         'query_location_field' => $queryLocationId,
         'oauth_state' => $stateLocationId,
         'token_location_field' => $tokenLocationId,
     ] as $source => $directId) {
-        if ($directId !== null) {
-            $trustedDirectSignals[] = ['source' => $source, 'id' => $directId];
-        }
+        $addExactCandidate($directId, $source);
     }
 
-    $nonTokenExact = array_values(array_filter(
-        $trustedDirectSignals,
-        static fn(array $row): bool => $row['source'] !== 'token_location_field'
-    ));
-
-    $selectedDirect = null;
-    $selectedDirectSource = '';
-    $directConflicts = [];
-    foreach (!empty($nonTokenExact) ? $nonTokenExact : $trustedDirectSignals as $row) {
-        if ($selectedDirect === null) {
-            $selectedDirect = $row['id'];
-            $selectedDirectSource = $row['source'];
-            continue;
-        }
-
-        if ($selectedDirect !== $row['id']) {
-            $directConflicts[$row['source']] = $row['id'];
-        }
+    if (count($approvedSignalIds) === 1) {
+        $addExactCandidate($approvedSignalIds[0], 'approved_locations_single');
     }
 
-    if (!empty($directConflicts)) {
-        $directConflicts[$selectedDirectSource] = $selectedDirect;
+    if (count($queryApprovedSignalIds) === 1) {
+        $addExactCandidate($queryApprovedSignalIds[0], 'query_approved_locations_single');
+    }
+
+    if (count($locationIds) === 1) {
+        $addExactCandidate($locationIds[0], 'locations_single');
+    }
+
+    $exactCandidates = install_unique_ids($exactCandidates);
+    $candidateIds = install_unique_ids(array_merge($exactCandidates, $locationIds, $approvedIds));
+
+    if (count($exactCandidates) === 1) {
+        $locationId = $exactCandidates[0];
+        return [
+            'ok' => true,
+            'status' => INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION,
+            'resolutionMode' => INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION,
+            'locationId' => $locationId,
+            'location_id' => $locationId,
+            'source' => implode('+', $sourcesById[$locationId] ?? ['exact_single_location']),
+            'reason' => 'exact_single_location',
+            'candidate_ids' => $candidateIds,
+            'location_names' => $locationNames,
+        ];
+    }
+
+    if (count($exactCandidates) > 1) {
         return [
             'ok' => false,
+            'status' => INSTALL_STATE_AMBIGUOUS,
+            'resolutionMode' => INSTALL_STATE_AMBIGUOUS,
+            'locationId' => null,
             'location_id' => null,
-            'source' => 'direct_signal_conflict',
+            'source' => 'conflicting_exact_signals',
             'reason' => 'conflicting_exact_location_signals',
-            'candidate_ids' => install_unique_ids(array_merge($candidateIds, array_values($directConflicts))),
-            'location_names' => $locationNames,
-            'conflict' => $directConflicts,
-        ];
-    }
-
-    if ($selectedDirect !== null) {
-        $conflict = [];
-        if (!empty($candidateIds) && !in_array($selectedDirect, $candidateIds, true)) {
-            return [
-                'ok' => false,
-                'location_id' => null,
-                'source' => $selectedDirectSource,
-                'reason' => 'direct_location_conflicts_with_ghl_candidates',
-                'candidate_ids' => $candidateIds,
-                'location_names' => $locationNames,
-                'conflict' => ['direct_location_id' => $selectedDirect],
-            ];
-        }
-
-        if ($tokenLocationId !== null && $selectedDirectSource !== 'token_location_field' && $tokenLocationId !== $selectedDirect) {
-            $conflict['token_location_id'] = $tokenLocationId;
-        }
-
-        $result = [
-            'ok' => true,
-            'location_id' => $selectedDirect,
-            'source' => $selectedDirectSource,
-            'reason' => 'direct_location_signal',
             'candidate_ids' => $candidateIds,
             'location_names' => $locationNames,
-        ];
-        if (!empty($conflict)) {
-            $result['conflict'] = $conflict;
-        }
-
-        return $result;
-    }
-
-    if (count($candidateIds) === 1) {
-        return [
-            'ok' => true,
-            'location_id' => $candidateIds[0],
-            'source' => 'single_trusted_candidate',
-            'reason' => 'only_one_trusted_candidate',
-            'candidate_ids' => $candidateIds,
-            'location_names' => $locationNames,
+            'conflict' => $sourcesById,
         ];
     }
 
+    $pendingStatus = count($candidateIds) > 1 ? INSTALL_STATE_AMBIGUOUS : INSTALL_STATE_SELECTION_REQUIRED;
     return [
         'ok' => false,
+        'status' => $pendingStatus,
+        'resolutionMode' => $pendingStatus,
+        'locationId' => null,
         'location_id' => null,
         'source' => 'unresolved',
         'reason' => count($candidateIds) > 1 ? 'ambiguous_location_candidates' : 'no_location_signal',
         'candidate_ids' => $candidateIds,
         'location_names' => $locationNames,
     ];
+}
+
+function install_final_install_checkpoint(?string $locationId, string $resolutionMode): array
+{
+    $locationId = install_clean_location_id($locationId);
+    if (!$locationId || $resolutionMode !== INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION) {
+        return [
+            'ok' => false,
+            'status' => INSTALL_STATE_INSTALL_PENDING,
+            'message' => 'OAuth not fully resolved',
+        ];
+    }
+
+    return [
+        'ok' => true,
+        'status' => INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION,
+        'locationId' => $locationId,
+        'message' => 'OAuth fully resolved',
+    ];
+}
+
+function install_summarize_classification(array $classification): array
+{
+    return [
+        'status' => (string)($classification['status'] ?? ''),
+        'token_exists' => (bool)($classification['token_exists'] ?? false),
+        'linked' => (bool)($classification['linked'] ?? false),
+        'mismatch' => (bool)($classification['mismatch'] ?? false),
+    ];
+}
+
+function install_finalize_location_install(
+    $db,
+    string $locationId,
+    array $decision,
+    string $resolutionMode,
+    string $resolutionSource,
+    DateTimeImmutable $now
+): void {
+    $checkpoint = install_final_install_checkpoint($locationId, $resolutionMode);
+    if (empty($checkpoint['ok'])) {
+        throw new RuntimeException((string)($checkpoint['message'] ?? 'OAuth not fully resolved'));
+    }
+
+    $classification = is_array($decision['classification'] ?? null) ? $decision['classification'] : [];
+    $installStatus = (string)($decision['status'] ?? ($classification['status'] ?? ''));
+    $redirectKind = (string)($decision['kind'] ?? '');
+    $summary = install_summarize_classification($classification);
+    $timestamp = new \Google\Cloud\Core\Timestamp($now);
+
+    $tokenRef = $db->collection('ghl_tokens')->document($locationId);
+    $tokenSnap = $tokenRef->snapshot();
+    $tokenData = $tokenSnap->exists() ? $tokenSnap->data() : [];
+    $tokenInstallData = [
+        'install_state' => INSTALL_STATE_INSTALLED,
+        'install_status' => $installStatus,
+        'install_resolution_mode' => $resolutionMode,
+        'install_resolution_source' => $resolutionSource,
+        'install_redirect_kind' => $redirectKind,
+        'install_classification' => $summary,
+        'install_completed_at' => $timestamp,
+        'provisioned_from_selection' => $resolutionSource === 'signed_install_selection'
+            || strpos($resolutionSource, 'locations_single') !== false
+            || strpos($resolutionSource, 'approved_locations_single') !== false
+            || strpos($resolutionSource, 'query_approved_locations_single') !== false,
+        'is_live' => true,
+        'toggle_enabled' => true,
+        'updated_at' => $timestamp,
+    ];
+
+    $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
+    $intRef = $db->collection('integrations')->document($intDocId);
+    $intSnap = $intRef->snapshot();
+    $intData = $intSnap->exists() ? $intSnap->data() : [];
+
+    $integrationData = [
+        'location_id' => $locationId,
+        'location_name' => (string)($tokenData['location_name'] ?? ''),
+        'companyId' => $tokenData['companyId'] ?? ($tokenData['company_id'] ?? null),
+        'company_name' => (string)($tokenData['company_name'] ?? ''),
+        'access_token' => $tokenData['access_token'] ?? null,
+        'refresh_token' => $tokenData['refresh_token'] ?? null,
+        'scope' => $tokenData['scope'] ?? null,
+        'expires_at' => $tokenData['expires_at'] ?? null,
+        'client_id' => $tokenData['client_id'] ?? ($tokenData['appId'] ?? null),
+        'app_type' => $tokenData['appType'] ?? 'subaccount',
+        'install_state' => INSTALL_STATE_INSTALLED,
+        'install_status' => $installStatus,
+        'install_resolution_mode' => $resolutionMode,
+        'install_resolution_source' => $resolutionSource,
+        'install_redirect_kind' => $redirectKind,
+        'install_completed_at' => $timestamp,
+        'updated_at' => $timestamp,
+    ];
+
+    if (!$intSnap->exists() || !array_key_exists('free_credits_total', $intData)) {
+        $integrationData['free_credits_total'] = 10;
+    }
+    if (!$intSnap->exists() || !array_key_exists('free_usage_count', $intData)) {
+        $integrationData['free_usage_count'] = 0;
+    }
+    if (!$intSnap->exists() || !array_key_exists('credit_balance', $intData)) {
+        $integrationData['credit_balance'] = 0;
+    }
+    if (!$intSnap->exists() || !array_key_exists('system_default_sender', $intData)) {
+        $integrationData['system_default_sender'] = 'NOLASMSPro';
+    }
+    if (!$intSnap->exists() || !array_key_exists('installed_at', $intData)) {
+        $integrationData['installed_at'] = $timestamp;
+    }
+
+    $batch = $db->batch();
+    $batch->set($intRef, $integrationData, ['merge' => true]);
+    $batch->set($tokenRef, $tokenInstallData, ['merge' => true]);
+    $batch->commit();
 }
 
 function install_token_doc_exists($db, string $locationId): bool
@@ -997,7 +1033,33 @@ function install_user_linked_to_location($db, string $uid, string $locationId, ?
 function install_classify_location($db, string $locationId, ?string $companyId = null, ?bool $tokenExistedBefore = null): array
 {
     $locationId = trim($locationId);
-    $tokenExists = $tokenExistedBefore ?? install_token_doc_exists($db, $locationId);
+    $tokenData = [];
+    $storedInstallState = '';
+    $tokenSnapExists = false;
+    try {
+        $tokenSnapForState = $db->collection('ghl_tokens')->document($locationId)->snapshot();
+        if ($tokenSnapForState->exists()) {
+            $tokenSnapExists = true;
+            $tokenData = $tokenSnapForState->data();
+            $storedInstallState = (string)($tokenData['install_state'] ?? '');
+        }
+    } catch (Exception $e) {
+        error_log("[install_helpers] token state lookup failed for {$locationId}: " . $e->getMessage());
+    }
+
+    $tokenExists = $tokenExistedBefore ?? $tokenSnapExists;
+    $pendingOAuth = $tokenExistedBefore === null && $storedInstallState === INSTALL_STATE_PENDING_OAUTH;
+    if ($pendingOAuth) {
+        return [
+            'status' => INSTALL_STATE_INSTALL_PENDING,
+            'token_exists' => $tokenExists,
+            'linked' => false,
+            'linked_account' => null,
+            'mismatch' => false,
+            'install_state' => $storedInstallState,
+        ];
+    }
+
     $mismatch = install_location_company_mismatch($db, $locationId, $companyId);
     $linkedAccount = install_linked_account_for_location($db, $locationId);
     $linked = $linkedAccount !== null;
@@ -1021,6 +1083,7 @@ function install_classify_location($db, string $locationId, ?string $companyId =
         'linked' => $linked,
         'linked_account' => $linkedAccount,
         'mismatch' => $mismatch,
+        'install_state' => $storedInstallState,
     ];
 }
 
@@ -1219,6 +1282,15 @@ function install_decide_location_redirect(
         return [
             'kind' => 'error',
             'status' => INSTALL_STATE_COMPANY_MISMATCH,
+            'url' => null,
+            'classification' => $classification,
+        ];
+    }
+
+    if (($classification['status'] ?? '') === INSTALL_STATE_INSTALL_PENDING) {
+        return [
+            'kind' => 'pending',
+            'status' => INSTALL_STATE_INSTALL_PENDING,
             'url' => null,
             'classification' => $classification,
         ];

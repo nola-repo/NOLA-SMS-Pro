@@ -180,6 +180,9 @@ if ($locationIdRaw !== '') {
             if (($loginInstallClass['status'] ?? '') === INSTALL_STATE_COMPANY_MISMATCH) {
                 il_page('Sub-account Mismatch', '<div class="error-box">This login link does not match the selected GoHighLevel sub-account. Please reinstall from the correct sub-account.</div>');
             }
+            if (($loginInstallClass['status'] ?? '') === INSTALL_STATE_INSTALL_PENDING) {
+                il_page('Install Pending', '<div class="error-box">OAuth is still being resolved for this sub-account. Please restart the Marketplace install if this page does not continue.</div>');
+            }
             if (!empty($loginInstallClass['token_exists']) && empty($loginInstallClass['linked'])) {
                 $locSnap = $dbForInstall->collection('ghl_tokens')->document($locationIdRaw)->snapshot();
                 $locData = $locSnap->exists() ? $locSnap->data() : [];
@@ -364,7 +367,7 @@ if ($isBulkInstall) {
     try {
         $dbForFooter = isset($dbForInstall) ? $dbForInstall : get_firestore();
         $footerClass = $loginInstallClass ?: install_classify_location($dbForFooter, $locationIdRaw);
-        if (!empty($footerClass['token_exists']) && empty($footerClass['linked'])) {
+        if (($footerClass['status'] ?? '') !== INSTALL_STATE_INSTALL_PENDING && !empty($footerClass['token_exists']) && empty($footerClass['linked'])) {
             $locSnap = $dbForFooter->collection('ghl_tokens')->document($locationIdRaw)->snapshot();
             $locData = $locSnap->exists() ? $locSnap->data() : [];
             $jwtSecretFooter = getenv('JWT_SECRET');

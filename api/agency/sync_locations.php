@@ -13,6 +13,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 require_once __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/../services/GhlClient.php';
+require_once __DIR__ . '/../install_helpers.php';
 
 $db = get_firestore();
 
@@ -22,12 +23,18 @@ try {
     $tokenData = null;
     $query = $db->collection('ghl_tokens')
         ->where('companyId', '==', $agency_id)
-        ->limit(1)
         ->documents();
 
     foreach ($query as $doc) {
         if ($doc->exists()) {
-            $tokenData = $doc->data();
+            $candidate = $doc->data();
+            if (($candidate['install_state'] ?? '') === INSTALL_STATE_PENDING_OAUTH) {
+                continue;
+            }
+            if (($candidate['appType'] ?? '') !== 'agency') {
+                continue;
+            }
+            $tokenData = $candidate;
             $tokenData['id'] = $doc->id();
             break;
         }
@@ -37,8 +44,11 @@ try {
         // Fallback: check if the agency_id itself is the document ID
         $doc = $db->collection('ghl_tokens')->document($agency_id)->snapshot();
         if ($doc->exists()) {
-            $tokenData = $doc->data();
-            $tokenData['id'] = $doc->id();
+            $candidate = $doc->data();
+            if (($candidate['install_state'] ?? '') !== INSTALL_STATE_PENDING_OAUTH) {
+                $tokenData = $candidate;
+                $tokenData['id'] = $doc->id();
+            }
         }
     }
 

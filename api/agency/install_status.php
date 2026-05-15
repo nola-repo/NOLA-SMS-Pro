@@ -92,6 +92,9 @@ function install_status_infer_single_location_for_company($db, string $companyId
             if (($data['appType'] ?? '') === 'agency' || $doc->id() === $companyId) {
                 continue;
             }
+            if (($data['install_state'] ?? '') === INSTALL_STATE_PENDING_OAUTH) {
+                continue;
+            }
             $locationId = install_clean_location_id($data['location_id'] ?? $data['locationId'] ?? $doc->id());
             if ($locationId === null || $locationId === $companyId) {
                 continue;

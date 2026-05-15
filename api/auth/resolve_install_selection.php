@@ -176,38 +176,15 @@ try {
         'location_name' => $locationName,
         'companyId' => $companyId,
         'company_name' => $companyName,
-        'is_live' => true,
-        'toggle_enabled' => true,
-        'provisioned_from_selection' => true,
+        'install_state' => INSTALL_STATE_PENDING_OAUTH,
+        'install_status' => INSTALL_STATE_INSTALL_PENDING,
+        'install_resolution_mode' => INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION,
+        'install_resolution_source' => 'signed_install_selection',
+        'provisioned_from_selection' => false,
         'selection_session_id' => $sessionId,
+        'oauth_pending_started_at' => new \Google\Cloud\Core\Timestamp($now),
         'updated_at' => new \Google\Cloud\Core\Timestamp($now),
     ], ['merge' => true]);
-
-    $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
-    $intRef = $db->collection('integrations')->document($intDocId);
-    $intSnap = $intRef->snapshot();
-    $integrationData = [
-        'location_id' => $locationId,
-        'location_name' => $locationName,
-        'companyId' => $companyId,
-        'company_name' => $companyName,
-        'access_token' => $ltData['access_token'],
-        'refresh_token' => $ltData['refresh_token'] ?? ($companyData['refresh_token'] ?? null),
-        'expires_at' => $expiresAt,
-        'client_id' => $clientId,
-        'app_type' => 'subaccount',
-        'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-    ];
-    if (!$intSnap->exists()) {
-        $integrationData['free_credits_total'] = 10;
-        $integrationData['free_usage_count'] = 0;
-        $integrationData['credit_balance'] = 0;
-        $integrationData['system_default_sender'] = 'NOLASMSPro';
-        $integrationData['installed_at'] = new \Google\Cloud\Core\Timestamp($now);
-        $intRef->set($integrationData);
-    } else {
-        $intRef->set($integrationData, ['merge' => true]);
-    }
 
     $sessionRef->set([
         'status' => 'selected',
@@ -227,19 +204,29 @@ try {
         $tokenExistedBefore
     );
 
-    if (($decision['kind'] ?? '') === 'error') {
+    if (($decision['kind'] ?? '') === 'error' || empty($decision['url'])) {
         http_response_code(409);
         echo json_encode([
-            'error' => 'Selected subaccount does not match the saved GoHighLevel company.',
-            'state' => INSTALL_STATE_COMPANY_MISMATCH,
+            'error' => 'Selected subaccount could not be finalized.',
+            'state' => $decision['status'] ?? INSTALL_STATE_INSTALL_PENDING,
         ]);
         exit;
     }
+
+    install_finalize_location_install(
+        $db,
+        $locationId,
+        $decision,
+        INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION,
+        'signed_install_selection',
+        $now
+    );
 
     echo json_encode([
         'ok' => true,
         'kind' => $decision['kind'],
         'state' => $decision['status'],
+        'install_state' => INSTALL_STATE_INSTALLED,
         'location_id' => $locationId,
         'location_name' => $locationName,
         'url' => $decision['url'],

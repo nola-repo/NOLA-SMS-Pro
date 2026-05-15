@@ -15,18 +15,21 @@ Agency installs are separate and enter through `/oauth/agency-callback`.
 ## Routing Algorithm
 
 1. Exchange the OAuth code.
-2. Resolve the selected location using only trusted selection signals:
+2. Enter `PENDING_OAUTH`; OAuth permission is not a completed install.
+3. Resolve the selected location using only trusted selection signals:
    - signed install selection session
    - explicit `locationId` / `location_id` / selected-location query field
-   - OAuth state containing an explicit location id
+   - OAuth state containing `selected_location_id`
    - `approvedLocations` with exactly one location
    - `locations[]` with exactly one location
-3. If multiple candidate locations remain and no exact signal chooses one, return `AMBIGUOUS` and show the explicit selection screen.
-4. If a company token was returned but no selected location signal or callback candidates exist, return `SELECTION_REQUIRED`, fetch company locations for display only, and show the explicit selection screen.
-5. After one selected `locationId` is known, check company ownership against `ghl_tokens/{locationId}`.
-6. Save or refresh the location token idempotently.
-7. Classify install state from token existence plus canonical ownership.
-8. Route:
+4. If exactly one unique exact candidate exists, return `EXACT_SINGLE_LOCATION` and never show the selector.
+5. If multiple candidate locations remain and no exact signal chooses one, return `AMBIGUOUS` and show the explicit selection screen.
+6. If a company token was returned but no selected location signal or callback candidates exist, return `SELECTION_REQUIRED`, fetch company locations for display only, and show the explicit selection screen.
+7. After one selected `locationId` is known, check company ownership against `ghl_tokens/{locationId}`.
+8. Save or refresh the location token idempotently with `install_state=PENDING_OAUTH`.
+9. Classify install state from token existence plus canonical ownership.
+10. Mark `install_state=INSTALLED` only after the location token is persisted and classification is complete.
+11. Route:
    - `FRESH_INSTALL` -> `/register?install_token=...`
    - `TOKEN_ONLY` -> `/register?install_token=...`
    - `LINKED_ACCOUNT` -> `/login?welcome_back=1&location_id=...`
@@ -40,6 +43,7 @@ Registration status is never used as a location selection signal.
 
 | State | Condition | Route |
 | --- | --- | --- |
+| `PENDING_OAUTH` | OAuth permission granted but location/token/classification is not complete | no final install side effects |
 | `FRESH_INSTALL` | no pre-existing `ghl_tokens/{locationId}` and no owner | registration |
 | `TOKEN_ONLY` | `ghl_tokens/{locationId}` exists and no canonical owner | registration continuation |
 | `LINKED_ACCOUNT` | canonical owner exists | login |
@@ -91,17 +95,18 @@ Direct location install:
 
 1. Resolve exact selected location.
 2. Reject company mismatch before saving over the location token.
-3. Save `ghl_tokens/{locationId}` and `integrations/ghl_{locationId}` with merge writes.
+3. Save `ghl_tokens/{locationId}` with `install_state=PENDING_OAUTH`.
 4. Classify using pre-save token existence plus canonical ownership.
-5. Redirect to registration or login.
+5. Finalize `ghl_tokens/{locationId}` and `integrations/ghl_{locationId}` with `install_state=INSTALLED`.
+6. Redirect to registration or login.
 
 Company-scoped token with one exact selected location:
 
 1. Save company token.
 2. Stop all bulk logic.
 3. Exchange company token only for the selected location token.
-4. Save location token and integration.
-5. Classify and redirect.
+4. Save location token with `install_state=PENDING_OAUTH`.
+5. Classify, finalize install artifacts, and redirect.
 
 Company-scoped token with multiple candidates and no exact selection:
 
@@ -109,7 +114,7 @@ Company-scoped token with multiple candidates and no exact selection:
 2. Create `install_sessions/{sessionId}` with `type=ambiguous_install_selection`.
 3. Sign an `install_selection_session` JWT.
 4. Show selection screen.
-5. `/api/auth/resolve-install-selection` validates session and selected location, exchanges only that selected location token, saves docs, classifies, and returns the redirect URL.
+5. `/api/auth/resolve-install-selection` validates session and selected location, exchanges only that selected location token, saves pending docs, classifies, finalizes, and returns the redirect URL.
 
 Company-scoped token with no exact selection and no usable callback candidates:
 
@@ -118,7 +123,7 @@ Company-scoped token with no exact selection and no usable callback candidates:
 3. Fetch available locations from GHL using `/locations/search?companyId=...` for display only.
 4. Show the explicit selection screen.
 5. `/api/auth/resolve-install-selection` validates the signed session and exchanges only the selected location token.
-6. Continue through the normal deterministic register/login routing.
+6. Save pending docs, classify, finalize, and continue through the normal deterministic register/login routing.
 7. Do not create a bulk provisioning session, call `/api/agency/install/provision`, or redirect to `/login?bulk_install=1`.
 
 ## Bulk Provisioning Boundary

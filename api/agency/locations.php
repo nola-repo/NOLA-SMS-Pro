@@ -4,6 +4,7 @@ header('Content-Type: application/json');
 
 require_once __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/auth_helper.php';
+require_once __DIR__ . '/../install_helpers.php';
 
 $agencyId = validate_agency_request(true);
 
@@ -31,6 +32,9 @@ try {
         $d = $doc->data();
         $isCompanyToken = ($d['userType'] ?? '') === 'Company' || (string)$doc->id() === $companyId;
         if ($isCompanyToken) {
+            continue;
+        }
+        if (($d['install_state'] ?? '') === INSTALL_STATE_PENDING_OAUTH) {
             continue;
         }
         $locId = (string)($d['location_id'] ?? $doc->id());

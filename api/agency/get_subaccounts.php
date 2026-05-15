@@ -10,6 +10,7 @@ require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 require __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/../services/CreditManager.php';
+require_once __DIR__ . '/../install_helpers.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     http_response_code(405);
@@ -65,6 +66,7 @@ try {
         // Skip the agency-level token itself
         $isAgency = ($data['appType'] ?? '') === 'agency' || $doc->id() === $agencyId;
         if ($isAgency) continue;
+        if (($data['install_state'] ?? '') === INSTALL_STATE_PENDING_OAUTH) continue;
 
         $locId = $data['locationId'] ?? $data['location_id'] ?? $doc->id();
         if ($locId && !in_array($locId, $locationIds)) {

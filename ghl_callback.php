@@ -296,6 +296,8 @@ HTML;
  */
 function render_error(string $message, array $details = []): void
 {
+    global $locationIdSafe;
+
     $msg_safe = htmlspecialchars($message);
     $details_html = '';
     if (!empty($details)) {
@@ -304,6 +306,10 @@ function render_error(string $message, array $details = []): void
     }
 
     $reinstall_url = 'https://marketplace.leadconnectorhq.com/v2/oauth/chooselocation?response_type=code&redirect_uri=https%3A%2F%2Fsmspro-api.nolacrm.io%2Foauth%2Fcallback&client_id=6999da2b8f278296d95f7274-mmn30t4f&scope=workflows.readonly+conversations%2Fmessage.readonly+conversations.readonly+conversations.write+contacts.readonly+contacts.write+conversations%2Fmessage.write+saas%2Flocation.read+locations.readonly+locations%2Ftags.readonly+locations%2Ftags.write&version_id=6999da2b8f278296d95f7274';
+    $stateLocationId = install_clean_location_id($locationIdSafe);
+    if ($stateLocationId !== null) {
+        $reinstall_url .= '&state=' . urlencode(json_encode(['selected_location_id' => $stateLocationId]));
+    }
 
     $body = <<<HTML
         <div class="error-icon" style="margin: 0 auto 32px;">
@@ -578,7 +584,7 @@ function location_id_from_assoc_json(?array $json): ?string
     if (!$json) {
         return null;
     }
-    foreach (['locationId', 'location_id', 'selectedLocationId', 'selected_location_id', 'activeLocationId', 'active_location_id'] as $key) {
+    foreach (['locationId', 'location_id', 'selected_location_id'] as $key) {
         $v = $json[$key] ?? null;
         $clean = install_clean_location_id($v);
         if ($clean !== null) {
@@ -644,7 +650,7 @@ function extract_location_id_from_state(?string $state): ?string
         // Case 0: query-string-like state payload
         $parsed = [];
         parse_str($trimmed, $parsed);
-        $fromQuery = $parsed['locationId'] ?? $parsed['location_id'] ?? $parsed['selectedLocationId'] ?? null;
+        $fromQuery = $parsed['locationId'] ?? $parsed['location_id'] ?? $parsed['selected_location_id'] ?? null;
         $fromQueryClean = install_clean_location_id($fromQuery);
         if ($fromQueryClean !== null) {
             return $fromQueryClean;
@@ -688,14 +694,9 @@ function extract_location_id_from_state(?string $state): ?string
             }
         }
 
-        // Case 2c: locationId embedded in a larger plain string
-        if (preg_match('/(?:locationId|location_id)["=: ]+([A-Za-z0-9_-]{12,})/i', $trimmed, $m)) {
+        // Case 2c: explicit location key embedded in a larger plain string
+        if (preg_match('/(?:locationId|location_id|selected_location_id)["=: ]+([A-Za-z0-9_-]{8,})/i', $trimmed, $m)) {
             return $m[1];
-        }
-
-        // Case 3: plain location-like ID (guard against obvious non-IDs)
-        if (preg_match('/^[A-Za-z0-9_-]{12,}$/', $trimmed)) {
-            return $trimmed;
         }
     }
 
@@ -708,7 +709,7 @@ function extract_location_id_from_state(?string $state): ?string
  */
 function extract_location_id_from_query(array $query): ?string
 {
-    $directKeys = ['locationId', 'location_id', 'selectedLocationId', 'selected_location_id', 'activeLocationId', 'active_location_id'];
+    $directKeys = ['locationId', 'location_id', 'selected_location_id'];
     foreach ($directKeys as $key) {
         $val = $query[$key] ?? null;
         $clean = install_clean_location_id($val);
@@ -747,7 +748,7 @@ function extract_location_ids_from_mixed($value): array
             return;
         }
 
-        foreach (['id', 'locationId', 'location_id', 'selectedLocationId', 'selected_location_id', 'activeLocationId', 'active_location_id'] as $key) {
+        foreach (['id', 'locationId', 'location_id', 'selected_location_id'] as $key) {
             if (!array_key_exists($key, $candidate)) {
                 continue;
             }
@@ -1039,10 +1040,15 @@ if (($data['userType'] ?? '') === 'Company') {
             'companyId'     => $companyId,
             'company_name'  => $companyNameFromToken,
             'agency_name'   => $companyNameFromToken,
+            'install_state' => INSTALL_STATE_PENDING_OAUTH,
+            'install_status' => INSTALL_STATE_INSTALL_PENDING,
+            'oauth_pending_started_at' => new \Google\Cloud\Core\Timestamp($now),
             'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
         ], ['merge' => true]);
     } catch (Exception $e) {
-        error_log('[GHL_CALLBACK] Failed to save company token: ' . $e->getMessage());
+        render_error('Callback authorized, but failed to save pending company token: ' . $e->getMessage(), [
+            'companyId' => $companyId,
+        ]);
     }
 
     // ── CASE A: Single-location install from agency view ─────────────────────
@@ -1064,18 +1070,22 @@ if (($data['userType'] ?? '') === 'Company') {
     ]);
     $locationsArrayIds = $caseAResolution['candidate_ids'];
     $singleLocationId = $caseAResolution['ok'] ? $caseAResolution['location_id'] : null;
-    if (($caseAResolution['source'] ?? '') === 'token_location_field' && empty($caseAResolution['candidate_ids'])) {
+    $caseAResolutionMode = (string)($caseAResolution['resolutionMode'] ?? ($caseAResolution['status'] ?? ''));
+    $caseACheckpoint = install_final_install_checkpoint($singleLocationId, $caseAResolutionMode);
+    if (empty($caseACheckpoint['ok'])) {
         $singleLocationId = null;
-        $caseAResolution['reason'] = 'company_token_direct_location_requires_picker_confirmation';
+        $caseAResolution['install_pending'] = $caseACheckpoint;
     }
 
     error_log('[GHL_CALLBACK_DEBUG] selected_location_candidate=' . json_encode([
         'singleLocationId' => $singleLocationId,
+        'resolutionMode' => $caseAResolutionMode,
         'resolution' => $caseAResolution,
         'state_present' => $state !== null && $state !== '',
     ]));
 
     if ($singleLocationId) {
+        $locationIdSafe = htmlspecialchars((string)$singleLocationId, ENT_QUOTES, 'UTF-8');
         error_log("[GHL_CALLBACK] Case A: single-location agency install — locationId={$singleLocationId}");
         $caseATokenExistedBefore = install_token_doc_exists($db, (string)$singleLocationId);
         if (install_location_company_mismatch($db, (string)$singleLocationId, (string)$companyId)) {
@@ -1149,44 +1159,18 @@ if (($data['userType'] ?? '') === 'Company') {
                 'location_name'         => $singleLocName,
                 'companyId'             => $companyId,
                 'company_name'          => $companyNameFromToken,
-                'is_live'               => true,
-                'toggle_enabled'        => true,
-                'provisioned_from_selection' => true,
+                'install_state'         => INSTALL_STATE_PENDING_OAUTH,
+                'install_status'        => INSTALL_STATE_INSTALL_PENDING,
+                'install_resolution_mode' => $caseAResolutionMode,
+                'install_resolution_source' => (string)($caseAResolution['source'] ?? 'case_a_single_location'),
+                'oauth_pending_started_at' => new \Google\Cloud\Core\Timestamp($now),
                 'updated_at'            => new \Google\Cloud\Core\Timestamp($now),
             ], ['merge' => true]);
         } catch (Exception $e) {
-            error_log('[GHL_CALLBACK] Case A bg: ghl_tokens write failed: ' . $e->getMessage());
-        }
-
-        // ── Background: Provision integrations doc ────────────────────────────
-        try {
-            $intDocId2 = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $singleLocationId);
-            $intRef2   = $db->collection('integrations')->document($intDocId2);
-            $intSnap2  = $intRef2->snapshot();
-            if (!$intSnap2->exists()) {
-                $intRef2->set([
-                    'location_id'           => $singleLocationId,
-                    'location_name'         => $singleLocName,
-                    'companyId'             => $companyId,
-                    'company_name'          => $companyNameFromToken,
-                    'free_credits_total'    => 10,
-                    'free_usage_count'      => 0,
-                    'credit_balance'        => 0,
-                    'system_default_sender' => 'NOLASMSPro',
-                    'installed_at'          => new \Google\Cloud\Core\Timestamp($now),
-                    'updated_at'            => new \Google\Cloud\Core\Timestamp($now),
-                ]);
-            } else {
-                $intRef2->set([
-                    'access_token'  => $ltData2['access_token'],
-                    'expires_at'    => $ltExpires2,
-                    'location_name' => $singleLocName,
-                    'company_name'  => $companyNameFromToken,
-                    'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
-                ], ['merge' => true]);
-            }
-        } catch (Exception $e) {
-            error_log('[GHL_CALLBACK] Case A bg: integrations write failed: ' . $e->getMessage());
+            render_error('Callback authorized, but failed to save pending location token: ' . $e->getMessage(), [
+                'locationId' => $singleLocationId,
+                'companyId' => $companyId,
+            ]);
         }
 
         require_once __DIR__ . '/api/jwt_helper.php';
@@ -1226,11 +1210,27 @@ if (($data['userType'] ?? '') === 'Company') {
             'classification' => $caseADecision['classification'],
         ]));
 
-        if ($caseADecision['kind'] === 'error') {
-            render_error('The selected sub-account does not match the saved GoHighLevel token. Please reinstall from the selected GHL sub-account.', [
+        if ($caseADecision['kind'] === 'error' || empty($caseADecision['url'])) {
+            render_error('The selected sub-account could not be finalized. Please reinstall from the selected GHL sub-account.', [
                 'locationId' => $singleLocationId,
                 'companyId' => $companyId,
                 'classification' => $caseADecision['classification'],
+            ]);
+        }
+
+        try {
+            install_finalize_location_install(
+                $db,
+                (string)$singleLocationId,
+                $caseADecision,
+                $caseAResolutionMode,
+                (string)($caseAResolution['source'] ?? 'case_a_single_location'),
+                $now
+            );
+        } catch (Exception $e) {
+            render_error('Callback authorized, but failed to finalize install: ' . $e->getMessage(), [
+                'locationId' => $singleLocationId,
+                'resolution' => $caseAResolution,
             ]);
         }
 
@@ -1311,9 +1311,16 @@ $finalResolution = install_resolve_selected_location([
     'locations' => $data['locations'] ?? [],
     'state_location_id' => extract_location_id_from_state($state),
 ]);
+$finalResolutionMode = (string)($finalResolution['resolutionMode'] ?? ($finalResolution['status'] ?? ''));
 $locationId = $finalResolution['ok'] ? $finalResolution['location_id'] : null;
+$finalCheckpoint = install_final_install_checkpoint($locationId, $finalResolutionMode);
+if (empty($finalCheckpoint['ok'])) {
+    $locationId = null;
+    $finalResolution['install_pending'] = $finalCheckpoint;
+}
 error_log('[GHL_CALLBACK_DEBUG] final_location_resolution=' . json_encode([
     'resolved_locationId' => $locationId,
+    'resolutionMode' => $finalResolutionMode,
     'token_locationId' => $data['locationId'] ?? ($data['location_id'] ?? null),
     'query_locationId' => $queryLocationId,
     'resolution' => $finalResolution,
@@ -1332,18 +1339,27 @@ if (!$locationId) {
         $db = get_firestore();
         $now = new DateTimeImmutable();
         $finalCompanyName = install_extract_company_name($data);
-        $db->collection('ghl_tokens')->document($finalCompanyId)->set([
-            'access_token' => $data['access_token'] ?? null,
-            'refresh_token' => $data['refresh_token'] ?? null,
-            'expires_at' => time() + (int)($data['expires_in'] ?? 86400),
-            'client_id' => $ghlApps[$usedAppType]['clientId'],
-            'appId' => $ghlApps[$usedAppType]['clientId'],
-            'appType' => 'subaccount',
-            'userType' => 'Company',
-            'companyId' => $finalCompanyId,
-            'company_name' => $finalCompanyName,
-            'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-        ], ['merge' => true]);
+        try {
+            $db->collection('ghl_tokens')->document($finalCompanyId)->set([
+                'access_token' => $data['access_token'] ?? null,
+                'refresh_token' => $data['refresh_token'] ?? null,
+                'expires_at' => time() + (int)($data['expires_in'] ?? 86400),
+                'client_id' => $ghlApps[$usedAppType]['clientId'],
+                'appId' => $ghlApps[$usedAppType]['clientId'],
+                'appType' => 'subaccount',
+                'userType' => 'Company',
+                'companyId' => $finalCompanyId,
+                'company_name' => $finalCompanyName,
+                'install_state' => INSTALL_STATE_PENDING_OAUTH,
+                'install_status' => INSTALL_STATE_INSTALL_PENDING,
+                'oauth_pending_started_at' => new \Google\Cloud\Core\Timestamp($now),
+                'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+            ], ['merge' => true]);
+        } catch (Exception $e) {
+            render_error('Callback authorized, but failed to save pending company token: ' . $e->getMessage(), [
+                'companyId' => $finalCompanyId,
+            ]);
+        }
 
         if (count($finalCandidateIds) > 1) {
             $selectionSession = create_install_selection_session(
@@ -1450,6 +1466,11 @@ try {
         'appId'     => $ghlApps[$usedAppType]['clientId'], // Store which app provided this token
         'client_id' => $ghlApps[$usedAppType]['clientId'], // Standard field name read by GhlClient::refreshToken()
         'appType'   => $usedAppType,
+        'install_state' => INSTALL_STATE_PENDING_OAUTH,
+        'install_status' => INSTALL_STATE_INSTALL_PENDING,
+        'install_resolution_mode' => $finalResolutionMode,
+        'install_resolution_source' => (string)($finalResolution['source'] ?? 'direct_location_callback'),
+        'oauth_pending_started_at' => new \Google\Cloud\Core\Timestamp($now),
         'raw' => $data,
         'updated_at' => new \Google\Cloud\Core\Timestamp($now),
     ];
@@ -1463,54 +1484,6 @@ try {
     }
 
     $db->collection('ghl_tokens')->document((string)$id)->set($tokenPayload, ['merge' => true]);
-
-    // 2b. Register the subaccount in ghl_tokens for the Agency Dashboard to track
-    if ($userType === 'Location') {
-        $db->collection('ghl_tokens')->document((string)$id)->set([
-            'location_id' => $id,
-            'location_name' => $displayName,
-            'companyId' => $data['companyId'] ?? '',
-            'company_name' => $companyNameDirect,
-            'userType' => $data['userType'] ?? 'Location',
-            'is_live' => true,
-            'toggle_enabled' => true,
-            'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-        ], ['merge' => true]);
-    }
-
-    if ($userType === 'Location') {
-        // 2. Provision Credits for new sub-account users
-        $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$id);
-        $integrationRef = $db->collection('integrations')->document($intDocId);
-        $integrationSnap = $integrationRef->snapshot();
-
-        $integrationData = [
-            'location_id' => $id,
-            'location_name' => $displayName,
-            'companyId' => $data['companyId'] ?? '',
-            'company_name' => $companyNameDirect,
-            'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-            'access_token' => $data['access_token'] ?? null,
-            'refresh_token' => $data['refresh_token'] ?? null,
-            'scope' => $data['scope'] ?? null,
-            'expires_at' => $expiresAtUnix,
-            'client_id' => $ghlApps[$usedAppType]['clientId'],
-            'app_type' => $usedAppType,
-        ];
-
-        if (!$integrationSnap->exists()) {
-            // First-time install — 10 free credits
-            $integrationData['free_credits_total'] = 10;
-            $integrationData['free_usage_count'] = 0;
-            $integrationData['credit_balance'] = 0;
-            $integrationData['installed_at'] = new \Google\Cloud\Core\Timestamp($now);
-            $integrationRef->set($integrationData);
-        }
-        else {
-            // Re-install: preserve credits, just update name & tokens
-            $integrationRef->set($integrationData, ['merge' => true]);
-        }
-    }
 
     // 3. Update matching user docs with company_id and company_name
     if ($userType === 'Company' && $id) {
@@ -1578,11 +1551,27 @@ $directDecision = install_decide_location_redirect(
     $tokenExistedBeforeDirect
 );
 
-if ($directDecision['kind'] === 'error') {
-    render_error('The selected sub-account does not match the saved GoHighLevel token. Please reinstall from the selected GHL sub-account.', [
+if ($directDecision['kind'] === 'error' || empty($directDecision['url'])) {
+    render_error('The selected sub-account could not be finalized. Please reinstall from the selected GHL sub-account.', [
         'locationId' => $locationId,
         'companyId' => $companyId,
         'classification' => $directDecision['classification'],
+    ]);
+}
+
+try {
+    install_finalize_location_install(
+        $db,
+        (string)$locationId,
+        $directDecision,
+        $finalResolutionMode,
+        (string)($finalResolution['source'] ?? 'direct_location_callback'),
+        $now
+    );
+} catch (Exception $e) {
+    render_error('Callback authorized, but failed to finalize install: ' . $e->getMessage(), [
+        'locationId' => $locationId,
+        'resolution' => $finalResolution,
     ]);
 }
 
