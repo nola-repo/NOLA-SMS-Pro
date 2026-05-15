@@ -329,7 +329,7 @@ if ($locationId) {
         if (($installClass['status'] ?? '') === INSTALL_STATE_INSTALL_PENDING) {
             ir_page('Install Pending', '<div style="text-align:center;"><h1>Install Pending</h1><p class="subtitle">OAuth is still being resolved for this sub-account. Please restart the Marketplace install if this page does not continue.</p></div>');
         }
-        if (!empty($installClass['linked'])) {
+        if (($installClass['status'] ?? '') === INSTALL_STATE_LINKED_ACCOUNT && empty($payload['allow_additional_member'])) {
             $loginName = $locationNameRaw !== '' ? $locationNameRaw : ($companyNameRaw !== '' ? $companyNameRaw : 'Your Sub-Account');
             $redirectUrl = 'https://smspro-api.nolacrm.io/login?welcome_back=1&name=' . urlencode($loginName)
                 . '&location_id=' . urlencode((string)$locationId)
@@ -371,6 +371,10 @@ $agencyLocHintHtml = '';
 if ($tokenType === 'agency_install' && ($locationId === null || $locationId === '')) {
     $agencyLocHintHtml = '<p class="subtitle" style="color:#b45309; font-size:12.5px; line-height:1.45; margin:-8px 0 16px;">No Location ID was sent with this link. Open NOLA SMS Pro from inside the target GHL <strong>sub-account</strong> (custom menu link) so GHL passes <code style="font-size:11px;">location_id</code>.</p>';
 }
+$additionalMemberBannerHtml = '';
+if (!empty($payload['allow_additional_member'])) {
+    $additionalMemberBannerHtml = '<div style="margin:0 0 18px;padding:12px 14px;border-radius:14px;text-align:left;font-size:13px;line-height:1.45;background:rgba(43,131,250,0.08);border:1px solid rgba(43,131,250,0.22);color:#1e3a5f;"><strong>Additional user</strong> — This GoHighLevel sub-account already has a primary NOLA SMS Pro owner. Complete this form to create another login tied to the same sub-account.</div>';
+}
 $showDebugBanner = ir_is_non_production();
 $debugBannerHtml = '';
 if ($showDebugBanner) {
@@ -407,6 +411,7 @@ HTML;
 // Form UI with JS
 ir_page('Create Your Account', <<<HTML
     {$debugBannerHtml}
+    {$additionalMemberBannerHtml}
     <div class="steps">
         <div class="step active" id="s-ind-1">
             <div class="step-circle">1</div>

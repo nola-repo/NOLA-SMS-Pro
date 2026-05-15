@@ -139,6 +139,16 @@ function render_page(string $title, string $body_html): void
         .tutorial-link:hover { color: #6e6e73; }
         
         .hidden { display: none !important; }
+
+        .selection-container {
+            margin-top: 10px;
+            max-height: 80vh;
+            overflow-y: auto;
+            overflow-x: hidden;
+            -webkit-overflow-scrolling: touch;
+            text-align: left;
+            padding-right: 4px;
+        }
         
         .error-pre { margin-top: 12px; font-size: 10px; color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; border-radius: 10px; padding: 10px; overflow: auto; max-height: 120px; text-align: left; white-space: pre-wrap; word-break: break-all; font-family: monospace; }
     </style>
@@ -544,7 +554,7 @@ HTML;
         <h1>Select Sub-account</h1>
         {$companyLine}
         <div id="selection-error" class="error-pre hidden"></div>
-        <div style="margin-top:10px;">{$buttons}</div>
+        <div class="selection-container">{$buttons}</div>
         <p style="font-size:11px;color:#6e6e73;line-height:1.45;margin-top:18px;">We could not verify which subaccount GoHighLevel selected, so NOLA SMS Pro needs one explicit confirmation before continuing.</p>
         <script>
           const INSTALL_SELECTION_TOKEN = {$sessionTokenJson};
@@ -719,7 +729,10 @@ function extract_location_id_from_query(array $query): ?string
     }
 
     // approvedLocations can be an array or CSV with one selected sub-account.
-    $approvedIds = extract_location_ids_from_mixed($query['approvedLocations'] ?? null);
+    $approvedIds = install_unique_ids(array_merge(
+        extract_location_ids_from_mixed($query['approvedLocations'] ?? null),
+        extract_location_ids_from_mixed($query['approvedLocationIds'] ?? null)
+    ));
     if (count($approvedIds) === 1) {
         return $approvedIds[0];
     }
@@ -758,11 +771,18 @@ function extract_location_ids_from_mixed($value): array
             }
         }
 
-        foreach (['locations', 'approvedLocations', 'locationIds', 'location_ids', 'location', 'selectedLocation', 'subaccount', 'subAccount', 'context'] as $key) {
+        foreach (['locations', 'approvedLocations', 'approvedLocationIds', 'locationIds', 'location_ids', 'location', 'selectedLocation', 'subaccount', 'subAccount', 'context'] as $key) {
             if (isset($candidate[$key]) && is_array($candidate[$key])) {
                 foreach ($candidate[$key] as $nested) {
                     $walk($nested);
                 }
+            }
+        }
+
+        $keys = array_keys($candidate);
+        if ($keys === range(0, count($candidate) - 1)) {
+            foreach ($candidate as $item) {
+                $walk($item);
             }
         }
     };
@@ -781,7 +801,7 @@ function extract_location_ids_from_mixed($value): array
         }
     }
 
-    return array_values(array_unique($ids));
+    return install_unique_ids($ids);
 }
 
 /**
@@ -918,7 +938,10 @@ if (!isset($_GET['code']))
 $code  = $_GET['code'];
 $state = $_GET['state'] ?? null;
 $queryLocationId = extract_location_id_from_query($_GET);
-$queryApprovedLocationIds = extract_location_ids_from_mixed($_GET['approvedLocations'] ?? null);
+$queryApprovedLocationIds = install_unique_ids(array_merge(
+    install_extract_location_ids_from_mixed($_GET['approvedLocations'] ?? null),
+    install_extract_location_ids_from_mixed($_GET['approvedLocationIds'] ?? null)
+));
 $debugTrace = [
     'source' => 'ghl_callback',
     'has_code' => !empty($code),
@@ -951,6 +974,8 @@ curl_close($ch);
 $data = json_decode($response, true);
 if ($httpCode !== 200 || !is_array($data))
     render_error('Authorization failed.', $data ?: []);
+
+error_log('OAUTH RESPONSE: ' . json_encode(install_redact_oauth_token_log_payload($data), JSON_PRETTY_PRINT));
 
 $debugTrace['token_http'] = $httpCode;
 $debugTrace['token_userType'] = $data['userType'] ?? null;
@@ -1055,7 +1080,10 @@ if (($data['userType'] ?? '') === 'Company') {
     // Resolve the selected sub-account once, using trusted picker signals. This
     // avoids stale token/state values selecting a different location.
     $hasLocationsArray = !empty($data['locations']) && is_array($data['locations']);
-    $approvedLocationIds = extract_location_ids_from_mixed($data['approvedLocations'] ?? null);
+    $approvedLocationIds = install_unique_ids(array_merge(
+        install_extract_location_ids_from_mixed($data['approvedLocations'] ?? null),
+        install_extract_location_ids_from_mixed($data['approvedLocationIds'] ?? null)
+    ));
     if (empty($approvedLocationIds) && !empty($queryApprovedLocationIds)) {
         $approvedLocationIds = $queryApprovedLocationIds;
     }
@@ -1306,7 +1334,10 @@ if (($data['userType'] ?? '') === 'Company') {
 $finalResolution = install_resolve_selected_location([
     'token_location_id' => $data['locationId'] ?? ($data['location_id'] ?? null),
     'query_location_id' => $queryLocationId,
-    'approved_location_ids' => extract_location_ids_from_mixed($data['approvedLocations'] ?? null),
+    'approved_location_ids' => install_unique_ids(array_merge(
+        install_extract_location_ids_from_mixed($data['approvedLocations'] ?? null),
+        install_extract_location_ids_from_mixed($data['approvedLocationIds'] ?? null)
+    )),
     'query_approved_location_ids' => $queryApprovedLocationIds,
     'locations' => $data['locations'] ?? [],
     'state_location_id' => extract_location_id_from_state($state),

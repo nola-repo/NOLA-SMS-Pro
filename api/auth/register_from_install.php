@@ -360,16 +360,7 @@ try {
         }
     }
 
-    // ── 1b. Enforce strict 1:1 (subaccount -> email) before creating/linking ─
-    if ($isLocationLevel) {
-        $linkedAccount = install_linked_account_for_location($db, (string)$locationId);
-        $linkedEmail = strtolower(trim((string)($linkedAccount['email'] ?? '')));
-        if ($linkedEmail !== '' && $linkedEmail !== $email) {
-            http_response_code(409);
-            echo json_encode(['error' => 'This subaccount is already linked to another email. Please login with the existing account.']);
-            exit;
-        }
-    }
+    // ── 1b. Additional NOLA users may register for the same GHL sub-account; do not block on primary owner email. ──
 
     // ── 1c. If no email match, check for an INCOMPLETE doc by location_id ────
     if (!$existingDoc && $isLocationLevel) {
@@ -387,6 +378,8 @@ try {
         }
     }
 
+    $ownershipMode = 'none';
+
     // ── 2a. EXISTING ACCOUNT — link location / complete profile ───────────────
     if ($existingDoc) {
         // Enforce password verification if the account is already fully set up
@@ -399,11 +392,7 @@ try {
         }
 
         if ($isLocationLevel && $locationId) {
-            if (!install_claim_owner_lock($db, 'location_owners', (string)$locationId, $existingId, $email, $fullName, $now, 'register_from_install_existing')) {
-                http_response_code(409);
-                echo json_encode(['error' => 'This subaccount is already linked to another owner. Please login with the existing linked account.']);
-                exit;
-            }
+            $ownershipMode = install_attach_user_to_location_ownership($db, (string)$locationId, $existingId, $email, $fullName, $phone, $now, 'register_from_install_existing');
         }
 
         $updates = ['updated_at' => new \Google\Cloud\Core\Timestamp($now)];
@@ -513,8 +502,7 @@ try {
             'location_id' => $linkedLoc,
             'auth_collection' => 'users',
         ], $jwtSecret, 28800); // 8 hours
-        if ($isLocationLevel && $locationId) {
-            _upsert_owner_lock($db, 'location_owners', (string)$locationId, $existingId, $email, $fullName, $now);
+        if ($isLocationLevel && $locationId && $ownershipMode === 'primary') {
             _sync_location_owner_metadata($db, (string)$locationId, $existingId, $email, $fullName, $phone, $now);
         }
 
@@ -598,15 +586,11 @@ try {
     }
 
     if ($isLocationLevel && $locationId) {
-        if (!install_claim_owner_lock($db, 'location_owners', (string)$locationId, $newUserId, $email, $fullName, $now, 'register_from_install_new')) {
-            http_response_code(409);
-            echo json_encode(['error' => 'This subaccount is already linked to another owner. Please login with the existing linked account.']);
-            exit;
-        }
+        $ownershipMode = install_attach_user_to_location_ownership($db, (string)$locationId, $newUserId, $email, $fullName, $phone, $now, 'register_from_install_new');
     }
 
     $newUserDoc->set($userData);
-    if ($isLocationLevel && $locationId) {
+    if ($isLocationLevel && $locationId && $ownershipMode === 'primary') {
         _sync_location_owner_metadata($db, (string)$locationId, $newUserId, $email, $fullName, $phone, $now);
     }
 

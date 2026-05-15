@@ -82,7 +82,7 @@ if (($linked2['id'] ?? '') !== 'user2') {
 $single = install_resolve_selected_location([
     'locations' => [['id' => $locationId, 'name' => 'Selected']],
 ]);
-if (empty($single['ok']) || ($single['location_id'] ?? '') !== $locationId || ($single['source'] ?? '') !== 'locations_single') {
+if (empty($single['ok']) || ($single['location_id'] ?? '') !== $locationId || ($single['source'] ?? '') !== 'locations_unique_single') {
     fwrite(STDERR, "single location resolution failed\n");
     exit(1);
 }
@@ -101,8 +101,17 @@ $conflict = install_resolve_selected_location([
     'approved_location_ids' => [$locationId],
     'token_location_id' => $otherLocationId,
 ]);
-if (empty($conflict['ok']) || ($conflict['location_id'] ?? '') !== $locationId || empty($conflict['conflict']['token_location_id'])) {
+if (empty($conflict['ok']) || ($conflict['location_id'] ?? '') !== $locationId || ($conflict['source'] ?? '') !== 'approved_locations_unique_single') {
     fwrite(STDERR, "picker-over-token conflict resolution failed\n");
+    exit(1);
+}
+
+$dupApproved = install_resolve_selected_location([
+    'approved_location_ids' => [$locationId, $locationId],
+    'locations' => [['id' => $locationId, 'name' => 'A'], ['id' => $locationId, 'name' => 'B']],
+]);
+if (empty($dupApproved['ok']) || ($dupApproved['location_id'] ?? '') !== $locationId) {
+    fwrite(STDERR, "deduped approved/locations resolution failed\n");
     exit(1);
 }
 

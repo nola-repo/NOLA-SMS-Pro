@@ -47,6 +47,38 @@ function install_unique_ids(array $ids): array
     return $out;
 }
 
+/**
+ * Redact secrets before logging OAuth/token payloads (structure stays inspectable).
+ *
+ * @param array<string,mixed> $data
+ * @return array<string,mixed>
+ */
+function install_redact_oauth_token_log_payload(array $data): array
+{
+    $redactKeys = ['access_token', 'refresh_token', 'id_token'];
+    $out = [];
+    foreach ($data as $k => $v) {
+        $key = (string)$k;
+        if (in_array($key, $redactKeys, true)) {
+            if (is_string($v) && $v !== '') {
+                $out[$k] = '[REDACTED len=' . strlen($v) . ']';
+                continue;
+            }
+            if (is_array($v)) {
+                $out[$k] = install_redact_oauth_token_log_payload($v);
+                continue;
+            }
+        }
+        if (is_array($v)) {
+            $out[$k] = install_redact_oauth_token_log_payload($v);
+            continue;
+        }
+        $out[$k] = $v;
+    }
+
+    return $out;
+}
+
 function install_extract_company_name(array $data): string
 {
     foreach (['companyName', 'company_name', 'agencyName', 'agency_name'] as $key) {
@@ -80,6 +112,14 @@ function install_location_rows_from_ghl($locations): array
     }
 
     foreach ($locations as $loc) {
+        if (is_string($loc) || is_int($loc) || is_float($loc)) {
+            $id = install_clean_location_id($loc);
+            if ($id !== null && !in_array($id, $ids, true)) {
+                $ids[] = $id;
+            }
+            continue;
+        }
+
         if (!is_array($loc)) {
             continue;
         }
@@ -195,6 +235,13 @@ function install_extract_location_ids_from_mixed($value): array
                 }
             }
         }
+
+        $keys = array_keys($candidate);
+        if ($keys === range(0, count($candidate) - 1)) {
+            foreach ($candidate as $item) {
+                $walk($item);
+            }
+        }
     };
 
     if (is_array($value)) {
@@ -211,7 +258,7 @@ function install_extract_location_ids_from_mixed($value): array
         }
     }
 
-    return array_values(array_unique($ids));
+    return install_unique_ids($ids);
 }
 
 function install_extract_location_id_from_query(array $query): ?string
@@ -223,7 +270,10 @@ function install_extract_location_id_from_query(array $query): ?string
         }
     }
 
-    $approvedIds = install_extract_location_ids_from_mixed($query['approvedLocations'] ?? ($query['approvedLocationIds'] ?? null));
+    $approvedIds = install_unique_ids(array_merge(
+        install_extract_location_ids_from_mixed($query['approvedLocations'] ?? null),
+        install_extract_location_ids_from_mixed($query['approvedLocationIds'] ?? null)
+    ));
     if (count($approvedIds) === 1) {
         return $approvedIds[0];
     }
@@ -320,8 +370,11 @@ function install_extract_location_id_from_oauth_state(?string $state, bool $allo
 function install_resolve_selected_location(array $signals): array
 {
     $rows = install_location_rows_from_ghl($signals['locations'] ?? []);
-    $locationIds = $rows['ids'];
+    $locationIdsFromRows = $rows['ids'];
     $locationNames = $rows['names'];
+
+    $locationIdsFromMixed = install_extract_location_ids_from_mixed($signals['locations'] ?? null);
+    $locationIdsUnique = install_unique_ids(array_merge($locationIdsFromRows, $locationIdsFromMixed));
 
     $approvedSignalIds = install_unique_ids(
         is_array($signals['approved_location_ids'] ?? null) ? $signals['approved_location_ids'] : []
@@ -329,69 +382,44 @@ function install_resolve_selected_location(array $signals): array
     $queryApprovedSignalIds = install_unique_ids(
         is_array($signals['query_approved_location_ids'] ?? null) ? $signals['query_approved_location_ids'] : []
     );
-    $approvedIds = install_unique_ids(array_merge($approvedSignalIds, $queryApprovedSignalIds));
+    $approvedMerged = install_unique_ids(array_merge($approvedSignalIds, $queryApprovedSignalIds));
 
     $tokenLocationId = install_clean_location_id($signals['token_location_id'] ?? null);
     $queryLocationId = install_clean_location_id($signals['query_location_id'] ?? null);
     $stateLocationId = install_clean_location_id($signals['state_location_id'] ?? null);
     $sessionLocationId = install_clean_location_id($signals['session_location_id'] ?? null);
 
-    $exactCandidates = [];
-    $sourcesById = [];
-    $addExactCandidate = static function (?string $id, string $source) use (&$exactCandidates, &$sourcesById): void {
-        $clean = install_clean_location_id($id);
-        if ($clean === null) {
-            return;
-        }
-        $exactCandidates[] = $clean;
-        if (!isset($sourcesById[$clean])) {
-            $sourcesById[$clean] = [];
-        }
-        if (!in_array($source, $sourcesById[$clean], true)) {
-            $sourcesById[$clean][] = $source;
-        }
-    };
-
-    foreach ([
+    // Priority: signed session > query > OAuth state > merged approvedLocations (unique)
+    // > locations[] unique > token root locationId (last; weaker for Company installs).
+    $tier1Order = [
         'signed_install_session' => $sessionLocationId,
         'query_location_field' => $queryLocationId,
         'oauth_state' => $stateLocationId,
-        'token_location_field' => $tokenLocationId,
-    ] as $source => $directId) {
-        $addExactCandidate($directId, $source);
+    ];
+    $tier1SourcesById = [];
+    $tier1Ids = [];
+    foreach ($tier1Order as $source => $id) {
+        if ($id === null) {
+            continue;
+        }
+        $tier1Ids[] = $id;
+        if (!isset($tier1SourcesById[$id])) {
+            $tier1SourcesById[$id] = [];
+        }
+        if (!in_array($source, $tier1SourcesById[$id], true)) {
+            $tier1SourcesById[$id][] = $source;
+        }
     }
+    $tier1Unique = install_unique_ids($tier1Ids);
 
-    if (count($approvedSignalIds) === 1) {
-        $addExactCandidate($approvedSignalIds[0], 'approved_locations_single');
-    }
+    $candidateIds = install_unique_ids(array_merge(
+        $tier1Ids,
+        $approvedMerged,
+        $locationIdsUnique,
+        $tokenLocationId !== null ? [$tokenLocationId] : []
+    ));
 
-    if (count($queryApprovedSignalIds) === 1) {
-        $addExactCandidate($queryApprovedSignalIds[0], 'query_approved_locations_single');
-    }
-
-    if (count($locationIds) === 1) {
-        $addExactCandidate($locationIds[0], 'locations_single');
-    }
-
-    $exactCandidates = install_unique_ids($exactCandidates);
-    $candidateIds = install_unique_ids(array_merge($exactCandidates, $locationIds, $approvedIds));
-
-    if (count($exactCandidates) === 1) {
-        $locationId = $exactCandidates[0];
-        return [
-            'ok' => true,
-            'status' => INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION,
-            'resolutionMode' => INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION,
-            'locationId' => $locationId,
-            'location_id' => $locationId,
-            'source' => implode('+', $sourcesById[$locationId] ?? ['exact_single_location']),
-            'reason' => 'exact_single_location',
-            'candidate_ids' => $candidateIds,
-            'location_names' => $locationNames,
-        ];
-    }
-
-    if (count($exactCandidates) > 1) {
+    if (count($tier1Unique) > 1) {
         return [
             'ok' => false,
             'status' => INSTALL_STATE_AMBIGUOUS,
@@ -402,7 +430,69 @@ function install_resolve_selected_location(array $signals): array
             'reason' => 'conflicting_exact_location_signals',
             'candidate_ids' => $candidateIds,
             'location_names' => $locationNames,
-            'conflict' => $sourcesById,
+            'conflict' => $tier1SourcesById,
+        ];
+    }
+
+    if (count($tier1Unique) === 1) {
+        $locationId = $tier1Unique[0];
+
+        return [
+            'ok' => true,
+            'status' => INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION,
+            'resolutionMode' => INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION,
+            'locationId' => $locationId,
+            'location_id' => $locationId,
+            'source' => implode('+', $tier1SourcesById[$locationId] ?? ['tier1']),
+            'reason' => 'exact_single_location',
+            'candidate_ids' => $candidateIds,
+            'location_names' => $locationNames,
+        ];
+    }
+
+    if (count($approvedMerged) === 1) {
+        $locationId = $approvedMerged[0];
+
+        return [
+            'ok' => true,
+            'status' => INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION,
+            'resolutionMode' => INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION,
+            'locationId' => $locationId,
+            'location_id' => $locationId,
+            'source' => 'approved_locations_unique_single',
+            'reason' => 'exact_single_location',
+            'candidate_ids' => $candidateIds,
+            'location_names' => $locationNames,
+        ];
+    }
+
+    if (count($locationIdsUnique) === 1) {
+        $locationId = $locationIdsUnique[0];
+
+        return [
+            'ok' => true,
+            'status' => INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION,
+            'resolutionMode' => INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION,
+            'locationId' => $locationId,
+            'location_id' => $locationId,
+            'source' => 'locations_unique_single',
+            'reason' => 'exact_single_location',
+            'candidate_ids' => $candidateIds,
+            'location_names' => $locationNames,
+        ];
+    }
+
+    if ($tokenLocationId !== null) {
+        return [
+            'ok' => true,
+            'status' => INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION,
+            'resolutionMode' => INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION,
+            'locationId' => $tokenLocationId,
+            'location_id' => $tokenLocationId,
+            'source' => 'token_location_field',
+            'reason' => 'exact_single_location',
+            'candidate_ids' => $candidateIds,
+            'location_names' => $locationNames,
         ];
     }
 
@@ -480,7 +570,9 @@ function install_finalize_location_install(
         'install_classification' => $summary,
         'install_completed_at' => $timestamp,
         'provisioned_from_selection' => $resolutionSource === 'signed_install_selection'
+            || strpos($resolutionSource, 'locations_unique_single') !== false
             || strpos($resolutionSource, 'locations_single') !== false
+            || strpos($resolutionSource, 'approved_locations_unique_single') !== false
             || strpos($resolutionSource, 'approved_locations_single') !== false
             || strpos($resolutionSource, 'query_approved_locations_single') !== false,
         'is_live' => true,
@@ -968,6 +1060,15 @@ function install_user_linked_to_location($db, string $uid, string $locationId, ?
     }
 
     try {
+        $memberSnap = $db->collection('location_owners')->document($locationId)->collection('members')->document($uid)->snapshot();
+        if ($memberSnap->exists()) {
+            return true;
+        }
+    } catch (Exception $e) {
+        error_log("[install_helpers] location member lookup failed for {$uid}/{$locationId}: " . $e->getMessage());
+    }
+
+    try {
         $ownerSnap = $db->collection('location_owners')->document($locationId)->snapshot();
         if ($ownerSnap->exists()) {
             $ownerData = $ownerSnap->data();
@@ -1107,7 +1208,8 @@ function install_build_registration_url(
     ?string $companyId,
     string $companyName,
     string $resolutionSource,
-    string $installStatus = ''
+    string $installStatus = '',
+    array $extraClaims = []
 ): string {
     $payload = [
         'type' => 'install',
@@ -1120,8 +1222,131 @@ function install_build_registration_url(
     if ($installStatus !== '') {
         $payload['install_status'] = $installStatus;
     }
+    foreach ($extraClaims as $k => $v) {
+        $payload[$k] = $v;
+    }
 
     return 'https://smspro-api.nolacrm.io/register?install_token=' . urlencode(jwt_sign($payload, $jwtSecret, 900));
+}
+
+/**
+ * Record a non-primary user linked to a sub-account under location_owners/{locationId}/members/{userId}.
+ *
+ * @param array<string,mixed> $extra
+ */
+function install_record_location_member(
+    $db,
+    string $locationId,
+    string $userId,
+    string $email,
+    string $fullName,
+    string $phone,
+    DateTimeImmutable $now,
+    string $source,
+    array $extra = []
+): void {
+    $locationId = trim($locationId);
+    $userId = trim($userId);
+    if ($locationId === '' || $userId === '') {
+        return;
+    }
+
+    $row = array_merge([
+        'entity_id' => $locationId,
+        'user_id' => $userId,
+        'owner_user_id' => $userId,
+        'email' => install_norm_email($email),
+        'owner_email' => install_norm_email($email),
+        'name' => trim($fullName),
+        'owner_name' => trim($fullName),
+        'phone' => trim($phone),
+        'owner_phone' => trim($phone),
+        'is_additional_location_member' => true,
+        'source' => $source,
+        'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+    ], $extra);
+
+    try {
+        $ref = $db->collection('location_owners')->document($locationId)->collection('members')->document($userId);
+        $snap = $ref->snapshot();
+        if (!$snap->exists()) {
+            $row['created_at'] = new \Google\Cloud\Core\Timestamp($now);
+        }
+        $ref->set($row, ['merge' => true]);
+    } catch (Exception $e) {
+        error_log("[install_helpers] install_record_location_member failed for {$locationId}/members/{$userId}: " . $e->getMessage());
+    }
+}
+
+/**
+ * Claim canonical location_owners/{locationId} when empty, or attach as members/{userId} when another owner exists.
+ *
+ * @return 'primary'|'member'
+ */
+function install_attach_user_to_location_ownership(
+    $db,
+    string $locationId,
+    string $userId,
+    string $email,
+    string $fullName,
+    string $phone,
+    DateTimeImmutable $now,
+    string $source
+): string {
+    $locationId = trim($locationId);
+    $userId = trim($userId);
+    $email = install_norm_email($email);
+    if ($locationId === '' || $userId === '' || $email === '') {
+        return 'member';
+    }
+
+    try {
+        $ref = $db->collection('location_owners')->document($locationId);
+        $snap = $ref->snapshot();
+        if (!$snap->exists()) {
+            if (install_claim_owner_lock($db, 'location_owners', $locationId, $userId, $email, $fullName, $now, $source)) {
+                return 'primary';
+            }
+
+            install_record_location_member($db, $locationId, $userId, $email, $fullName, $phone, $now, $source . ':claim_race');
+            return 'member';
+        }
+
+        $data = $snap->data();
+        $existingUid = trim((string)($data['owner_user_id'] ?? $data['owner_uid'] ?? $data['user_id'] ?? $data['uid'] ?? ''));
+        $existingEmail = install_norm_email($data['owner_email'] ?? $data['email'] ?? $data['user_email'] ?? $data['account_email'] ?? '');
+
+        if ($existingUid !== '' && $existingUid === $userId) {
+            install_claim_owner_lock($db, 'location_owners', $locationId, $userId, $email, $fullName, $now, $source);
+            return 'primary';
+        }
+
+        if ($existingUid === '' && $existingEmail === '') {
+            if (install_claim_owner_lock($db, 'location_owners', $locationId, $userId, $email, $fullName, $now, $source)) {
+                return 'primary';
+            }
+        }
+
+        if ($existingUid !== '' && $existingUid !== $userId) {
+            install_record_location_member($db, $locationId, $userId, $email, $fullName, $phone, $now, $source);
+            return 'member';
+        }
+
+        if ($existingEmail !== '' && $existingEmail !== $email) {
+            install_record_location_member($db, $locationId, $userId, $email, $fullName, $phone, $now, $source);
+            return 'member';
+        }
+
+        if (install_claim_owner_lock($db, 'location_owners', $locationId, $userId, $email, $fullName, $now, $source)) {
+            return 'primary';
+        }
+
+        install_record_location_member($db, $locationId, $userId, $email, $fullName, $phone, $now, $source . ':fallback');
+        return 'member';
+    } catch (Exception $e) {
+        error_log("[install_helpers] install_attach_user_to_location_ownership failed for {$locationId}/{$userId}: " . $e->getMessage());
+        return 'member';
+    }
 }
 
 /**
