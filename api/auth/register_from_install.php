@@ -320,8 +320,11 @@ if (!empty($errors)) {
 }
 
 try {
+    $rflogId = bin2hex(random_bytes(4));
+    $rflogStart = microtime(true);
     $db = get_firestore();
     $now = new DateTimeImmutable();
+    register_from_install_log_timing($rflogId, 'init', $rflogStart);
 
     if ($type === 'install' && $locationId && $companyId && install_location_company_mismatch($db, (string)$locationId, (string)$companyId)) {
         http_response_code(422);
@@ -345,6 +348,7 @@ try {
     }
 
     $isLocationLevel = !empty($locationId);
+    register_from_install_log_timing($rflogId, 'guards', $rflogStart);
 
     // ── 1. Check if email already exists ─────────────────────────────────────
     $usersRef = $db->collection('users');
@@ -379,6 +383,7 @@ try {
     }
 
     $ownershipMode = 'none';
+    register_from_install_log_timing($rflogId, 'email_lookup', $rflogStart);
 
     // ── 2a. EXISTING ACCOUNT — link location / complete profile ───────────────
     if ($existingDoc) {
@@ -393,6 +398,7 @@ try {
 
         if ($isLocationLevel && $locationId) {
             $ownershipMode = install_attach_user_to_location_ownership($db, (string)$locationId, $existingId, $email, $fullName, $phone, $now, 'register_from_install_existing');
+            register_from_install_log_timing($rflogId, 'owner_attach', $rflogStart);
         }
 
         $updates = ['updated_at' => new \Google\Cloud\Core\Timestamp($now)];
@@ -448,6 +454,7 @@ try {
         }
 
         $usersRef->document($existingId)->set($updates, ['merge' => true]);
+        register_from_install_log_timing($rflogId, 'user_write', $rflogStart);
 
         if ($isLocationLevel && $locationId) {
             // Enforce one-email -> one-subaccount by pruning stale links first.
@@ -502,18 +509,9 @@ try {
             'location_id' => $linkedLoc,
             'auth_collection' => 'users',
         ], $jwtSecret, 28800); // 8 hours
-        if ($isLocationLevel && $locationId && $ownershipMode === 'primary') {
-            _sync_location_owner_metadata($db, (string)$locationId, $existingId, $email, $fullName, $phone, $now);
-        }
+        register_from_install_log_timing($rflogId, 'jwt_sign', $rflogStart);
 
-        if ($isLocationLevel && $locationId) {
-            try {
-                install_finalize_after_registration($db, (string)$locationId, $now);
-            } catch (Exception $finalizeError) {
-                error_log('[register_from_install] finalize_after_registration failed for ' . $locationId . ': ' . $finalizeError->getMessage());
-            }
-        }
-
+        register_from_install_log_timing($rflogId, 'before_response', $rflogStart);
         http_response_code(200);
         echo json_encode([
             'status' => 'linked',
@@ -526,6 +524,20 @@ try {
             'company_name' => $compName,
             'user' => $userApiOut,
         ]);
+
+        if ($isLocationLevel && $locationId) {
+            $ownerContext = $ownershipMode === 'primary'
+                ? [
+                    'owner_user_id' => $existingId,
+                    'owner_email' => $email,
+                    'owner_name' => $fullName,
+                    'owner_phone' => $phone,
+                ]
+                : [];
+            register_from_install_run_deferred_finalize($db, (string) $locationId, $ownerContext, $now, $rflogId, $rflogStart);
+        } else {
+            register_from_install_log_timing($rflogId, 'total', $rflogStart);
+        }
         exit;
     }
 
@@ -595,12 +607,11 @@ try {
 
     if ($isLocationLevel && $locationId) {
         $ownershipMode = install_attach_user_to_location_ownership($db, (string)$locationId, $newUserId, $email, $fullName, $phone, $now, 'register_from_install_new');
+        register_from_install_log_timing($rflogId, 'owner_attach', $rflogStart);
     }
 
     $newUserDoc->set($userData);
-    if ($isLocationLevel && $locationId && $ownershipMode === 'primary') {
-        _sync_location_owner_metadata($db, (string)$locationId, $newUserId, $email, $fullName, $phone, $now);
-    }
+    register_from_install_log_timing($rflogId, 'user_write', $rflogStart);
 
     // Write user-owned subaccount entry
     if ($isLocationLevel && $locationId) {
@@ -631,6 +642,7 @@ try {
             true
         );
     }
+    register_from_install_log_timing($rflogId, 'subaccount_write', $rflogStart);
 
     // Return JWT immediately so the install page can cache auth without a second login
     $token = jwt_sign([
@@ -643,15 +655,9 @@ try {
     ], $jwtSecret, 28800);
 
     $userApiNew = auth_user_payload_for_api($userData, $email);
+    register_from_install_log_timing($rflogId, 'jwt_sign', $rflogStart);
 
-    if ($isLocationLevel && $locationId) {
-        try {
-            install_finalize_after_registration($db, (string)$locationId, $now);
-        } catch (Exception $finalizeError) {
-            error_log('[register_from_install] finalize_after_registration failed for ' . $locationId . ': ' . $finalizeError->getMessage());
-        }
-    }
-
+    register_from_install_log_timing($rflogId, 'before_response', $rflogStart);
     http_response_code(201);
     echo json_encode([
         'status' => 'success',
@@ -665,6 +671,20 @@ try {
         'user' => $userApiNew,
     ]);
 
+    if ($isLocationLevel && $locationId) {
+        $ownerContext = $ownershipMode === 'primary'
+            ? [
+                'owner_user_id' => $newUserId,
+                'owner_email' => $email,
+                'owner_name' => $fullName,
+                'owner_phone' => $phone,
+            ]
+            : [];
+        register_from_install_run_deferred_finalize($db, (string) $locationId, $ownerContext, $now, $rflogId, $rflogStart);
+    } else {
+        register_from_install_log_timing($rflogId, 'total', $rflogStart);
+    }
+
 } catch (Exception $e) {
     error_log("[api/auth/register_from_install.php] Registration exception: {$e->getMessage()}\n{$e->getTraceAsString()}");
     http_response_code(500);
@@ -672,6 +692,36 @@ try {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+function register_from_install_log_timing(string $rid, string $step, float $sinceStart): void
+{
+    error_log('[register_from_install] rid=' . $rid . ' step=' . $step . ' ms=' . (int) round((microtime(true) - $sinceStart) * 1000));
+}
+
+/**
+ * @param array{owner_user_id?:string,owner_email?:string,owner_name?:string,owner_phone?:string} $ownerContext
+ */
+function register_from_install_run_deferred_finalize(
+    $db,
+    string $locationId,
+    array $ownerContext,
+    DateTimeImmutable $now,
+    string $rid,
+    float $sinceStart
+): void {
+    if (function_exists('fastcgi_finish_request')) {
+        fastcgi_finish_request();
+    }
+
+    $finalizeStart = microtime(true);
+    try {
+        install_finalize_registered_location_fast($db, $locationId, $ownerContext, $now);
+    } catch (Exception $finalizeError) {
+        error_log('[register_from_install] finalize_registered_fast failed rid=' . $rid . ' location=' . $locationId . ': ' . $finalizeError->getMessage());
+    }
+    register_from_install_log_timing($rid, 'finalize_fast', $finalizeStart);
+    register_from_install_log_timing($rid, 'total', $sinceStart);
+}
 
 /**
  * Write (or update) a subaccount record in users/{uid}/subaccounts/{entityId}.

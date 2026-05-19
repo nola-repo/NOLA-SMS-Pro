@@ -1083,6 +1083,154 @@ function install_finalize_after_registration($db, string $locationId, DateTimeIm
     );
 }
 
+/**
+ * Fast registration finalization: one token read + one batch (no deep ownership scan).
+ *
+ * @param array{owner_user_id?:string,owner_email?:string,owner_name?:string,owner_phone?:string} $ownerContext
+ */
+function install_finalize_registered_location_fast(
+    $db,
+    string $locationId,
+    array $ownerContext,
+    DateTimeImmutable $now
+): void {
+    $locationId = install_clean_location_id($locationId);
+    if ($locationId === null) {
+        return;
+    }
+
+    try {
+        $tokenRef = $db->collection('ghl_tokens')->document($locationId);
+        $tokenSnap = $tokenRef->snapshot();
+    } catch (Exception $e) {
+        error_log('[install_helpers] finalize_registered_fast lookup failed for ' . $locationId . ': ' . $e->getMessage());
+
+        return;
+    }
+
+    if (!$tokenSnap->exists()) {
+        return;
+    }
+
+    $tokenData = $tokenSnap->data();
+    $storedState = (string)($tokenData['install_state'] ?? '');
+    if ($storedState === INSTALL_STATE_INSTALLED) {
+        return;
+    }
+    if ($storedState !== INSTALL_STATE_PENDING_OAUTH) {
+        return;
+    }
+
+    $hasLocationToken = trim((string)($tokenData['access_token'] ?? '')) !== ''
+        && (($tokenData['userType'] ?? '') === 'Location'
+            || install_clean_location_id($tokenData['location_id'] ?? ($tokenData['locationId'] ?? null)) === $locationId);
+    if (!$hasLocationToken) {
+        return;
+    }
+
+    $resolutionMode = (string)($tokenData['install_resolution_mode'] ?? INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION);
+    if (empty(install_final_install_checkpoint($locationId, $resolutionMode)['ok'])) {
+        return;
+    }
+
+    $resolutionSource = (string)($tokenData['install_resolution_source'] ?? 'register_from_install');
+    if ($resolutionSource === '') {
+        $resolutionSource = 'register_from_install';
+    }
+    $resolutionSource .= '+registration_complete';
+
+    $installStatus = INSTALL_STATE_LINKED_ACCOUNT;
+    $timestamp = new \Google\Cloud\Core\Timestamp($now);
+    $classificationSummary = install_summarize_classification([
+        'status' => $installStatus,
+        'token_exists' => true,
+        'linked' => true,
+        'mismatch' => false,
+    ]);
+
+    $ownerUserId = trim((string)($ownerContext['owner_user_id'] ?? ''));
+    $ownerFields = [];
+    if ($ownerUserId !== '') {
+        $ownerFields = [
+            'location_id' => $locationId,
+            'owner_user_id' => $ownerUserId,
+            'owner_uid' => $ownerUserId,
+            'owner_email' => install_norm_email($ownerContext['owner_email'] ?? ''),
+            'owner_name' => trim((string)($ownerContext['owner_name'] ?? '')),
+            'owner_phone' => preg_replace('/\s+/', '', trim((string)($ownerContext['owner_phone'] ?? ''))),
+        ];
+    }
+
+    $tokenInstallData = array_merge($ownerFields, [
+        'install_state' => INSTALL_STATE_INSTALLED,
+        'install_status' => $installStatus,
+        'is_live' => true,
+        'toggle_enabled' => true,
+        'install_resolution_mode' => $resolutionMode,
+        'install_resolution_source' => $resolutionSource,
+        'install_redirect_kind' => 'login',
+        'install_classification' => $classificationSummary,
+        'install_completed_at' => $timestamp,
+        'uninstalled_at' => null,
+        'uninstall_source' => null,
+        'updated_at' => $timestamp,
+    ]);
+
+    $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
+    $intRef = $db->collection('integrations')->document($intDocId);
+    $intData = [];
+    try {
+        $intSnap = $intRef->snapshot();
+        $intData = $intSnap->exists() ? $intSnap->data() : [];
+    } catch (Exception $e) {
+        error_log('[install_helpers] finalize_registered_fast integration read failed for ' . $locationId . ': ' . $e->getMessage());
+    }
+
+    $integrationData = array_merge($ownerFields, [
+        'location_id' => $locationId,
+        'location_name' => (string)($tokenData['location_name'] ?? ''),
+        'companyId' => $tokenData['companyId'] ?? ($tokenData['company_id'] ?? null),
+        'company_name' => (string)($tokenData['company_name'] ?? ''),
+        'access_token' => $tokenData['access_token'] ?? null,
+        'refresh_token' => $tokenData['refresh_token'] ?? null,
+        'scope' => $tokenData['scope'] ?? null,
+        'expires_at' => $tokenData['expires_at'] ?? null,
+        'client_id' => $tokenData['client_id'] ?? ($tokenData['appId'] ?? null),
+        'app_type' => $tokenData['appType'] ?? 'subaccount',
+        'install_state' => INSTALL_STATE_INSTALLED,
+        'install_status' => $installStatus,
+        'install_resolution_mode' => $resolutionMode,
+        'install_resolution_source' => $resolutionSource,
+        'install_redirect_kind' => 'login',
+        'install_completed_at' => $timestamp,
+        'uninstalled_at' => null,
+        'uninstall_source' => null,
+        'is_live' => true,
+        'updated_at' => $timestamp,
+    ]);
+
+    if (!array_key_exists('free_credits_total', $intData)) {
+        $integrationData['free_credits_total'] = 10;
+    }
+    if (!array_key_exists('free_usage_count', $intData)) {
+        $integrationData['free_usage_count'] = 0;
+    }
+    if (!array_key_exists('credit_balance', $intData)) {
+        $integrationData['credit_balance'] = 0;
+    }
+    if (!array_key_exists('system_default_sender', $intData)) {
+        $integrationData['system_default_sender'] = 'NOLASMSPro';
+    }
+    if (!array_key_exists('installed_at', $intData)) {
+        $integrationData['installed_at'] = $timestamp;
+    }
+
+    $batch = $db->batch();
+    $batch->set($tokenRef, $tokenInstallData, ['merge' => true]);
+    $batch->set($intRef, $integrationData, ['merge' => true]);
+    $batch->commit();
+}
+
 function install_finalize_location_install(
     $db,
     string $locationId,
@@ -1726,6 +1874,18 @@ function install_classify_location_for_provision(
         ];
     }
 
+    // Brand-new selection: no prior location token and no stored doc — skip owner scan.
+    if (!$tokenExistedBefore && $preloadedTokenExists === false) {
+        return [
+            'status' => INSTALL_STATE_FRESH_INSTALL,
+            'token_exists' => false,
+            'linked' => false,
+            'linked_account' => null,
+            'mismatch' => false,
+            'install_state' => INSTALL_STATE_PENDING_OAUTH,
+        ];
+    }
+
     $linkedAccount = null;
     try {
         $ownerSnap = $db->collection('location_owners')->document($locationId)->snapshot();
@@ -2070,11 +2230,16 @@ function install_complete_company_location_selection(
     $expiresAt = time() + (int)($ltData['expires_in'] ?? 86400);
     $locationName = trim($locationName);
     if ($locationName === '') {
-        $locationName = install_fetch_location_name_with_token(
-            (string)$ltData['access_token'],
-            $locationId,
-            ''
-        );
+        // Selection UI already lists workspace names; avoid a blocking GHL locations GET.
+        if (strpos($resolutionSource, 'selection') !== false) {
+            $locationName = 'Workspace';
+        } else {
+            $locationName = install_fetch_location_name_with_token(
+                (string)$ltData['access_token'],
+                $locationId,
+                ''
+            );
+        }
     }
 
     $clientId = $companyData['client_id'] ?? $companyData['appId'] ?? null;
@@ -2136,16 +2301,20 @@ function install_complete_company_location_selection(
     );
 
     if ($selectionSessionId !== null && $selectionSessionId !== '') {
-        try {
-            $db->collection('install_sessions')->document($selectionSessionId)->set([
-                'status' => 'selected',
-                'selected_location_id' => $locationId,
-                'selected_location_name' => $locationName,
-                'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-            ], ['merge' => true]);
-        } catch (Exception $e) {
-            error_log('[install_helpers] selection session update failed: ' . $e->getMessage());
-        }
+        $sessionIdForUpdate = $selectionSessionId;
+        $sessionUpdatePayload = [
+            'status' => 'selected',
+            'selected_location_id' => $locationId,
+            'selected_location_name' => $locationName,
+            'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+        ];
+        register_shutdown_function(static function () use ($db, $sessionIdForUpdate, $sessionUpdatePayload): void {
+            try {
+                $db->collection('install_sessions')->document($sessionIdForUpdate)->set($sessionUpdatePayload, ['merge' => true]);
+            } catch (Exception $e) {
+                error_log('[install_helpers] selection session update failed: ' . $e->getMessage());
+            }
+        });
     }
 
     return [
@@ -2258,8 +2427,13 @@ function install_try_server_redirect_single_selection(
  *
  * @return array{ok:bool, code:int, data:array, raw:string, format:string, failures:array}
  */
-function install_exchange_location_token(string $companyToken, string $companyId, string $locationId): array
-{
+function install_exchange_location_token(
+    string $companyToken,
+    string $companyId,
+    string $locationId,
+    int $timeoutSeconds = 5
+): array {
+    $timeoutSeconds = max(3, min(10, $timeoutSeconds));
     $attempts = [
         [
             'format' => 'form',
@@ -2292,10 +2466,11 @@ function install_exchange_location_token(string $companyToken, string $companyId
             CURLOPT_POSTFIELDS => $attempt['body'],
             CURLOPT_HTTPHEADER => $attempt['headers'],
             CURLOPT_CONNECTTIMEOUT => 2,
-            CURLOPT_TIMEOUT => 6,
+            CURLOPT_TIMEOUT => $timeoutSeconds,
         ]);
         $raw = curl_exec($ltCurl);
         $code = curl_getinfo($ltCurl, CURLINFO_HTTP_CODE);
+        $curlErrno = curl_errno($ltCurl);
         curl_close($ltCurl);
         $data = json_decode($raw ?: '', true);
         $jsonDecodeOk = is_array($data);
@@ -2347,8 +2522,14 @@ function install_exchange_location_token(string $companyToken, string $companyId
             'raw' => substr($sanitizedRaw, 0, 400),
         ];
 
-        if (in_array($code, [400, 401, 403], true)) {
-            $failures[count($failures) - 1]['reason'] = 'auth_error_no_retry';
+        if (in_array($code, [400, 401, 403, 404], true)) {
+            $failures[count($failures) - 1]['reason'] = 'client_error_no_retry';
+            break;
+        }
+
+        // Timeouts / transport errors: alternate Content-Type is unlikely to help.
+        if ($curlErrno !== 0 || $code === 0) {
+            $failures[count($failures) - 1]['reason'] = 'transport_error_no_retry';
             break;
         }
     }
@@ -2376,8 +2557,8 @@ function install_fetch_location_name_with_token(string $accessToken, string $loc
         $ch = curl_init('https://services.leadconnectorhq.com/locations/' . urlencode($locationId));
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CONNECTTIMEOUT => 3,
-            CURLOPT_TIMEOUT => 6,
+            CURLOPT_CONNECTTIMEOUT => 2,
+            CURLOPT_TIMEOUT => 4,
             CURLOPT_HTTPHEADER => [
                 'Authorization: Bearer ' . $accessToken,
                 'Accept: application/json',

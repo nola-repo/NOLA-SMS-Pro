@@ -275,6 +275,8 @@ $locationNameRaw = (string) ($payload['location_name'] ?? '');
 $locationName = htmlspecialchars($locationNameRaw, ENT_QUOTES, 'UTF-8');
 $companyId    = $payload['company_id'] ?? null;
 $companyNameRaw = (string) ($payload['company_name'] ?? '');
+$irLocTokenExists = false;
+$irLocTokenData = [];
 
 // Best-effort display-name hydration from Firestore when token payload is sparse.
 // Agency-level install JWTs omit location_id — infer it when exactly one sub-account token exists.
@@ -285,8 +287,10 @@ try {
         if ($locationName === '' || $companyNameRaw === '') {
             if ($locationId) {
                 $locSnap = $db->collection('ghl_tokens')->document((string) $locationId)->snapshot();
-                if ($locSnap->exists()) {
+                $irLocTokenExists = $locSnap->exists();
+                if ($irLocTokenExists) {
                     $locData = $locSnap->data();
+                    $irLocTokenData = is_array($locData) ? $locData : [];
                     if ($locationName === '') {
                         $locationNameRaw = (string) ($locData['location_name'] ?? '');
                         $locationName = htmlspecialchars($locationNameRaw, ENT_QUOTES, 'UTF-8');
@@ -322,7 +326,32 @@ if ($tokenType !== 'install' && $tokenType !== 'agency_install') {
 if ($locationId) {
     try {
         $db = isset($db) ? $db : get_firestore();
-        $installClass = install_classify_location($db, (string)$locationId, $companyId ? (string)$companyId : null);
+        if (!$irLocTokenExists) {
+            $locSnapGuard = $db->collection('ghl_tokens')->document((string) $locationId)->snapshot();
+            $irLocTokenExists = $locSnapGuard->exists();
+            if ($irLocTokenExists) {
+                $guardData = $locSnapGuard->data();
+                $irLocTokenData = is_array($guardData) ? $guardData : [];
+            }
+        }
+        if (ir_enable_deep_linked_user_fallback()) {
+            $installClass = install_classify_location(
+                $db,
+                (string) $locationId,
+                $companyId ? (string) $companyId : null,
+                null,
+                true
+            );
+        } else {
+            $installClass = install_classify_location_for_provision(
+                $db,
+                (string) $locationId,
+                $companyId ? (string) $companyId : null,
+                $irLocTokenExists,
+                $irLocTokenExists,
+                $irLocTokenData
+            );
+        }
         if (($installClass['status'] ?? '') === INSTALL_STATE_COMPANY_MISMATCH) {
             ir_page('Sub-account Mismatch', '<div style="text-align:center;"><h1>Sub-account Mismatch</h1><p class="subtitle">This install link does not match the selected GoHighLevel sub-account. Please reinstall from the correct sub-account.</p></div>');
         }
