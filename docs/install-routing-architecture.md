@@ -29,6 +29,7 @@ Agency installs are separate and enter through `/oauth/agency-callback`.
 8. Save or refresh the location token idempotently with `install_state=PENDING_OAUTH`.
 9. Classify install state from token existence plus canonical ownership.
 10. Mark `install_state=INSTALLED` only after the location token is persisted and classification is complete.
+11. On GHL **AppUninstall**, `POST /webhook/ghl_marketplace_events` sets `install_state=UNINSTALLED`, clears tokens, and blocks `ghl_provider` / `send_sms` for that location.
 11. Route:
    - `FRESH_INSTALL` -> `/register?install_token=...`
    - `TOKEN_ONLY` -> `/register?install_token=...`

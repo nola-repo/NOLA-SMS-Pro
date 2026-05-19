@@ -67,6 +67,7 @@ try {
         $isAgency = ($data['appType'] ?? '') === 'agency' || $doc->id() === $agencyId;
         if ($isAgency) continue;
         if (($data['install_state'] ?? '') === INSTALL_STATE_PENDING_OAUTH) continue;
+        if (!install_token_active_for_sms(true, $data)) continue;
 
         $locId = $data['locationId'] ?? $data['location_id'] ?? $doc->id();
         if ($locId && !in_array($locId, $locationIds)) {

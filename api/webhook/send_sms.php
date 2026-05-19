@@ -10,6 +10,7 @@ header('Content-Type: application/json');
 $config = require __DIR__ . '/config.php';
 require __DIR__ . '/firestore_client.php';
 require __DIR__ . '/../auth_helpers.php';
+require __DIR__ . '/../install_helpers.php';
 require __DIR__ . '/../services/CreditManager.php';
 require __DIR__ . '/../services/GhlClient.php';
 require_once __DIR__ . '/../services/GhlSyncService.php';
@@ -114,6 +115,22 @@ $payload = json_decode($raw, true);
 if (!is_array($payload)) {
     $payload = $_POST;
 }
+
+// GHL Marketplace AppInstall / AppUninstall often hit the Default webhook URL (this script).
+if (install_is_marketplace_lifecycle_payload($payload)) {
+    try {
+        $dbMarketplace = get_firestore();
+        $marketplaceResult = install_handle_marketplace_webhook($dbMarketplace, $payload, $config);
+        http_response_code((int)$marketplaceResult['status']);
+        echo json_encode($marketplaceResult['body']);
+    } catch (Throwable $e) {
+        error_log('[send_sms] marketplace lifecycle handler failed: ' . $e->getMessage());
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => 'Marketplace webhook processing failed']);
+    }
+    exit;
+}
+
 log_full_payload($raw, $payload);
 
 /* |-------------------------------------------------------------------------- | EXTRACT MESSAGE + SENDER |-------------------------------------------------------------------------- */
@@ -218,6 +235,17 @@ if (!$toggleEnabled) {
     echo json_encode([
         'status' => 'error',
         'message' => 'SMS sending is currently disabled for this account. Please contact your agency.'
+    ]);
+    exit;
+}
+
+$installGate = install_location_sms_gate($db, (string)$locId);
+if (empty($installGate['allowed'])) {
+    http_response_code(403);
+    echo json_encode([
+        'status' => 'error',
+        'error' => (string)($installGate['code'] ?? 'install_blocked'),
+        'message' => (string)($installGate['reason'] ?? 'NOLA SMS Pro is not installed for this sub-account.'),
     ]);
     exit;
 }

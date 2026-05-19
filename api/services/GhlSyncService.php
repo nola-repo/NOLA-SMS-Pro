@@ -3,6 +3,7 @@
 namespace Nola\Services;
 
 require_once __DIR__ . '/GhlClient.php';
+require_once __DIR__ . '/../install_helpers.php';
 
 /**
  * GhlSyncService — Handles synchronization of messages and statuses to GHL.
@@ -26,6 +27,11 @@ class GhlSyncService
     public function syncOutboundMessage(string $phone, string $message, ?string $contactId = null): array
     {
         try {
+            $installSkip = $this->skipIfInstallInactive();
+            if ($installSkip !== null) {
+                return $installSkip;
+            }
+
             if ($this->isConversationSyncDisabled()) {
                 return ['success' => true, 'skipped' => true, 'reason' => 'conversation_sync_disabled_for_location'];
             }
@@ -97,6 +103,11 @@ class GhlSyncService
     public function syncInboundMessage(string $phone, string $message): array
     {
         try {
+            $installSkip = $this->skipIfInstallInactive();
+            if ($installSkip !== null) {
+                return $installSkip;
+            }
+
             if ($this->isConversationSyncDisabled()) {
                 return ['success' => true, 'skipped' => true, 'reason' => 'conversation_sync_disabled_for_location'];
             }
@@ -242,6 +253,23 @@ class GhlSyncService
     {
         $docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $this->locationId);
         return $this->db->collection('integrations')->document($docId);
+    }
+
+    /**
+     * @return array<string,mixed>|null
+     */
+    private function skipIfInstallInactive(): ?array
+    {
+        $gate = install_location_sms_gate($this->db, $this->locationId);
+        if (!empty($gate['allowed'])) {
+            return null;
+        }
+
+        return [
+            'success' => true,
+            'skipped' => true,
+            'reason' => (string)($gate['code'] ?? 'app_uninstalled'),
+        ];
     }
 
     private function isConversationSyncDisabled(): bool

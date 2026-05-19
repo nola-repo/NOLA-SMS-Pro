@@ -16,8 +16,307 @@ if (!defined('INSTALL_STATE_FRESH_INSTALL')) {
     define('INSTALL_STATE_COMPANY_MISMATCH', 'COMPANY_MISMATCH');
     define('INSTALL_STATE_PENDING_OAUTH', 'PENDING_OAUTH');
     define('INSTALL_STATE_INSTALLED', 'INSTALLED');
+    define('INSTALL_STATE_UNINSTALLED', 'UNINSTALLED');
     define('INSTALL_STATE_INSTALL_PENDING', 'INSTALL_PENDING');
     define('INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION', 'EXACT_SINGLE_LOCATION');
+}
+
+/**
+ * Whether a ghl_tokens document represents an active Marketplace install (SMS allowed).
+ *
+ * @param array<string,mixed> $tokenData
+ */
+function install_token_active_for_sms(bool $docExists, array $tokenData = []): bool
+{
+    if (!$docExists) {
+        return false;
+    }
+
+    $state = (string)($tokenData['install_state'] ?? '');
+    if ($state === INSTALL_STATE_UNINSTALLED) {
+        return false;
+    }
+    if ($state === INSTALL_STATE_PENDING_OAUTH) {
+        return false;
+    }
+    if (array_key_exists('is_live', $tokenData) && $tokenData['is_live'] === false) {
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * Gate SMS / conversation-provider traffic for a GHL location.
+ *
+ * @return array{allowed:bool,code:string,reason:string}
+ */
+function install_location_sms_gate($db, string $locationId): array
+{
+    $locationId = trim($locationId);
+    if ($locationId === '') {
+        return [
+            'allowed' => false,
+            'code' => 'missing_location',
+            'reason' => 'Missing location',
+        ];
+    }
+
+    try {
+        $snap = $db->collection('ghl_tokens')->document($locationId)->snapshot();
+    } catch (Exception $e) {
+        error_log('[install_helpers] install_location_sms_gate failed for ' . $locationId . ': ' . $e->getMessage());
+
+        return [
+            'allowed' => false,
+            'code' => 'token_lookup_error',
+            'reason' => 'Could not verify install status for this sub-account.',
+        ];
+    }
+
+    if (!$snap->exists()) {
+        return [
+            'allowed' => false,
+            'code' => 'not_installed',
+            'reason' => 'NOLA SMS Pro is not installed for this sub-account. Install from the GoHighLevel Marketplace to send SMS.',
+        ];
+    }
+
+    $data = $snap->data();
+    if (!install_token_active_for_sms(true, $data)) {
+        $state = (string)($data['install_state'] ?? '');
+        if ($state === INSTALL_STATE_UNINSTALLED || (($data['is_live'] ?? null) === false)) {
+            return [
+                'allowed' => false,
+                'code' => 'app_uninstalled',
+                'reason' => 'NOLA SMS Pro was uninstalled for this sub-account. Reinstall from the GoHighLevel Marketplace to use SMS again.',
+            ];
+        }
+        if ($state === INSTALL_STATE_PENDING_OAUTH) {
+            return [
+                'allowed' => false,
+                'code' => 'install_pending',
+                'reason' => 'Install is still pending. Complete the Marketplace install for this sub-account.',
+            ];
+        }
+
+        return [
+            'allowed' => false,
+            'code' => 'not_active',
+            'reason' => 'NOLA SMS Pro is not active for this sub-account.',
+        ];
+    }
+
+    return ['allowed' => true, 'code' => 'ok', 'reason' => ''];
+}
+
+/**
+ * Mark a location as uninstalled (blocks ghl_provider, send_sms, agency installed lists).
+ */
+function install_mark_location_uninstalled(
+    $db,
+    string $locationId,
+    string $source = 'app_uninstall',
+    ?string $companyId = null
+): bool {
+    $locationId = install_clean_location_id($locationId) ?? trim($locationId);
+    if ($locationId === '') {
+        return false;
+    }
+
+    $now = new \Google\Cloud\Core\Timestamp(new DateTimeImmutable());
+    $tokenRef = $db->collection('ghl_tokens')->document($locationId);
+    $tokenSnap = $tokenRef->snapshot();
+
+    if (!$tokenSnap->exists()) {
+        error_log("[install_helpers] uninstall skip: no ghl_tokens doc for {$locationId}");
+
+        return false;
+    }
+
+    $existing = $tokenSnap->data();
+    $tokenUpdate = [
+        'install_state' => INSTALL_STATE_UNINSTALLED,
+        'install_status' => INSTALL_STATE_UNINSTALLED,
+        'is_live' => false,
+        'toggle_enabled' => false,
+        'uninstalled_at' => $now,
+        'uninstall_source' => $source,
+        'updated_at' => $now,
+        'access_token' => null,
+        'refresh_token' => null,
+    ];
+    if ($companyId !== null && $companyId !== '') {
+        $tokenUpdate['companyId'] = $companyId;
+    }
+
+    $tokenRef->set($tokenUpdate, ['merge' => true]);
+
+    $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
+    $db->collection('integrations')->document($intDocId)->set([
+        'location_id' => $locationId,
+        'install_state' => INSTALL_STATE_UNINSTALLED,
+        'is_live' => false,
+        'uninstalled_at' => $now,
+        'uninstall_source' => $source,
+        'updated_at' => $now,
+        'access_token' => null,
+        'refresh_token' => null,
+    ], ['merge' => true]);
+
+    $subRef = $db->collection('agency_subaccounts')->document($locationId);
+    if ($subRef->snapshot()->exists()) {
+        $subRef->set([
+            'toggle_enabled' => false,
+            'install_state' => INSTALL_STATE_UNINSTALLED,
+            'uninstalled_at' => $now,
+            'updated_at' => $now,
+        ], ['merge' => true]);
+    }
+
+    error_log('[install_helpers] marked uninstalled location=' . $locationId . ' source=' . $source . ' company=' . ($companyId ?? ''));
+
+    return true;
+}
+
+/**
+ * Mark all location-level tokens under a company as uninstalled (agency-level uninstall).
+ */
+function install_mark_company_locations_uninstalled($db, string $companyId, string $source = 'app_uninstall_agency'): int
+{
+    $companyId = trim($companyId);
+    if ($companyId === '') {
+        return 0;
+    }
+
+    $count = 0;
+    try {
+        $docs = $db->collection('ghl_tokens')->where('companyId', '=', $companyId)->documents();
+        foreach ($docs as $doc) {
+            if (!$doc->exists()) {
+                continue;
+            }
+            $data = $doc->data();
+            $locId = (string)($data['locationId'] ?? $data['location_id'] ?? $doc->id());
+            $isAgency = ($data['appType'] ?? '') === 'agency' || $locId === $companyId || $doc->id() === $companyId;
+            if ($isAgency) {
+                if ($doc->id() === $companyId || $locId === $companyId) {
+                    $doc->reference()->set([
+                        'install_state' => INSTALL_STATE_UNINSTALLED,
+                        'is_live' => false,
+                        'uninstalled_at' => new \Google\Cloud\Core\Timestamp(new DateTimeImmutable()),
+                        'uninstall_source' => $source,
+                        'updated_at' => new \Google\Cloud\Core\Timestamp(new DateTimeImmutable()),
+                        'access_token' => null,
+                        'refresh_token' => null,
+                    ], ['merge' => true]);
+                }
+                continue;
+            }
+            if (install_mark_location_uninstalled($db, $locId, $source, $companyId)) {
+                $count++;
+            }
+        }
+    } catch (Exception $e) {
+        error_log('[install_helpers] company uninstall failed for ' . $companyId . ': ' . $e->getMessage());
+    }
+
+    return $count;
+}
+
+/**
+ * True when payload is GHL Marketplace AppInstall / AppUninstall (not SMS).
+ *
+ * @param array<string,mixed> $payload
+ */
+function install_is_marketplace_lifecycle_payload(array $payload): bool
+{
+    $eventType = strtoupper(trim((string)($payload['type'] ?? '')));
+
+    return in_array($eventType, ['UNINSTALL', 'INSTALL'], true);
+}
+
+/**
+ * Handle AppInstall / AppUninstall webhook body. Returns HTTP status + JSON body.
+ *
+ * @param array<string,mixed> $payload
+ * @param array<string,mixed> $config Optional webhook config (GHL_CLIENT_ID keys)
+ * @return array{status:int,body:array<string,mixed>}
+ */
+function install_handle_marketplace_webhook($db, array $payload, array $config = []): array
+{
+    $eventType = strtoupper(trim((string)($payload['type'] ?? '')));
+    $appId = trim((string)($payload['appId'] ?? $payload['app_id'] ?? ''));
+    $locationId = install_clean_location_id($payload['locationId'] ?? $payload['location_id'] ?? null);
+    $companyId = install_clean_location_id($payload['companyId'] ?? $payload['company_id'] ?? null);
+
+    $expectedAppIds = array_values(array_filter([
+        trim((string)($config['GHL_CLIENT_ID'] ?? '')),
+        trim((string)($config['GHL_AGENCY_CLIENT_ID'] ?? '')),
+        trim((string)(getenv('GHL_CLIENT_ID') ?: '')),
+        trim((string)(getenv('GHL_AGENCY_CLIENT_ID') ?: '')),
+    ]));
+
+    if ($appId !== '' && $expectedAppIds !== [] && !in_array($appId, $expectedAppIds, true)) {
+        error_log('[install_marketplace_webhook] ignored appId=' . $appId);
+
+        return [
+            'status' => 200,
+            'body' => ['success' => true, 'ignored' => true, 'reason' => 'unknown_app_id'],
+        ];
+    }
+
+    error_log('[install_marketplace_webhook] ' . json_encode([
+        'type' => $eventType,
+        'appId' => $appId,
+        'locationId' => $locationId,
+        'companyId' => $companyId,
+    ]));
+
+    if ($eventType === 'UNINSTALL') {
+        $marked = 0;
+        if ($locationId) {
+            if (install_mark_location_uninstalled($db, $locationId, 'ghl_app_uninstall_webhook', $companyId)) {
+                $marked = 1;
+            }
+        } elseif ($companyId) {
+            $marked = install_mark_company_locations_uninstalled($db, $companyId, 'ghl_app_uninstall_agency_webhook');
+        } else {
+            return [
+                'status' => 400,
+                'body' => ['success' => false, 'error' => 'UNINSTALL missing locationId and companyId'],
+            ];
+        }
+
+        return [
+            'status' => 200,
+            'body' => [
+                'success' => true,
+                'event' => 'UNINSTALL',
+                'locations_marked' => $marked,
+                'locationId' => $locationId,
+                'companyId' => $companyId,
+            ],
+        ];
+    }
+
+    if ($eventType === 'INSTALL') {
+        return [
+            'status' => 200,
+            'body' => [
+                'success' => true,
+                'event' => 'INSTALL',
+                'message' => 'Acknowledged; complete OAuth via /oauth/callback for token persistence.',
+                'locationId' => $locationId,
+                'companyId' => $companyId,
+            ],
+        ];
+    }
+
+    return [
+        'status' => 400,
+        'body' => ['success' => false, 'error' => 'Unsupported marketplace event', 'type' => $eventType],
+    ];
 }
 
 function install_clean_location_id($value): ?string
@@ -606,6 +905,8 @@ function install_finalize_location_install(
     $tokenInstallData = [
         'install_state' => INSTALL_STATE_INSTALLED,
         'install_status' => $installStatus,
+        'is_live' => true,
+        'toggle_enabled' => true,
         'install_resolution_mode' => $resolutionMode,
         'install_resolution_source' => $resolutionSource,
         'install_redirect_kind' => $redirectKind,
@@ -617,8 +918,8 @@ function install_finalize_location_install(
             || strpos($resolutionSource, 'approved_locations_unique_single') !== false
             || strpos($resolutionSource, 'approved_locations_single') !== false
             || strpos($resolutionSource, 'query_approved_locations_single') !== false,
-        'is_live' => true,
-        'toggle_enabled' => true,
+        'uninstalled_at' => null,
+        'uninstall_source' => null,
         'updated_at' => $timestamp,
     ];
 
@@ -644,6 +945,9 @@ function install_finalize_location_install(
         'install_resolution_source' => $resolutionSource,
         'install_redirect_kind' => $redirectKind,
         'install_completed_at' => $timestamp,
+        'uninstalled_at' => null,
+        'uninstall_source' => null,
+        'is_live' => true,
         'updated_at' => $timestamp,
     ];
 

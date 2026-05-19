@@ -37,6 +37,9 @@ try {
         if (($d['install_state'] ?? '') === INSTALL_STATE_PENDING_OAUTH) {
             continue;
         }
+        if (!install_token_active_for_sms(true, $d)) {
+            continue;
+        }
         $locId = (string)($d['location_id'] ?? $doc->id());
         if ($locId === '' || $locId === $companyId) {
             continue;

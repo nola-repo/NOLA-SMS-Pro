@@ -72,6 +72,11 @@ class WebhookV2LegacyBridgeController extends Controller
         return $this->forwardToLegacy(base_path('../api/webhook/ghl_provider.php'), $request->method(), $request->all(), (string) $request->getContent());
     }
 
+    public function ghlMarketplaceEvents(Request $request): Response
+    {
+        return $this->forwardToLegacy(base_path('../api/webhook/ghl_marketplace_events.php'), $request->method(), $request->all(), (string) $request->getContent());
+    }
+
     private function forwardToLegacy(string $script, string $method, array $query = [], string $rawBody = ''): Response
     {
         $result = $this->bridge->call($script, $method, $query, $rawBody);

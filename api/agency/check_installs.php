@@ -48,8 +48,9 @@ try {
             // Exclude the agency-level token itself
             $isAgency = ($data['appType'] ?? '') === 'agency' || $locId === $companyId;
             $isPending = ($data['install_state'] ?? '') === INSTALL_STATE_PENDING_OAUTH;
+            $isActive = install_token_active_for_sms(true, $data);
             
-            if (!$isAgency && !$isPending && $locId && !in_array($locId, $installedLocations)) {
+            if (!$isAgency && !$isPending && $isActive && $locId && !in_array($locId, $installedLocations)) {
                 $installedLocations[] = $locId;
             }
         }

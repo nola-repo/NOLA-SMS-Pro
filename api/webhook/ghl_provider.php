@@ -34,6 +34,7 @@ header('Content-Type: application/json');
 $config = require __DIR__ . '/config.php';
 require __DIR__ . '/firestore_client.php';
 require __DIR__ . '/../auth_helpers.php';
+require __DIR__ . '/../install_helpers.php';
 require __DIR__ . '/../services/CreditManager.php';
 
 $SEMAPHORE_API_KEY      = $config['SEMAPHORE_API_KEY'];
@@ -186,6 +187,22 @@ if (!$toggleEnabled) {
     echo json_encode([
         'success' => false,
         'error'   => 'SMS sending is currently disabled for this account. Please contact your agency.'
+    ]);
+    exit;
+}
+
+$installGate = install_location_sms_gate($db, (string)$locationId);
+if (empty($installGate['allowed'])) {
+    error_log('[ghl_provider][REJECT] ' . json_encode([
+        'req_id' => $providerReqId,
+        'reason' => $installGate['code'] ?? 'install_blocked',
+        'locationId' => $locationId,
+    ]));
+    http_response_code(403);
+    echo json_encode([
+        'success' => false,
+        'error' => (string)($installGate['reason'] ?? 'NOLA SMS Pro is not installed for this sub-account.'),
+        'code' => (string)($installGate['code'] ?? 'install_blocked'),
     ]);
     exit;
 }

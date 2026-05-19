@@ -83,6 +83,7 @@ Route::any('/api/v2/webhook/ghl_create_conversation', [WebhookV2LegacyBridgeCont
 Route::any('/api/v2/webhook/ghl_debug', [WebhookV2LegacyBridgeController::class, 'ghlDebug']);
 Route::any('/api/v2/webhook/ghl_oauth', [WebhookV2LegacyBridgeController::class, 'ghlOauth']);
 Route::any('/api/v2/webhook/ghl_provider', [WebhookV2LegacyBridgeController::class, 'ghlProvider']);
+Route::any('/api/v2/webhook/ghl_marketplace_events', [WebhookV2LegacyBridgeController::class, 'ghlMarketplaceEvents']);
 
 // Admin Routes
 Route::any('/api/v2/admin_auth', [AdminV2LegacyBridgeController::class, 'auth']);

@@ -17,6 +17,7 @@ header('Content-Type: application/json');
 
 require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
+require __DIR__ . '/install_helpers.php';
 require __DIR__ . '/services/GhlClient.php';
 
 // Standardized Auth Check
@@ -53,6 +54,17 @@ if (!$locId) {
 
 auth_assert_ghl_api_location_allowed($db, $jwtCtx, (string) $locId);
 $tokenRegistryId = auth_resolve_ghl_token_registry_id($db, $jwtCtx, (string) $locId);
+
+$installGate = install_location_sms_gate($db, (string) $locId);
+if (empty($installGate['allowed'])) {
+    http_response_code(403);
+    echo json_encode([
+        'success' => false,
+        'error' => (string) ($installGate['reason'] ?? 'NOLA SMS Pro is not installed for this sub-account.'),
+        'code' => (string) ($installGate['code'] ?? 'install_blocked'),
+    ]);
+    exit;
+}
 
 try {
     $client = new GhlClient($db, $locId, $tokenRegistryId);
