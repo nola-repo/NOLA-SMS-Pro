@@ -521,12 +521,24 @@ function render_company_location_recovery_selection(
     array $debug = [],
     ?string $preselectedLocationId = null
 ): void {
-    $available = fetch_company_locations_for_selection($companyId, $companyToken);
+    $preselectedLocationId = install_clean_location_id($preselectedLocationId);
+    if ($preselectedLocationId !== null) {
+        $available = [
+            'ok' => true,
+            'ids' => [$preselectedLocationId],
+            'names' => [],
+            'failures' => [],
+        ];
+        error_log('[GHL_CALLBACK] selection_required_skipped_company_fetch preselected=' . $preselectedLocationId);
+    } else {
+        $available = fetch_company_locations_for_selection($companyId, $companyToken);
+    }
     error_log('[GHL_CALLBACK] selection_required_locations_fetch=' . json_encode([
         'companyId' => $companyId,
         'ok' => $available['ok'],
         'count' => count($available['ids']),
         'failures' => $available['failures'],
+        'preselected' => $preselectedLocationId,
     ]));
 
     if (!$available['ok']) {
@@ -583,6 +595,7 @@ function render_ambiguous_selection(
     $resolveUrlJson = json_encode($resolveUrl, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT);
     $sessionTokenJson = json_encode($sessionToken, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT);
     $confirmMode = $uiMode === 'confirm_preselected';
+    $autoConfirmJson = $confirmMode ? 'true' : 'false';
     $buttons = '';
     $primaryWorkspaceLabel = 'Workspace';
     foreach ($candidateLocations as $row) {
@@ -683,7 +696,7 @@ HTML;
             btn.appendChild(c2);
             err.classList.add('hidden');
             const ctl = new AbortController();
-            const to = setTimeout(function() { ctl.abort(); }, 90000);
+            const to = setTimeout(function() { ctl.abort(); }, 45000);
             try {
               const res = await fetch(RESOLVE_SELECTION_URL, {
                 method: 'POST',
@@ -712,6 +725,24 @@ HTML;
               btn.appendChild(r1);
               btn.appendChild(r2);
             }
+          }
+          const AUTO_CONFIRM_PRESELECTED = {$autoConfirmJson};
+          if (AUTO_CONFIRM_PRESELECTED) {
+            window.addEventListener('DOMContentLoaded', function() {
+              var btn = document.querySelector('.selection-option-btn');
+              if (!btn || btn.disabled) return;
+              var status = document.getElementById('auto-confirm-status');
+              if (!status) {
+                status = document.createElement('p');
+                status.id = 'auto-confirm-status';
+                status.className = 'subtitle';
+                status.style.marginBottom = '12px';
+                status.textContent = 'Setting up your workspace…';
+                var list = document.getElementById('selection-list');
+                if (list && list.parentNode) list.parentNode.insertBefore(status, list);
+              }
+              setTimeout(function() { selectLocation(btn); }, 50);
+            });
           }
         </script>
 HTML;
@@ -1226,15 +1257,22 @@ if (($data['userType'] ?? '') === 'Company') {
         $approvedLocationIds = $queryApprovedLocationIds;
     }
     $stateLocationId = extract_location_id_from_state($state);
+    $preselectSignals = [
+        'token_marketplace_selected_id' => install_oauth_marketplace_selected_location_id($data),
+        'state_location_id' => $stateLocationId,
+        'query_location_id' => $queryLocationId,
+    ];
     $caseAResolution = install_resolve_selected_location([
         'token_location_id' => $data['locationId'] ?? ($data['location_id'] ?? null),
-        'token_marketplace_selected_id' => install_oauth_marketplace_selected_location_id($data),
+        'token_marketplace_selected_id' => $preselectSignals['token_marketplace_selected_id'],
         'query_location_id' => $queryLocationId,
         'approved_location_ids' => $approvedLocationIds,
         'query_approved_location_ids' => $queryApprovedLocationIds,
         'locations' => $oauthLocations,
         'state_location_id' => $stateLocationId,
     ]);
+    $preselectedTrust = install_preselected_location_for_selection_ui($preselectSignals);
+    $caseAResolution = install_trust_marketplace_preselect_to_resolution($caseAResolution, $preselectedTrust);
     $locationsArrayIds = $caseAResolution['candidate_ids'];
     $singleLocationId = $caseAResolution['ok'] ? $caseAResolution['location_id'] : null;
     $caseAResolutionMode = (string)($caseAResolution['resolutionMode'] ?? ($caseAResolution['status'] ?? ''));
@@ -1282,10 +1320,12 @@ if (($data['userType'] ?? '') === 'Company') {
 
         $ltExpires2 = time() + (int)($ltData2['expires_in'] ?? 86400);
 
-        // Try to get location name from the locations[] payload GHL already sent us
-        // (free — avoids a round-trip to the GHL /locations/{id} API before redirect).
+        // Try to get location name from resolver/OAuth payload before calling GHL again.
         $singleLocName = '';
-        if ($hasLocationsArray) {
+        if (is_array($caseAResolution['location_names'] ?? null)) {
+            $singleLocName = trim((string)($caseAResolution['location_names'][$singleLocationId] ?? ''));
+        }
+        if ($hasLocationsArray && $singleLocName === '') {
             foreach ($oauthLocations as $loc) {
                 if (!is_array($loc)) continue;
                 $lid = $loc['id'] ?? $loc['locationId'] ?? null;
@@ -1491,9 +1531,14 @@ if (($data['userType'] ?? '') === 'Company') {
 
 // ─── Determine Location ID ────────────────────────────────────────────────────────────────
 // Resolve only from trusted OAuth/GHL selection signals; never infer from registration status.
+$finalPreselectSignals = [
+    'token_marketplace_selected_id' => install_oauth_marketplace_selected_location_id($data),
+    'state_location_id' => extract_location_id_from_state($state),
+    'query_location_id' => $queryLocationId,
+];
 $finalResolution = install_resolve_selected_location([
     'token_location_id' => $data['locationId'] ?? ($data['location_id'] ?? null),
-    'token_marketplace_selected_id' => install_oauth_marketplace_selected_location_id($data),
+    'token_marketplace_selected_id' => $finalPreselectSignals['token_marketplace_selected_id'],
     'query_location_id' => $queryLocationId,
     'approved_location_ids' => install_unique_ids(array_merge(
         install_extract_location_ids_from_mixed($data['approvedLocations'] ?? null),
@@ -1501,8 +1546,10 @@ $finalResolution = install_resolve_selected_location([
     )),
     'query_approved_location_ids' => $queryApprovedLocationIds,
     'locations' => install_oauth_locations_array_for_resolver($data),
-    'state_location_id' => extract_location_id_from_state($state),
+    'state_location_id' => $finalPreselectSignals['state_location_id'],
 ]);
+$finalPreselectedTrust = install_preselected_location_for_selection_ui($finalPreselectSignals);
+$finalResolution = install_trust_marketplace_preselect_to_resolution($finalResolution, $finalPreselectedTrust);
 $finalResolutionMode = (string)($finalResolution['resolutionMode'] ?? ($finalResolution['status'] ?? ''));
 $locationId = $finalResolution['ok'] ? $finalResolution['location_id'] : null;
 $finalCheckpoint = install_final_install_checkpoint($locationId, $finalResolutionMode);

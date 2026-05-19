@@ -729,13 +729,13 @@ function install_resolve_selected_location(array $signals): array
     $sessionLocationId = install_clean_location_id($signals['session_location_id'] ?? null);
     $marketplaceSelectedId = install_clean_location_id($signals['token_marketplace_selected_id'] ?? null);
 
-    // Priority: signed session > query > OAuth state > GHL marketplace selected fields
+    // Priority: signed session > marketplace picker > query > OAuth state
     // > merged approvedLocations (unique) > locations[] unique > token root locationId.
     $tier1Order = [
         'signed_install_session' => $sessionLocationId,
+        'ghl_token_marketplace_selected' => $marketplaceSelectedId,
         'query_location_field' => $queryLocationId,
         'oauth_state' => $stateLocationId,
-        'ghl_token_marketplace_selected' => $marketplaceSelectedId,
     ];
     $tier1SourcesById = [];
     $tier1Ids = [];
@@ -761,6 +761,33 @@ function install_resolve_selected_location(array $signals): array
     ));
 
     if (count($tier1Unique) > 1) {
+        $tier1ConflictPriority = [
+            ['signed_install_session', $sessionLocationId],
+            ['ghl_token_marketplace_selected', $marketplaceSelectedId],
+            ['query_location_field', $queryLocationId],
+            ['oauth_state', $stateLocationId],
+        ];
+        foreach ($tier1ConflictPriority as $priorityRow) {
+            $prioritySource = $priorityRow[0];
+            $priorityId = install_clean_location_id($priorityRow[1] ?? null);
+            if ($priorityId === null || !in_array($priorityId, $tier1Unique, true)) {
+                continue;
+            }
+
+            return [
+                'ok' => true,
+                'status' => INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION,
+                'resolutionMode' => INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION,
+                'locationId' => $priorityId,
+                'location_id' => $priorityId,
+                'source' => $prioritySource,
+                'reason' => 'tier1_conflict_resolved_by_priority',
+                'candidate_ids' => $candidateIds,
+                'location_names' => $locationNames,
+                'conflict' => $tier1SourcesById,
+            ];
+        }
+
         return [
             'ok' => false,
             'status' => INSTALL_STATE_AMBIGUOUS,
@@ -886,10 +913,10 @@ function install_summarize_classification(array $classification): array
 function install_preselected_location_for_selection_ui(array $signals): ?string
 {
     foreach ([
-        'token_marketplace_selected_id',
-        'state_location_id',
-        'query_location_id',
         'session_location_id',
+        'token_marketplace_selected_id',
+        'query_location_id',
+        'state_location_id',
     ] as $key) {
         $id = install_clean_location_id($signals[$key] ?? null);
         if ($id !== null) {
@@ -911,7 +938,7 @@ function install_narrow_selection_to_preselected(array $candidateIds, array $loc
 {
     $candidateIds = install_unique_ids($candidateIds);
     $preselectedId = install_clean_location_id($preselectedId);
-    if ($preselectedId === null || !in_array($preselectedId, $candidateIds, true)) {
+    if ($preselectedId === null) {
         return [
             'candidate_ids' => $candidateIds,
             'location_names' => $locationNames,
@@ -920,11 +947,46 @@ function install_narrow_selection_to_preselected(array $candidateIds, array $loc
         ];
     }
 
+    if (!in_array($preselectedId, $candidateIds, true)) {
+        $candidateIds[] = $preselectedId;
+    }
+
     return [
         'candidate_ids' => [$preselectedId],
         'location_names' => $locationNames,
         'ui_mode' => 'confirm_preselected',
         'preselected_location_id' => $preselectedId,
+    ];
+}
+
+/**
+ * When GHL Marketplace chooser already picked a sub-account, skip the second picker.
+ */
+function install_trust_marketplace_preselect_to_resolution(array $resolution, ?string $preselectedId): array
+{
+    $preselectedId = install_clean_location_id($preselectedId);
+    if ($preselectedId === null || !empty($resolution['ok'])) {
+        return $resolution;
+    }
+
+    $candidateIds = install_unique_ids(
+        is_array($resolution['candidate_ids'] ?? null) ? $resolution['candidate_ids'] : []
+    );
+    if (!in_array($preselectedId, $candidateIds, true)) {
+        $candidateIds[] = $preselectedId;
+    }
+    $locationNames = is_array($resolution['location_names'] ?? null) ? $resolution['location_names'] : [];
+
+    return [
+        'ok' => true,
+        'status' => INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION,
+        'resolutionMode' => INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION,
+        'locationId' => $preselectedId,
+        'location_id' => $preselectedId,
+        'source' => 'marketplace_preselected_trusted',
+        'reason' => 'trusted_marketplace_picker',
+        'candidate_ids' => $candidateIds,
+        'location_names' => $locationNames,
     ];
 }
 
@@ -1941,6 +2003,9 @@ function install_exchange_location_token(string $companyToken, string $companyId
 function install_fetch_location_name_with_token(string $accessToken, string $locationId, string $fallback = ''): string
 {
     if ($accessToken === '' || $locationId === '') {
+        return $fallback;
+    }
+    if (trim($fallback) !== '') {
         return $fallback;
     }
 
