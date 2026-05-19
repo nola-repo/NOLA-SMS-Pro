@@ -9,7 +9,7 @@
 require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 
-@set_time_limit(60);
+@set_time_limit(45);
 
 require_once __DIR__ . '/../jwt_helper.php';
 require_once __DIR__ . '/../install_helpers.php';
@@ -57,6 +57,7 @@ if ($sessionId === '' || $companyId === '') {
 }
 
 try {
+    $startedAt = microtime(true);
     $db = get_firestore();
     $sessionRef = $db->collection('install_sessions')->document($sessionId);
     $sessionSnap = $sessionRef->snapshot();
@@ -129,7 +130,8 @@ try {
         $locationId,
         (string)($candidateNames[$locationId] ?? ''),
         'signed_install_selection',
-        $sessionId
+        $sessionId,
+        true
     );
 
     if (!$result['ok'] || empty($result['url'])) {
@@ -144,6 +146,8 @@ try {
     $decision = is_array($result['decision'] ?? null) ? $result['decision'] : [];
     $deferredFinalize = install_should_defer_finalize_for_decision($decision);
 
+    error_log('[resolve_install_selection] ok locationId=' . $locationId . ' ms=' . (int)round((microtime(true) - $startedAt) * 1000));
+
     echo json_encode([
         'ok' => true,
         'kind' => $decision['kind'] ?? 'register',
@@ -154,7 +158,7 @@ try {
         'url' => $result['url'],
     ]);
 } catch (Exception $e) {
-    error_log('[resolve_install_selection] exception: ' . $e->getMessage());
+    error_log('[resolve_install_selection] exception: ' . $e->getMessage() . ' ms=' . (isset($startedAt) ? (int)round((microtime(true) - $startedAt) * 1000) : 0));
     http_response_code(500);
     echo json_encode(['error' => 'Failed to continue install selection.']);
 }

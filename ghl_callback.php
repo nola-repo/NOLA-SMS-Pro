@@ -606,8 +606,7 @@ function render_ambiguous_selection(
     string $uiMode = 'list'
 ): void
 {
-    global $backendApiUrl;
-    $resolveUrl = rtrim((string)$backendApiUrl, '/') . '/api/auth/resolve-install-selection';
+    $resolveUrl = '/api/auth/resolve-install-selection';
     $resolveUrlJson = json_encode($resolveUrl, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT);
     $sessionTokenJson = json_encode($sessionToken, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT);
     $confirmMode = $uiMode === 'confirm_preselected';
@@ -701,26 +700,34 @@ HTML;
             c1.style.cssText = 'display:block;font-weight:800;';
             c1.textContent = 'Connecting your workspace…';
             var c2 = document.createElement('span');
+            c2.setAttribute('data-connect-detail', '1');
             c2.style.cssText = 'display:block;font-size:12px;opacity:0.8;margin-top:6px;font-weight:500;';
             c2.textContent = 'Usually under 15 seconds.';
             btn.appendChild(c1);
             btn.appendChild(c2);
           }
+          function updateConnectingDetail(btn, text) {
+            var detail = btn.querySelector('[data-connect-detail]');
+            if (detail) detail.textContent = text;
+          }
           async function postResolveSelection(locationId, attempt) {
             const ctl = new AbortController();
-            const to = setTimeout(function() { ctl.abort(); }, 35000);
+            const to = setTimeout(function() { ctl.abort(); }, 25000);
             try {
               const res = await fetch(RESOLVE_SELECTION_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
                 body: JSON.stringify({ session_token: INSTALL_SELECTION_TOKEN, location_id: locationId }),
                 signal: ctl.signal,
-                credentials: 'same-origin'
+                credentials: 'same-origin',
+                cache: 'no-store'
               });
               clearTimeout(to);
-              const data = await res.json().catch(() => ({}));
+              const raw = await res.text();
+              let data = {};
+              try { data = raw ? JSON.parse(raw) : {}; } catch (parseErr) { data = {}; }
               if (!res.ok || !data.url) {
-                const retryable = res.status >= 500 || res.status === 0;
+                const retryable = res.status >= 500 || res.status === 0 || res.status === 504;
                 if (retryable && attempt < 1) {
                   return postResolveSelection(locationId, attempt + 1);
                 }
@@ -743,11 +750,16 @@ HTML;
             if (searchEl) searchEl.disabled = true;
             btn.textContent = '';
             setConnectingState(btn);
+            var slowTimer = setTimeout(function() {
+              updateConnectingDetail(btn, 'Still connecting… this can take up to 25 seconds.');
+            }, 12000);
             err.classList.add('hidden');
             try {
               const data = await postResolveSelection(locationId, 0);
-              window.location.assign(data.url);
+              clearTimeout(slowTimer);
+              window.location.replace(data.url);
             } catch (e) {
+              clearTimeout(slowTimer);
               err.textContent = (e && e.name === 'AbortError') ? 'That step took too long. Please try again, or reopen NOLA SMS Pro from GoHighLevel.' : (e.message || 'Could not continue installation.');
               err.classList.remove('hidden');
               document.querySelectorAll('.selection-option-btn').forEach(b => { b.disabled = false; b.style.opacity = '1'; });

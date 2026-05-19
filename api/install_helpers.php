@@ -1004,7 +1004,8 @@ function install_maybe_finalize_location_install(
     array $decision,
     string $resolutionMode,
     string $resolutionSource,
-    DateTimeImmutable $now
+    DateTimeImmutable $now,
+    ?array $preloadedTokenData = null
 ): void {
     if (install_should_defer_finalize_for_decision($decision)) {
         return;
@@ -1016,7 +1017,8 @@ function install_maybe_finalize_location_install(
         $decision,
         $resolutionMode,
         $resolutionSource,
-        $now
+        $now,
+        $preloadedTokenData
     );
 }
 
@@ -1087,7 +1089,8 @@ function install_finalize_location_install(
     array $decision,
     string $resolutionMode,
     string $resolutionSource,
-    DateTimeImmutable $now
+    DateTimeImmutable $now,
+    ?array $preloadedTokenData = null
 ): void {
     $checkpoint = install_final_install_checkpoint($locationId, $resolutionMode);
     if (empty($checkpoint['ok'])) {
@@ -1101,8 +1104,12 @@ function install_finalize_location_install(
     $timestamp = new \Google\Cloud\Core\Timestamp($now);
 
     $tokenRef = $db->collection('ghl_tokens')->document($locationId);
-    $tokenSnap = $tokenRef->snapshot();
-    $tokenData = $tokenSnap->exists() ? $tokenSnap->data() : [];
+    if ($preloadedTokenData !== null) {
+        $tokenData = $preloadedTokenData;
+    } else {
+        $tokenSnap = $tokenRef->snapshot();
+        $tokenData = $tokenSnap->exists() ? $tokenSnap->data() : [];
+    }
     $tokenInstallData = [
         'install_state' => INSTALL_STATE_INSTALLED,
         'install_status' => $installStatus,
@@ -1189,19 +1196,31 @@ function install_token_doc_exists($db, string $locationId): bool
     }
 }
 
-function install_location_company_mismatch($db, string $locationId, ?string $companyId): bool
-{
+function install_location_company_mismatch(
+    $db,
+    string $locationId,
+    ?string $companyId,
+    ?bool $tokenDocExists = null,
+    ?array $tokenData = null
+): bool {
     $companyId = trim((string)$companyId);
     if ($locationId === '') {
         return false;
     }
 
     try {
-        $snap = $db->collection('ghl_tokens')->document($locationId)->snapshot();
-        if (!$snap->exists()) {
-            return false;
+        if ($tokenDocExists !== null) {
+            if (!$tokenDocExists) {
+                return false;
+            }
+            $data = is_array($tokenData) ? $tokenData : [];
+        } else {
+            $snap = $db->collection('ghl_tokens')->document($locationId)->snapshot();
+            if (!$snap->exists()) {
+                return false;
+            }
+            $data = $snap->data();
         }
-        $data = $snap->data();
         $storedLocation = install_clean_location_id($data['location_id'] ?? ($data['locationId'] ?? null));
         $storedCompany = trim((string)($data['companyId'] ?? $data['company_id'] ?? ''));
         $isAgencyLevelDoc = (($data['appType'] ?? '') === 'agency')
@@ -1439,6 +1458,10 @@ function install_linked_account_for_location($db, string $locationId, bool $deep
         error_log("[install_helpers] owner lookup failed for {$locationId}: " . $e->getMessage());
     }
 
+    if (!$deepFallback) {
+        return install_linked_account_for_location_owner_fallbacks($db, $locationId);
+    }
+
     foreach ([
         'active_location_id',
         'location_id',
@@ -1463,10 +1486,6 @@ function install_linked_account_for_location($db, string $locationId, bool $deep
         } catch (Exception $e) {
             error_log("[install_helpers] user {$field} lookup failed for {$locationId}: " . $e->getMessage());
         }
-    }
-
-    if (!$deepFallback) {
-        return install_linked_account_for_location_owner_fallbacks($db, $locationId);
     }
 
     foreach ([
@@ -1673,6 +1692,78 @@ function install_user_linked_to_location($db, string $uid, string $locationId, ?
     }
 
     return false;
+}
+
+/**
+ * Fast routing classification right after Marketplace selection (avoids slow legacy scans).
+ *
+ * @return array{status:string,token_exists:bool,linked:bool,linked_account:?array,mismatch:bool,install_state?:string}
+ */
+function install_classify_location_for_provision(
+    $db,
+    string $locationId,
+    ?string $companyId,
+    bool $tokenExistedBefore,
+    ?bool $preloadedTokenExists = null,
+    ?array $preloadedTokenData = null
+): array {
+    $locationId = trim($locationId);
+    $mismatch = install_location_company_mismatch(
+        $db,
+        $locationId,
+        $companyId,
+        $preloadedTokenExists,
+        $preloadedTokenData
+    );
+    if ($mismatch) {
+        return [
+            'status' => INSTALL_STATE_COMPANY_MISMATCH,
+            'token_exists' => $tokenExistedBefore,
+            'linked' => false,
+            'linked_account' => null,
+            'mismatch' => true,
+            'install_state' => INSTALL_STATE_PENDING_OAUTH,
+        ];
+    }
+
+    $linkedAccount = null;
+    try {
+        $ownerSnap = $db->collection('location_owners')->document($locationId)->snapshot();
+        $linkedAccount = install_linked_account_from_owner_like_doc($ownerSnap, 'location_owners');
+    } catch (Exception $e) {
+        error_log("[install_helpers] provision owner lookup failed for {$locationId}: " . $e->getMessage());
+    }
+
+    if ($linkedAccount !== null) {
+        return [
+            'status' => INSTALL_STATE_LINKED_ACCOUNT,
+            'token_exists' => true,
+            'linked' => true,
+            'linked_account' => $linkedAccount,
+            'mismatch' => false,
+            'install_state' => INSTALL_STATE_PENDING_OAUTH,
+        ];
+    }
+
+    if ($tokenExistedBefore) {
+        return [
+            'status' => INSTALL_STATE_TOKEN_ONLY,
+            'token_exists' => true,
+            'linked' => false,
+            'linked_account' => null,
+            'mismatch' => false,
+            'install_state' => INSTALL_STATE_PENDING_OAUTH,
+        ];
+    }
+
+    return [
+        'status' => INSTALL_STATE_FRESH_INSTALL,
+        'token_exists' => false,
+        'linked' => false,
+        'linked_account' => null,
+        'mismatch' => false,
+        'install_state' => INSTALL_STATE_PENDING_OAUTH,
+    ];
 }
 
 /**
@@ -1924,7 +2015,8 @@ function install_complete_company_location_selection(
     string $locationId,
     string $locationName,
     string $resolutionSource,
-    ?string $selectionSessionId = null
+    ?string $selectionSessionId = null,
+    bool $skipClaimRecord = false
 ): array {
     $locationId = install_clean_location_id($locationId);
     $companyId = trim($companyId);
@@ -1937,15 +2029,33 @@ function install_complete_company_location_selection(
         return ['ok' => false, 'url' => null, 'error' => 'Company token is empty.'];
     }
 
-    if (install_location_company_mismatch($db, $locationId, $companyId)) {
+    $preloadedTokenExists = false;
+    $preloadedTokenData = [];
+    try {
+        $preloadedTokenSnap = $db->collection('ghl_tokens')->document($locationId)->snapshot();
+        $preloadedTokenExists = $preloadedTokenSnap->exists();
+        if ($preloadedTokenExists) {
+            $preloadedTokenData = $preloadedTokenSnap->data();
+        }
+    } catch (Exception $e) {
+        error_log("[install_helpers] preloaded token read failed for {$locationId}: " . $e->getMessage());
+    }
+
+    if (install_location_company_mismatch(
+        $db,
+        $locationId,
+        $companyId,
+        $preloadedTokenExists,
+        $preloadedTokenData
+    )) {
         return ['ok' => false, 'url' => null, 'error' => 'Selected subaccount belongs to a different GoHighLevel company.'];
     }
 
-    if ($selectionSessionId !== null && $selectionSessionId !== '') {
+    if (!$skipClaimRecord && $selectionSessionId !== null && $selectionSessionId !== '') {
         install_record_selection_claim($db, $selectionSessionId, $companyId, $locationId);
     }
 
-    $tokenExistedBefore = install_token_doc_exists($db, $locationId);
+    $tokenExistedBefore = $preloadedTokenExists;
     $exchange = install_exchange_location_token($companyToken, $companyId, $locationId);
     if (!$exchange['ok']) {
         return [
@@ -1968,7 +2078,7 @@ function install_complete_company_location_selection(
     }
 
     $clientId = $companyData['client_id'] ?? $companyData['appId'] ?? null;
-    $db->collection('ghl_tokens')->document($locationId)->set([
+    $freshTokenData = array_merge($preloadedTokenData, [
         'access_token' => $ltData['access_token'],
         'refresh_token' => $ltData['refresh_token'] ?? ($companyData['refresh_token'] ?? null),
         'expires_at' => $expiresAt,
@@ -1988,20 +2098,8 @@ function install_complete_company_location_selection(
         'selection_session_id' => $selectionSessionId,
         'oauth_pending_started_at' => new \Google\Cloud\Core\Timestamp($now),
         'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-    ], ['merge' => true]);
-
-    if ($selectionSessionId !== null && $selectionSessionId !== '') {
-        try {
-            $db->collection('install_sessions')->document($selectionSessionId)->set([
-                'status' => 'selected',
-                'selected_location_id' => $locationId,
-                'selected_location_name' => $locationName,
-                'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-            ], ['merge' => true]);
-        } catch (Exception $e) {
-            error_log('[install_helpers] selection session update failed: ' . $e->getMessage());
-        }
-    }
+    ]);
+    $db->collection('ghl_tokens')->document($locationId)->set($freshTokenData, ['merge' => true]);
 
     $decision = install_decide_location_redirect(
         $db,
@@ -2012,7 +2110,10 @@ function install_complete_company_location_selection(
         $companyName,
         $resolutionSource,
         $tokenExistedBefore,
-        false
+        false,
+        true,
+        $preloadedTokenExists,
+        $preloadedTokenData
     );
 
     if (($decision['kind'] ?? '') === 'error' || empty($decision['url'])) {
@@ -2030,8 +2131,22 @@ function install_complete_company_location_selection(
         $decision,
         INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION,
         $resolutionSource,
-        $now
+        $now,
+        $freshTokenData
     );
+
+    if ($selectionSessionId !== null && $selectionSessionId !== '') {
+        try {
+            $db->collection('install_sessions')->document($selectionSessionId)->set([
+                'status' => 'selected',
+                'selected_location_id' => $locationId,
+                'selected_location_name' => $locationName,
+                'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+            ], ['merge' => true]);
+        } catch (Exception $e) {
+            error_log('[install_helpers] selection session update failed: ' . $e->getMessage());
+        }
+    }
 
     return [
         'ok' => true,
@@ -2231,6 +2346,11 @@ function install_exchange_location_token(string $companyToken, string $companyId
             'has_access_token_field' => !empty($data['access_token']) || (is_string($raw) && strpos($raw, '"access_token"') !== false),
             'raw' => substr($sanitizedRaw, 0, 400),
         ];
+
+        if (in_array($code, [400, 401, 403], true)) {
+            $failures[count($failures) - 1]['reason'] = 'auth_error_no_retry';
+            break;
+        }
     }
 
     return [
@@ -2293,9 +2413,21 @@ function install_decide_location_redirect(
     string $companyName,
     string $resolutionSource,
     ?bool $tokenExistedBefore = null,
-    bool $deepOwnershipFallback = true
+    bool $deepOwnershipFallback = true,
+    bool $provisionFast = false,
+    ?bool $preloadedTokenExists = null,
+    ?array $preloadedTokenData = null
 ): array {
-    $classification = install_classify_location($db, $locationId, $companyId, $tokenExistedBefore, $deepOwnershipFallback);
+    $classification = $provisionFast
+        ? install_classify_location_for_provision(
+            $db,
+            $locationId,
+            $companyId,
+            (bool)$tokenExistedBefore,
+            $preloadedTokenExists,
+            $preloadedTokenData
+        )
+        : install_classify_location($db, $locationId, $companyId, $tokenExistedBefore, $deepOwnershipFallback);
 
     if (($classification['status'] ?? '') === INSTALL_STATE_COMPANY_MISMATCH) {
         return [
