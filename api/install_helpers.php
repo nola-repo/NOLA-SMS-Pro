@@ -1703,14 +1703,22 @@ function install_classify_location(
     $tokenExists = $tokenExistedBefore ?? $tokenSnapExists;
     $pendingOAuth = $tokenExistedBefore === null && $storedInstallState === INSTALL_STATE_PENDING_OAUTH;
     if ($pendingOAuth) {
-        return [
-            'status' => INSTALL_STATE_INSTALL_PENDING,
-            'token_exists' => $tokenExists,
-            'linked' => false,
-            'linked_account' => null,
-            'mismatch' => false,
-            'install_state' => $storedInstallState,
-        ];
+        // PENDING_OAUTH after location token exchange means "finish registration", not
+        // "OAuth still resolving". Only block when the location token is not provisioned yet.
+        $hasProvisionedLocationToken = trim((string)($tokenData['access_token'] ?? '')) !== ''
+            && (($tokenData['userType'] ?? '') === 'Location'
+                || install_clean_location_id($tokenData['location_id'] ?? ($tokenData['locationId'] ?? null)) === $locationId);
+        if (!$hasProvisionedLocationToken) {
+            return [
+                'status' => INSTALL_STATE_INSTALL_PENDING,
+                'token_exists' => $tokenExists,
+                'linked' => false,
+                'linked_account' => null,
+                'mismatch' => false,
+                'install_state' => $storedInstallState,
+            ];
+        }
+        $tokenExists = true;
     }
 
     $mismatch = install_location_company_mismatch($db, $locationId, $companyId);
