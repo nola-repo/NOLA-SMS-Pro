@@ -575,6 +575,22 @@ function render_company_location_recovery_selection(
     );
 
     error_log('[GHL_CALLBACK] Selection-required install recovery session=' . $selectionSession['session_id']);
+    install_try_server_redirect_single_selection(
+        $db,
+        $jwtSecret,
+        $companyId,
+        $companyName,
+        [
+            'access_token' => $companyToken,
+            'client_id' => trim((string)(getenv('GHL_CLIENT_ID') ?: '')),
+            'appId' => trim((string)(getenv('GHL_CLIENT_ID') ?: '')),
+        ],
+        $selectionSession['candidate_locations'],
+        ($narrowed['ui_mode'] ?? '') === 'confirm_preselected'
+            ? 'recovery_confirm_preselected'
+            : 'recovery_single_candidate',
+        (string)$selectionSession['session_id']
+    );
     render_ambiguous_selection(
         (string)$selectionSession['session_token'],
         $selectionSession['candidate_locations'],
@@ -679,24 +695,20 @@ HTML;
               });
             });
           })();
-          async function selectLocation(btn) {
-            const locationId = btn.getAttribute('data-location-id');
-            const labelRestore = btn.getAttribute('data-label') || 'Workspace';
-            const err = document.getElementById('selection-error');
-            document.querySelectorAll('.selection-option-btn').forEach(b => { b.disabled = true; b.style.opacity = '.65'; });
-            if (searchEl) searchEl.disabled = true;
+          function setConnectingState(btn) {
             btn.textContent = '';
             var c1 = document.createElement('span');
             c1.style.cssText = 'display:block;font-weight:800;';
             c1.textContent = 'Connecting your workspace…';
             var c2 = document.createElement('span');
             c2.style.cssText = 'display:block;font-size:12px;opacity:0.8;margin-top:6px;font-weight:500;';
-            c2.textContent = 'This can take a moment.';
+            c2.textContent = 'Usually under 15 seconds.';
             btn.appendChild(c1);
             btn.appendChild(c2);
-            err.classList.add('hidden');
+          }
+          async function postResolveSelection(locationId, attempt) {
             const ctl = new AbortController();
-            const to = setTimeout(function() { ctl.abort(); }, 45000);
+            const to = setTimeout(function() { ctl.abort(); }, 35000);
             try {
               const res = await fetch(RESOLVE_SELECTION_URL, {
                 method: 'POST',
@@ -707,10 +719,35 @@ HTML;
               });
               clearTimeout(to);
               const data = await res.json().catch(() => ({}));
-              if (!res.ok || !data.url) throw new Error(data.error || ('Could not continue installation (' + res.status + ').'));
-              window.location.assign(data.url);
+              if (!res.ok || !data.url) {
+                const retryable = res.status >= 500 || res.status === 0;
+                if (retryable && attempt < 1) {
+                  return postResolveSelection(locationId, attempt + 1);
+                }
+                throw new Error(data.error || ('Could not continue installation (' + res.status + ').'));
+              }
+              return data;
             } catch (e) {
               clearTimeout(to);
+              if (attempt < 1 && (e && e.name === 'AbortError')) {
+                return postResolveSelection(locationId, attempt + 1);
+              }
+              throw e;
+            }
+          }
+          async function selectLocation(btn) {
+            const locationId = btn.getAttribute('data-location-id');
+            const labelRestore = btn.getAttribute('data-label') || 'Workspace';
+            const err = document.getElementById('selection-error');
+            document.querySelectorAll('.selection-option-btn').forEach(b => { b.disabled = true; b.style.opacity = '.65'; });
+            if (searchEl) searchEl.disabled = true;
+            btn.textContent = '';
+            setConnectingState(btn);
+            err.classList.add('hidden');
+            try {
+              const data = await postResolveSelection(locationId, 0);
+              window.location.assign(data.url);
+            } catch (e) {
               err.textContent = (e && e.name === 'AbortError') ? 'That step took too long. Please try again, or reopen NOLA SMS Pro from GoHighLevel.' : (e.message || 'Could not continue installation.');
               err.classList.remove('hidden');
               document.querySelectorAll('.selection-option-btn').forEach(b => { b.disabled = false; b.style.opacity = '1'; });
@@ -1483,6 +1520,23 @@ if (($data['userType'] ?? '') === 'Company') {
             $narrowedSelection['preselected_location_id']
         );
         error_log('[GHL_CALLBACK] Ambiguous install selection required session=' . $selectionSession['session_id']);
+        install_try_server_redirect_single_selection(
+            $db,
+            (string)$jwtSecretSelect,
+            (string)$companyId,
+            $companyNameFromToken,
+            [
+                'access_token' => $companyToken,
+                'refresh_token' => $companyRefresh,
+                'client_id' => $subaccountClientId,
+                'appId' => $subaccountClientId,
+            ],
+            $selectionSession['candidate_locations'],
+            ($narrowedSelection['ui_mode'] ?? '') === 'confirm_preselected'
+                ? 'callback_confirm_preselected'
+                : 'callback_single_candidate',
+            (string)$selectionSession['session_id']
+        );
         render_ambiguous_selection(
             (string)$selectionSession['session_token'],
             $selectionSession['candidate_locations'],
@@ -1626,6 +1680,23 @@ if (!$locationId) {
                 INSTALL_STATE_AMBIGUOUS,
                 (string)$finalNarrowed['ui_mode'],
                 $finalNarrowed['preselected_location_id']
+            );
+            install_try_server_redirect_single_selection(
+                $db,
+                (string)$jwtSecretSelect,
+                $finalCompanyId,
+                $finalCompanyName,
+                [
+                    'access_token' => (string)($data['access_token'] ?? ''),
+                    'refresh_token' => $data['refresh_token'] ?? null,
+                    'client_id' => $ghlApps[$usedAppType]['clientId'],
+                    'appId' => $ghlApps[$usedAppType]['clientId'],
+                ],
+                $selectionSession['candidate_locations'],
+                ($finalNarrowed['ui_mode'] ?? '') === 'confirm_preselected'
+                    ? 'final_confirm_preselected'
+                    : 'final_single_candidate',
+                (string)$selectionSession['session_id']
             );
             render_ambiguous_selection(
                 (string)$selectionSession['session_token'],

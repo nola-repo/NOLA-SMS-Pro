@@ -1678,8 +1678,13 @@ function install_user_linked_to_location($db, string $uid, string $locationId, ?
 /**
  * @return array{status:string,token_exists:bool,linked:bool,linked_account:?array,mismatch:bool}
  */
-function install_classify_location($db, string $locationId, ?string $companyId = null, ?bool $tokenExistedBefore = null): array
-{
+function install_classify_location(
+    $db,
+    string $locationId,
+    ?string $companyId = null,
+    ?bool $tokenExistedBefore = null,
+    bool $deepOwnershipFallback = true
+): array {
     $locationId = trim($locationId);
     $tokenData = [];
     $storedInstallState = '';
@@ -1709,7 +1714,7 @@ function install_classify_location($db, string $locationId, ?string $companyId =
     }
 
     $mismatch = install_location_company_mismatch($db, $locationId, $companyId);
-    $linkedAccount = install_linked_account_for_location($db, $locationId);
+    $linkedAccount = install_linked_account_for_location($db, $locationId, $deepOwnershipFallback);
     $linked = $linkedAccount !== null;
     if ($linked) {
         install_backfill_location_owner($db, $locationId, $linkedAccount);
@@ -1897,6 +1902,235 @@ function install_attach_user_to_location_ownership(
 }
 
 /**
+ * Provision one selected sub-account from a company token and return the redirect URL.
+ *
+ * @param array<string,mixed> $companyData
+ * @return array{ok:bool,url:?string,error:?string,decision?:array<string,mixed>}
+ */
+function install_complete_company_location_selection(
+    $db,
+    string $jwtSecret,
+    string $companyId,
+    string $companyName,
+    array $companyData,
+    string $locationId,
+    string $locationName,
+    string $resolutionSource,
+    ?string $selectionSessionId = null
+): array {
+    $locationId = install_clean_location_id($locationId);
+    $companyId = trim($companyId);
+    if ($locationId === null || $companyId === '') {
+        return ['ok' => false, 'url' => null, 'error' => 'Missing company or location context.'];
+    }
+
+    $companyToken = (string)($companyData['access_token'] ?? '');
+    if ($companyToken === '') {
+        return ['ok' => false, 'url' => null, 'error' => 'Company token is empty.'];
+    }
+
+    if (install_location_company_mismatch($db, $locationId, $companyId)) {
+        return ['ok' => false, 'url' => null, 'error' => 'Selected subaccount belongs to a different GoHighLevel company.'];
+    }
+
+    if ($selectionSessionId !== null && $selectionSessionId !== '') {
+        install_record_selection_claim($db, $selectionSessionId, $companyId, $locationId);
+    }
+
+    $tokenExistedBefore = install_token_doc_exists($db, $locationId);
+    $exchange = install_exchange_location_token($companyToken, $companyId, $locationId);
+    if (!$exchange['ok']) {
+        return [
+            'ok' => false,
+            'url' => null,
+            'error' => 'Failed to exchange selected subaccount token.',
+        ];
+    }
+
+    $ltData = $exchange['data'];
+    $now = new DateTimeImmutable();
+    $expiresAt = time() + (int)($ltData['expires_in'] ?? 86400);
+    $locationName = trim($locationName);
+    if ($locationName === '') {
+        $locationName = install_fetch_location_name_with_token(
+            (string)$ltData['access_token'],
+            $locationId,
+            ''
+        );
+    }
+
+    $clientId = $companyData['client_id'] ?? $companyData['appId'] ?? null;
+    $db->collection('ghl_tokens')->document($locationId)->set([
+        'access_token' => $ltData['access_token'],
+        'refresh_token' => $ltData['refresh_token'] ?? ($companyData['refresh_token'] ?? null),
+        'expires_at' => $expiresAt,
+        'client_id' => $clientId,
+        'appId' => $clientId,
+        'appType' => 'subaccount',
+        'userType' => 'Location',
+        'location_id' => $locationId,
+        'location_name' => $locationName,
+        'companyId' => $companyId,
+        'company_name' => $companyName,
+        'install_state' => INSTALL_STATE_PENDING_OAUTH,
+        'install_status' => INSTALL_STATE_INSTALL_PENDING,
+        'install_resolution_mode' => INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION,
+        'install_resolution_source' => $resolutionSource,
+        'provisioned_from_selection' => strpos($resolutionSource, 'selection') !== false,
+        'selection_session_id' => $selectionSessionId,
+        'oauth_pending_started_at' => new \Google\Cloud\Core\Timestamp($now),
+        'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+    ], ['merge' => true]);
+
+    if ($selectionSessionId !== null && $selectionSessionId !== '') {
+        try {
+            $db->collection('install_sessions')->document($selectionSessionId)->set([
+                'status' => 'selected',
+                'selected_location_id' => $locationId,
+                'selected_location_name' => $locationName,
+                'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+            ], ['merge' => true]);
+        } catch (Exception $e) {
+            error_log('[install_helpers] selection session update failed: ' . $e->getMessage());
+        }
+    }
+
+    $decision = install_decide_location_redirect(
+        $db,
+        $jwtSecret,
+        $locationId,
+        $locationName,
+        $companyId,
+        $companyName,
+        $resolutionSource,
+        $tokenExistedBefore,
+        false
+    );
+
+    if (($decision['kind'] ?? '') === 'error' || empty($decision['url'])) {
+        return [
+            'ok' => false,
+            'url' => null,
+            'error' => 'Selected subaccount could not be finalized.',
+            'decision' => $decision,
+        ];
+    }
+
+    install_maybe_finalize_location_install(
+        $db,
+        $locationId,
+        $decision,
+        INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION,
+        $resolutionSource,
+        $now
+    );
+
+    return [
+        'ok' => true,
+        'url' => (string)$decision['url'],
+        'error' => null,
+        'decision' => $decision,
+    ];
+}
+
+/**
+ * Idempotent claim for install selection (avoids slow create+re-read on retries).
+ */
+function install_record_selection_claim($db, string $sessionId, string $companyId, string $locationId): void
+{
+    $sessionId = trim($sessionId);
+    $locationId = install_clean_location_id($locationId);
+    if ($sessionId === '' || $locationId === null) {
+        return;
+    }
+
+    $claimRef = $db->collection('install_selection_claims')->document($sessionId);
+    try {
+        $claimSnap = $claimRef->snapshot();
+        if ($claimSnap->exists()) {
+            $claimedLocationId = install_clean_location_id($claimSnap->data()['selected_location_id'] ?? null);
+            if ($claimedLocationId !== null && $claimedLocationId !== $locationId) {
+                throw new RuntimeException('Install session already claimed for a different subaccount.');
+            }
+            return;
+        }
+    } catch (RuntimeException $e) {
+        throw $e;
+    } catch (Exception $e) {
+        error_log('[install_helpers] selection claim read failed: ' . $e->getMessage());
+    }
+
+    try {
+        $claimRef->set([
+            'session_id' => $sessionId,
+            'company_id' => $companyId,
+            'selected_location_id' => $locationId,
+            'created_at' => new \Google\Cloud\Core\Timestamp(new DateTimeImmutable()),
+        ], ['merge' => true]);
+    } catch (Exception $e) {
+        error_log('[install_helpers] selection claim write failed: ' . $e->getMessage());
+    }
+}
+
+/**
+ * @param array<int,array{location_id:string,location_name?:string}> $candidateLocations
+ */
+function install_try_server_redirect_single_selection(
+    $db,
+    string $jwtSecret,
+    string $companyId,
+    string $companyName,
+    array $companyData,
+    array $candidateLocations,
+    string $resolutionSource,
+    ?string $selectionSessionId = null
+): bool {
+    $candidateIds = [];
+    $candidateNames = [];
+    foreach ($candidateLocations as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $id = install_clean_location_id($row['location_id'] ?? $row['locationId'] ?? $row['id'] ?? null);
+        if ($id === null) {
+            continue;
+        }
+        $candidateIds[] = $id;
+        $name = trim((string)($row['location_name'] ?? $row['locationName'] ?? $row['name'] ?? ''));
+        if ($name !== '') {
+            $candidateNames[$id] = $name;
+        }
+    }
+    $candidateIds = install_unique_ids($candidateIds);
+    if (count($candidateIds) !== 1) {
+        return false;
+    }
+
+    $locationId = $candidateIds[0];
+    $result = install_complete_company_location_selection(
+        $db,
+        $jwtSecret,
+        $companyId,
+        $companyName,
+        $companyData,
+        $locationId,
+        (string)($candidateNames[$locationId] ?? ''),
+        $resolutionSource,
+        $selectionSessionId
+    );
+
+    if (!$result['ok'] || empty($result['url'])) {
+        error_log('[install_helpers] server_redirect_single_selection_failed locationId=' . $locationId . ' error=' . ($result['error'] ?? 'unknown'));
+
+        return false;
+    }
+
+    header('Location: ' . $result['url'], true, 302);
+    error_log('[install_helpers] server_redirect_single_selection locationId=' . $locationId);
+    exit;
+}
+
+/**
  * Exchange a company-scoped token into a location-scoped token.
  *
  * @return array{ok:bool, code:int, data:array, raw:string, format:string, failures:array}
@@ -1924,16 +2158,6 @@ function install_exchange_location_token(string $companyToken, string $companyId
                 'Version: 2021-07-28',
             ],
         ],
-        [
-            'format' => 'query',
-            'url' => 'https://services.leadconnectorhq.com/oauth/locationToken?companyId=' . urlencode($companyId) . '&locationId=' . urlencode($locationId),
-            'body' => '',
-            'headers' => [
-                'Authorization: Bearer ' . $companyToken,
-                'Accept: application/json',
-                'Version: 2021-07-28',
-            ],
-        ],
     ];
 
     $failures = [];
@@ -1944,8 +2168,8 @@ function install_exchange_location_token(string $companyToken, string $companyId
             CURLOPT_POST => true,
             CURLOPT_POSTFIELDS => $attempt['body'],
             CURLOPT_HTTPHEADER => $attempt['headers'],
-            CURLOPT_CONNECTTIMEOUT => 3,
-            CURLOPT_TIMEOUT => 8,
+            CURLOPT_CONNECTTIMEOUT => 2,
+            CURLOPT_TIMEOUT => 6,
         ]);
         $raw = curl_exec($ltCurl);
         $code = curl_getinfo($ltCurl, CURLINFO_HTTP_CODE);
@@ -1954,6 +2178,17 @@ function install_exchange_location_token(string $companyToken, string $companyId
         $jsonDecodeOk = is_array($data);
         if (!$jsonDecodeOk) {
             $data = [];
+        }
+
+        if (($code === 200 || $code === 201) && !empty($data['access_token'])) {
+            return [
+                'ok' => true,
+                'code' => $code,
+                'data' => $data,
+                'raw' => (string)$raw,
+                'format' => $attempt['format'],
+                'failures' => $failures,
+            ];
         }
 
         if (empty($data['access_token']) && is_string($raw) && $raw !== '') {
@@ -2049,9 +2284,10 @@ function install_decide_location_redirect(
     ?string $companyId,
     string $companyName,
     string $resolutionSource,
-    ?bool $tokenExistedBefore = null
+    ?bool $tokenExistedBefore = null,
+    bool $deepOwnershipFallback = true
 ): array {
-    $classification = install_classify_location($db, $locationId, $companyId, $tokenExistedBefore);
+    $classification = install_classify_location($db, $locationId, $companyId, $tokenExistedBefore, $deepOwnershipFallback);
 
     if (($classification['status'] ?? '') === INSTALL_STATE_COMPANY_MISMATCH) {
         return [

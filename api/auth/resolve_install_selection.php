@@ -9,7 +9,7 @@
 require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 
-@set_time_limit(120);
+@set_time_limit(60);
 
 require_once __DIR__ . '/../jwt_helper.php';
 require_once __DIR__ . '/../install_helpers.php';
@@ -103,33 +103,6 @@ try {
         exit;
     }
 
-    $claimRef = $db->collection('install_selection_claims')->document($sessionId);
-    try {
-        $claimRef->create([
-            'session_id' => $sessionId,
-            'company_id' => $companyId,
-            'selected_location_id' => $locationId,
-            'created_at' => new \Google\Cloud\Core\Timestamp(new DateTimeImmutable()),
-        ]);
-    } catch (Exception $claimError) {
-        $claimSnap = $claimRef->snapshot();
-        if ($claimSnap->exists()) {
-            $claim = $claimSnap->data();
-            $claimedLocationId = install_clean_location_id($claim['selected_location_id'] ?? null);
-            if ($claimedLocationId !== null && $claimedLocationId !== $locationId) {
-                http_response_code(409);
-                echo json_encode(['error' => 'This install session already selected a different subaccount. Please restart installation.']);
-                exit;
-            }
-        }
-    }
-
-    if (install_location_company_mismatch($db, $locationId, $companyId)) {
-        http_response_code(409);
-        echo json_encode(['error' => 'Selected subaccount belongs to a different GoHighLevel company.']);
-        exit;
-    }
-
     $companySnap = $db->collection('ghl_tokens')->document($companyId)->snapshot();
     if (!$companySnap->exists()) {
         http_response_code(409);
@@ -137,102 +110,48 @@ try {
         exit;
     }
     $companyData = $companySnap->data();
-    $companyToken = (string)($companyData['access_token'] ?? '');
-    if ($companyToken === '') {
-        http_response_code(409);
-        echo json_encode(['error' => 'Company token is empty. Please restart installation from GoHighLevel.']);
-        exit;
-    }
-
-    $tokenExistedBefore = install_token_doc_exists($db, $locationId);
-    $exchange = install_exchange_location_token($companyToken, $companyId, $locationId);
-    if (!$exchange['ok']) {
-        http_response_code(502);
-        echo json_encode([
-            'error' => 'Failed to exchange selected subaccount token.',
-            'details' => $exchange['failures'] ?? [],
-        ]);
-        exit;
-    }
-
-    $ltData = $exchange['data'];
-    $now = new DateTimeImmutable();
-    $expiresAt = time() + (int)($ltData['expires_in'] ?? 86400);
     $companyName = trim((string)($session['company_name'] ?? $payload['company_name'] ?? $companyData['company_name'] ?? $companyData['agency_name'] ?? ''));
-    $locationName = install_fetch_location_name_with_token(
-        (string)$ltData['access_token'],
-        $locationId,
-        (string)($candidateNames[$locationId] ?? '')
-    );
 
-    $clientId = $companyData['client_id'] ?? $companyData['appId'] ?? null;
-    $db->collection('ghl_tokens')->document($locationId)->set([
-        'access_token' => $ltData['access_token'],
-        'refresh_token' => $ltData['refresh_token'] ?? ($companyData['refresh_token'] ?? null),
-        'expires_at' => $expiresAt,
-        'client_id' => $clientId,
-        'appId' => $clientId,
-        'appType' => 'subaccount',
-        'userType' => 'Location',
-        'location_id' => $locationId,
-        'location_name' => $locationName,
-        'companyId' => $companyId,
-        'company_name' => $companyName,
-        'install_state' => INSTALL_STATE_PENDING_OAUTH,
-        'install_status' => INSTALL_STATE_INSTALL_PENDING,
-        'install_resolution_mode' => INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION,
-        'install_resolution_source' => 'signed_install_selection',
-        'provisioned_from_selection' => false,
-        'selection_session_id' => $sessionId,
-        'oauth_pending_started_at' => new \Google\Cloud\Core\Timestamp($now),
-        'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-    ], ['merge' => true]);
+    try {
+        install_record_selection_claim($db, $sessionId, $companyId, $locationId);
+    } catch (RuntimeException $claimError) {
+        http_response_code(409);
+        echo json_encode(['error' => $claimError->getMessage()]);
+        exit;
+    }
 
-    $sessionRef->set([
-        'status' => 'selected',
-        'selected_location_id' => $locationId,
-        'selected_location_name' => $locationName,
-        'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-    ], ['merge' => true]);
-
-    $decision = install_decide_location_redirect(
+    $result = install_complete_company_location_selection(
         $db,
         (string)$jwtSecret,
-        $locationId,
-        $locationName,
         $companyId,
         $companyName,
+        $companyData,
+        $locationId,
+        (string)($candidateNames[$locationId] ?? ''),
         'signed_install_selection',
-        $tokenExistedBefore
+        $sessionId
     );
 
-    if (($decision['kind'] ?? '') === 'error' || empty($decision['url'])) {
-        http_response_code(409);
+    if (!$result['ok'] || empty($result['url'])) {
+        http_response_code(empty($result['decision']) ? 502 : 409);
         echo json_encode([
-            'error' => 'Selected subaccount could not be finalized.',
-            'state' => $decision['status'] ?? INSTALL_STATE_INSTALL_PENDING,
+            'error' => $result['error'] ?? 'Selected subaccount could not be finalized.',
+            'state' => $result['decision']['status'] ?? INSTALL_STATE_INSTALL_PENDING,
         ]);
         exit;
     }
 
+    $decision = is_array($result['decision'] ?? null) ? $result['decision'] : [];
     $deferredFinalize = install_should_defer_finalize_for_decision($decision);
-    install_maybe_finalize_location_install(
-        $db,
-        $locationId,
-        $decision,
-        INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION,
-        'signed_install_selection',
-        $now
-    );
 
     echo json_encode([
         'ok' => true,
-        'kind' => $decision['kind'],
-        'state' => $decision['status'],
+        'kind' => $decision['kind'] ?? 'register',
+        'state' => $decision['status'] ?? INSTALL_STATE_FRESH_INSTALL,
         'install_state' => $deferredFinalize ? INSTALL_STATE_PENDING_OAUTH : INSTALL_STATE_INSTALLED,
         'location_id' => $locationId,
-        'location_name' => $locationName,
-        'url' => $decision['url'],
+        'location_name' => $candidateNames[$locationId] ?? '',
+        'url' => $result['url'],
     ]);
 } catch (Exception $e) {
     error_log('[resolve_install_selection] exception: ' . $e->getMessage());
