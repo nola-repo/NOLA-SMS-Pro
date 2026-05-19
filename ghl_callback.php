@@ -375,7 +375,9 @@ function create_install_selection_session(
     array $locationNames,
     string $reason,
     array $debug = [],
-    string $selectionState = INSTALL_STATE_AMBIGUOUS
+    string $selectionState = INSTALL_STATE_AMBIGUOUS,
+    string $uiMode = 'list',
+    ?string $preselectedLocationId = null
 ): array {
     $candidateIds = install_unique_ids($candidateIds);
     $rows = [];
@@ -397,6 +399,8 @@ function create_install_selection_session(
         'state' => $selectionState,
         'status' => 'needs_selection',
         'reason' => $reason,
+        'ui_mode' => $uiMode,
+        'preselected_location_id' => install_clean_location_id($preselectedLocationId),
         'candidate_locations' => $rows,
         'debug' => $debug,
         'created_at' => new \Google\Cloud\Core\Timestamp($now),
@@ -416,6 +420,7 @@ function create_install_selection_session(
         'session_id' => $sessionId,
         'session_token' => $sessionToken,
         'candidate_locations' => $rows,
+        'ui_mode' => $uiMode,
     ];
 }
 
@@ -513,7 +518,8 @@ function render_company_location_recovery_selection(
     string $companyName,
     string $companyToken,
     array $resolution,
-    array $debug = []
+    array $debug = [],
+    ?string $preselectedLocationId = null
 ): void {
     $available = fetch_company_locations_for_selection($companyId, $companyToken);
     error_log('[GHL_CALLBACK] selection_required_locations_fetch=' . json_encode([
@@ -532,36 +538,53 @@ function render_company_location_recovery_selection(
         ]);
     }
 
+    $narrowed = install_narrow_selection_to_preselected(
+        $available['ids'],
+        $available['names'],
+        $preselectedLocationId
+    );
+
     $selectionSession = create_install_selection_session(
         $db,
         $jwtSecret,
         $companyId,
         $companyName,
-        $available['ids'],
-        $available['names'],
+        $narrowed['candidate_ids'],
+        $narrowed['location_names'],
         (string)($resolution['reason'] ?? 'no_location_signal'),
         $debug + [
             'resolution_source' => $resolution['source'] ?? 'unresolved',
             'recovery' => 'company_locations_search',
+            'preselected_location_id' => $narrowed['preselected_location_id'],
         ],
-        INSTALL_STATE_SELECTION_REQUIRED
+        INSTALL_STATE_SELECTION_REQUIRED,
+        (string)$narrowed['ui_mode'],
+        $narrowed['preselected_location_id']
     );
 
     error_log('[GHL_CALLBACK] Selection-required install recovery session=' . $selectionSession['session_id']);
     render_ambiguous_selection(
         (string)$selectionSession['session_token'],
         $selectionSession['candidate_locations'],
-        $companyName
+        $companyName,
+        (string)($selectionSession['ui_mode'] ?? 'list')
     );
 }
 
-function render_ambiguous_selection(string $sessionToken, array $candidateLocations, string $companyName = ''): void
+function render_ambiguous_selection(
+    string $sessionToken,
+    array $candidateLocations,
+    string $companyName = '',
+    string $uiMode = 'list'
+): void
 {
     global $backendApiUrl;
     $resolveUrl = rtrim((string)$backendApiUrl, '/') . '/api/auth/resolve-install-selection';
     $resolveUrlJson = json_encode($resolveUrl, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT);
     $sessionTokenJson = json_encode($sessionToken, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT);
+    $confirmMode = $uiMode === 'confirm_preselected';
     $buttons = '';
+    $primaryWorkspaceLabel = 'Workspace';
     foreach ($candidateLocations as $row) {
         $id = install_clean_location_id($row['location_id'] ?? null);
         if ($id === null) {
@@ -569,10 +592,25 @@ function render_ambiguous_selection(string $sessionToken, array $candidateLocati
         }
         $name = trim((string)($row['location_name'] ?? ''));
         $label = $name !== '' ? $name : 'Workspace';
+        if ($confirmMode) {
+            $primaryWorkspaceLabel = $label;
+        }
         $safeLabel = htmlspecialchars($label, ENT_QUOTES, 'UTF-8');
         $safeId = htmlspecialchars($id, ENT_QUOTES, 'UTF-8');
         $searchHaystack = strtolower($label . ' ' . $name);
         $safeSearch = htmlspecialchars($searchHaystack, ENT_QUOTES, 'UTF-8');
+        if ($confirmMode) {
+            $buttons .= <<<HTML
+            <div class="selection-confirm-card" style="text-align:left; padding:16px 18px; border-radius:16px; background:rgba(43,131,250,0.06); border:1px solid rgba(43,131,250,0.14); margin-bottom:16px;">
+                <span style="display:block; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.6px; color:#6e6e73; margin-bottom:6px;">Selected sub-account</span>
+                <span style="display:block; font-weight:800; font-size:17px; color:#111; line-height:1.35;">{$safeLabel}</span>
+            </div>
+            <button type="button" class="btn-submit selection-option-btn" style="text-align:center; display:block;" data-location-id="{$safeId}" data-search="{$safeSearch}" data-label="{$safeLabel}" onclick="selectLocation(this)">
+                <span style="display:block; font-weight:800;">Continue with this sub-account</span>
+            </button>
+HTML;
+            continue;
+        }
         $buttons .= <<<HTML
             <button type="button" class="btn-submit selection-option-btn" style="text-align:left; display:block;" data-location-id="{$safeId}" data-search="{$safeSearch}" data-label="{$safeLabel}" onclick="selectLocation(this)">
                 <span style="display:block; font-weight:800;">{$safeLabel}</span>
@@ -581,22 +619,40 @@ HTML;
     }
 
     $companyEsc = $companyName !== '' ? htmlspecialchars($companyName, ENT_QUOTES, 'UTF-8') : '';
-    $companyLine = $companyEsc !== ''
-        ? '<p class="subtitle" style="margin-bottom:14px; line-height:1.45;">Pick the workspace you&rsquo;re finishing setup for under <strong style="color:#111;">' . $companyEsc . '</strong>.</p>'
-        : '<p class="subtitle" style="margin-bottom:14px; line-height:1.45;">Pick the workspace you&rsquo;re finishing setup for right now.</p>';
-
-    $body = <<<HTML
-        <h1>Finish setup</h1>
-        {$companyLine}
-        <div id="selection-error" class="error-pre hidden"></div>
+    $workspaceEsc = htmlspecialchars($primaryWorkspaceLabel, ENT_QUOTES, 'UTF-8');
+    if ($confirmMode) {
+        $companyLine = $companyEsc !== ''
+            ? '<p class="subtitle" style="margin-bottom:14px; line-height:1.5;">You chose <strong style="color:#111;">' . $workspaceEsc . '</strong> in GoHighLevel. Confirm this is the sub-account where NOLA SMS Pro should be installed under <strong style="color:#111;">' . $companyEsc . '</strong>.</p>'
+            : '<p class="subtitle" style="margin-bottom:14px; line-height:1.5;">You chose <strong style="color:#111;">' . $workspaceEsc . '</strong> in GoHighLevel. Confirm this is the sub-account where NOLA SMS Pro should be installed.</p>';
+        $pageTitle = 'Confirm your sub-account';
+        $heading = 'Confirm your sub-account';
+        $searchBlock = '';
+        $footerHint = '<p style="font-size:11px;color:#6e6e73;line-height:1.45;margin-top:14px;">Location IDs stay hidden for security. We only connect NOLA SMS Pro to the workspace you selected in the Marketplace install flow.</p>';
+    } else {
+        $companyLine = $companyEsc !== ''
+            ? '<p class="subtitle" style="margin-bottom:14px; line-height:1.45;">Pick the workspace you&rsquo;re finishing setup for under <strong style="color:#111;">' . $companyEsc . '</strong>.</p>'
+            : '<p class="subtitle" style="margin-bottom:14px; line-height:1.45;">Pick the workspace you&rsquo;re finishing setup for right now.</p>';
+        $pageTitle = 'Finish setup';
+        $heading = 'Finish setup';
+        $searchBlock = <<<HTML
         <div class="selection-search-wrap">
             <svg class="selection-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
             <label for="selection-search" class="hidden">Search workspaces</label>
             <input type="search" id="selection-search" class="selection-search-input" placeholder="Search by workspace name…" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="search">
         </div>
+HTML;
+        $footerHint = '<p style="font-size:11px;color:#6e6e73;line-height:1.45;margin-top:14px;">If the list is long, use search to find your workspace quickly. This step keeps NOLA SMS Pro aligned with the right place in GoHighLevel.</p>';
+    }
+
+    $body = <<<HTML
+        <h1>{$heading}</h1>
+        {$companyLine}
+        <div id="selection-error" class="error-pre hidden"></div>
+        {$searchBlock}
         <div class="selection-container" id="selection-list">{$buttons}</div>
-        <p style="font-size:11px;color:#6e6e73;line-height:1.45;margin-top:14px;">If the list is long, use search to find your workspace quickly. This step keeps NOLA SMS Pro aligned with the right place in GoHighLevel.</p>
-        <script>
+        {$footerHint}
+
+<script>
           const INSTALL_SELECTION_TOKEN = {$sessionTokenJson};
           const RESOLVE_SELECTION_URL = {$resolveUrlJson};
           const searchEl = document.getElementById('selection-search');
@@ -659,7 +715,7 @@ HTML;
           }
         </script>
 HTML;
-    render_page('Finish setup', $body);
+    render_page($pageTitle, $body);
     exit;
 }
 
@@ -1330,7 +1386,7 @@ if (($data['userType'] ?? '') === 'Company') {
         }
 
         try {
-            install_finalize_location_install(
+            install_maybe_finalize_location_install(
                 $db,
                 (string)$singleLocationId,
                 $caseADecision,
@@ -1358,25 +1414,40 @@ if (($data['userType'] ?? '') === 'Company') {
             render_error('Server configuration error: JWT secret missing.');
         }
 
+        $preselectedForSelection = install_preselected_location_for_selection_ui([
+            'token_marketplace_selected_id' => install_oauth_marketplace_selected_location_id($data),
+            'state_location_id' => $stateLocationId,
+            'query_location_id' => $queryLocationId,
+        ]);
+        $narrowedSelection = install_narrow_selection_to_preselected(
+            $locationsArrayIds,
+            $caseAResolution['location_names'] ?? [],
+            $preselectedForSelection
+        );
         $selectionSession = create_install_selection_session(
             $db,
             (string)$jwtSecretSelect,
             (string)$companyId,
             $companyNameFromToken,
-            $locationsArrayIds,
-            $caseAResolution['location_names'] ?? [],
+            $narrowedSelection['candidate_ids'],
+            $narrowedSelection['location_names'],
             (string)($caseAResolution['reason'] ?? 'ambiguous_location_candidates'),
             [
                 'resolution_source' => $caseAResolution['source'] ?? 'unresolved',
                 'token_userType' => $data['userType'] ?? null,
                 'isBulkInstallation' => $data['isBulkInstallation'] ?? null,
-            ]
+                'preselected_location_id' => $narrowedSelection['preselected_location_id'],
+            ],
+            INSTALL_STATE_AMBIGUOUS,
+            (string)$narrowedSelection['ui_mode'],
+            $narrowedSelection['preselected_location_id']
         );
         error_log('[GHL_CALLBACK] Ambiguous install selection required session=' . $selectionSession['session_id']);
         render_ambiguous_selection(
             (string)$selectionSession['session_token'],
             $selectionSession['candidate_locations'],
-            $companyNameFromToken
+            $companyNameFromToken,
+            (string)($selectionSession['ui_mode'] ?? 'list')
         );
     }
 
@@ -1388,6 +1459,11 @@ if (($data['userType'] ?? '') === 'Company') {
             render_error('Server configuration error: JWT secret missing.');
         }
 
+        $preselectedForRecovery = install_preselected_location_for_selection_ui([
+            'token_marketplace_selected_id' => install_oauth_marketplace_selected_location_id($data),
+            'state_location_id' => $stateLocationId,
+            'query_location_id' => $queryLocationId,
+        ]);
         render_company_location_recovery_selection(
             $db,
             (string)$jwtSecretSelect,
@@ -1399,7 +1475,8 @@ if (($data['userType'] ?? '') === 'Company') {
                 'token_userType' => $data['userType'] ?? null,
                 'isBulkInstallation' => $data['isBulkInstallation'] ?? null,
                 'state_present' => $state !== null && $state !== '',
-            ]
+            ],
+            $preselectedForRecovery
         );
     }
 
@@ -1477,24 +1554,46 @@ if (!$locationId) {
         }
 
         if (count($finalCandidateIds) > 1) {
+            $finalPreselected = install_preselected_location_for_selection_ui([
+                'token_marketplace_selected_id' => install_oauth_marketplace_selected_location_id($data),
+                'state_location_id' => extract_location_id_from_state($state),
+                'query_location_id' => $queryLocationId,
+            ]);
+            $finalNarrowed = install_narrow_selection_to_preselected(
+                $finalCandidateIds,
+                $finalResolution['location_names'] ?? [],
+                $finalPreselected
+            );
             $selectionSession = create_install_selection_session(
                 $db,
                 (string)$jwtSecretSelect,
                 $finalCompanyId,
                 $finalCompanyName,
-                $finalCandidateIds,
-                $finalResolution['location_names'] ?? [],
+                $finalNarrowed['candidate_ids'],
+                $finalNarrowed['location_names'],
                 (string)($finalResolution['reason'] ?? 'ambiguous_location_candidates'),
-                ['resolution_source' => $finalResolution['source'] ?? 'unresolved']
+                [
+                    'resolution_source' => $finalResolution['source'] ?? 'unresolved',
+                    'preselected_location_id' => $finalNarrowed['preselected_location_id'],
+                ],
+                INSTALL_STATE_AMBIGUOUS,
+                (string)$finalNarrowed['ui_mode'],
+                $finalNarrowed['preselected_location_id']
             );
             render_ambiguous_selection(
                 (string)$selectionSession['session_token'],
                 $selectionSession['candidate_locations'],
-                $finalCompanyName
+                $finalCompanyName,
+                (string)($selectionSession['ui_mode'] ?? 'list')
             );
         }
 
         if (empty($finalCandidateIds) && !empty($data['access_token'])) {
+            $finalPreselectedRecovery = install_preselected_location_for_selection_ui([
+                'token_marketplace_selected_id' => install_oauth_marketplace_selected_location_id($data),
+                'state_location_id' => extract_location_id_from_state($state),
+                'query_location_id' => $queryLocationId,
+            ]);
             render_company_location_recovery_selection(
                 $db,
                 (string)$jwtSecretSelect,
@@ -1505,7 +1604,8 @@ if (!$locationId) {
                 [
                     'token_userType' => $data['userType'] ?? null,
                     'state_present' => $state !== null && $state !== '',
-                ]
+                ],
+                $finalPreselectedRecovery
             );
         }
     }
@@ -1675,7 +1775,7 @@ if ($directDecision['kind'] === 'error' || empty($directDecision['url'])) {
 }
 
 try {
-    install_finalize_location_install(
+    install_maybe_finalize_location_install(
         $db,
         (string)$locationId,
         $directDecision,

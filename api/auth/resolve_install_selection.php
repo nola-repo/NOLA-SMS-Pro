@@ -215,7 +215,8 @@ try {
         exit;
     }
 
-    install_finalize_location_install(
+    $deferredFinalize = install_should_defer_finalize_for_decision($decision);
+    install_maybe_finalize_location_install(
         $db,
         $locationId,
         $decision,
@@ -228,7 +229,7 @@ try {
         'ok' => true,
         'kind' => $decision['kind'],
         'state' => $decision['status'],
-        'install_state' => INSTALL_STATE_INSTALLED,
+        'install_state' => $deferredFinalize ? INSTALL_STATE_PENDING_OAUTH : INSTALL_STATE_INSTALLED,
         'location_id' => $locationId,
         'location_name' => $locationName,
         'url' => $decision['url'],

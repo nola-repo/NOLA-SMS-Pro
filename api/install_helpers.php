@@ -880,6 +880,145 @@ function install_summarize_classification(array $classification): array
     ];
 }
 
+/**
+ * Marketplace / agency chooser pick (tier-1 signals only) for the second-step UI.
+ */
+function install_preselected_location_for_selection_ui(array $signals): ?string
+{
+    foreach ([
+        'token_marketplace_selected_id',
+        'state_location_id',
+        'query_location_id',
+        'session_location_id',
+    ] as $key) {
+        $id = install_clean_location_id($signals[$key] ?? null);
+        if ($id !== null) {
+            return $id;
+        }
+    }
+
+    return null;
+}
+
+/**
+ * When the user already picked a sub-account in GHL, show only that workspace on step 2.
+ *
+ * @param array<int,string> $candidateIds
+ * @param array<string,string> $locationNames
+ * @return array{candidate_ids: array<int,string>, location_names: array<string,string>, ui_mode: string, preselected_location_id: ?string}
+ */
+function install_narrow_selection_to_preselected(array $candidateIds, array $locationNames, ?string $preselectedId): array
+{
+    $candidateIds = install_unique_ids($candidateIds);
+    $preselectedId = install_clean_location_id($preselectedId);
+    if ($preselectedId === null || !in_array($preselectedId, $candidateIds, true)) {
+        return [
+            'candidate_ids' => $candidateIds,
+            'location_names' => $locationNames,
+            'ui_mode' => 'list',
+            'preselected_location_id' => null,
+        ];
+    }
+
+    return [
+        'candidate_ids' => [$preselectedId],
+        'location_names' => $locationNames,
+        'ui_mode' => 'confirm_preselected',
+        'preselected_location_id' => $preselectedId,
+    ];
+}
+
+/**
+ * Defer INSTALLED / is_live until NOLA registration completes (fresh or token-only installs).
+ */
+function install_should_defer_finalize_for_decision(array $decision): bool
+{
+    return ((string)($decision['kind'] ?? '')) === 'register';
+}
+
+function install_maybe_finalize_location_install(
+    $db,
+    string $locationId,
+    array $decision,
+    string $resolutionMode,
+    string $resolutionSource,
+    DateTimeImmutable $now
+): void {
+    if (install_should_defer_finalize_for_decision($decision)) {
+        return;
+    }
+
+    install_finalize_location_install(
+        $db,
+        $locationId,
+        $decision,
+        $resolutionMode,
+        $resolutionSource,
+        $now
+    );
+}
+
+/**
+ * Mark ghl_tokens + integrations INSTALLED after register-from-install succeeds.
+ */
+function install_finalize_after_registration($db, string $locationId, DateTimeImmutable $now): void
+{
+    $locationId = install_clean_location_id($locationId);
+    if ($locationId === null) {
+        return;
+    }
+
+    try {
+        $tokenSnap = $db->collection('ghl_tokens')->document($locationId)->snapshot();
+    } catch (Exception $e) {
+        error_log('[install_helpers] finalize_after_registration lookup failed for ' . $locationId . ': ' . $e->getMessage());
+
+        return;
+    }
+
+    if (!$tokenSnap->exists()) {
+        return;
+    }
+
+    $tokenData = $tokenSnap->data();
+    $storedState = (string)($tokenData['install_state'] ?? '');
+    if ($storedState === INSTALL_STATE_INSTALLED) {
+        return;
+    }
+    if ($storedState !== INSTALL_STATE_PENDING_OAUTH) {
+        return;
+    }
+
+    $resolutionMode = (string)($tokenData['install_resolution_mode'] ?? INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION);
+    $checkpoint = install_final_install_checkpoint($locationId, $resolutionMode);
+    if (empty($checkpoint['ok'])) {
+        return;
+    }
+
+    $companyId = trim((string)($tokenData['companyId'] ?? $tokenData['company_id'] ?? ''));
+    $classification = install_classify_location($db, $locationId, $companyId !== '' ? $companyId : null);
+    $status = (string)($classification['status'] ?? INSTALL_STATE_LINKED_ACCOUNT);
+    $decision = [
+        'kind' => 'login',
+        'status' => $status,
+        'url' => null,
+        'classification' => $classification,
+    ];
+    $resolutionSource = (string)($tokenData['install_resolution_source'] ?? 'register_from_install');
+    if ($resolutionSource === '') {
+        $resolutionSource = 'register_from_install';
+    }
+
+    install_finalize_location_install(
+        $db,
+        $locationId,
+        $decision,
+        $resolutionMode,
+        $resolutionSource . '+registration_complete',
+        $now
+    );
+}
+
 function install_finalize_location_install(
     $db,
     string $locationId,

@@ -506,6 +506,14 @@ try {
             _sync_location_owner_metadata($db, (string)$locationId, $existingId, $email, $fullName, $phone, $now);
         }
 
+        if ($isLocationLevel && $locationId) {
+            try {
+                install_finalize_after_registration($db, (string)$locationId, $now);
+            } catch (Exception $finalizeError) {
+                error_log('[register_from_install] finalize_after_registration failed for ' . $locationId . ': ' . $finalizeError->getMessage());
+            }
+        }
+
         http_response_code(200);
         echo json_encode([
             'status' => 'linked',
@@ -635,6 +643,14 @@ try {
     ], $jwtSecret, 28800);
 
     $userApiNew = auth_user_payload_for_api($userData, $email);
+
+    if ($isLocationLevel && $locationId) {
+        try {
+            install_finalize_after_registration($db, (string)$locationId, $now);
+        } catch (Exception $finalizeError) {
+            error_log('[register_from_install] finalize_after_registration failed for ' . $locationId . ': ' . $finalizeError->getMessage());
+        }
+    }
 
     http_response_code(201);
     echo json_encode([
