@@ -351,6 +351,29 @@ function install_unique_ids(array $ids): array
 }
 
 /**
+ * GHL sometimes echoes root `locationId` equal to `companyId` on Company-scoped tokens.
+ * That value is not a sub-account id and must not be used for /oauth/locationToken.
+ *
+ * @param array<string,mixed> $oauthData
+ */
+function install_sanitize_token_root_location_id_for_company(array $oauthData, $tokenLocationId): ?string
+{
+    $tl = install_clean_location_id($tokenLocationId);
+    if ($tl === null) {
+        return null;
+    }
+    if ((string)($oauthData['userType'] ?? '') !== 'Company') {
+        return $tl;
+    }
+    $cid = install_clean_location_id($oauthData['companyId'] ?? $oauthData['company_id'] ?? null);
+    if ($cid !== null && $tl === $cid) {
+        return null;
+    }
+
+    return $tl;
+}
+
+/**
  * Redact secrets before logging OAuth/token payloads (structure stays inspectable).
  *
  * @param array<string,mixed> $data
@@ -427,6 +450,21 @@ function install_oauth_locations_array_for_resolver(array $data): array
  */
 function install_oauth_marketplace_selected_location_id(array $data): ?string
 {
+    $companyId = install_clean_location_id($data['companyId'] ?? $data['company_id'] ?? null);
+    $isCompanyToken = ((string)($data['userType'] ?? '')) === 'Company';
+
+    $pick = static function (?string $id) use ($companyId, $isCompanyToken): ?string {
+        $id = install_clean_location_id($id);
+        if ($id === null) {
+            return null;
+        }
+        if ($isCompanyToken && $companyId !== null && $id === $companyId) {
+            return null;
+        }
+
+        return $id;
+    };
+
     foreach ([
         'selectedLocationId',
         'selected_location_id',
@@ -437,33 +475,33 @@ function install_oauth_marketplace_selected_location_id(array $data): ?string
         'targetLocationId',
         'target_location_id',
     ] as $k) {
-        $id = install_clean_location_id($data[$k] ?? null);
+        $id = $pick($data[$k] ?? null);
         if ($id !== null) {
             return $id;
         }
     }
 
-    $fromAssoc = install_location_id_from_assoc_payload($data);
+    $fromAssoc = $pick(install_location_id_from_assoc_payload($data));
     if ($fromAssoc !== null) {
         return $fromAssoc;
     }
 
     if (($data['userType'] ?? '') === 'Location') {
-        $id = install_clean_location_id($data['locationId'] ?? $data['location_id'] ?? null);
+        $id = $pick($data['locationId'] ?? $data['location_id'] ?? null);
         if ($id !== null) {
             return $id;
         }
     }
 
     if (($data['isBulkInstallation'] ?? null) === false) {
-        $id = install_clean_location_id($data['locationId'] ?? $data['location_id'] ?? null);
+        $id = $pick($data['locationId'] ?? $data['location_id'] ?? null);
         if ($id !== null) {
             return $id;
         }
     }
 
     if (!empty($data['location']) && is_array($data['location'])) {
-        $id = install_clean_location_id(
+        $id = $pick(
             $data['location']['id'] ?? $data['location']['locationId'] ?? $data['location']['location_id'] ?? null
         );
         if ($id !== null) {
@@ -474,13 +512,19 @@ function install_oauth_marketplace_selected_location_id(array $data): ?string
     if (($data['isBulkInstallation'] ?? null) !== true) {
         $rows = install_location_rows_from_ghl(install_oauth_locations_array_for_resolver($data));
         if (count($rows['ids']) === 1) {
-            return $rows['ids'][0];
+            $id = $pick($rows['ids'][0]);
+            if ($id !== null) {
+                return $id;
+            }
         }
     }
 
-    $jwtLocationId = install_location_id_from_oauth_access_token((string)($data['access_token'] ?? ''));
-    if ($jwtLocationId !== null) {
-        return $jwtLocationId;
+    // Company JWT payloads use authClassId for the agency — never treat as sub-account.
+    if (!$isCompanyToken) {
+        $jwtLocationId = $pick(install_location_id_from_oauth_access_token((string)($data['access_token'] ?? '')));
+        if ($jwtLocationId !== null) {
+            return $jwtLocationId;
+        }
     }
 
     return null;
@@ -516,14 +560,20 @@ function install_location_id_from_oauth_access_token(?string $accessToken): ?str
         return null;
     }
 
-    foreach (['locationId', 'location_id', 'authClassId', 'selectedLocationId', 'selected_location_id'] as $key) {
+    foreach (['locationId', 'location_id', 'selectedLocationId', 'selected_location_id'] as $key) {
         $id = install_clean_location_id($payload[$key] ?? null);
         if ($id !== null) {
             return $id;
         }
     }
 
-    return install_location_id_from_assoc_payload($payload);
+    $fromAssoc = install_location_id_from_assoc_payload($payload);
+    if ($fromAssoc !== null) {
+        return $fromAssoc;
+    }
+
+    // Last resort for some Location JWTs (never use for Company tokens — callers must gate).
+    return install_clean_location_id($payload['authClassId'] ?? null);
 }
 
 /**
@@ -533,7 +583,7 @@ function install_record_marketplace_install_pick($db, ?string $companyId, ?strin
 {
     $companyId = install_clean_location_id($companyId);
     $locationId = install_clean_location_id($locationId);
-    if ($companyId === null || $locationId === null) {
+    if ($companyId === null || $locationId === null || $locationId === $companyId) {
         return;
     }
 
@@ -574,7 +624,12 @@ function install_recent_marketplace_install_location_id($db, string $companyId):
             }
         }
 
-        return install_clean_location_id($data['location_id'] ?? null);
+        $loc = install_clean_location_id($data['location_id'] ?? null);
+        if ($loc !== null && $loc === $companyId) {
+            return null;
+        }
+
+        return $loc;
     } catch (Exception $e) {
         error_log('[install_helpers] marketplace_install_pick read failed: ' . $e->getMessage());
 
@@ -598,13 +653,21 @@ function install_collect_preselect_signals($db, array $oauthData, ?string $state
 {
     $companyId = install_clean_location_id($companyId);
 
+    $jwtPick = ((string)($oauthData['userType'] ?? '')) !== 'Company'
+        ? install_location_id_from_oauth_access_token((string)($oauthData['access_token'] ?? ''))
+        : null;
+    $cidForJwt = install_clean_location_id($oauthData['companyId'] ?? $oauthData['company_id'] ?? null);
+    if ($cidForJwt !== null && install_clean_location_id($jwtPick) === $cidForJwt) {
+        $jwtPick = null;
+    }
+
     return [
         'session_location_id' => install_clean_location_id($sessionLocationId),
         'token_marketplace_selected_id' => install_oauth_marketplace_selected_location_id($oauthData),
         'query_location_id' => install_extract_location_id_from_query($query),
         'state_location_id' => install_extract_location_id_from_oauth_state($state),
         'webhook_location_id' => $companyId !== null ? install_recent_marketplace_install_location_id($db, $companyId) : null,
-        'jwt_location_id' => install_location_id_from_oauth_access_token((string)($oauthData['access_token'] ?? '')),
+        'jwt_location_id' => install_clean_location_id($jwtPick),
     ];
 }
 
@@ -1162,10 +1225,17 @@ function install_narrow_selection_to_preselected(array $candidateIds, array $loc
 /**
  * When GHL Marketplace chooser already picked a sub-account, skip the second picker.
  */
-function install_trust_marketplace_preselect_to_resolution(array $resolution, ?string $preselectedId): array
+function install_trust_marketplace_preselect_to_resolution(array $resolution, ?string $preselectedId, ?string $oauthCompanyId = null): array
 {
     $preselectedId = install_clean_location_id($preselectedId);
     if ($preselectedId === null || !empty($resolution['ok'])) {
+        return $resolution;
+    }
+
+    $cid = install_clean_location_id($oauthCompanyId);
+    if ($cid !== null && $preselectedId === $cid) {
+        error_log('[install_helpers] trust_marketplace_preselect skipped: preselected matches company id');
+
         return $resolution;
     }
 

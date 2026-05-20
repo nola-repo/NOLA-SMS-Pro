@@ -1098,8 +1098,9 @@ if (($data['userType'] ?? '') === 'Company') {
     }
     $preselectSignals = install_collect_preselect_signals($db, $data, $state, $_GET, (string)$companyId);
     $stateLocationId = $preselectSignals['state_location_id'];
+    $tokenRootLoc = install_sanitize_token_root_location_id_for_company($data, $data['locationId'] ?? ($data['location_id'] ?? null));
     $caseAResolution = install_resolve_selected_location([
-        'token_location_id' => $data['locationId'] ?? ($data['location_id'] ?? null),
+        'token_location_id' => $tokenRootLoc,
         'token_marketplace_selected_id' => $preselectSignals['token_marketplace_selected_id'],
         'query_location_id' => $preselectSignals['query_location_id'] ?? $queryLocationId,
         'approved_location_ids' => $approvedLocationIds,
@@ -1109,7 +1110,7 @@ if (($data['userType'] ?? '') === 'Company') {
     ]);
     error_log('[GHL_CALLBACK_DEBUG] preselect_signals=' . json_encode($preselectSignals));
     $preselectedTrust = install_preselected_location_for_selection_ui($preselectSignals);
-    $caseAResolution = install_trust_marketplace_preselect_to_resolution($caseAResolution, $preselectedTrust);
+    $caseAResolution = install_trust_marketplace_preselect_to_resolution($caseAResolution, $preselectedTrust, (string)$companyId);
     $locationsArrayIds = $caseAResolution['candidate_ids'];
     $singleLocationId = $caseAResolution['ok'] ? $caseAResolution['location_id'] : null;
     $caseAResolutionMode = (string)($caseAResolution['resolutionMode'] ?? ($caseAResolution['status'] ?? ''));
@@ -1125,6 +1126,15 @@ if (($data['userType'] ?? '') === 'Company') {
         'resolution' => $caseAResolution,
         'state_present' => $state !== null && $state !== '',
     ]));
+
+    if ($singleLocationId) {
+        $singleLocClean = install_clean_location_id((string)$singleLocationId);
+        $companyClean = install_clean_location_id((string)$companyId);
+        if ($singleLocClean !== null && $companyClean !== null && $singleLocClean === $companyClean) {
+            error_log('[GHL_CALLBACK] Case A: ignoring false single-location id (matches company id); continuing selection flow');
+            $singleLocationId = null;
+        }
+    }
 
     if ($singleLocationId) {
         $locationIdSafe = htmlspecialchars((string)$singleLocationId, ENT_QUOTES, 'UTF-8');
@@ -1388,10 +1398,11 @@ $finalPreselectSignals = install_collect_preselect_signals(
     $_GET,
     trim((string)($data['companyId'] ?? ''))
 );
+$finalTokenRoot = install_sanitize_token_root_location_id_for_company($data, $data['locationId'] ?? ($data['location_id'] ?? null));
 $finalResolution = install_resolve_selected_location([
-    'token_location_id' => $data['locationId'] ?? ($data['location_id'] ?? null),
+    'token_location_id' => $finalTokenRoot,
     'token_marketplace_selected_id' => $finalPreselectSignals['token_marketplace_selected_id'],
-    'query_location_id' => $queryLocationId,
+    'query_location_id' => $finalPreselectSignals['query_location_id'] ?? $queryLocationId,
     'approved_location_ids' => install_unique_ids(array_merge(
         install_extract_location_ids_from_mixed($data['approvedLocations'] ?? null),
         install_extract_location_ids_from_mixed($data['approvedLocationIds'] ?? null)
@@ -1401,7 +1412,11 @@ $finalResolution = install_resolve_selected_location([
     'state_location_id' => $finalPreselectSignals['state_location_id'],
 ]);
 $finalPreselectedTrust = install_preselected_location_for_selection_ui($finalPreselectSignals);
-$finalResolution = install_trust_marketplace_preselect_to_resolution($finalResolution, $finalPreselectedTrust);
+$finalResolution = install_trust_marketplace_preselect_to_resolution(
+    $finalResolution,
+    $finalPreselectedTrust,
+    trim((string)($data['companyId'] ?? ''))
+);
 $finalResolutionMode = (string)($finalResolution['resolutionMode'] ?? ($finalResolution['status'] ?? ''));
 $locationId = $finalResolution['ok'] ? $finalResolution['location_id'] : null;
 $finalCheckpoint = install_final_install_checkpoint($locationId, $finalResolutionMode);

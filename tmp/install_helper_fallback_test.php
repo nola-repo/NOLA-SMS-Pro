@@ -170,4 +170,25 @@ if ($preselectUi !== $locationId) {
     exit(1);
 }
 
+$echoCompany = install_oauth_marketplace_selected_location_id([
+    'userType' => 'Company',
+    'companyId' => $locationId,
+    'locationId' => $locationId,
+    'isBulkInstallation' => true,
+]);
+if ($echoCompany !== null) {
+    fwrite(STDERR, "company token must not treat root locationId=companyId as sub-account pick\n");
+    exit(1);
+}
+
+$trustBad = install_trust_marketplace_preselect_to_resolution(
+    ['ok' => false, 'candidate_ids' => [$locationId, $otherLocationId], 'location_names' => []],
+    $locationId,
+    $locationId
+);
+if (!empty($trustBad['ok'])) {
+    fwrite(STDERR, "trust must not accept preselect equal to company id\n");
+    exit(1);
+}
+
 echo "helper fallback and resolution checks passed\n";
