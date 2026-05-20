@@ -258,12 +258,18 @@ function install_handle_marketplace_webhook($db, array $payload, array $config =
     ]));
 
     if ($appId !== '' && $expectedAppIds !== [] && !in_array($appId, $expectedAppIds, true)) {
-        error_log('[install_marketplace_webhook] ignored appId=' . $appId);
+        // Keep strict filtering for UNINSTALL, but do not drop INSTALL picks:
+        // some tenants send app identifiers that differ from env client IDs.
+        if ($eventType !== 'INSTALL') {
+            error_log('[install_marketplace_webhook] ignored appId=' . $appId);
 
-        return [
-            'status' => 200,
-            'body' => ['success' => true, 'ignored' => true, 'reason' => 'unknown_app_id'],
-        ];
+            return [
+                'status' => 200,
+                'body' => ['success' => true, 'ignored' => true, 'reason' => 'unknown_app_id'],
+            ];
+        }
+
+        error_log('[install_marketplace_webhook] install appId mismatch accepted for preselect capture appId=' . $appId);
     }
 
     error_log('[install_marketplace_webhook] ' . json_encode([
@@ -664,12 +670,12 @@ function install_collect_preselect_signals(
 
     $webhookLoc = null;
     if ($companyId !== null) {
-        for ($attempt = 0; $attempt < 6; $attempt++) {
+        for ($attempt = 0; $attempt < 20; $attempt++) {
             $webhookLoc = install_recent_marketplace_install_location_id($db, $companyId);
             if ($webhookLoc !== null) {
                 break;
             }
-            if ($attempt < 5) {
+            if ($attempt < 19) {
                 usleep(200000);
             }
         }
