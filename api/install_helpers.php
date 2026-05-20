@@ -668,19 +668,10 @@ function install_collect_preselect_signals(
     $companyId = install_clean_location_id($companyId);
     $tokenCand = install_unique_ids(is_array($oauthTokenLocationCandidateIds) ? $oauthTokenLocationCandidateIds : []);
 
-    $webhookLoc = null;
-    if ($companyId !== null) {
-        for ($attempt = 0; $attempt < 20; $attempt++) {
-            $webhookLoc = install_recent_marketplace_install_location_id($db, $companyId);
-            if ($webhookLoc !== null) {
-                break;
-            }
-            if ($attempt < 19) {
-                usleep(200000);
-            }
-        }
-    }
-
+    $chooserCallbackPick = install_chooser_pick_from_oauth_redirect_query($query, $companyId, $tokenCand);
+    $tokenMarketplacePick = install_oauth_marketplace_selected_location_id($oauthData);
+    $queryPick = install_extract_location_id_from_query($query, $companyId);
+    $statePick = install_extract_location_id_from_oauth_state($state);
     $jwtPick = ((string)($oauthData['userType'] ?? '')) !== 'Company'
         ? install_location_id_from_oauth_access_token((string)($oauthData['access_token'] ?? ''))
         : null;
@@ -688,15 +679,43 @@ function install_collect_preselect_signals(
     if ($cidForJwt !== null && install_clean_location_id($jwtPick) === $cidForJwt) {
         $jwtPick = null;
     }
+    $jwtPick = install_clean_location_id($jwtPick);
+
+    // Reduce callback latency: this helper is called multiple times per request.
+    // Cache webhook pick lookups and only do short retries when no direct signal exists.
+    static $webhookPickCache = [];
+    $webhookLoc = null;
+    if ($companyId !== null) {
+        if (array_key_exists($companyId, $webhookPickCache)) {
+            $webhookLoc = $webhookPickCache[$companyId];
+        } else {
+            $hasDirectSignals = $chooserCallbackPick !== null
+                || $tokenMarketplacePick !== null
+                || $queryPick !== null
+                || $statePick !== null
+                || $jwtPick !== null;
+            $maxAttempts = $hasDirectSignals ? 1 : 3;
+            for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
+                $webhookLoc = install_recent_marketplace_install_location_id($db, $companyId);
+                if ($webhookLoc !== null) {
+                    break;
+                }
+                if ($attempt < $maxAttempts - 1) {
+                    usleep(80000);
+                }
+            }
+            $webhookPickCache[$companyId] = $webhookLoc;
+        }
+    }
 
     return [
         'session_location_id' => install_clean_location_id($sessionLocationId),
-        'chooser_callback_pick_id' => install_chooser_pick_from_oauth_redirect_query($query, $companyId, $tokenCand),
-        'token_marketplace_selected_id' => install_oauth_marketplace_selected_location_id($oauthData),
-        'query_location_id' => install_extract_location_id_from_query($query, $companyId),
-        'state_location_id' => install_extract_location_id_from_oauth_state($state),
+        'chooser_callback_pick_id' => $chooserCallbackPick,
+        'token_marketplace_selected_id' => $tokenMarketplacePick,
+        'query_location_id' => $queryPick,
+        'state_location_id' => $statePick,
         'webhook_location_id' => $webhookLoc,
-        'jwt_location_id' => install_clean_location_id($jwtPick),
+        'jwt_location_id' => $jwtPick,
     ];
 }
 

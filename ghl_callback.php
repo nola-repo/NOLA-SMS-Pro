@@ -1354,9 +1354,7 @@ if (($data['userType'] ?? '') === 'Company') {
             render_error('Server configuration error: JWT secret missing.');
         }
 
-        $preselectedForSelection = install_preselected_location_for_selection_ui(
-            install_collect_preselect_signals($db, $data, $state, $_GET, (string)$companyId, null, $oauthTokenLocIds)
-        );
+        $preselectedForSelection = $preselectedTrust;
         $narrowedSelection = install_narrow_selection_to_preselected(
             $locationsArrayIds,
             $caseAResolution['location_names'] ?? [],
@@ -1420,9 +1418,7 @@ if (($data['userType'] ?? '') === 'Company') {
             render_error('Server configuration error: JWT secret missing.');
         }
 
-        $preselectedForRecovery = install_preselected_location_for_selection_ui(
-            install_collect_preselect_signals($db, $data, $state, $_GET, (string)$companyId, null, $oauthTokenLocIds)
-        );
+        $preselectedForRecovery = $preselectedTrust;
         render_company_location_recovery_selection(
             $db,
             (string)$jwtSecretSelect,
@@ -1542,9 +1538,7 @@ if (!$locationId) {
         }
 
         if (count($finalCandidateIds) > 1) {
-            $finalPreselected = install_preselected_location_for_selection_ui(
-                install_collect_preselect_signals($db, $data, $state, $_GET, $finalCompanyId, null, $finalOAuthTokenLocIds)
-            );
+            $finalPreselected = $finalPreselectedTrust;
             $finalNarrowed = install_narrow_selection_to_preselected(
                 $finalCandidateIds,
                 $finalResolution['location_names'] ?? [],
@@ -1598,9 +1592,7 @@ if (!$locationId) {
         }
 
         if (empty($finalCandidateIds) && !empty($data['access_token'])) {
-            $finalPreselectedRecovery = install_preselected_location_for_selection_ui(
-                install_collect_preselect_signals($db, $data, $state, $_GET, $finalCompanyId, null, $finalOAuthTokenLocIds)
-            );
+            $finalPreselectedRecovery = $finalPreselectedTrust;
             render_company_location_recovery_selection(
                 $db,
                 (string)$jwtSecretSelect,
