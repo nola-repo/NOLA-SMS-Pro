@@ -1867,6 +1867,65 @@ function install_linked_account_from_owner_like_doc($doc, string $source): ?arra
     ];
 }
 
+/**
+ * Ensure owner-like linked-account rows still map to a real, active user.
+ * This prevents stale `location_owners` rows from forcing welcome-back routing
+ * after the user document has been deleted for reinstall testing.
+ *
+ * @param array{id:string,email:string,name:string,source:string}|null $linked
+ * @return array{id:string,email:string,name:string,source:string}|null
+ */
+function install_validate_linked_account_user_exists($db, ?array $linked): ?array
+{
+    if ($linked === null) {
+        return null;
+    }
+
+    $uid = trim((string)($linked['id'] ?? ''));
+    $email = install_norm_email($linked['email'] ?? '');
+    if ($uid === '' && $email === '') {
+        return null;
+    }
+
+    if ($uid !== '') {
+        try {
+            $userSnap = $db->collection('users')->document($uid)->snapshot();
+            if ($userSnap->exists()) {
+                $data = $userSnap->data();
+                if (is_array($data) && install_is_active_user($data)) {
+                    $userEmail = install_norm_email($data['email'] ?? '');
+                    if ($email === '' || $userEmail === '' || $userEmail === $email) {
+                        $linked['email'] = $email !== '' ? $email : $userEmail;
+                        return $linked;
+                    }
+                }
+            }
+        } catch (Exception $e) {
+            error_log('[install_helpers] linked-account uid validation failed: ' . $e->getMessage());
+        }
+    }
+
+    if ($email !== '') {
+        try {
+            foreach ($db->collection('users')->where('email', '=', $email)->limit(1)->documents() as $doc) {
+                if (!$doc->exists()) {
+                    continue;
+                }
+                $data = $doc->data();
+                if (!is_array($data) || !install_is_active_user($data)) {
+                    continue;
+                }
+                $linked['id'] = $uid !== '' ? $uid : $doc->id();
+                return $linked;
+            }
+        } catch (Exception $e) {
+            error_log('[install_helpers] linked-account email validation failed: ' . $e->getMessage());
+        }
+    }
+
+    return null;
+}
+
 function install_backfill_location_owner($db, string $locationId, ?array $linkedAccount): void
 {
     if ($locationId === '' || empty($linkedAccount['email'])) {
@@ -1969,7 +2028,12 @@ function install_linked_account_for_location($db, string $locationId, bool $deep
         $ownerSnap = $db->collection('location_owners')->document($locationId)->snapshot();
         $linked = install_linked_account_from_owner_like_doc($ownerSnap, 'location_owners');
         if ($linked !== null) {
+            $linked = install_validate_linked_account_user_exists($db, $linked);
+            if ($linked === null) {
+                error_log("[install_helpers] ignored stale location_owners entry for {$locationId} (owner user missing)");
+            } else {
             return $linked;
+            }
         }
     } catch (Exception $e) {
         error_log("[install_helpers] owner lookup failed for {$locationId}: " . $e->getMessage());
@@ -2045,6 +2109,9 @@ function install_linked_account_for_location($db, string $locationId, bool $deep
     }
 
     $linked = install_linked_account_for_location_owner_fallbacks($db, $locationId);
+    if ($linked !== null) {
+        $linked = install_validate_linked_account_user_exists($db, $linked);
+    }
     if ($linked !== null) {
         install_backfill_location_owner($db, $locationId, $linked);
     }
@@ -2259,6 +2326,9 @@ function install_classify_location_for_provision(
     try {
         $ownerSnap = $db->collection('location_owners')->document($locationId)->snapshot();
         $linkedAccount = install_linked_account_from_owner_like_doc($ownerSnap, 'location_owners');
+        if ($linkedAccount !== null) {
+            $linkedAccount = install_validate_linked_account_user_exists($db, $linkedAccount);
+        }
     } catch (Exception $e) {
         error_log("[install_helpers] provision owner lookup failed for {$locationId}: " . $e->getMessage());
     }
