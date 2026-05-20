@@ -98,9 +98,26 @@ try {
     }
     $candidateIds = install_unique_ids($candidateIds);
 
+    $lockedPreselect = install_clean_location_id($session['preselected_location_id'] ?? null);
+    $sessionUiMode = (string)($session['ui_mode'] ?? 'list');
+    if ($lockedPreselect !== null) {
+        if ($locationId !== $lockedPreselect) {
+            http_response_code(403);
+            echo json_encode(['error' => 'This install is locked to the sub-account you selected in GoHighLevel.']);
+            exit;
+        }
+        $locationId = $lockedPreselect;
+    }
+
     if (!in_array($locationId, $candidateIds, true)) {
         http_response_code(403);
         echo json_encode(['error' => 'Selected location is not part of this signed install session.']);
+        exit;
+    }
+
+    if ($sessionUiMode === 'confirm_preselected' && count($candidateIds) === 1 && $candidateIds[0] !== $locationId) {
+        http_response_code(403);
+        echo json_encode(['error' => 'Install session candidate list does not match the Marketplace selection.']);
         exit;
     }
 

@@ -107,6 +107,9 @@ try {
         // Provide the default sub-accounts limit immediately on registration
         $data['max_active_subaccounts'] = 3;
     }
+    elseif ($role === 'user') {
+        $data['credit_balance'] = 0;
+    }
     
     if ($role === 'user' && !empty($locationId)) {
         $data['location_id'] = $locationId;

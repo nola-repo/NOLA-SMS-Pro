@@ -379,6 +379,15 @@ function create_install_selection_session(
     string $uiMode = 'list',
     ?string $preselectedLocationId = null
 ): array {
+    $preselectedLocationId = install_clean_location_id($preselectedLocationId);
+    if ($preselectedLocationId !== null) {
+        $narrowed = install_narrow_selection_to_preselected($candidateIds, $locationNames, $preselectedLocationId);
+        $candidateIds = $narrowed['candidate_ids'];
+        $locationNames = $narrowed['location_names'];
+        $uiMode = (string)$narrowed['ui_mode'];
+        $preselectedLocationId = $narrowed['preselected_location_id'];
+    }
+
     $candidateIds = install_unique_ids($candidateIds);
     $rows = [];
     foreach ($candidateIds as $candidateId) {
@@ -800,224 +809,6 @@ HTML;
 }
 
 /**
- * Pull a GHL location id from an associative JSON-decoded payload (OAuth state body).
- */
-function location_id_from_assoc_json(?array $json): ?string
-{
-    if (!$json) {
-        return null;
-    }
-    foreach (['locationId', 'location_id', 'selected_location_id'] as $key) {
-        $v = $json[$key] ?? null;
-        $clean = install_clean_location_id($v);
-        if ($clean !== null) {
-            return $clean;
-        }
-    }
-    foreach (['location_ids', 'locationIds', 'approvedLocations'] as $listKey) {
-        $locIds = $json[$listKey] ?? null;
-        $cleanListValue = install_clean_location_id($locIds);
-        if ($cleanListValue !== null) {
-            return $cleanListValue;
-        }
-        if (is_array($locIds) && count($locIds) === 1) {
-            $clean = install_clean_location_id($locIds[0] ?? null);
-            if ($clean !== null) {
-                return $clean;
-            }
-        }
-    }
-    $nested = $json['locations'] ?? null;
-    if (is_array($nested) && count($nested) === 1 && is_array($nested[0])) {
-        $row = $nested[0];
-        $clean = install_clean_location_id($row['id'] ?? $row['locationId'] ?? $row['location_id'] ?? null);
-        if ($clean !== null) {
-            return $clean;
-        }
-    }
-    foreach (['location', 'selectedLocation', 'subaccount', 'subAccount', 'context'] as $nestedKey) {
-        if (isset($json[$nestedKey]) && is_array($json[$nestedKey])) {
-            $nestedLocation = location_id_from_assoc_json($json[$nestedKey]);
-            if ($nestedLocation !== null) {
-                return $nestedLocation;
-            }
-        }
-    }
-    return null;
-}
-
-/**
- * Best-effort extraction of a locationId from OAuth state.
- * Supports plain IDs and common encoded JSON wrapper formats.
- */
-function extract_location_id_from_state(?string $state): ?string
-{
-    if (!$state) {
-        return null;
-    }
-
-    $candidates = [];
-    $candidates[] = $state;
-    $decoded = urldecode($state);
-    if ($decoded !== $state) {
-        $candidates[] = $decoded;
-    }
-
-    foreach ($candidates as $candidate) {
-        if (!is_string($candidate) || trim($candidate) === '') {
-            continue;
-        }
-
-        $trimmed = trim($candidate);
-
-        // Case 0: query-string-like state payload
-        $parsed = [];
-        parse_str($trimmed, $parsed);
-        $fromQuery = $parsed['locationId'] ?? $parsed['location_id'] ?? $parsed['selected_location_id'] ?? null;
-        $fromQueryClean = install_clean_location_id($fromQuery);
-        if ($fromQueryClean !== null) {
-            return $fromQueryClean;
-        }
-
-        // Case 1: JSON payload in state (direct)
-        $json = json_decode($trimmed, true);
-        if (is_array($json)) {
-            $fromJson = location_id_from_assoc_json($json);
-            if (is_string($fromJson) && $fromJson !== '') {
-                return $fromJson;
-            }
-        }
-
-        // Case 2: base64-encoded JSON payload
-        $b64 = base64_decode($trimmed, true);
-        if ($b64 !== false && $b64 !== '') {
-            $jsonB64 = json_decode($b64, true);
-            if (is_array($jsonB64)) {
-                $fromB64Json = location_id_from_assoc_json($jsonB64);
-                if (is_string($fromB64Json) && $fromB64Json !== '') {
-                    return $fromB64Json;
-                }
-            }
-        }
-
-        // Case 2b: base64url-encoded JSON payload
-        $b64Url = strtr($trimmed, '-_', '+/');
-        $padLen = strlen($b64Url) % 4;
-        if ($padLen > 0) {
-            $b64Url .= str_repeat('=', 4 - $padLen);
-        }
-        $b64u = base64_decode($b64Url, true);
-        if ($b64u !== false && $b64u !== '') {
-            $jsonB64u = json_decode($b64u, true);
-            if (is_array($jsonB64u)) {
-                $fromB64uJson = location_id_from_assoc_json($jsonB64u);
-                if (is_string($fromB64uJson) && $fromB64uJson !== '') {
-                    return $fromB64uJson;
-                }
-            }
-        }
-
-        // Case 2c: explicit location key embedded in a larger plain string
-        if (preg_match('/(?:locationId|location_id|selected_location_id)["=: ]+([A-Za-z0-9_-]{8,})/i', $trimmed, $m)) {
-            return $m[1];
-        }
-    }
-
-    return null;
-}
-
-/**
- * Best-effort extraction of a locationId directly from callback query params.
- * Handles common variants seen in GHL redirects.
- */
-function extract_location_id_from_query(array $query): ?string
-{
-    $directKeys = ['locationId', 'location_id', 'selected_location_id'];
-    foreach ($directKeys as $key) {
-        $val = $query[$key] ?? null;
-        $clean = install_clean_location_id($val);
-        if ($clean !== null) {
-            return $clean;
-        }
-    }
-
-    // approvedLocations can be an array or CSV with one selected sub-account.
-    $approvedIds = install_unique_ids(array_merge(
-        extract_location_ids_from_mixed($query['approvedLocations'] ?? null),
-        extract_location_ids_from_mixed($query['approvedLocationIds'] ?? null)
-    ));
-    if (count($approvedIds) === 1) {
-        return $approvedIds[0];
-    }
-
-    return null;
-}
-
-/**
- * Normalize location IDs from mixed callback payload formats.
- * Accepts array, CSV, or JSON string and returns unique IDs.
- *
- * @return array<int, string>
- */
-function extract_location_ids_from_mixed($value): array
-{
-    $ids = [];
-    $walk = null;
-    $walk = static function ($candidate) use (&$ids, &$walk): void {
-        $clean = install_clean_location_id($candidate);
-        if ($clean !== null) {
-            $ids[] = $clean;
-            return;
-        }
-
-        if (!is_array($candidate)) {
-            return;
-        }
-
-        foreach (['id', 'locationId', 'location_id', 'selected_location_id'] as $key) {
-            if (!array_key_exists($key, $candidate)) {
-                continue;
-            }
-            $clean = install_clean_location_id($candidate[$key]);
-            if ($clean !== null) {
-                $ids[] = $clean;
-            }
-        }
-
-        foreach (['locations', 'approvedLocations', 'approvedLocationIds', 'locationIds', 'location_ids', 'location', 'selectedLocation', 'subaccount', 'subAccount', 'context'] as $key) {
-            if (isset($candidate[$key]) && is_array($candidate[$key])) {
-                foreach ($candidate[$key] as $nested) {
-                    $walk($nested);
-                }
-            }
-        }
-
-        $keys = array_keys($candidate);
-        if ($keys === range(0, count($candidate) - 1)) {
-            foreach ($candidate as $item) {
-                $walk($item);
-            }
-        }
-    };
-
-    if (is_array($value)) {
-        $walk($value);
-    } elseif (is_string($value) && trim($value) !== '') {
-        $raw = trim($value);
-        $decoded = json_decode($raw, true);
-        if (is_array($decoded)) {
-            $walk($decoded);
-        } else {
-            foreach (array_map('trim', explode(',', $raw)) as $item) {
-                $walk($item);
-            }
-        }
-    }
-
-    return install_unique_ids($ids);
-}
-
-/**
  * Exchange a company-scoped token into a location-scoped token.
  * Tries both payload formats because GHL behavior varies by app/runtime.
  *
@@ -1150,7 +941,7 @@ if (!isset($_GET['code']))
 
 $code  = $_GET['code'];
 $state = $_GET['state'] ?? null;
-$queryLocationId = extract_location_id_from_query($_GET);
+$queryLocationId = install_extract_location_id_from_query($_GET);
 $queryApprovedLocationIds = install_unique_ids(array_merge(
     install_extract_location_ids_from_mixed($_GET['approvedLocations'] ?? null),
     install_extract_location_ids_from_mixed($_GET['approvedLocationIds'] ?? null)
@@ -1305,21 +1096,18 @@ if (($data['userType'] ?? '') === 'Company') {
     if (empty($approvedLocationIds) && !empty($queryApprovedLocationIds)) {
         $approvedLocationIds = $queryApprovedLocationIds;
     }
-    $stateLocationId = extract_location_id_from_state($state);
-    $preselectSignals = [
-        'token_marketplace_selected_id' => install_oauth_marketplace_selected_location_id($data),
-        'state_location_id' => $stateLocationId,
-        'query_location_id' => $queryLocationId,
-    ];
+    $preselectSignals = install_collect_preselect_signals($db, $data, $state, $_GET, (string)$companyId);
+    $stateLocationId = $preselectSignals['state_location_id'];
     $caseAResolution = install_resolve_selected_location([
         'token_location_id' => $data['locationId'] ?? ($data['location_id'] ?? null),
         'token_marketplace_selected_id' => $preselectSignals['token_marketplace_selected_id'],
-        'query_location_id' => $queryLocationId,
+        'query_location_id' => $preselectSignals['query_location_id'] ?? $queryLocationId,
         'approved_location_ids' => $approvedLocationIds,
         'query_approved_location_ids' => $queryApprovedLocationIds,
         'locations' => $oauthLocations,
         'state_location_id' => $stateLocationId,
     ]);
+    error_log('[GHL_CALLBACK_DEBUG] preselect_signals=' . json_encode($preselectSignals));
     $preselectedTrust = install_preselected_location_for_selection_ui($preselectSignals);
     $caseAResolution = install_trust_marketplace_preselect_to_resolution($caseAResolution, $preselectedTrust);
     $locationsArrayIds = $caseAResolution['candidate_ids'];
@@ -1503,11 +1291,9 @@ if (($data['userType'] ?? '') === 'Company') {
             render_error('Server configuration error: JWT secret missing.');
         }
 
-        $preselectedForSelection = install_preselected_location_for_selection_ui([
-            'token_marketplace_selected_id' => install_oauth_marketplace_selected_location_id($data),
-            'state_location_id' => $stateLocationId,
-            'query_location_id' => $queryLocationId,
-        ]);
+        $preselectedForSelection = install_preselected_location_for_selection_ui(
+            install_collect_preselect_signals($db, $data, $state, $_GET, (string)$companyId)
+        );
         $narrowedSelection = install_narrow_selection_to_preselected(
             $locationsArrayIds,
             $caseAResolution['location_names'] ?? [],
@@ -1565,11 +1351,9 @@ if (($data['userType'] ?? '') === 'Company') {
             render_error('Server configuration error: JWT secret missing.');
         }
 
-        $preselectedForRecovery = install_preselected_location_for_selection_ui([
-            'token_marketplace_selected_id' => install_oauth_marketplace_selected_location_id($data),
-            'state_location_id' => $stateLocationId,
-            'query_location_id' => $queryLocationId,
-        ]);
+        $preselectedForRecovery = install_preselected_location_for_selection_ui(
+            install_collect_preselect_signals($db, $data, $state, $_GET, (string)$companyId)
+        );
         render_company_location_recovery_selection(
             $db,
             (string)$jwtSecretSelect,
@@ -1597,11 +1381,13 @@ if (($data['userType'] ?? '') === 'Company') {
 
 // ─── Determine Location ID ────────────────────────────────────────────────────────────────
 // Resolve only from trusted OAuth/GHL selection signals; never infer from registration status.
-$finalPreselectSignals = [
-    'token_marketplace_selected_id' => install_oauth_marketplace_selected_location_id($data),
-    'state_location_id' => extract_location_id_from_state($state),
-    'query_location_id' => $queryLocationId,
-];
+$finalPreselectSignals = install_collect_preselect_signals(
+    get_firestore(),
+    $data,
+    $state,
+    $_GET,
+    trim((string)($data['companyId'] ?? ''))
+);
 $finalResolution = install_resolve_selected_location([
     'token_location_id' => $data['locationId'] ?? ($data['location_id'] ?? null),
     'token_marketplace_selected_id' => $finalPreselectSignals['token_marketplace_selected_id'],
@@ -1667,11 +1453,9 @@ if (!$locationId) {
         }
 
         if (count($finalCandidateIds) > 1) {
-            $finalPreselected = install_preselected_location_for_selection_ui([
-                'token_marketplace_selected_id' => install_oauth_marketplace_selected_location_id($data),
-                'state_location_id' => extract_location_id_from_state($state),
-                'query_location_id' => $queryLocationId,
-            ]);
+            $finalPreselected = install_preselected_location_for_selection_ui(
+                install_collect_preselect_signals($db, $data, $state, $_GET, $finalCompanyId)
+            );
             $finalNarrowed = install_narrow_selection_to_preselected(
                 $finalCandidateIds,
                 $finalResolution['location_names'] ?? [],
@@ -1719,11 +1503,9 @@ if (!$locationId) {
         }
 
         if (empty($finalCandidateIds) && !empty($data['access_token'])) {
-            $finalPreselectedRecovery = install_preselected_location_for_selection_ui([
-                'token_marketplace_selected_id' => install_oauth_marketplace_selected_location_id($data),
-                'state_location_id' => extract_location_id_from_state($state),
-                'query_location_id' => $queryLocationId,
-            ]);
+            $finalPreselectedRecovery = install_preselected_location_for_selection_ui(
+                install_collect_preselect_signals($db, $data, $state, $_GET, $finalCompanyId)
+            );
             render_company_location_recovery_selection(
                 $db,
                 (string)$jwtSecretSelect,

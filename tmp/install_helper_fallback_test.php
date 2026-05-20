@@ -141,4 +141,33 @@ if (empty($marketplaceTier['ok']) || ($marketplaceTier['location_id'] ?? '') !==
     exit(1);
 }
 
+$oauthPick = install_oauth_marketplace_selected_location_id([
+    'userType' => 'Location',
+    'locationId' => $locationId,
+    'isBulkInstallation' => false,
+]);
+if ($oauthPick !== $locationId) {
+    fwrite(STDERR, "oauth marketplace Location userType pick failed\n");
+    exit(1);
+}
+
+$narrowed = install_narrow_selection_to_preselected(
+    [$locationId, $otherLocationId],
+    [$locationId => 'A', $otherLocationId => 'B'],
+    $locationId
+);
+if (($narrowed['ui_mode'] ?? '') !== 'confirm_preselected' || count($narrowed['candidate_ids']) !== 1) {
+    fwrite(STDERR, "narrow preselected selection failed\n");
+    exit(1);
+}
+
+$preselectUi = install_preselected_location_for_selection_ui([
+    'webhook_location_id' => $locationId,
+    'jwt_location_id' => $otherLocationId,
+]);
+if ($preselectUi !== $locationId) {
+    fwrite(STDERR, "preselect UI priority failed\n");
+    exit(1);
+}
+
 echo "helper fallback and resolution checks passed\n";

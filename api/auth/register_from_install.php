@@ -14,6 +14,7 @@ require __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/../jwt_helper.php';
 require_once __DIR__ . '/../auth_helpers.php';
 require_once __DIR__ . '/../install_helpers.php';
+require_once __DIR__ . '/../services/CreditManager.php';
 require_once __DIR__ . '/user_profile_helper.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -438,6 +439,9 @@ try {
             $updates['active_location_id'] = $locationId;
             $updates['location_id'] = $locationId;
             $updates['ghl_token_ref'] = 'ghl_tokens/' . $locationId;
+            if (!array_key_exists('credit_balance', $existingDoc)) {
+                $updates['credit_balance'] = users_resolve_initial_credit_balance_for_location($db, (string)$locationId);
+            }
         } elseif (!empty($companyId)) {
             $updates['company_id'] = $companyId;
         }
@@ -457,6 +461,7 @@ try {
         register_from_install_log_timing($rflogId, 'user_write', $rflogStart);
 
         if ($isLocationLevel && $locationId) {
+            (new CreditManager())->ensureSubaccountCreditBalanceForLocation((string)$locationId);
             // Enforce one-email -> one-subaccount by pruning stale links first.
             _prune_user_subaccounts_except($db, $existingId, $locationId);
             _write_user_subaccount(
@@ -597,6 +602,7 @@ try {
         $userData['active_location_id'] = $locationId;
         $userData['location_id'] = $locationId;
         $userData['ghl_token_ref'] = 'ghl_tokens/' . $locationId;
+        $userData['credit_balance'] = users_resolve_initial_credit_balance_for_location($db, (string)$locationId);
     }
     if (!empty($companyId)) {
         $userData['company_id'] = $companyId;
@@ -612,6 +618,10 @@ try {
 
     $newUserDoc->set($userData);
     register_from_install_log_timing($rflogId, 'user_write', $rflogStart);
+
+    if ($isLocationLevel && $locationId) {
+        (new CreditManager())->ensureSubaccountCreditBalanceForLocation((string)$locationId);
+    }
 
     // Write user-owned subaccount entry
     if ($isLocationLevel && $locationId) {
@@ -721,6 +731,11 @@ function register_from_install_run_deferred_finalize(
     }
     register_from_install_log_timing($rid, 'finalize_fast', $finalizeStart);
     register_from_install_log_timing($rid, 'total', $sinceStart);
+}
+
+function _initial_user_credit_balance_for_location($db, string $locationId): int
+{
+    return users_resolve_initial_credit_balance_for_location($db, $locationId);
 }
 
 /**

@@ -301,6 +301,10 @@ function install_handle_marketplace_webhook($db, array $payload, array $config =
     }
 
     if ($eventType === 'INSTALL') {
+        if ($locationId !== null && $companyId !== null) {
+            install_record_marketplace_install_pick($db, $companyId, $locationId);
+        }
+
         return [
             'status' => 200,
             'body' => [
@@ -423,19 +427,185 @@ function install_oauth_locations_array_for_resolver(array $data): array
  */
 function install_oauth_marketplace_selected_location_id(array $data): ?string
 {
-    foreach (['selectedLocationId', 'selected_location_id', 'selectedLocation', 'selected_location'] as $k) {
+    foreach ([
+        'selectedLocationId',
+        'selected_location_id',
+        'selectedLocation',
+        'selected_location',
+        'installedLocationId',
+        'installed_location_id',
+        'targetLocationId',
+        'target_location_id',
+    ] as $k) {
         $id = install_clean_location_id($data[$k] ?? null);
         if ($id !== null) {
             return $id;
         }
     }
+
+    $fromAssoc = install_location_id_from_assoc_payload($data);
+    if ($fromAssoc !== null) {
+        return $fromAssoc;
+    }
+
+    if (($data['userType'] ?? '') === 'Location') {
+        $id = install_clean_location_id($data['locationId'] ?? $data['location_id'] ?? null);
+        if ($id !== null) {
+            return $id;
+        }
+    }
+
+    if (($data['isBulkInstallation'] ?? null) === false) {
+        $id = install_clean_location_id($data['locationId'] ?? $data['location_id'] ?? null);
+        if ($id !== null) {
+            return $id;
+        }
+    }
+
     if (!empty($data['location']) && is_array($data['location'])) {
-        return install_clean_location_id(
+        $id = install_clean_location_id(
             $data['location']['id'] ?? $data['location']['locationId'] ?? $data['location']['location_id'] ?? null
         );
+        if ($id !== null) {
+            return $id;
+        }
+    }
+
+    if (($data['isBulkInstallation'] ?? null) !== true) {
+        $rows = install_location_rows_from_ghl(install_oauth_locations_array_for_resolver($data));
+        if (count($rows['ids']) === 1) {
+            return $rows['ids'][0];
+        }
+    }
+
+    $jwtLocationId = install_location_id_from_oauth_access_token((string)($data['access_token'] ?? ''));
+    if ($jwtLocationId !== null) {
+        return $jwtLocationId;
     }
 
     return null;
+}
+
+/**
+ * Best-effort location id from an OAuth access_token JWT payload (unverified decode).
+ */
+function install_location_id_from_oauth_access_token(?string $accessToken): ?string
+{
+    if (!is_string($accessToken) || $accessToken === '') {
+        return null;
+    }
+
+    $parts = explode('.', $accessToken);
+    if (count($parts) < 2) {
+        return null;
+    }
+
+    $payloadSegment = $parts[1];
+    $padded = strtr($payloadSegment, '-_', '+/');
+    $padLen = strlen($padded) % 4;
+    if ($padLen > 0) {
+        $padded .= str_repeat('=', 4 - $padLen);
+    }
+    $decoded = base64_decode($padded, true);
+    if ($decoded === false || $decoded === '') {
+        return null;
+    }
+
+    $payload = json_decode($decoded, true);
+    if (!is_array($payload)) {
+        return null;
+    }
+
+    foreach (['locationId', 'location_id', 'authClassId', 'selectedLocationId', 'selected_location_id'] as $key) {
+        $id = install_clean_location_id($payload[$key] ?? null);
+        if ($id !== null) {
+            return $id;
+        }
+    }
+
+    return install_location_id_from_assoc_payload($payload);
+}
+
+/**
+ * Persist the sub-account chosen in a GHL INSTALL webhook for the OAuth callback to read.
+ */
+function install_record_marketplace_install_pick($db, ?string $companyId, ?string $locationId): void
+{
+    $companyId = install_clean_location_id($companyId);
+    $locationId = install_clean_location_id($locationId);
+    if ($companyId === null || $locationId === null) {
+        return;
+    }
+
+    try {
+        $now = new DateTimeImmutable();
+        $db->collection('marketplace_install_picks')->document($companyId)->set([
+            'company_id' => $companyId,
+            'location_id' => $locationId,
+            'picked_at' => new \Google\Cloud\Core\Timestamp($now),
+            'expires_at' => new \Google\Cloud\Core\Timestamp($now->modify('+30 minutes')),
+        ], ['merge' => true]);
+    } catch (Exception $e) {
+        error_log('[install_helpers] marketplace_install_pick write failed: ' . $e->getMessage());
+    }
+}
+
+/**
+ * Recent INSTALL webhook pick for this agency (chooselocation may not echo it in the token).
+ */
+function install_recent_marketplace_install_location_id($db, string $companyId): ?string
+{
+    $companyId = install_clean_location_id($companyId);
+    if ($companyId === null) {
+        return null;
+    }
+
+    try {
+        $snap = $db->collection('marketplace_install_picks')->document($companyId)->snapshot();
+        if (!$snap->exists()) {
+            return null;
+        }
+
+        $data = $snap->data();
+        $expiresAt = $data['expires_at'] ?? null;
+        if ($expiresAt instanceof \Google\Cloud\Core\Timestamp) {
+            if ($expiresAt->get()->getTimestamp() < time()) {
+                return null;
+            }
+        }
+
+        return install_clean_location_id($data['location_id'] ?? null);
+    } catch (Exception $e) {
+        error_log('[install_helpers] marketplace_install_pick read failed: ' . $e->getMessage());
+
+        return null;
+    }
+}
+
+/**
+ * Tier-1 signals for the second-step install UI (Marketplace pick → OAuth → selection form).
+ *
+ * @return array{
+ *   session_location_id: ?string,
+ *   token_marketplace_selected_id: ?string,
+ *   query_location_id: ?string,
+ *   state_location_id: ?string,
+ *   webhook_location_id: ?string,
+ *   jwt_location_id: ?string
+ * }
+ */
+function install_collect_preselect_signals($db, array $oauthData, ?string $state, array $query, ?string $companyId = null, ?string $sessionLocationId = null): array
+{
+    $companyId = install_clean_location_id($companyId);
+
+    return [
+        'session_location_id' => install_clean_location_id($sessionLocationId),
+        'token_marketplace_selected_id' => install_oauth_marketplace_selected_location_id($oauthData),
+        'query_location_id' => install_extract_location_id_from_query($query),
+        'state_location_id' => install_extract_location_id_from_oauth_state($state),
+        'webhook_location_id' => $companyId !== null ? install_recent_marketplace_install_location_id($db, $companyId) : null,
+        'jwt_location_id' => install_location_id_from_oauth_access_token((string)($oauthData['access_token'] ?? '')),
+    ];
 }
 
 /**
@@ -917,6 +1087,8 @@ function install_preselected_location_for_selection_ui(array $signals): ?string
         'token_marketplace_selected_id',
         'query_location_id',
         'state_location_id',
+        'webhook_location_id',
+        'jwt_location_id',
     ] as $key) {
         $id = install_clean_location_id($signals[$key] ?? null);
         if ($id !== null) {
@@ -925,6 +1097,34 @@ function install_preselected_location_for_selection_ui(array $signals): ?string
     }
 
     return null;
+}
+
+/**
+ * Canonical initial subaccount credit_balance for users/{id} (legacy integrations fallback).
+ */
+function users_resolve_initial_credit_balance_for_location($db, string $locationId): int
+{
+    $locationId = install_clean_location_id($locationId) ?? trim($locationId);
+    if ($locationId === '') {
+        return 0;
+    }
+
+    $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
+    try {
+        $intSnap = $db->collection('integrations')->document($intDocId)->snapshot();
+        if (!$intSnap->exists()) {
+            return 0;
+        }
+
+        $intData = $intSnap->data();
+        if (array_key_exists('credit_balance', $intData) && is_numeric($intData['credit_balance'])) {
+            return max(0, (int)$intData['credit_balance']);
+        }
+    } catch (Exception $e) {
+        error_log('[install_helpers] users_resolve_initial_credit_balance failed for ' . $locationId . ': ' . $e->getMessage());
+    }
+
+    return 0;
 }
 
 /**

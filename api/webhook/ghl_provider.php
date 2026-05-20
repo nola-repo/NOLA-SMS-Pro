@@ -53,6 +53,22 @@ if (!is_array($payload)) {
     $payload = $_POST;
 }
 
+// GHL may deliver Marketplace AppInstall/AppUninstall events to any configured provider URL.
+// Handle lifecycle events here too so uninstalled locations are blocked before any SMS path.
+if (install_is_marketplace_lifecycle_payload($payload)) {
+    try {
+        $dbMarketplace = get_firestore();
+        $marketplaceResult = install_handle_marketplace_webhook($dbMarketplace, $payload, $config);
+        http_response_code((int)$marketplaceResult['status']);
+        echo json_encode($marketplaceResult['body']);
+    } catch (Throwable $e) {
+        error_log('[ghl_provider] marketplace lifecycle handler failed: ' . $e->getMessage());
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => 'Marketplace webhook processing failed']);
+    }
+    exit;
+}
+
 error_log('[ghl_provider] Received payload: ' . $raw);
 $providerReqId = 'ghlp_' . bin2hex(random_bytes(6));
 error_log('[ghl_provider][INGRESS] ' . json_encode([
@@ -175,21 +191,6 @@ if (!isset($db)) {
 $tokenRef  = $db->collection('ghl_tokens')->document($locationId);
 $tokenSnap = $tokenRef->snapshot();
 $tokenData = $tokenSnap->exists() ? $tokenSnap->data() : [];
-$toggleEnabled = isset($tokenData['toggle_enabled']) ? (bool)$tokenData['toggle_enabled'] : true;
-
-if (!$toggleEnabled) {
-    error_log('[ghl_provider][REJECT] ' . json_encode([
-        'req_id' => $providerReqId,
-        'reason' => 'toggle_disabled',
-        'locationId' => $locationId,
-    ]));
-    http_response_code(403);
-    echo json_encode([
-        'success' => false,
-        'error'   => 'SMS sending is currently disabled for this account. Please contact your agency.'
-    ]);
-    exit;
-}
 
 $installGate = install_location_sms_gate($db, (string)$locationId);
 if (empty($installGate['allowed'])) {
@@ -203,6 +204,22 @@ if (empty($installGate['allowed'])) {
         'success' => false,
         'error' => (string)($installGate['reason'] ?? 'NOLA SMS Pro is not installed for this sub-account.'),
         'code' => (string)($installGate['code'] ?? 'install_blocked'),
+    ]);
+    exit;
+}
+
+$toggleEnabled = isset($tokenData['toggle_enabled']) ? (bool)$tokenData['toggle_enabled'] : true;
+
+if (!$toggleEnabled) {
+    error_log('[ghl_provider][REJECT] ' . json_encode([
+        'req_id' => $providerReqId,
+        'reason' => 'toggle_disabled',
+        'locationId' => $locationId,
+    ]));
+    http_response_code(403);
+    echo json_encode([
+        'success' => false,
+        'error'   => 'SMS sending is currently disabled for this account. Please contact your agency.'
     ]);
     exit;
 }

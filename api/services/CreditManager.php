@@ -671,15 +671,66 @@ class CreditManager
     private function find_user_ref_for_subaccount_wallet(string $locationKey)
     {
         foreach ($this->activeLocationIdQueryCandidates($locationKey) as $loc) {
-            $query = $this->db->collection('users')->where('active_location_id', '=', $loc)->limit(1)->documents();
-            foreach ($query as $userDoc) {
-                if ($userDoc->exists()) {
-                    return $userDoc->reference();
+            foreach (['active_location_id', 'location_id'] as $field) {
+                $query = $this->db->collection('users')->where($field, '=', $loc)->limit(1)->documents();
+                foreach ($query as $userDoc) {
+                    if ($userDoc->exists()) {
+                        $this->backfill_user_credit_balance_if_missing($userDoc->reference(), $locationKey);
+                        return $userDoc->reference();
+                    }
                 }
             }
         }
 
         return null;
+    }
+
+    /**
+     * Ensure users/{id}.credit_balance exists when a sub-account owner is linked (sync from legacy integrations).
+     */
+    public function ensureSubaccountCreditBalanceForLocation(string $locationId): void
+    {
+        $locationId = trim($locationId);
+        if ($locationId === '') {
+            return;
+        }
+
+        $userRef = $this->find_user_ref_for_subaccount_wallet($locationId);
+        if ($userRef !== null) {
+            $this->backfill_user_credit_balance_if_missing($userRef, $locationId);
+        }
+    }
+
+    private function backfill_user_credit_balance_if_missing($userRef, string $locationKey): void
+    {
+        try {
+            $userSnap = $userRef->snapshot();
+            if (!$userSnap->exists()) {
+                return;
+            }
+
+            $userData = $userSnap->data();
+            if (array_key_exists('credit_balance', $userData)) {
+                return;
+            }
+
+            $legacyBalance = 0;
+            $legacyRef = $this->db->collection('integrations')->document(self::integration_doc_id_for_location($locationKey));
+            $legacySnap = $legacyRef->snapshot();
+            if ($legacySnap->exists()) {
+                $legacyData = $legacySnap->data();
+                if (array_key_exists('credit_balance', $legacyData) && is_numeric($legacyData['credit_balance'])) {
+                    $legacyBalance = max(0, (int)$legacyData['credit_balance']);
+                }
+            }
+
+            $userRef->set([
+                'credit_balance' => $legacyBalance,
+                'updated_at' => new Timestamp(new \DateTimeImmutable()),
+            ], ['merge' => true]);
+        } catch (\Throwable $e) {
+            error_log('[CreditManager] credit_balance backfill skipped for ' . $locationKey . ': ' . $e->getMessage());
+        }
     }
 
     /**
