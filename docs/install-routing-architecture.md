@@ -18,12 +18,14 @@ Agency installs are separate and enter through `/oauth/agency-callback`.
 2. Enter `PENDING_OAUTH`; OAuth permission is not a completed install.
 3. Resolve the selected location using only trusted selection signals:
    - signed install selection session
-   - explicit `locationId` / `location_id` / selected-location query field
+   - explicit `locationId` / `location_id` / `selectedLocationId` (and similar) on the callback query string
    - OAuth state containing `selected_location_id`
+   - `approvedLocations` / `approvedLocationIds` on the callback query intersected with token `locations[]` when the token lists many sub-accounts
+   - INSTALL webhook snapshot in `marketplace_install_picks/{companyId}` (with brief server-side retry if the webhook is a few hundred ms behind OAuth)
    - `approvedLocations` with exactly one location
    - `locations[]` with exactly one location
 4. If exactly one unique exact candidate exists, return `EXACT_SINGLE_LOCATION` and never show the selector.
-5. If multiple candidate locations remain and no exact signal chooses one, return `AMBIGUOUS` and show the explicit selection screen.
+5. If multiple candidate locations remain and no exact signal chooses one, return `AMBIGUOUS` and show the explicit selection screen. If the chooser selection is still detectable (redirect query intersecting token `locations[]`, INSTALL webhook `marketplace_install_picks`, or extra query keys), the UI mode is `confirm_preselected`: **one** workspace and **no search bar** — user confirms only.
 6. If a company token was returned but no selected location signal or callback candidates exist, return `SELECTION_REQUIRED`, fetch company locations for display only, and show the explicit selection screen.
 7. After one selected `locationId` is known, check company ownership against `ghl_tokens/{locationId}`.
 8. Save or refresh the location token idempotently with `install_state=PENDING_OAUTH`.
@@ -150,6 +152,12 @@ The selected subaccount callback may receive a Company-scoped token from GHL, bu
 - Missing or expired install token: registration stops and asks for reinstall.
 - Registration form always displays the selected location name and id from the signed token and selected `ghl_tokens/{locationId}` only.
 - Repeated callback or repeated selected-location submission uses merge writes and owner locks, so it is idempotent.
+
+## Debugging install / preselection
+
+On `/oauth/callback`, PHP error logs may include lines prefixed with **`[GHL_CALLBACK_INSTALL_TRACE]`**. Those lines avoid secrets: they list **only the names of query-string parameters** returned on the OAuth redirect (never the OAuth `code` value) plus structured **`preselect_signals`** and resolver summaries.
+
+Disable in production if needed: set **`GHL_INSTALL_TRACE=0`** (or `false`, `no`, `off`). When unset, tracing is **on**.
 
 ## Migration Strategy
 

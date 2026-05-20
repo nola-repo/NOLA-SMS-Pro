@@ -645,13 +645,35 @@ function install_recent_marketplace_install_location_id($db, string $companyId):
  *   token_marketplace_selected_id: ?string,
  *   query_location_id: ?string,
  *   state_location_id: ?string,
+ *   chooser_callback_pick_id: ?string,
  *   webhook_location_id: ?string,
  *   jwt_location_id: ?string
  * }
  */
-function install_collect_preselect_signals($db, array $oauthData, ?string $state, array $query, ?string $companyId = null, ?string $sessionLocationId = null): array
-{
+function install_collect_preselect_signals(
+    $db,
+    array $oauthData,
+    ?string $state,
+    array $query,
+    ?string $companyId = null,
+    ?string $sessionLocationId = null,
+    ?array $oauthTokenLocationCandidateIds = null
+): array {
     $companyId = install_clean_location_id($companyId);
+    $tokenCand = install_unique_ids(is_array($oauthTokenLocationCandidateIds) ? $oauthTokenLocationCandidateIds : []);
+
+    $webhookLoc = null;
+    if ($companyId !== null) {
+        for ($attempt = 0; $attempt < 6; $attempt++) {
+            $webhookLoc = install_recent_marketplace_install_location_id($db, $companyId);
+            if ($webhookLoc !== null) {
+                break;
+            }
+            if ($attempt < 5) {
+                usleep(200000);
+            }
+        }
+    }
 
     $jwtPick = ((string)($oauthData['userType'] ?? '')) !== 'Company'
         ? install_location_id_from_oauth_access_token((string)($oauthData['access_token'] ?? ''))
@@ -663,10 +685,11 @@ function install_collect_preselect_signals($db, array $oauthData, ?string $state
 
     return [
         'session_location_id' => install_clean_location_id($sessionLocationId),
+        'chooser_callback_pick_id' => install_chooser_pick_from_oauth_redirect_query($query, $companyId, $tokenCand),
         'token_marketplace_selected_id' => install_oauth_marketplace_selected_location_id($oauthData),
-        'query_location_id' => install_extract_location_id_from_query($query),
+        'query_location_id' => install_extract_location_id_from_query($query, $companyId),
         'state_location_id' => install_extract_location_id_from_oauth_state($state),
-        'webhook_location_id' => $companyId !== null ? install_recent_marketplace_install_location_id($db, $companyId) : null,
+        'webhook_location_id' => $webhookLoc,
         'jwt_location_id' => install_clean_location_id($jwtPick),
     ];
 }
@@ -833,12 +856,33 @@ function install_extract_location_ids_from_mixed($value): array
     return install_unique_ids($ids);
 }
 
-function install_extract_location_id_from_query(array $query): ?string
+function install_extract_location_id_from_query(array $query, ?string $rejectCompanyId = null): ?string
 {
-    foreach (['locationId', 'location_id', 'selected_location_id'] as $key) {
-        $clean = install_clean_location_id($query[$key] ?? null);
-        if ($clean !== null) {
-            return $clean;
+    $reject = install_clean_location_id($rejectCompanyId);
+
+    $asSubLoc = static function (?string $id) use ($reject): ?string {
+        $clean = install_clean_location_id($id);
+        if ($clean === null) {
+            return null;
+        }
+        if ($reject !== null && $clean === $reject) {
+            return null;
+        }
+
+        return $clean;
+    };
+
+    foreach ([
+        'locationId',
+        'location_id',
+        'selected_location_id',
+        'selectedLocationId',
+        'selectedLocation',
+        'selected_location',
+    ] as $key) {
+        $v = $asSubLoc($query[$key] ?? null);
+        if ($v !== null) {
+            return $v;
         }
     }
 
@@ -846,8 +890,62 @@ function install_extract_location_id_from_query(array $query): ?string
         install_extract_location_ids_from_mixed($query['approvedLocations'] ?? null),
         install_extract_location_ids_from_mixed($query['approvedLocationIds'] ?? null)
     ));
+    if ($reject !== null) {
+        $approvedIds = array_values(array_filter($approvedIds, static function ($id) use ($reject) {
+            return $id !== $reject;
+        }));
+    }
     if (count($approvedIds) === 1) {
         return $approvedIds[0];
+    }
+
+    return null;
+}
+
+/**
+ * Sub-account the user chose in GHL chooser, from OAuth redirect query params,
+ * when the token lists many locations. Compares GET approved or locations ids to token locations[].
+ *
+ * @param array<int,string> $oauthTokenLocationIds ids parsed from OAuth token locations[]
+ */
+function install_chooser_pick_from_oauth_redirect_query(array $query, ?string $companyId, array $oauthTokenLocationIds): ?string
+{
+    $cid = install_clean_location_id($companyId);
+    $oauthTokenLocationIds = install_unique_ids($oauthTokenLocationIds);
+
+    $fromQuery = install_unique_ids(array_merge(
+        install_extract_location_ids_from_mixed($query['approvedLocations'] ?? null),
+        install_extract_location_ids_from_mixed($query['approvedLocationIds'] ?? null),
+        install_extract_location_ids_from_mixed($query['locations'] ?? null),
+        install_extract_location_ids_from_mixed($query['locationIds'] ?? null),
+        install_extract_location_ids_from_mixed($query['location_ids'] ?? null),
+    ));
+
+    $filtered = [];
+    foreach ($fromQuery as $id) {
+        if ($cid !== null && $id === $cid) {
+            continue;
+        }
+        if ($oauthTokenLocationIds !== [] && !in_array($id, $oauthTokenLocationIds, true)) {
+            continue;
+        }
+        $filtered[] = $id;
+    }
+    $filtered = install_unique_ids($filtered);
+    if (count($filtered) === 1) {
+        return $filtered[0];
+    }
+
+    if ($oauthTokenLocationIds !== []) {
+        $intersect = install_unique_ids(array_values(array_intersect($fromQuery, $oauthTokenLocationIds)));
+        if ($cid !== null) {
+            $intersect = array_values(array_filter($intersect, static function ($id) use ($cid) {
+                return $id !== $cid;
+            }));
+        }
+        if (count($intersect) === 1) {
+            return $intersect[0];
+        }
     }
 
     return null;
@@ -1147,10 +1245,11 @@ function install_preselected_location_for_selection_ui(array $signals): ?string
 {
     foreach ([
         'session_location_id',
+        'chooser_callback_pick_id',
+        'webhook_location_id',
         'token_marketplace_selected_id',
         'query_location_id',
         'state_location_id',
-        'webhook_location_id',
         'jwt_location_id',
     ] as $key) {
         $id = install_clean_location_id($signals[$key] ?? null);

@@ -191,4 +191,17 @@ if (!empty($trustBad['ok'])) {
     exit(1);
 }
 
+$companyLike = 'COMPANYXX11111111';
+$locPick = 'LOCATIONYY11111111';
+$locOther = 'LOCATIONZZ11111111';
+$chooser = install_chooser_pick_from_oauth_redirect_query(
+    ['approvedLocations' => [$locPick]],
+    $companyLike,
+    [$locPick, $locOther]
+);
+if ($chooser !== $locPick) {
+    fwrite(STDERR, "chooser_callback_pick failed\n");
+    exit(1);
+}
+
 echo "helper fallback and resolution checks passed\n";

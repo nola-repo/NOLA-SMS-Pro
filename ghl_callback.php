@@ -8,6 +8,33 @@ $locationIdSafe = '';
 $backendApiUrl = 'https://smspro-api.nolacrm.io';
 
 /**
+ * Whether greppable install tracing is enabled. Set GHL_INSTALL_TRACE=0 to disable.
+ * Tracing never logs OAuth authorization codes or access/refresh tokens.
+ */
+function ghl_install_trace_enabled(): bool
+{
+    $v = getenv('GHL_INSTALL_TRACE');
+    if ($v === false || $v === '') {
+        return true;
+    }
+    $v = strtolower(trim((string)$v));
+
+    return !in_array($v, ['0', 'false', 'no', 'off'], true);
+}
+
+/**
+ * @param array<string,mixed> $payload
+ */
+function ghl_install_trace_log(string $phase, array $payload): void
+{
+    if (!ghl_install_trace_enabled()) {
+        return;
+    }
+    $payload['_phase'] = $phase;
+    error_log('[GHL_CALLBACK_INSTALL_TRACE] ' . json_encode($payload, JSON_UNESCAPED_SLASHES));
+}
+
+/**
  * Send a full HTML page and exit.
  */
 function render_page(string $title, string $body_html): void
@@ -988,6 +1015,20 @@ $debugTrace['token_companyId'] = $data['companyId'] ?? null;
 $debugTrace['token_locationId'] = $data['locationId'] ?? ($data['location_id'] ?? null);
 error_log('[GHL_CALLBACK_DEBUG] token_exchange=' . json_encode($debugTrace));
 
+$installQueryKeys = array_keys($_GET);
+sort($installQueryKeys);
+ghl_install_trace_log('after_token_exchange', [
+    'oauth_callback_query_keys' => $installQueryKeys,
+    'has_query_state' => isset($_GET['state']),
+    'query_state_length' => isset($_GET['state']) ? strlen((string)$_GET['state']) : 0,
+    'token_userType' => $data['userType'] ?? null,
+    'token_companyId' => $data['companyId'] ?? null,
+    'token_root_locationId' => $data['locationId'] ?? ($data['location_id'] ?? null),
+    'token_locations_array_count' => isset($data['locations']) && is_array($data['locations']) ? count($data['locations']) : 0,
+    'token_has_approvedLocations_key' => array_key_exists('approvedLocations', $data),
+    'token_has_selectedLocationId_key' => array_key_exists('selectedLocationId', $data) || array_key_exists('selected_location_id', $data),
+]);
+
 // Subaccount-only — $usedAppType is always 'subaccount'
 $usedAppType = 'subaccount';
 
@@ -1096,7 +1137,8 @@ if (($data['userType'] ?? '') === 'Company') {
     if (empty($approvedLocationIds) && !empty($queryApprovedLocationIds)) {
         $approvedLocationIds = $queryApprovedLocationIds;
     }
-    $preselectSignals = install_collect_preselect_signals($db, $data, $state, $_GET, (string)$companyId);
+    $oauthTokenLocIds = install_location_rows_from_ghl($oauthLocations)['ids'];
+    $preselectSignals = install_collect_preselect_signals($db, $data, $state, $_GET, (string)$companyId, null, $oauthTokenLocIds);
     $stateLocationId = $preselectSignals['state_location_id'];
     $tokenRootLoc = install_sanitize_token_root_location_id_for_company($data, $data['locationId'] ?? ($data['location_id'] ?? null));
     $caseAResolution = install_resolve_selected_location([
@@ -1111,6 +1153,17 @@ if (($data['userType'] ?? '') === 'Company') {
     error_log('[GHL_CALLBACK_DEBUG] preselect_signals=' . json_encode($preselectSignals));
     $preselectedTrust = install_preselected_location_for_selection_ui($preselectSignals);
     $caseAResolution = install_trust_marketplace_preselect_to_resolution($caseAResolution, $preselectedTrust, (string)$companyId);
+    ghl_install_trace_log('company_install_resolution', [
+        'preselect_signals' => $preselectSignals,
+        'preselected_location_for_ui' => $preselectedTrust,
+        'resolver_after_trust_ok' => !empty($caseAResolution['ok']),
+        'resolver_location_id' => $caseAResolution['location_id'] ?? null,
+        'resolver_source' => $caseAResolution['source'] ?? null,
+        'resolver_reason' => $caseAResolution['reason'] ?? null,
+        'resolver_candidate_count' => count($caseAResolution['candidate_ids'] ?? []),
+        'oauth_token_locations_count' => count($oauthTokenLocIds),
+        'callback_query_approved_location_count' => count($queryApprovedLocationIds),
+    ]);
     $locationsArrayIds = $caseAResolution['candidate_ids'];
     $singleLocationId = $caseAResolution['ok'] ? $caseAResolution['location_id'] : null;
     $caseAResolutionMode = (string)($caseAResolution['resolutionMode'] ?? ($caseAResolution['status'] ?? ''));
@@ -1302,13 +1355,19 @@ if (($data['userType'] ?? '') === 'Company') {
         }
 
         $preselectedForSelection = install_preselected_location_for_selection_ui(
-            install_collect_preselect_signals($db, $data, $state, $_GET, (string)$companyId)
+            install_collect_preselect_signals($db, $data, $state, $_GET, (string)$companyId, null, $oauthTokenLocIds)
         );
         $narrowedSelection = install_narrow_selection_to_preselected(
             $locationsArrayIds,
             $caseAResolution['location_names'] ?? [],
             $preselectedForSelection
         );
+        ghl_install_trace_log('company_ambiguous_selection_ui', [
+            'ui_mode' => (string)($narrowedSelection['ui_mode'] ?? ''),
+            'preselected_for_selection' => $preselectedForSelection,
+            'candidates_before_narrow' => count($locationsArrayIds),
+            'candidates_after_narrow' => count($narrowedSelection['candidate_ids'] ?? []),
+        ]);
         $selectionSession = create_install_selection_session(
             $db,
             (string)$jwtSecretSelect,
@@ -1362,7 +1421,7 @@ if (($data['userType'] ?? '') === 'Company') {
         }
 
         $preselectedForRecovery = install_preselected_location_for_selection_ui(
-            install_collect_preselect_signals($db, $data, $state, $_GET, (string)$companyId)
+            install_collect_preselect_signals($db, $data, $state, $_GET, (string)$companyId, null, $oauthTokenLocIds)
         );
         render_company_location_recovery_selection(
             $db,
@@ -1391,12 +1450,16 @@ if (($data['userType'] ?? '') === 'Company') {
 
 // ─── Determine Location ID ────────────────────────────────────────────────────────────────
 // Resolve only from trusted OAuth/GHL selection signals; never infer from registration status.
+$finalOAuthLocsArray = install_oauth_locations_array_for_resolver($data);
+$finalOAuthTokenLocIds = install_location_rows_from_ghl($finalOAuthLocsArray)['ids'];
 $finalPreselectSignals = install_collect_preselect_signals(
     get_firestore(),
     $data,
     $state,
     $_GET,
-    trim((string)($data['companyId'] ?? ''))
+    trim((string)($data['companyId'] ?? '')),
+    null,
+    $finalOAuthTokenLocIds
 );
 $finalTokenRoot = install_sanitize_token_root_location_id_for_company($data, $data['locationId'] ?? ($data['location_id'] ?? null));
 $finalResolution = install_resolve_selected_location([
@@ -1417,6 +1480,17 @@ $finalResolution = install_trust_marketplace_preselect_to_resolution(
     $finalPreselectedTrust,
     trim((string)($data['companyId'] ?? ''))
 );
+ghl_install_trace_log('final_install_resolution', [
+    'preselect_signals' => $finalPreselectSignals,
+    'preselected_location_for_ui' => $finalPreselectedTrust,
+    'resolver_after_trust_ok' => !empty($finalResolution['ok']),
+    'resolver_location_id' => $finalResolution['location_id'] ?? null,
+    'resolver_source' => $finalResolution['source'] ?? null,
+    'resolver_reason' => $finalResolution['reason'] ?? null,
+    'resolver_candidate_count' => count($finalResolution['candidate_ids'] ?? []),
+    'oauth_token_locations_count' => count($finalOAuthTokenLocIds),
+    'callback_query_approved_location_count' => count($queryApprovedLocationIds),
+]);
 $finalResolutionMode = (string)($finalResolution['resolutionMode'] ?? ($finalResolution['status'] ?? ''));
 $locationId = $finalResolution['ok'] ? $finalResolution['location_id'] : null;
 $finalCheckpoint = install_final_install_checkpoint($locationId, $finalResolutionMode);
@@ -1469,13 +1543,19 @@ if (!$locationId) {
 
         if (count($finalCandidateIds) > 1) {
             $finalPreselected = install_preselected_location_for_selection_ui(
-                install_collect_preselect_signals($db, $data, $state, $_GET, $finalCompanyId)
+                install_collect_preselect_signals($db, $data, $state, $_GET, $finalCompanyId, null, $finalOAuthTokenLocIds)
             );
             $finalNarrowed = install_narrow_selection_to_preselected(
                 $finalCandidateIds,
                 $finalResolution['location_names'] ?? [],
                 $finalPreselected
             );
+            ghl_install_trace_log('final_ambiguous_selection_ui', [
+                'ui_mode' => (string)($finalNarrowed['ui_mode'] ?? ''),
+                'preselected_for_selection' => $finalPreselected,
+                'candidates_before_narrow' => count($finalCandidateIds),
+                'candidates_after_narrow' => count($finalNarrowed['candidate_ids'] ?? []),
+            ]);
             $selectionSession = create_install_selection_session(
                 $db,
                 (string)$jwtSecretSelect,
@@ -1519,7 +1599,7 @@ if (!$locationId) {
 
         if (empty($finalCandidateIds) && !empty($data['access_token'])) {
             $finalPreselectedRecovery = install_preselected_location_for_selection_ui(
-                install_collect_preselect_signals($db, $data, $state, $_GET, $finalCompanyId)
+                install_collect_preselect_signals($db, $data, $state, $_GET, $finalCompanyId, null, $finalOAuthTokenLocIds)
             );
             render_company_location_recovery_selection(
                 $db,
