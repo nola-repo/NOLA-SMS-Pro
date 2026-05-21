@@ -369,30 +369,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'accounts') {
     $results = [];
 
-    // Pre-fetch all agencies to resolve names efficiently
-    $agenciesRaw = $db->collection('ghl_tokens')->where('appType', '==', 'agency')->documents();
+    // Pre-fetch all tokens in a single query to resolve agency/subaccount names and settings (saves collection reads)
+    $allTokens = $db->collection('ghl_tokens')->documents();
     $agencyMap = [];
-    foreach ($agenciesRaw as $agencyDocRaw) {
-        if ($agencyDocRaw->exists()) {
-            $agData = $agencyDocRaw->data();
-            $comp = $agData['companyId'] ?? $agData['company_id'] ?? $agencyDocRaw->id();
-            $agencyMap[$comp] = $agData['company_name'] ?? $agData['companyName'] ?? $agData['agency_name'] ?? 'Unknown Agency';
-        }
-    }
-
-    // Pre-fetch subaccount tokens to get companyId and settings
-    // (This avoids querying inside the loop)
-    $subTokenDocs = $db->collection('ghl_tokens')->documents();
     $subTokenMap = [];
     $subCompanyMap = [];
-    foreach ($subTokenDocs as $subTDoc) {
-        if ($subTDoc->exists()) {
-            $subData = $subTDoc->data();
-            if (($subData['appType'] ?? '') !== 'agency') {
-                $locIdStr = $subData['locationId'] ?? $subData['location_id'] ?? $subTDoc->id();
+
+    foreach ($allTokens as $tokenDoc) {
+        if ($tokenDoc->exists()) {
+            $tData = $tokenDoc->data();
+            $appType = $tData['appType'] ?? '';
+
+            if ($appType === 'agency') {
+                $comp = $tData['companyId'] ?? $tData['company_id'] ?? $tokenDoc->id();
+                $agencyMap[$comp] = $tData['company_name'] ?? $tData['companyName'] ?? $tData['agency_name'] ?? 'Unknown Agency';
+            } else {
+                $locIdStr = $tData['locationId'] ?? $tData['location_id'] ?? $tokenDoc->id();
                 if ($locIdStr) {
-                    $subTokenMap[$locIdStr] = $subData;
-                    $subCompStr = $subData['companyId'] ?? $subData['company_id'] ?? null;
+                    $subTokenMap[$locIdStr] = $tData;
+                    $subCompStr = $tData['companyId'] ?? $tData['company_id'] ?? null;
                     if ($subCompStr) {
                         $subCompanyMap[$locIdStr] = $subCompStr;
                     }
@@ -401,9 +396,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
         }
     }
 
+    // Pre-fetch all users to map location credit balances in-memory (eliminates O(N) nested loop queries)
+    $usersRaw = $db->collection('users')->documents();
+    $locationToCreditMap = [];
+    foreach ($usersRaw as $userDoc) {
+        if ($userDoc->exists()) {
+            $uData = $userDoc->data();
+            $bal = isset($uData['credit_balance']) ? (int)$uData['credit_balance'] : null;
+            if ($bal !== null) {
+                $activeLoc = trim((string)($uData['active_location_id'] ?? ''));
+                if ($activeLoc !== '') {
+                    $locationToCreditMap[$activeLoc] = $bal;
+                    $locationToCreditMap['ghl_' . $activeLoc] = $bal;
+                }
+                
+                $locIdField = trim((string)($uData['location_id'] ?? ''));
+                if ($locIdField !== '') {
+                    $locationToCreditMap[$locIdField] = $bal;
+                    $locationToCreditMap['ghl_' . $locIdField] = $bal;
+                }
+            }
+        }
+    }
+
     // 1. Fetch all integrations (Master list)
     $integrationsRaw = $db->collection('integrations')->documents();
-    $cmAccounts = new CreditManager();
 
     foreach ($integrationsRaw as $intDoc) {
         $intData = $intDoc->data();
@@ -464,6 +481,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
 
         $tokData = $subTokenMap[$locId] ?? [];
 
+        // Resolve sub-account credit balance using the high-performance in-memory map
+        $creditBalance = 0;
+        if (isset($locationToCreditMap[$locId])) {
+            $creditBalance = $locationToCreditMap[$locId];
+        } elseif (isset($locationToCreditMap['ghl_' . $locId])) {
+            $creditBalance = $locationToCreditMap['ghl_' . $locId];
+        } else {
+            // Fallback to legacy integrations local credit_balance
+            $creditBalance = (int)($intData['credit_balance'] ?? 0);
+        }
+
         $results[] = [
             'id' => $intDocId, // Expected by frontend mapping
             'data' => [
@@ -475,7 +503,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
                 'nola_pro_api_key'   => $intData['nola_pro_api_key'] ?? null,
                 'api_key'            => $intData['api_key'] ?? null,
                 'semaphore_api_key'  => $intData['semaphore_api_key'] ?? null,
-                'credit_balance'     => $cmAccounts->get_balance((string)$locId),
+                'credit_balance'     => $creditBalance,
                 'free_usage_count'   => (int)($intData['free_usage_count'] ?? 0),
                 'free_credits_total' => (int)($intData['free_credits_total'] ?? 10),
                 'toggle_enabled'     => isset($tokData['toggle_enabled']) ? (bool)$tokData['toggle_enabled'] : true,
