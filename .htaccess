@@ -62,6 +62,7 @@
 
     # ── SMS sending (frontend uses /api/sms) ─────────────────────────
     RewriteRule ^api/sms/?$ /api/webhook/send_sms.php [NC,L,QSA]
+    RewriteRule ^api/send_sms(\.php)?/?$ /api/webhook/send_sms.php [NC,L,QSA]
 
     # ── Specialized Frontend-Backend Reconciliation ──────────────────
     # /api/bulk-campaigns -> /api/webhook/fetch_bulk_messages.php
