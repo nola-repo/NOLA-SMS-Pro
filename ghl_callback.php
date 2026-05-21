@@ -208,6 +208,21 @@ function render_page(string $title, string $body_html): void
         .selection-option-btn { margin-top: 8px !important; }
         
         .error-pre { margin-top: 12px; font-size: 10px; color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; border-radius: 10px; padding: 10px; overflow: auto; max-height: 120px; text-align: left; white-space: pre-wrap; word-break: break-all; font-family: monospace; }
+        
+        .connecting-spinner {
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            border: 2px solid rgba(255,255,255,0.35);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 0.8s ease-in-out infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
@@ -468,6 +483,34 @@ function create_install_selection_session(
  */
 function fetch_company_locations_for_selection(string $companyId, string $companyToken): array
 {
+    // Try to retrieve cached locations list to avoid slow paginated GHL requests
+    try {
+        $db = get_firestore();
+        $cacheSnap = $db->collection('company_locations_cache')->document($companyId)->snapshot();
+        if ($cacheSnap->exists()) {
+            $cacheData = $cacheSnap->data();
+            $createdAt = $cacheData['created_at'] ?? null;
+            $ttlSeconds = 600; // 10 minutes cache TTL
+            $cacheAge = 99999;
+            if ($createdAt instanceof \Google\Cloud\Core\Timestamp) {
+                $cacheAge = time() - $createdAt->get()->getTimestamp();
+            } elseif (is_numeric($createdAt)) {
+                $cacheAge = time() - $createdAt;
+            }
+            if ($cacheAge < $ttlSeconds && !empty($cacheData['ids'])) {
+                error_log("[GHL_CALLBACK] fetch_company_locations_for_selection using Firestore cache for {$companyId} (age={$cacheAge}s)");
+                return [
+                    'ok' => true,
+                    'ids' => is_array($cacheData['ids']) ? $cacheData['ids'] : [],
+                    'names' => is_array($cacheData['names']) ? $cacheData['names'] : [],
+                    'failures' => [],
+                ];
+            }
+        }
+    } catch (Exception $cacheEx) {
+        error_log("[GHL_CALLBACK] Cache read failed for company locations {$companyId}: " . $cacheEx->getMessage());
+    }
+
     $ids = [];
     $names = [];
     $failures = [];
@@ -539,12 +582,29 @@ function fetch_company_locations_for_selection(string $companyId, string $compan
         $skip += $limit;
     } while (!empty($batch) && count($batch) === $limit && count($ids) < 1000);
 
-    return [
+    $result = [
         'ok' => empty($failures) && !empty($ids),
         'ids' => $ids,
         'names' => $names,
         'failures' => $failures,
     ];
+
+    // Save to cache if successful
+    if ($result['ok']) {
+        try {
+            $db = get_firestore();
+            $db->collection('company_locations_cache')->document($companyId)->set([
+                'company_id' => $companyId,
+                'ids' => $ids,
+                'names' => $names,
+                'created_at' => new \Google\Cloud\Core\Timestamp(new DateTimeImmutable()),
+            ], ['merge' => true]);
+        } catch (Exception $cacheEx) {
+            error_log("[GHL_CALLBACK] Cache write failed for company locations {$companyId}: " . $cacheEx->getMessage());
+        }
+    }
+
+    return $result;
 }
 
 function render_company_location_recovery_selection(
@@ -732,15 +792,29 @@ HTML;
           })();
           function setConnectingState(btn) {
             btn.textContent = '';
+            var container = document.createElement('div');
+            container.style.cssText = 'display:flex; align-items:center; justify-content:center; gap:12px;';
+            
+            var spinner = document.createElement('div');
+            spinner.className = 'connecting-spinner';
+            
+            var textWrap = document.createElement('div');
+            textWrap.style.cssText = 'text-align:left;';
+            
             var c1 = document.createElement('span');
             c1.style.cssText = 'display:block;font-weight:800;';
             c1.textContent = 'Connecting your workspace…';
+            
             var c2 = document.createElement('span');
             c2.setAttribute('data-connect-detail', '1');
-            c2.style.cssText = 'display:block;font-size:12px;opacity:0.8;margin-top:6px;font-weight:500;';
+            c2.style.cssText = 'display:block;font-size:12px;opacity:0.8;margin-top:2px;font-weight:500;';
             c2.textContent = 'Usually under 15 seconds.';
-            btn.appendChild(c1);
-            btn.appendChild(c2);
+            
+            textWrap.appendChild(c1);
+            textWrap.appendChild(c2);
+            container.appendChild(spinner);
+            container.appendChild(textWrap);
+            btn.appendChild(container);
           }
           function updateConnectingDetail(btn, text) {
             var detail = btn.querySelector('[data-connect-detail]');
@@ -1625,26 +1699,69 @@ $usedAppType = 'subaccount';
 
 // ─── Fetch Location Name ───────────────────────────────────────────────────────
 $locationName = '';
-try {
-    $locCh = curl_init('https://services.leadconnectorhq.com/locations/' . $locationId);
-    curl_setopt($locCh, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($locCh, CURLOPT_CONNECTTIMEOUT, 3);
-    curl_setopt($locCh, CURLOPT_TIMEOUT, 6);
-    curl_setopt($locCh, CURLOPT_HTTPHEADER, [
-        'Authorization: Bearer ' . $data['access_token'],
-        'Accept: application/json',
-        'Version: 2021-07-28',
-    ]);
-    $locResp = curl_exec($locCh);
-    $locCode = curl_getinfo($locCh, CURLINFO_HTTP_CODE);
-    curl_close($locCh);
+$db = get_firestore();
+$tokenExistedBeforeDirect = install_token_doc_exists($db, (string)$locationId);
 
-    if ($locCode === 200) {
-        $locData      = json_decode($locResp, true);
-        $locationName = $locData['location']['name'] ?? '';
+// 1. Try to fetch location name from finalResolution names array
+if (is_array($finalResolution['location_names'] ?? null)) {
+    $locationName = trim((string)($finalResolution['location_names'][$locationId] ?? ''));
+}
+
+// 2. Try to fetch location name from data['location'] when matches the ID
+if ($locationName === '' && !empty($data['location']) && is_array($data['location'])) {
+    $lid = $data['location']['id'] ?? $data['location']['locationId'] ?? $data['location']['location_id'] ?? null;
+    if ((string)$lid === (string)$locationId) {
+        $locationName = trim((string)($data['location']['name'] ?? $data['location']['location_name'] ?? ''));
     }
-} catch (Exception $e) {
-    error_log("Failed to fetch location name in callback for $locationId: " . $e->getMessage());
+}
+
+// 3. Try to fetch location name from data['locations'] list
+if ($locationName === '' && !empty($data['locations']) && is_array($data['locations'])) {
+    foreach ($data['locations'] as $loc) {
+        if (!is_array($loc)) continue;
+        $lid = $loc['id'] ?? $loc['locationId'] ?? $loc['location_id'] ?? null;
+        if ((string)$lid === (string)$locationId) {
+            $locationName = trim((string)($loc['name'] ?? $loc['location_name'] ?? ''));
+            break;
+        }
+    }
+}
+
+// 4. Try to retrieve name from existing database document if it existed previously
+if ($locationName === '' && $tokenExistedBeforeDirect) {
+    try {
+        $existingSnap = $db->collection('ghl_tokens')->document((string)$locationId)->snapshot();
+        if ($existingSnap->exists()) {
+            $locationName = trim((string)($existingSnap->data()['location_name'] ?? ''));
+        }
+    } catch (Exception $e) {
+        error_log("Failed to fetch location name from Firestore: " . $e->getMessage());
+    }
+}
+
+// 5. Fallback: If still unknown, do one quick external lookup before calling GHL
+if ($locationName === '') {
+    try {
+        $locCh = curl_init('https://services.leadconnectorhq.com/locations/' . $locationId);
+        curl_setopt($locCh, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($locCh, CURLOPT_CONNECTTIMEOUT, 3);
+        curl_setopt($locCh, CURLOPT_TIMEOUT, 6);
+        curl_setopt($locCh, CURLOPT_HTTPHEADER, [
+            'Authorization: Bearer ' . $data['access_token'],
+            'Accept: application/json',
+            'Version: 2021-07-28',
+        ]);
+        $locResp = curl_exec($locCh);
+        $locCode = curl_getinfo($locCh, CURLINFO_HTTP_CODE);
+        curl_close($locCh);
+
+        if ($locCode === 200) {
+            $locData      = json_decode($locResp, true);
+            $locationName = $locData['location']['name'] ?? '';
+        }
+    } catch (Exception $e) {
+        error_log("Failed to fetch location name in callback for $locationId: " . $e->getMessage());
+    }
 }
 
 $displayName     = $locationName;
