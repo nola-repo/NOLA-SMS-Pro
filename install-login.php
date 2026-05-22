@@ -106,6 +106,13 @@ function il_page(string $title, string $body): void {
             padding: 12px 16px; margin-bottom: 20px;
             font-size: 13px; color: #dc2626; font-weight: 600;
         }
+        .banner-success {
+            background: #ecfdf5; border: 1px solid #a7f3d0;
+            border-radius: 14px; padding: 14px 16px; margin-bottom: 22px;
+        }
+        .banner-success p { font-size: 13px; color: #065f46; line-height: 1.5; }
+        .banner-success strong { font-weight: 700; }
+        .hidden { display: none !important; }
         .footer { font-size: 11px; color: #b0b0b0; text-align: center; margin-top: 20px; }
     </style>
 </head>
@@ -162,12 +169,176 @@ $bulkCount     = (int)($_GET['count'] ?? 0);
 $sessionIdRaw  = trim((string)($_GET['session_id'] ?? ''));
 $installTokenRaw = trim((string)($_GET['install_token'] ?? ''));
 
-// ── Handle POST ───────────────────────────────────────────────────────────────
+// ── Handle POST & Password Reset Actions ─────────────────────────────────────
 $formError = null;
+$infoMessage = null;
 $emailVal  = '';
 $linkedAccount = null;
 $loginInstallClass = null;
 
+$action = $_GET['action'] ?? '';
+$token = $_GET['token'] ?? $_POST['token'] ?? '';
+$queryStringForAction = (string)($_SERVER['QUERY_STRING'] ?? '');
+
+$isResetSuccess = isset($_GET['reset_success']) && $_GET['reset_success'] === '1';
+if ($isResetSuccess) {
+    $infoMessage = "Your password has been successfully reset. Please sign in below.";
+}
+
+// 1. Handle Reset Password Form Render or Post Submit
+if ($action === 'reset_password' || (isset($_POST['form_action']) && $_POST['form_action'] === 'reset_password')) {
+    $db = get_firestore();
+    $userDoc = null;
+    $userCollection = null;
+
+    if ($token !== '') {
+        try {
+            $results = $db->collection('agency_users')
+                ->where('reset_token', '=', $token)
+                ->limit(1)
+                ->documents();
+            foreach ($results as $doc) {
+                if ($doc->exists()) {
+                    $userDoc = $doc;
+                    $userCollection = 'agency_users';
+                    break;
+                }
+            }
+
+            if (!$userDoc) {
+                $results = $db->collection('users')
+                    ->where('reset_token', '=', $token)
+                    ->limit(1)
+                    ->documents();
+                foreach ($results as $doc) {
+                    if ($doc->exists()) {
+                        $userDoc = $doc;
+                        $userCollection = 'users';
+                        break;
+                    }
+                }
+            }
+        } catch (Exception $e) {
+            error_log("[install-login] Token lookup error: " . $e->getMessage());
+        }
+    }
+
+    if (!$userDoc) {
+        $formError = "Invalid or expired password reset link.";
+        goto render_login_form;
+    }
+
+    // Check token expiration
+    $data = $userDoc->data();
+    $expires = $data['reset_expires'] ?? null;
+    $isExpired = true;
+    if ($expires instanceof \Google\Cloud\Core\Timestamp) {
+        $isExpired = (time() > $expires->get()->getTimestamp());
+    }
+
+    if ($isExpired) {
+        $formError = "The password reset link has expired. Please request a new one.";
+        goto render_login_form;
+    }
+
+    // If it's a POST submit to reset the password
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['form_action']) && $_POST['form_action'] === 'reset_password') {
+        $newPassword = $_POST['new_password'] ?? '';
+        $confirmPassword = $_POST['confirm_password'] ?? '';
+
+        if (strlen($newPassword) < 8) {
+            $resetError = "Password must be at least 8 characters long.";
+            goto render_reset_form;
+        }
+
+        if ($newPassword !== $confirmPassword) {
+            $resetError = "Passwords do not match.";
+            goto render_reset_form;
+        }
+
+        try {
+            $hash = password_hash($newPassword, PASSWORD_DEFAULT);
+            $userRef = $db->collection($userCollection)->document($userDoc->id());
+            $userRef->set([
+                'password_hash' => $hash,
+                'reset_token' => null,
+                'reset_expires' => null,
+                'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+            ], ['merge' => true]);
+
+            header("Location: " . $apiBase . "/login?reset_success=1", true, 302);
+            exit;
+        } catch (Exception $e) {
+            error_log("[install-login] Password update error: " . $e->getMessage());
+            $resetError = "Failed to update password. Please try again.";
+            goto render_reset_form;
+        }
+    }
+
+    render_reset_form:
+    $resetErrorHtml = isset($resetError) ? "<div class=\"error-box\">{$resetError}</div>" : '';
+    $resetFormAction = '/login?action=reset_password';
+    if ($queryStringForAction !== '') {
+        $resetFormAction = '/login?' . htmlspecialchars($queryStringForAction, ENT_QUOTES, 'UTF-8');
+    }
+
+    il_page('Reset Password', <<<HTML
+        <h1>Reset your password</h1>
+        <p class="subtitle">Enter your new password below.</p>
+        {$resetErrorHtml}
+        <form id="reset-password-form" method="POST" action="{$resetFormAction}">
+            <input type="hidden" name="form_action" value="reset_password">
+            <input type="hidden" name="token" value="{$token}">
+            
+            <div class="field">
+                <label for="new_password">New Password</label>
+                <div class="pw-wrap">
+                    <input id="new_password" name="new_password" type="password" required
+                        placeholder="••••••••" autocomplete="new-password">
+                    <button type="button" id="toggle-new-pw" class="pw-toggle" aria-label="Show/hide password">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </button>
+                </div>
+            </div>
+            
+            <div class="field">
+                <label for="confirm_password">Confirm New Password</label>
+                <div class="pw-wrap">
+                    <input id="confirm_password" name="confirm_password" type="password" required
+                        placeholder="••••••••" autocomplete="new-password">
+                    <button type="button" id="toggle-confirm-pw" class="pw-toggle" aria-label="Show/hide password">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </button>
+                </div>
+            </div>
+            
+            <button id="reset-submit-btn" type="submit" class="btn-submit">Reset Password</button>
+        </form>
+        <p class="footer" style="margin-top:24px;">
+            <a href="/login" style="color:#2b83fa;font-weight:600;">Back to Sign In</a>
+        </p>
+        <script>
+            var newPwToggle = document.getElementById('toggle-new-pw');
+            if (newPwToggle) newPwToggle.addEventListener('click', function() {
+                var inp = document.getElementById('new_password');
+                inp.type = inp.type === 'password' ? 'text' : 'password';
+            });
+            var confirmPwToggle = document.getElementById('toggle-confirm-pw');
+            if (confirmPwToggle) confirmPwToggle.addEventListener('click', function() {
+                var inp = document.getElementById('confirm_password');
+                inp.type = inp.type === 'password' ? 'text' : 'password';
+            });
+            var form = document.getElementById('reset-password-form');
+            if (form) form.addEventListener('submit', function() {
+                var btn = document.getElementById('reset-submit-btn');
+                btn.disabled = true;
+                btn.textContent = 'Resetting…';
+            });
+        </script>
+HTML);
+}
+
+// 2. Preload linked account for location if location_id is provided
 if ($locationIdRaw !== '') {
     try {
         $dbForInstall = get_firestore();
@@ -203,58 +374,130 @@ if ($locationIdRaw !== '') {
     }
 }
 
+// 3. Handle POST Requests
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $email    = strtolower(trim($_POST['email']    ?? ''));
-    $password = $_POST['password'] ?? '';
-    $emailVal = htmlspecialchars($email, ENT_QUOTES, 'UTF-8');
+    $formActionType = $_POST['form_action'] ?? 'login';
 
-    $ch = curl_init($apiBase . '/api/auth/login');
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POST           => true,
-        CURLOPT_HTTPHEADER     => ['Content-Type: application/json', 'Accept: application/json'],
-        CURLOPT_POSTFIELDS     => json_encode(['email' => $email, 'password' => $password]),
-        CURLOPT_TIMEOUT        => 15,
-    ]);
-    $resp = curl_exec($ch);
-    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+    if ($formActionType === 'forgot') {
+        $email = strtolower(trim($_POST['email'] ?? ''));
+        if ($email !== '') {
+            try {
+                $db = get_firestore();
+                $userDoc = null;
+                $userCollection = null;
 
-    $result = json_decode($resp, true);
+                // Query agency_users
+                $results = $db->collection('agency_users')
+                    ->where('email', '=', $email)
+                    ->limit(1)
+                    ->documents();
+                foreach ($results as $doc) {
+                    if ($doc->exists()) {
+                        $userDoc = $doc;
+                        $userCollection = 'agency_users';
+                        break;
+                    }
+                }
 
-    if ($code === 200 && !empty($result['token'])) {
-        if ($locationIdRaw !== '') {
-            $db = get_firestore();
-            $jwtSecret = getenv('JWT_SECRET');
-            if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
-                $formError = 'Server configuration error: JWT secret missing.';
-                goto render_login_form;
-            }
-            $payload = jwt_verify((string)$result['token'], $jwtSecret);
-            $authUid = (string)($payload['sub'] ?? '');
-            $authEmail = (string)($payload['email'] ?? $email);
-            if (!install_user_linked_to_location($db, $authUid, $locationIdRaw, $authEmail)) {
-                $formError = 'This account is not linked to the selected subaccount. Please sign in with the correct linked account.';
-                goto render_login_form;
+                // Query users
+                if (!$userDoc) {
+                    $results = $db->collection('users')
+                        ->where('email', '=', $email)
+                        ->limit(1)
+                        ->documents();
+                    foreach ($results as $doc) {
+                        if ($doc->exists()) {
+                            $userDoc = $doc;
+                            $userCollection = 'users';
+                            break;
+                        }
+                    }
+                }
+
+                if ($userDoc) {
+                    $token = bin2hex(random_bytes(32));
+                    $expires = new \Google\Cloud\Core\Timestamp(new \DateTime('+1 hour'));
+
+                    $userRef = $db->collection($userCollection)->document($userDoc->id());
+                    $userRef->set([
+                        'reset_token' => $token,
+                        'reset_expires' => $expires,
+                        'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+                    ], ['merge' => true]);
+
+                    // Send email
+                    $subject = "Password Reset Request - NOLA SMS Pro";
+                    $resetLink = $apiBase . '/login?action=reset_password&token=' . $token;
+                    $message = "Hello,\n\nWe received a request to reset the password for your NOLA SMS Pro account. To set a new password, please click the link below:\n\n" . $resetLink . "\n\nThis link will expire in 1 hour.\n\nIf you did not request a password reset, please ignore this email.";
+                    $headers = "From: noreply@nolacrm.io\r\n" .
+                               "Reply-To: support@nolacrm.io\r\n" .
+                               "X-Mailer: PHP/" . phpversion();
+
+                    @mail($email, $subject, $message, $headers);
+                    error_log("[install-login] Sent password reset email to: {$email}. Reset link: {$resetLink}");
+                } else {
+                    error_log("[install-login] Forgot password request for non-existent email: {$email}");
+                }
+            } catch (Exception $e) {
+                error_log("[install-login] Forgot password error: " . $e->getMessage());
             }
         }
-
-        // Agency account — redirect to agency portal
-        if (($result['role'] ?? '') === 'agency') {
-            header('Location: https://agency.nolasmspro.com', true, 302);
-            exit;
-        }
-
-        $token    = $result['token'];
-        $userJson = base64_encode(json_encode($result['user'] ?? []));
-        $dest     = $apiBase . '/auth-handoff.html'
-            . '?token='    . urlencode($token)
-            . '&user='     . urlencode($userJson)
-            . '&redirect=' . urlencode($reactApp);
-        header('Location: ' . $dest, true, 302);
-        exit;
+        $infoMessage = "If an account exists for that email address, we have sent a password reset link. Please check your inbox.";
+        goto render_login_form;
     } else {
-        $formError = htmlspecialchars($result['error'] ?? 'Invalid email or password.', ENT_QUOTES, 'UTF-8');
+        // Default login handling
+        $email    = strtolower(trim($_POST['email']    ?? ''));
+        $password = $_POST['password'] ?? '';
+        $emailVal = htmlspecialchars($email, ENT_QUOTES, 'UTF-8');
+
+        $ch = curl_init($apiBase . '/api/auth/login');
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST           => true,
+            CURLOPT_HTTPHEADER     => ['Content-Type: application/json', 'Accept: application/json'],
+            CURLOPT_POSTFIELDS     => json_encode(['email' => $email, 'password' => $password]),
+            CURLOPT_TIMEOUT        => 15,
+        ]);
+        $resp = curl_exec($ch);
+        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        $result = json_decode($resp, true);
+
+        if ($code === 200 && !empty($result['token'])) {
+            if ($locationIdRaw !== '') {
+                $db = get_firestore();
+                $jwtSecret = getenv('JWT_SECRET');
+                if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
+                    $formError = 'Server configuration error: JWT secret missing.';
+                    goto render_login_form;
+                }
+                $payload = jwt_verify((string)$result['token'], $jwtSecret);
+                $authUid = (string)($payload['sub'] ?? '');
+                $authEmail = (string)($payload['email'] ?? $email);
+                if (!install_user_linked_to_location($db, $authUid, $locationIdRaw, $authEmail)) {
+                    $formError = 'This account is not linked to the selected subaccount. Please sign in with the correct linked account.';
+                    goto render_login_form;
+                }
+            }
+
+            // Agency account — redirect to agency portal
+            if (($result['role'] ?? '') === 'agency') {
+                header('Location: https://agency.nolasmspro.com', true, 302);
+                exit;
+            }
+
+            $token    = $result['token'];
+            $userJson = base64_encode(json_encode($result['user'] ?? []));
+            $dest     = $apiBase . '/auth-handoff.html'
+                . '?token='    . urlencode($token)
+                . '&user='     . urlencode($userJson)
+                . '&redirect=' . urlencode($reactApp);
+            header('Location: ' . $dest, true, 302);
+            exit;
+        } else {
+            $formError = htmlspecialchars($result['error'] ?? 'Invalid email or password.', ENT_QUOTES, 'UTF-8');
+        }
     }
 }
 render_login_form:
@@ -304,6 +547,14 @@ HTML;
         <p><strong>⚡ {$countLabel}.</strong><br>
         Each sub-account admin must open NOLA SMS Pro from within their own GHL sub-account sidebar to complete individual registration.<br><br>
         If you are a sub-account admin, sign in below or ask your agency owner to resend access.</p>
+    </div>
+HTML;
+}
+
+if ($infoMessage) {
+    $bannerHtml .= <<<HTML
+    <div class="banner-success">
+        <p>{$infoMessage}</p>
     </div>
 HTML;
 }
@@ -490,29 +741,84 @@ HTML;
 }
 
 il_page('Sign In', <<<HTML
-    <h1>Welcome back</h1>
-    <p class="subtitle">Sign in to your NOLA SMS Pro account.</p>
-    {$bannerHtml}
-    {$linkedAccountHtml}
-    {$errorHtml}
-    <form id="login-form" method="POST" action="{$formAction}">
-        <input type="hidden" name="location_id" value="{$locationIdSafe}">
-        <div class="field">
-            <label for="{$emailLabelFor}">Email Address</label>
+    <div id="login-form-wrapper">
+        <h1>Welcome back</h1>
+        <p class="subtitle">Sign in to your NOLA SMS Pro account.</p>
+        {$bannerHtml}
+        {$linkedAccountHtml}
+        {$errorHtml}
+        <form id="login-form" method="POST" action="{$formAction}">
+            <input type="hidden" name="location_id" value="{$locationIdSafe}">
+            <div class="field">
+                <label for="{$emailLabelFor}">Email Address</label>
 {$emailFieldHtml}
-        </div>
-        <div class="field">
-            <label for="password">Password</label>
-            <div class="pw-wrap">
-                <input id="password" name="password" type="password" required
-                    placeholder="••••••••" {$passwordAutocompleteAttrs}>
-                <button type="button" id="toggle-pw" class="pw-toggle" aria-label="Show/hide password">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                </button>
             </div>
-        </div>
-        <button id="submit-btn" type="submit" class="btn-submit">Sign In</button>
-    </form>
-    {$footerHtml}
+            <div class="field">
+                <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 7px;">
+                    <label for="password" style="margin-bottom: 0;">Password</label>
+                    <a href="#" id="forgot-pw-link" style="font-size: 11px; font-weight: 700; color: #2b83fa; text-decoration: none; text-transform: uppercase; letter-spacing: 0.05em;">Forgot Password?</a>
+                </div>
+                <div class="pw-wrap">
+                    <input id="password" name="password" type="password" required
+                        placeholder="••••••••" {$passwordAutocompleteAttrs}>
+                    <button type="button" id="toggle-pw" class="pw-toggle" aria-label="Show/hide password">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </button>
+                </div>
+            </div>
+            <button id="submit-btn" type="submit" class="btn-submit">Sign In</button>
+        </form>
+        {$footerHtml}
+    </div>
+
+    <div id="forgot-form-wrapper" class="hidden">
+        <h1>Forgot Password</h1>
+        <p class="subtitle">Enter your email address to request a password reset.</p>
+        <form id="forgot-form" method="POST" action="{$formAction}">
+            <input type="hidden" name="form_action" value="forgot">
+            <div class="field">
+                <label for="forgot-email">Email Address</label>
+                <input id="forgot-email" name="email" type="email" required
+                    placeholder="you@company.com" autocomplete="email">
+            </div>
+            <button id="forgot-submit-btn" type="submit" class="btn-submit">Send Reset Link</button>
+        </form>
+        <p class="footer" style="margin-top: 24px;">
+            <a href="#" id="back-to-login-link" style="color: #2b83fa; font-weight: 600; text-decoration: none;">Back to Sign In</a>
+        </p>
+    </div>
+
+    <script>
+      (function() {
+        var forgotLink = document.getElementById('forgot-pw-link');
+        var backToLoginLink = document.getElementById('back-to-login-link');
+        var loginWrapper = document.getElementById('login-form-wrapper');
+        var forgotWrapper = document.getElementById('forgot-form-wrapper');
+        
+        if (forgotLink && backToLoginLink && loginWrapper && forgotWrapper) {
+          forgotLink.addEventListener('click', function(e) {
+            e.preventDefault();
+            loginWrapper.classList.add('hidden');
+            forgotWrapper.classList.remove('hidden');
+          });
+          backToLoginLink.addEventListener('click', function(e) {
+            e.preventDefault();
+            forgotWrapper.classList.add('hidden');
+            loginWrapper.classList.remove('hidden');
+          });
+        }
+        
+        var forgotForm = document.getElementById('forgot-form');
+        if (forgotForm) {
+          forgotForm.addEventListener('submit', function() {
+            var btn = document.getElementById('forgot-submit-btn');
+            if (btn) {
+              btn.disabled = true;
+              btn.textContent = 'Sending…';
+            }
+          });
+        }
+      })();
+    </script>
     {$bulkStatusScript}
 HTML);
