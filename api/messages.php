@@ -9,11 +9,14 @@ header('Content-Type: application/json');
 
 require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
+require_once __DIR__ . '/services/StatusSync.php';
 
 validate_api_request();
 
 $db = get_firestore();
 $config = require __DIR__ . '/webhook/config.php';
+$apiKey = $config['SEMAPHORE_API_KEY'] ?? '';
+$apiKeyCache = [];
 
 // Status syncing is now handled by Cloud Scheduler (every 5 min)
 // via api/webhook/retrieve_status.php → StatusSync::runSync()
@@ -142,6 +145,7 @@ try {
             if (!$doc->exists())
                 continue;
             $d = $doc->data();
+            \Nola\Services\StatusSync::checkAndSyncSingleMessage($db, $d, $doc->id(), $apiKey, $apiKeyCache);
             $out['data'][] = [
                 'id' => $doc->id(),
                 'conversation_id' => $d['conversation_id'] ?? null,
@@ -202,6 +206,7 @@ try {
             if (!$doc->exists())
                 continue;
             $d = $doc->data();
+            \Nola\Services\StatusSync::checkAndSyncSingleMessage($db, $d, $doc->id(), $apiKey, $apiKeyCache);
             $out['data'][] = [
                 'id' => $doc->id(),
                 'conversation_id' => $d['conversation_id'] ?? null,
@@ -234,6 +239,7 @@ try {
             if (!$doc->exists())
                 continue;
             $d = $doc->data();
+            \Nola\Services\StatusSync::checkAndSyncSingleMessage($db, $d, $doc->id(), $apiKey, $apiKeyCache);
             $out['data'][] = [
                 'id' => $doc->id(),
                 'conversation_id' => $d['conversation_id'] ?? null,
@@ -296,6 +302,7 @@ try {
             if (!$doc->exists())
                 continue;
             $d = $doc->data();
+            \Nola\Services\StatusSync::checkAndSyncSingleMessage($db, $d, $doc->id(), $apiKey, $apiKeyCache);
             $rows[] = [
                 'id' => $doc->id(),
                 'direction' => 'outbound',

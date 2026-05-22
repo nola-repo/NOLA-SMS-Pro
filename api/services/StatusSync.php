@@ -143,37 +143,176 @@ class StatusSync
         return is_numeric($ts) ? (int)$ts : strtotime((string)$ts);
     }
 
+    /**
+     * Inline single message status checker.
+     * Throttled to max 1 check per 8 seconds per message.
+     * Max 3 checks per execution flow (managed by a static request counter).
+     */
+    private static $inlineCheckCount = 0;
+    private static $maxInlineChecks = 3;
+
+    public static function checkAndSyncSingleMessage($db, &$data, $messageId, $systemApiKey, &$apiKeyCache)
+    {
+        // 1. Only process outbound messages that are in a non-final state
+        $status = $data['status'] ?? '';
+        if (!in_array(strtolower($status), ['queued', 'pending', 'sending'])) {
+            return;
+        }
+
+        // 2. Global request limit guard (max 3 checks per request)
+        if (self::$inlineCheckCount >= self::$maxInlineChecks) {
+            return;
+        }
+
+        // 3. Time window guard: only check messages sent in the last 15 minutes
+        $now = time();
+        $dateCreated = self::parseTs($data['date_created'] ?? $data['created_at'] ?? null);
+        if (!$dateCreated || ($now - $dateCreated > 900)) {
+            // Let background cron handle older ones
+            return;
+        }
+
+        // 4. Throttle guard: only check once every 8 seconds
+        $updatedAt = self::parseTs($data['updated_at'] ?? null);
+        if ($updatedAt && ($now - $updatedAt < 8)) {
+            return;
+        }
+
+        // Increment our active request check counter
+        self::$inlineCheckCount++;
+
+        // 5. Select the correct API key
+        $locId = $data['location_id'] ?? '';
+        $activeApiKey = $systemApiKey;
+        if ($locId) {
+            if (!isset($apiKeyCache[$locId])) {
+                try {
+                    $intDoc = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
+                    $snap = $db->collection('integrations')->document($intDoc)->snapshot();
+                    if ($snap->exists()) {
+                        $idat = $snap->data();
+                        $activeApiKey = $idat['nola_pro_api_key'] ?? ($idat['semaphore_api_key'] ?? $systemApiKey);
+                    }
+                } catch (\Exception $e) {
+                    error_log("[StatusSync] Inline key fetch error for $locId: " . $e->getMessage());
+                }
+                $apiKeyCache[$locId] = $activeApiKey;
+            }
+            $activeApiKey = $apiKeyCache[$locId];
+        }
+
+        // 6. Make the Live API Call to Semaphore
+        try {
+            $url = "https://api.semaphore.co/api/v4/messages/$messageId?apikey=$activeApiKey";
+            $ch = curl_init($url);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 5); // Short timeout for inline responsiveness
+            $resp = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            $ts = new \Google\Cloud\Core\Timestamp(new \DateTime());
+
+            if ($httpCode === 404) {
+                // Not found yet on provider, update updated_at to throttle
+                $updates = [['path' => 'updated_at', 'value' => $ts]];
+                try {
+                    $db->collection('sms_logs')->document($messageId)->update($updates);
+                    $db->collection('messages')->document($messageId)->update($updates);
+                } catch (\Exception $e) {}
+                $data['updated_at'] = $ts;
+                return;
+            }
+
+            if ($httpCode === 200 && $resp) {
+                $decoded = json_decode($resp, true);
+                $statusStr = '';
+                if (is_array($decoded) && isset($decoded[0]['status'])) {
+                    $statusStr = $decoded[0]['status'];
+                } elseif (is_array($decoded) && isset($decoded['status'])) {
+                    $statusStr = $decoded['status'];
+                }
+
+                if ($statusStr) {
+                    $rawStatus = strtolower($statusStr);
+                    
+                    // Strict 3-state Mapping
+                    $newStatus = 'Sending';
+                    if (in_array($rawStatus, ['sent', 'success', 'delivered'])) {
+                        $newStatus = 'Sent';
+                    } elseif (in_array($rawStatus, ['failed', 'expired', 'rejected', 'undelivered'])) {
+                        $newStatus = 'Failed';
+                    }
+
+                    if (self::isUpgrade($status, $newStatus)) {
+                        self::finalize($db, null, $messageId, $newStatus);
+                        $data['status'] = $newStatus;
+                        $data['updated_at'] = $ts;
+                        error_log("[StatusSync] Inline upgrade for $messageId: $status -> $newStatus (raw: $rawStatus)");
+                    } else {
+                        // Still in progress, update updated_at to reset throttle
+                        $updates = [['path' => 'updated_at', 'value' => $ts]];
+                        try {
+                            $db->collection('sms_logs')->document($messageId)->update($updates);
+                            $db->collection('messages')->document($messageId)->update($updates);
+                        } catch (\Exception $e) {}
+                        $data['updated_at'] = $ts;
+                    }
+                }
+            }
+        } catch (\Exception $e) {
+            error_log("[StatusSync] Inline sync exception for $messageId: " . $e->getMessage());
+        }
+    }
+
     private static function finalize($db, $doc, $messageId, $status, $reason = null) {
         $ts = new \Google\Cloud\Core\Timestamp(new \DateTime());
         $updates = [['path' => 'status', 'value' => $status], ['path' => 'updated_at', 'value' => $ts]];
         if ($reason) $updates[] = ['path' => 'error_reason', 'value' => $reason];
         
-        $doc->reference()->update($updates);
+        $data = null;
+        if ($doc instanceof \Google\Cloud\Firestore\DocumentSnapshot) {
+            $doc->reference()->update($updates);
+            $data = $doc->data();
+        } else {
+            // Direct ID updates when called without a document snapshot
+            try {
+                $db->collection('sms_logs')->document($messageId)->update($updates);
+            } catch (\Exception $e) {}
+            try {
+                $snap = $db->collection('sms_logs')->document($messageId)->snapshot();
+                if ($snap->exists()) {
+                    $data = $snap->data();
+                }
+            } catch (\Exception $e) {}
+        }
+
         try {
             $db->collection('messages')->document($messageId)->update($updates);
         } catch (\Exception $e) {}
 
         if ($status === 'Sent' || $status === 'Failed') {
             try {
-                $data = $doc->data();
-                $locId = $data['location_id'] ?? null;
-                if ($locId) {
-                    require_once __DIR__ . '/NotificationService.php';
-                    \NotificationService::notifyDeliveryStatus($db, $locId, $messageId, $status, $data['number'] ?? 'unknown');
+                if ($data) {
+                    $locId = $data['location_id'] ?? null;
+                    if ($locId) {
+                        require_once __DIR__ . '/NotificationService.php';
+                        \NotificationService::notifyDeliveryStatus($db, $locId, $messageId, $status, $data['number'] ?? ($data['numbers'][0] ?? 'unknown'));
 
-                    // ── GHL Status Sync ─────────────────────────────────────
-                    try {
-                        require_once __DIR__ . '/GhlSyncService.php';
-                        if (!isset(self::$ghlSyncServices[$locId])) {
-                            self::$ghlSyncServices[$locId] = new GhlSyncService($db, $locId);
+                        // ── GHL Status Sync ─────────────────────────────────────
+                        try {
+                            require_once __DIR__ . '/GhlSyncService.php';
+                            if (!isset(self::$ghlSyncServices[$locId])) {
+                                self::$ghlSyncServices[$locId] = new GhlSyncService($db, $locId);
+                            }
+                            
+                            $ghlMessageId = $data['ghl_message_id'] ?? null;
+                            if ($ghlMessageId) {
+                                self::$ghlSyncServices[$locId]->syncMessageStatus($ghlMessageId, $status);
+                            }
+                        } catch (\Exception $e) {
+                            error_log("[StatusSync] GHL Status Sync failed: " . $e->getMessage());
                         }
-                        
-                        $ghlMessageId = $data['ghl_message_id'] ?? null;
-                        if ($ghlMessageId) {
-                            self::$ghlSyncServices[$locId]->syncMessageStatus($ghlMessageId, $status);
-                        }
-                    } catch (\Exception $e) {
-                        error_log("[StatusSync] GHL Status Sync failed: " . $e->getMessage());
                     }
                 }
             } catch (\Exception $e) {}
