@@ -34,97 +34,98 @@ function il_page(string $title, string $body): void {
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-        html { font-family: 'Poppins', system-ui, sans-serif; background: #f9fafb; color: #1a1a1a; -webkit-font-smoothing: antialiased; }
-        body { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 20px; background: #f9fafb; }
-        .blob { position: fixed; border-radius: 50%; background: #2b83fa; filter: blur(120px); opacity: 0.15; pointer-events: none; z-index: 0; }
-        .blob-tl { top: -10%; left: -10%; width: 50vw; height: 50vw; }
-        .blob-br { bottom: -10%; right: -10%; width: 50vw; height: 50vw; }
+        html { font-family: 'Poppins', system-ui, sans-serif; background: #f4f6fa; color: #1a1a1a; -webkit-font-smoothing: antialiased; }
+        body { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 20px; background: radial-gradient(circle at 10% 20%, rgba(43, 131, 250, 0.05) 0%, transparent 40%), radial-gradient(circle at 90% 80%, rgba(124, 58, 237, 0.05) 0%, transparent 40%), #f8fafc; }
+        .blob { position: fixed; border-radius: 50%; filter: blur(120px); opacity: 0.16; pointer-events: none; z-index: 0; }
+        .blob-tl { top: -10%; left: -10%; width: 50vw; height: 50vw; background: #2b83fa; }
+        .blob-br { bottom: -10%; right: -10%; width: 50vw; height: 50vw; background: #7c3aed; }
         .card {
             max-width: 460px; width: 100%;
-            background: rgba(255,255,255,0.82);
-            backdrop-filter: blur(20px) saturate(180%);
-            -webkit-backdrop-filter: blur(20px) saturate(180%);
-            border-radius: 32px; padding: 40px 36px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.07), inset 0 0 0 1px rgba(255,255,255,0.5);
-            border: 1px solid rgba(43,131,250,0.1);
-            animation: card-in 0.6s cubic-bezier(0.16,1,0.3,1) both;
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(24px) saturate(190%);
+            -webkit-backdrop-filter: blur(24px) saturate(190%);
+            border-radius: 32px; padding: 44px 38px;
+            box-shadow: 0 24px 64px -16px rgba(43, 131, 250, 0.08), 0 8px 24px -8px rgba(0, 0, 0, 0.04), inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+            border: 1px solid rgba(43, 131, 250, 0.08);
+            animation: card-in 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
             z-index: 10; text-align: left;
         }
-        @keyframes card-in { from { opacity:0; transform:translateY(32px); } to { opacity:1; transform:translateY(0); } }
-        .logo { display: flex; align-items: center; gap: 10px; margin-bottom: 28px; }
-        .logo-icon { width: 40px; height: 40px; background: #2b83fa; border-radius: 12px; display: flex; align-items: center; justify-content: center; }
-        .logo-text { font-size: 17px; font-weight: 800; color: #111; letter-spacing: -0.4px; }
-        h1 { font-size: 26px; font-weight: 800; letter-spacing: -1px; color: #111; margin-bottom: 4px; }
-        .subtitle { font-size: 14px; color: #6e6e73; margin-bottom: 28px; font-weight: 500; }
+        @keyframes card-in { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
+        .logo-wrap { text-align: center; margin-bottom: 32px; }
+        .logo-img { max-height: 52px; width: auto; object-fit: contain; display: block; margin: 0 auto; transition: transform 0.3s ease; }
+        .logo-img:hover { transform: scale(1.03); }
+        h1 { font-size: 24px; font-weight: 800; letter-spacing: -0.6px; color: #111; margin-bottom: 6px; text-align: center; }
+        .subtitle { font-size: 13.5px; color: #6e6e73; margin-bottom: 28px; font-weight: 500; text-align: center; line-height: 1.45; }
         /* Banners */
         .banner-blue {
-            background: #eff6ff; border: 1px solid #bfdbfe;
-            border-radius: 14px; padding: 14px 16px; margin-bottom: 22px;
+            background: rgba(43, 131, 250, 0.06); border: 1px solid rgba(43, 131, 250, 0.2);
+            border-radius: 16px; padding: 14px 18px; margin-bottom: 24px;
         }
-        .banner-blue p { font-size: 13px; color: #1e40af; line-height: 1.5; }
-        .banner-blue strong { font-weight: 700; }
+        .banner-blue p { font-size: 13px; color: #1d4ed8; line-height: 1.5; font-weight: 500; }
+        .banner-blue strong { font-weight: 700; color: #1e40af; }
         .banner-amber {
-            background: #fffbeb; border: 1px solid #fde68a;
-            border-radius: 14px; padding: 14px 16px; margin-bottom: 22px;
+            background: rgba(245, 158, 11, 0.06); border: 1px solid rgba(245, 158, 11, 0.25);
+            border-radius: 16px; padding: 14px 18px; margin-bottom: 24px;
         }
-        .banner-amber p { font-size: 13px; color: #92400e; line-height: 1.5; }
-        .banner-amber strong { font-weight: 700; }
-        .install-progress { height: 8px; border-radius: 999px; background: rgba(146,64,14,0.16); overflow: hidden; margin: 12px 0 10px; }
-        .install-progress-fill { display: block; height: 100%; width: 0%; border-radius: inherit; background: #2b83fa; transition: width 0.35s ease; }
-        .install-status-detail { font-size: 12px !important; color: #92400e !important; margin-top: 8px; }
+        .banner-amber p { font-size: 13px; color: #b45309; line-height: 1.5; font-weight: 500; }
+        .banner-amber strong { font-weight: 700; color: #92400e; }
+        .install-progress { height: 6px; border-radius: 999px; background: rgba(245, 158, 11, 0.12); overflow: hidden; margin: 12px 0 10px; }
+        .install-progress-fill { display: block; height: 100%; width: 0%; border-radius: inherit; background: linear-gradient(90deg, #2b83fa, #7c3aed); transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1); }
+        .install-status-detail { font-size: 12px !important; color: #b45309 !important; margin-top: 8px; font-weight: 600; }
         .install-next {
-            display: none; margin-top: 12px; width: 100%; text-align: center;
-            padding: 11px 12px; border-radius: 12px; background: #2b83fa;
-            color: #fff; text-decoration: none; font-size: 13px; font-weight: 800;
+            display: none; margin-top: 14px; width: 100%; text-align: center;
+            padding: 12px; border-radius: 14px; background: linear-gradient(135deg, #2b83fa 0%, #1a70e7 100%);
+            color: #fff; text-decoration: none; font-size: 13px; font-weight: 700;
+            box-shadow: 0 4px 12px rgba(43, 131, 250, 0.2); transition: all 0.2s;
         }
-        .install-next:hover { background: #1d6bd4; }
+        .install-next:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(43, 131, 250, 0.3); }
         /* Form */
-        label { display: block; font-size: 11px; font-weight: 800; text-transform: uppercase; color: #9aa0a6; margin-bottom: 7px; letter-spacing: 0.05em; }
-        .field { margin-bottom: 18px; }
+        label { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; color: #6e6e73; margin-bottom: 8px; letter-spacing: 0.8px; }
+        .field { margin-bottom: 20px; }
         input[type=email], input[type=password], input[type=text] {
             width: 100%; padding: 13px 16px; border-radius: 14px;
-            border: 1px solid #e0e0e0; background: #fafafa;
-            font-family: inherit; font-size: 14px; outline: none; transition: all 0.2s;
+            border: 1px solid rgba(0, 0, 0, 0.08); background: rgba(248, 250, 252, 0.8);
+            font-family: inherit; font-size: 14px; outline: none; transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
             color: #111;
         }
-        input:focus { border-color: #2b83fa; background: #fff; box-shadow: 0 0 0 4px rgba(43,131,250,0.1); }
+        input:focus { border-color: #2b83fa; background: #fff; box-shadow: 0 0 0 4px rgba(43, 131, 250, 0.12); }
         .pw-wrap { position: relative; }
-        .pw-toggle { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; color: #9aa0a6; padding: 4px; }
+        .pw-toggle { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; color: #9aa0a6; padding: 4px; display: flex; align-items: center; justify-content: center; transition: color 0.2s; }
         .pw-toggle:hover { color: #2b83fa; }
         .btn-submit {
-            width: 100%; padding: 15px; border-radius: 16px;
-            background: #2b83fa; color: #fff; font-size: 15px; font-weight: 700;
-            border: none; cursor: pointer; margin-top: 6px;
-            box-shadow: 0 6px 16px rgba(43,131,250,0.3);
-            transition: all 0.2s; font-family: inherit;
+            width: 100%; padding: 14px; border-radius: 14px;
+            background: linear-gradient(135deg, #2b83fa 0%, #1a70e7 100%); color: #fff; font-size: 14.5px; font-weight: 700;
+            border: none; cursor: pointer; margin-top: 8px;
+            box-shadow: 0 8px 20px -4px rgba(43, 131, 250, 0.35);
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); font-family: inherit;
+            display: flex; align-items: center; justify-content: center; gap: 8px;
         }
-        .btn-submit:hover { background: #1d6bd4; transform: translateY(-2px); box-shadow: 0 10px 24px rgba(43,131,250,0.4); }
-        .btn-submit:active { transform: scale(0.98); }
-        .btn-submit:disabled { opacity: 0.7; cursor: not-allowed; transform: none; }
+        .btn-submit:hover { transform: translateY(-2px); box-shadow: 0 12px 28px -4px rgba(43, 131, 250, 0.45); }
+        .btn-submit:active { transform: scale(0.985) translateY(0); }
+        .btn-submit:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
         .error-box {
-            background: #fef2f2; border: 1px solid #fecaca; border-radius: 12px;
-            padding: 12px 16px; margin-bottom: 20px;
-            font-size: 13px; color: #dc2626; font-weight: 600;
+            background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 14px;
+            padding: 12px 16px; margin-bottom: 24px;
+            font-size: 13px; color: #dc2626; font-weight: 600; line-height: 1.45;
         }
         .banner-success {
-            background: #ecfdf5; border: 1px solid #a7f3d0;
-            border-radius: 14px; padding: 14px 16px; margin-bottom: 22px;
+            background: rgba(16, 185, 129, 0.05); border: 1px solid rgba(16, 185, 129, 0.2);
+            border-radius: 16px; padding: 14px 18px; margin-bottom: 24px;
         }
-        .banner-success p { font-size: 13px; color: #065f46; line-height: 1.5; }
-        .banner-success strong { font-weight: 700; }
+        .banner-success p { font-size: 13px; color: #047857; line-height: 1.5; font-weight: 500; }
+        .banner-success strong { font-weight: 700; color: #065f46; }
         .hidden { display: none !important; }
-        .footer { font-size: 11px; color: #b0b0b0; text-align: center; margin-top: 20px; }
+        .footer { font-size: 12px; color: #8e8e93; text-align: center; margin-top: 24px; font-weight: 500; }
+        .footer a { text-decoration: none; transition: color 0.2s; }
+        .footer a:hover { color: #1a70e7 !important; }
     </style>
 </head>
 <body>
     <div class="blob blob-tl"></div>
     <div class="blob blob-br"></div>
     <div class="card">
-        <div class="logo">
-            <div class="logo-icon">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-            </div>
-            <span class="logo-text">NOLA SMS Pro</span>
+        <div class="logo-wrap">
+            <img src="PNG%20-%20NOLA%20SMS%20PRO%20Standard.png" alt="NOLA SMS Pro" class="logo-img">
         </div>
         {$body}
     </div>
