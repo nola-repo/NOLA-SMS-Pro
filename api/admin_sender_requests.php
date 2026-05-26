@@ -396,12 +396,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
         }
     }
 
-    // Pre-fetch all users to map location credit balances in-memory (eliminates O(N) nested loop queries)
+    // Pre-fetch all users to map location credit balances and user profile details in-memory (eliminates O(N) nested loop queries)
     $usersRaw = $db->collection('users')->documents();
     $locationToCreditMap = [];
+    $locationToUserMap = [];
     foreach ($usersRaw as $userDoc) {
         if ($userDoc->exists()) {
             $uData = $userDoc->data();
+            
+            // Build location to user map
+            foreach (['active_location_id', 'location_id'] as $field) {
+                $loc = trim((string)($uData[$field] ?? ''));
+                if ($loc !== '') {
+                    $userDataEntry = ['id' => $userDoc->id()] + $uData;
+                    $locationToUserMap[$loc] = $userDataEntry;
+                    $locationToUserMap['ghl_' . $loc] = $userDataEntry;
+                }
+            }
+
             $bal = isset($uData['credit_balance']) ? (int)$uData['credit_balance'] : null;
             if ($bal !== null) {
                 $activeLoc = trim((string)($uData['active_location_id'] ?? ''));
@@ -492,6 +504,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
             $creditBalance = (int)($intData['credit_balance'] ?? 0);
         }
 
+        $userData = $locationToUserMap[$locId] ?? $locationToUserMap['ghl_' . $locId] ?? [];
+        
+        $firstName = $userData['firstName'] ?? '';
+        $lastName  = $userData['lastName'] ?? '';
+        $fullName  = $userData['name'] ?? '';
+        if (empty($firstName) && empty($lastName) && !empty($fullName)) {
+            $parts = preg_split('/\s+/', trim((string)$fullName));
+            $firstName = $parts[0] ?? '';
+            $lastName  = count($parts) > 1 ? implode(' ', array_slice($parts, 1)) : '';
+        }
+
         $results[] = [
             'id' => $intDocId, // Expected by frontend mapping
             'data' => [
@@ -509,7 +532,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
                 'toggle_enabled'     => isset($tokData['toggle_enabled']) ? (bool)$tokData['toggle_enabled'] : true,
                 'rate_limit'         => (int)($tokData['rate_limit'] ?? 0),
                 'attempt_count'      => (int)($tokData['attempt_count'] ?? 0),
-                'last_reset_date'    => $tokData['last_reset_date'] ?? ''
+                'last_reset_date'    => $tokData['last_reset_date'] ?? '',
+                
+                // Enriched user details
+                'name'               => $fullName,
+                'firstName'          => $firstName,
+                'lastName'           => $lastName,
+                'email'              => $userData['email'] ?? '',
+                'phone'              => $userData['phone'] ?? '',
+                'role'               => $userData['role'] ?? 'user',
+                'active'             => !array_key_exists('active', $userData) || !empty($userData['active']),
             ]
         ];
     }
