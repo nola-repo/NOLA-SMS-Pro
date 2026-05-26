@@ -69,6 +69,49 @@ try {
         }
     }
 
+    // POST handler for update_profile action
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        $input = json_decode(file_get_contents('php://input'), true) ?? [];
+        $action = $input['action'] ?? '';
+
+        if ($action === 'update_profile') {
+            if (empty($authUserId)) {
+                http_response_code(401);
+                echo json_encode(['status' => 'error', 'message' => 'Unauthorized: Invalid token or user session']);
+                exit;
+            }
+
+            $name  = trim($input['name'] ?? '');
+            $email = trim($input['email'] ?? '');
+            $phone = trim($input['phone'] ?? '');
+
+            if (empty($name)) {
+                http_response_code(400);
+                echo json_encode(['status' => 'error', 'message' => 'Name is required']);
+                exit;
+            }
+
+            $nameParts = preg_split('/\s+/', $name);
+            $firstName = $nameParts[0] ?? '';
+            $lastName  = count($nameParts) > 1 ? implode(' ', array_slice($nameParts, 1)) : '';
+
+            $db->collection('users')->document($authUserId)->update([
+                ['path' => 'name', 'value' => $name],
+                ['path' => 'firstName', 'value' => $firstName],
+                ['path' => 'lastName', 'value' => $lastName],
+                ['path' => 'email', 'value' => $email],
+                ['path' => 'phone', 'value' => $phone],
+                ['path' => 'updated_at', 'value' => new \Google\Cloud\Core\Timestamp(new \DateTime())]
+            ]);
+
+            echo json_encode([
+                'status'  => 'success',
+                'message' => 'Profile updated successfully.'
+            ]);
+            exit;
+        }
+    }
+
     if (!$locId) {
         http_response_code(400);
         echo json_encode([
