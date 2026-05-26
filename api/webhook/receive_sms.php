@@ -80,15 +80,52 @@ foreach ($matchingConvs as $matching) {
         'members' => [$senderNumber]
     ], ['merge' => true]);
 
-    // 3. Sync to GHL (Best-Effort)
+    // 3. Invalidate local conversations list cache for this location ID
     try {
-        $ghlSync = new \Nola\Services\GhlSyncService($db, $locId);
-        $ghlSync->syncInboundMessage($senderNumber, $message);
-    } catch (\Throwable $e) {
-        error_log("[receive_sms] GHL Sync failed: " . $e->getMessage());
+        require_once __DIR__ . '/../cache_helper.php';
+        NolaCache::deleteRegistry("conversations_registry_{$locId}");
+    } catch (\Throwable $cacheEx) {
+        error_log("[receive_sms] Cache invalidation failed: " . $cacheEx->getMessage());
     }
 
-    $processed[] = $locId;
+    $processed[] = [
+        'locId' => $locId,
+        'senderNumber' => $senderNumber,
+        'message' => $message
+    ];
 }
 
-echo json_encode(["status" => "received", "locations_processed" => $processed]);
+// ── Decouple Connection ──────────────────────────────────────────────────
+// Send the HTTP response immediately to Semaphore so the webhook completes in <50ms
+// This triggers any client-side Firestore listeners instantly without waiting for GHL Sync
+if (!headers_sent()) {
+    ignore_user_abort(true);
+    set_time_limit(300);
+
+    ob_start();
+    echo json_encode([
+        "status" => "received",
+        "locations_processed" => array_column($processed, 'locId')
+    ]);
+    
+    $size = ob_get_length();
+    header("Content-Length: $size");
+    header("Connection: close");
+    ob_end_flush();
+    ob_flush();
+    flush();
+
+    if (function_exists('fastcgi_finish_request')) {
+        fastcgi_finish_request();
+    }
+}
+
+// ── Background Execution: Sync to GHL ──────────────────────────────────────
+foreach ($processed as $proc) {
+    try {
+        $ghlSync = new \Nola\Services\GhlSyncService($db, $proc['locId']);
+        $ghlSync->syncInboundMessage($proc['senderNumber'], $proc['message']);
+    } catch (\Throwable $e) {
+        error_log("[receive_sms] GHL Sync failed for location {$proc['locId']}: " . $e->getMessage());
+    }
+}

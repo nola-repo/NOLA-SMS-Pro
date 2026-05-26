@@ -29,6 +29,25 @@ try {
         $type = $_GET['type'] ?? null; // optional: direct | bulk
 
         $conversationId = $_GET['id'] ?? $_GET['conversation_id'] ?? null;
+
+        // Try to load cached conversations list first
+        require_once __DIR__ . '/cache_helper.php';
+        $paramsHash = md5(serialize([$limit, $offset, $type, $conversationId]));
+        $cacheKey = "conversations_list_{$locId}_{$paramsHash}";
+        $registryKey = "conversations_registry_{$locId}";
+
+        $cachedData = NolaCache::get($cacheKey);
+        if ($cachedData !== null) {
+            echo json_encode([
+                'success' => true,
+                'data' => $cachedData,
+                'limit' => $limit,
+                'offset' => $offset,
+                'cached' => true,
+            ], JSON_PRETTY_PRINT);
+            exit;
+        }
+
         $q = $db->collection('conversations')
             ->where('location_id', '==', $locId);
 
@@ -71,11 +90,15 @@ try {
             $rows[] = $row;
         }
 
+        // Store rows in Cache with Registry mapping
+        NolaCache::setWithRegistry($registryKey, $cacheKey, $rows, 300); // 5-minute TTL
+
         echo json_encode([
             'success' => true,
             'data' => $rows,
             'limit' => $limit,
             'offset' => $offset,
+            'cached' => false,
         ], JSON_PRETTY_PRINT);
     }
     elseif ($method === 'POST' || $method === 'PUT') {
@@ -118,6 +141,14 @@ try {
 
         $docRef->set(array_column($updateData, 'value', 'path'), ['merge' => true]);
 
+        // Invalidate conversations cache for this location ID
+        try {
+            require_once __DIR__ . '/cache_helper.php';
+            NolaCache::deleteRegistry("conversations_registry_{$locId}");
+        } catch (\Throwable $cacheEx) {
+            error_log("[conversations] Cache invalidation failed: " . $cacheEx->getMessage());
+        }
+
         echo json_encode(['success' => true, 'message' => 'Conversation updated']);
     }
     elseif ($method === 'DELETE') {
@@ -140,6 +171,14 @@ try {
                 $messages = $db->collection('messages')->where('conversation_id', '==', $id)->documents();
                 foreach ($messages as $msgDoc) {
                     $msgDoc->reference()->delete();
+                }
+
+                // Invalidate conversations cache for this location ID
+                try {
+                    require_once __DIR__ . '/cache_helper.php';
+                    NolaCache::deleteRegistry("conversations_registry_{$locId}");
+                } catch (\Throwable $cacheEx) {
+                    error_log("[conversations] Cache invalidation failed: " . $cacheEx->getMessage());
                 }
 
                 echo json_encode(['success' => true, 'message' => "Deleted $id"]);
