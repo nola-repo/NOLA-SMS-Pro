@@ -125,6 +125,14 @@ try {
         $syncedCount++;
     }
 
+    // Invalidate agency subaccounts cache
+    try {
+        require_once __DIR__ . '/../cache_helper.php';
+        NolaCache::delete('subaccounts_' . $agency_id);
+    } catch (\Throwable $e) {
+        error_log('[sync_locations] Cache invalidation failed: ' . $e->getMessage());
+    }
+
     echo json_encode([
         'status' => 'success',
         'message' => "Synced $syncedCount locations for agency $agency_id",

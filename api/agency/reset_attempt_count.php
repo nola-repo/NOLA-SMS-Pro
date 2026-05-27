@@ -42,6 +42,14 @@ if ($data['agency_id'] !== $agency_id) {
 
 $docRef->set(['attempt_count' => 0], ['merge' => true]);
 
+// Invalidate agency subaccounts cache
+try {
+    require_once __DIR__ . '/../cache_helper.php';
+    NolaCache::delete('subaccounts_' . $agency_id);
+} catch (\Throwable $e) {
+    error_log('[reset_attempt_count] Cache invalidation failed: ' . $e->getMessage());
+}
+
 echo json_encode([
     'status' => 'success',
     'subaccount_id' => $subaccount_id,

@@ -32,11 +32,15 @@ if (!$agencyId) {
     exit;
 }
 
-require_once __DIR__ . '/../services/Cache.php';
-$cache = new Cache('data');
+require_once __DIR__ . '/../cache_helper.php';
 $cacheKey = 'subaccounts_' . $agencyId;
 
-$cachedResponse = $cache->get($cacheKey, 600); // 10 minutes cache
+$bypassCache = isset($_GET['refresh']) || isset($_GET['bypass_cache']);
+$cachedResponse = null;
+if (!$bypassCache) {
+    $cachedResponse = NolaCache::get($cacheKey);
+}
+
 if ($cachedResponse) {
     echo json_encode($cachedResponse);
     exit;
@@ -123,7 +127,7 @@ try {
         'subaccounts' => $subaccounts
     ];
 
-    $cache->set($cacheKey, $response);
+    NolaCache::set($cacheKey, $response, 600);
 
     echo json_encode($response);
 
