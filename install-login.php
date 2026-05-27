@@ -35,41 +35,103 @@ function il_page(string $title, string $body): void {
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
         html { font-family: 'Poppins', system-ui, sans-serif; background: #f4f6fa; color: #1a1a1a; -webkit-font-smoothing: antialiased; }
-        body { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 20px; background: radial-gradient(circle at 10% 20%, rgba(43, 131, 250, 0.05) 0%, transparent 40%), radial-gradient(circle at 90% 80%, rgba(124, 58, 237, 0.05) 0%, transparent 40%), #f8fafc; }
-        .blob { position: fixed; border-radius: 50%; filter: blur(120px); opacity: 0.16; pointer-events: none; z-index: 0; }
-        .blob-tl { top: -10%; left: -10%; width: 50vw; height: 50vw; background: #2b83fa; }
-        .blob-br { bottom: -10%; right: -10%; width: 50vw; height: 50vw; background: #7c3aed; }
+        body {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            background: linear-gradient(135deg, #f5f8ff 0%, #fcfbfe 50%, #f4f6fc 100%);
+            position: relative;
+            overflow-x: hidden;
+        }
+        .blob {
+            position: fixed;
+            border-radius: 50%;
+            filter: blur(140px);
+            opacity: 0.18;
+            pointer-events: none;
+            z-index: 0;
+            transition: all 1s ease-in-out;
+        }
+        .blob-tl {
+            top: -12%;
+            left: -12%;
+            width: 55vw;
+            height: 55vw;
+            background: radial-gradient(circle, #2b83fa 0%, #4f46e5 70%);
+            animation: drift-tl 20s ease-in-out infinite alternate;
+        }
+        .blob-br {
+            bottom: -12%;
+            right: -12%;
+            width: 55vw;
+            height: 55vw;
+            background: radial-gradient(circle, #7c3aed 0%, #db2777 70%);
+            animation: drift-br 25s ease-in-out infinite alternate;
+        }
+        @keyframes drift-tl {
+            0% { transform: translate(0, 0) scale(1) rotate(0deg); }
+            50% { transform: translate(5%, 4%) scale(1.08) rotate(90deg); }
+            100% { transform: translate(0, 0) scale(1) rotate(0deg); }
+        }
+        @keyframes drift-br {
+            0% { transform: translate(0, 0) scale(1.05) rotate(0deg); }
+            50% { transform: translate(-4%, -5%) scale(0.95) rotate(-90deg); }
+            100% { transform: translate(0, 0) scale(1.05) rotate(0deg); }
+        }
         .card {
             max-width: 460px; width: 100%;
             background: rgba(255, 255, 255, 0.85);
-            backdrop-filter: blur(24px) saturate(190%);
-            -webkit-backdrop-filter: blur(24px) saturate(190%);
-            border-radius: 32px; padding: 44px 38px;
-            box-shadow: 0 24px 64px -16px rgba(43, 131, 250, 0.08), 0 8px 24px -8px rgba(0, 0, 0, 0.04), inset 0 0 0 1px rgba(255, 255, 255, 0.6);
-            border: 1px solid rgba(43, 131, 250, 0.08);
-            animation: card-in 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+            backdrop-filter: blur(30px) saturate(200%);
+            -webkit-backdrop-filter: blur(30px) saturate(200%);
+            border-radius: 28px; padding: 44px 38px;
+            box-shadow: 0 30px 70px -10px rgba(43, 131, 250, 0.12), 0 12px 30px -15px rgba(0, 0, 0, 0.04), inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.45);
+            animation: card-in 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
             z-index: 10; text-align: left;
         }
         @keyframes card-in { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
         .logo-wrap { text-align: center; margin-bottom: 32px; }
-        .logo-img { max-height: 52px; width: auto; object-fit: contain; display: block; margin: 0 auto; transition: transform 0.3s ease; }
-        .logo-img:hover { transform: scale(1.03); }
-        h1 { font-size: 24px; font-weight: 800; letter-spacing: -0.6px; color: #111; margin-bottom: 6px; text-align: center; }
-        .subtitle { font-size: 13.5px; color: #6e6e73; margin-bottom: 28px; font-weight: 500; text-align: center; line-height: 1.45; }
+        .logo-img { max-height: 52px; width: auto; object-fit: contain; display: block; margin: 0 auto; transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); }
+        .logo-img:hover { transform: scale(1.04); }
+        h1 {
+            font-size: 26px;
+            font-weight: 800;
+            letter-spacing: -0.8px;
+            margin-bottom: 6px;
+            text-align: center;
+            background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .subtitle { font-size: 13.5px; color: #64748b; margin-bottom: 28px; font-weight: 500; text-align: center; line-height: 1.45; }
+        
         /* Banners */
         .banner-blue {
-            background: rgba(43, 131, 250, 0.06); border: 1px solid rgba(43, 131, 250, 0.2);
+            background: rgba(43, 131, 250, 0.05); border: 1px solid rgba(43, 131, 250, 0.15);
             border-radius: 16px; padding: 14px 18px; margin-bottom: 24px;
+            position: relative; overflow: hidden;
         }
-        .banner-blue p { font-size: 13px; color: #1d4ed8; line-height: 1.5; font-weight: 500; }
-        .banner-blue strong { font-weight: 700; color: #1e40af; }
+        .banner-blue::before {
+            content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: #2b83fa;
+        }
+        .banner-blue p { font-size: 13px; color: #1e40af; line-height: 1.5; font-weight: 500; padding-left: 4px; }
+        .banner-blue strong { font-weight: 700; color: #1e3a8a; }
+        
         .banner-amber {
-            background: rgba(245, 158, 11, 0.06); border: 1px solid rgba(245, 158, 11, 0.25);
+            background: rgba(245, 158, 11, 0.05); border: 1px solid rgba(245, 158, 11, 0.2);
             border-radius: 16px; padding: 14px 18px; margin-bottom: 24px;
+            position: relative; overflow: hidden;
         }
-        .banner-amber p { font-size: 13px; color: #b45309; line-height: 1.5; font-weight: 500; }
-        .banner-amber strong { font-weight: 700; color: #92400e; }
-        .install-progress { height: 6px; border-radius: 999px; background: rgba(245, 158, 11, 0.12); overflow: hidden; margin: 12px 0 10px; }
+        .banner-amber::before {
+            content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: #f59e0b;
+        }
+        .banner-amber p { font-size: 13px; color: #92400e; line-height: 1.5; font-weight: 500; padding-left: 4px; }
+        .banner-amber strong { font-weight: 700; color: #78350f; }
+        
+        .install-progress { height: 6px; border-radius: 999px; background: rgba(245, 158, 11, 0.1); overflow: hidden; margin: 12px 0 10px; }
         .install-progress-fill { display: block; height: 100%; width: 0%; border-radius: inherit; background: linear-gradient(90deg, #2b83fa, #7c3aed); transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1); }
         .install-status-detail { font-size: 12px !important; color: #b45309 !important; margin-top: 8px; font-weight: 600; }
         .install-next {
@@ -79,43 +141,71 @@ function il_page(string $title, string $body): void {
             box-shadow: 0 4px 12px rgba(43, 131, 250, 0.2); transition: all 0.2s;
         }
         .install-next:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(43, 131, 250, 0.3); }
+        
         /* Form */
-        label { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; color: #6e6e73; margin-bottom: 8px; letter-spacing: 0.8px; }
+        label { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748b; margin-bottom: 8px; letter-spacing: 0.8px; }
         .field { margin-bottom: 20px; }
+        
+        .input-wrap { position: relative; }
+        .input-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); width: 16px; height: 16px; color: #94a3b8; pointer-events: none; transition: color 0.25s ease; z-index: 2; }
+        
         input[type=email], input[type=password], input[type=text] {
-            width: 100%; padding: 13px 16px; border-radius: 14px;
-            border: 1px solid rgba(0, 0, 0, 0.08); background: rgba(248, 250, 252, 0.8);
+            width: 100%; padding: 13px 16px 13px 42px; border-radius: 14px;
+            border: 1px solid rgba(0, 0, 0, 0.08); background: rgba(248, 250, 252, 0.7);
             font-family: inherit; font-size: 14px; outline: none; transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-            color: #111;
+            color: #0f172a; position: relative;
+        }
+        .pw-wrap input[type=password], .pw-wrap input[type=text] {
+            padding-right: 48px;
         }
         input:focus { border-color: #2b83fa; background: #fff; box-shadow: 0 0 0 4px rgba(43, 131, 250, 0.12); }
+        .input-wrap-focus .input-icon { color: #2b83fa; }
+        
         .pw-wrap { position: relative; }
-        .pw-toggle { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; color: #9aa0a6; padding: 4px; display: flex; align-items: center; justify-content: center; transition: color 0.2s; }
+        .pw-toggle { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; color: #94a3b8; padding: 4px; display: flex; align-items: center; justify-content: center; transition: color 0.2s; z-index: 3; }
         .pw-toggle:hover { color: #2b83fa; }
+        
         .btn-submit {
             width: 100%; padding: 14px; border-radius: 14px;
             background: linear-gradient(135deg, #2b83fa 0%, #1a70e7 100%); color: #fff; font-size: 14.5px; font-weight: 700;
             border: none; cursor: pointer; margin-top: 8px;
-            box-shadow: 0 8px 20px -4px rgba(43, 131, 250, 0.35);
+            box-shadow: 0 8px 20px -4px rgba(43, 131, 250, 0.3);
             transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); font-family: inherit;
             display: flex; align-items: center; justify-content: center; gap: 8px;
         }
-        .btn-submit:hover { transform: translateY(-2px); box-shadow: 0 12px 28px -4px rgba(43, 131, 250, 0.45); }
+        .btn-submit:hover { transform: translateY(-2px); box-shadow: 0 12px 28px -4px rgba(43, 131, 250, 0.4); }
         .btn-submit:active { transform: scale(0.985) translateY(0); }
         .btn-submit:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
+        
         .error-box {
-            background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 14px;
+            background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.15); border-radius: 14px;
             padding: 12px 16px; margin-bottom: 24px;
             font-size: 13px; color: #dc2626; font-weight: 600; line-height: 1.45;
+            position: relative; overflow: hidden;
         }
+        .error-box::before {
+            content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: #dc2626;
+        }
+        
         .banner-success {
-            background: rgba(16, 185, 129, 0.05); border: 1px solid rgba(16, 185, 129, 0.2);
+            background: rgba(16, 185, 129, 0.05); border: 1px solid rgba(16, 185, 129, 0.15);
             border-radius: 16px; padding: 14px 18px; margin-bottom: 24px;
+            position: relative; overflow: hidden;
         }
-        .banner-success p { font-size: 13px; color: #047857; line-height: 1.5; font-weight: 500; }
-        .banner-success strong { font-weight: 700; color: #065f46; }
+        .banner-success::before {
+            content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: #10b981;
+        }
+        .banner-success p { font-size: 13px; color: #065f46; line-height: 1.5; font-weight: 500; padding-left: 4px; }
+        .banner-success strong { font-weight: 700; color: #047857; }
+        
         .hidden { display: none !important; }
-        .footer { font-size: 12px; color: #8e8e93; text-align: center; margin-top: 24px; font-weight: 500; }
+        .fade-in-up { animation: fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) both; }
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .footer { font-size: 12.5px; color: #64748b; text-align: center; margin-top: 24px; font-weight: 500; }
         .footer a { text-decoration: none; transition: color 0.2s; }
         .footer a:hover { color: #1a70e7 !important; }
     </style>
@@ -125,7 +215,7 @@ function il_page(string $title, string $body): void {
     <div class="blob blob-br"></div>
     <div class="card">
         <div class="logo-wrap">
-            <img src="PNG%20-%20NOLA%20SMS%20PRO%20Standard.png" alt="NOLA SMS Pro" class="logo-img">
+            <img src="https://smspro-api.nolacrm.io/PNG%20-%20NOLA%20SMS%20PRO%20Standard.png" alt="NOLA SMS Pro" class="logo-img">
         </div>
         {$body}
     </div>
@@ -293,7 +383,8 @@ if ($action === 'reset_password' || (isset($_POST['form_action']) && $_POST['for
             
             <div class="field">
                 <label for="new_password">New Password</label>
-                <div class="pw-wrap">
+                <div class="input-wrap pw-wrap">
+                    <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
                     <input id="new_password" name="new_password" type="password" required
                         placeholder="••••••••" autocomplete="new-password">
                     <button type="button" id="toggle-new-pw" class="pw-toggle" aria-label="Show/hide password">
@@ -304,7 +395,8 @@ if ($action === 'reset_password' || (isset($_POST['form_action']) && $_POST['for
             
             <div class="field">
                 <label for="confirm_password">Confirm New Password</label>
-                <div class="pw-wrap">
+                <div class="input-wrap pw-wrap">
+                    <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
                     <input id="confirm_password" name="confirm_password" type="password" required
                         placeholder="••••••••" autocomplete="new-password">
                     <button type="button" id="toggle-confirm-pw" class="pw-toggle" aria-label="Show/hide password">
@@ -319,6 +411,18 @@ if ($action === 'reset_password' || (isset($_POST['form_action']) && $_POST['for
             <a href="/login" style="color:#2b83fa;font-weight:600;">Back to Sign In</a>
         </p>
         <script>
+            // Toggle input focus active classes
+            document.querySelectorAll('.input-wrap input').forEach(function(input) {
+              input.addEventListener('focus', function() {
+                var wrap = input.closest('.input-wrap');
+                if (wrap) wrap.classList.add('input-wrap-focus');
+              });
+              input.addEventListener('blur', function() {
+                var wrap = input.closest('.input-wrap');
+                if (wrap) wrap.classList.remove('input-wrap-focus');
+              });
+            });
+
             var newPwToggle = document.getElementById('toggle-new-pw');
             if (newPwToggle) newPwToggle.addEventListener('click', function() {
                 var inp = document.getElementById('new_password');
@@ -752,14 +856,18 @@ il_page('Sign In', <<<HTML
             <input type="hidden" name="location_id" value="{$locationIdSafe}">
             <div class="field">
                 <label for="{$emailLabelFor}">Email Address</label>
-{$emailFieldHtml}
+                <div class="input-wrap">
+                    <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+                    {$emailFieldHtml}
+                </div>
             </div>
             <div class="field">
                 <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 7px;">
                     <label for="password" style="margin-bottom: 0;">Password</label>
                     <a href="#" id="forgot-pw-link" style="font-size: 11px; font-weight: 700; color: #2b83fa; text-decoration: none; text-transform: uppercase; letter-spacing: 0.05em;">Forgot Password?</a>
                 </div>
-                <div class="pw-wrap">
+                <div class="input-wrap pw-wrap">
+                    <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
                     <input id="password" name="password" type="password" required
                         placeholder="••••••••" {$passwordAutocompleteAttrs}>
                     <button type="button" id="toggle-pw" class="pw-toggle" aria-label="Show/hide password">
@@ -779,8 +887,11 @@ il_page('Sign In', <<<HTML
             <input type="hidden" name="form_action" value="forgot">
             <div class="field">
                 <label for="forgot-email">Email Address</label>
-                <input id="forgot-email" name="email" type="email" required
-                    placeholder="you@company.com" autocomplete="email">
+                <div class="input-wrap">
+                    <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+                    <input id="forgot-email" name="email" type="email" required
+                        placeholder="you@company.com" autocomplete="email">
+                </div>
             </div>
             <button id="forgot-submit-btn" type="submit" class="btn-submit">Send Reset Link</button>
         </form>
@@ -791,6 +902,18 @@ il_page('Sign In', <<<HTML
 
     <script>
       (function() {
+        // Toggle input focus active classes
+        document.querySelectorAll('.input-wrap input').forEach(function(input) {
+          input.addEventListener('focus', function() {
+            var wrap = input.closest('.input-wrap');
+            if (wrap) wrap.classList.add('input-wrap-focus');
+          });
+          input.addEventListener('blur', function() {
+            var wrap = input.closest('.input-wrap');
+            if (wrap) wrap.classList.remove('input-wrap-focus');
+          });
+        });
+
         var forgotLink = document.getElementById('forgot-pw-link');
         var backToLoginLink = document.getElementById('back-to-login-link');
         var loginWrapper = document.getElementById('login-form-wrapper');
@@ -801,11 +924,13 @@ il_page('Sign In', <<<HTML
             e.preventDefault();
             loginWrapper.classList.add('hidden');
             forgotWrapper.classList.remove('hidden');
+            forgotWrapper.classList.add('fade-in-up');
           });
           backToLoginLink.addEventListener('click', function(e) {
             e.preventDefault();
             forgotWrapper.classList.add('hidden');
             loginWrapper.classList.remove('hidden');
+            loginWrapper.classList.add('fade-in-up');
           });
         }
         
