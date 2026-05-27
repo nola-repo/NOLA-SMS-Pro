@@ -120,10 +120,12 @@ try {
         echo json_encode([
             'success' => true,
             'data'    => [
-                'id'       => $docId,
-                'name'     => $name,
-                'content'  => $content,
-                'category' => $category,
+                'id'         => $docId,
+                'name'       => $name,
+                'content'    => $content,
+                'category'   => $category,
+                'created_at' => $now->format(\DateTimeInterface::ATOM),
+                'updated_at' => $now->format(\DateTimeInterface::ATOM),
             ],
             'message' => 'Template created',
         ]);
@@ -184,9 +186,21 @@ try {
             error_log("[templates] Cache invalidation failed: " . $cacheEx->getMessage());
         }
 
+        // Fetch updated document for full response row
+        $updatedSnap = $docRef->snapshot();
+        $updatedData = $updatedSnap->data();
+
         echo json_encode([
             'success' => true,
             'message' => 'Template updated',
+            'data'    => [
+                'id'         => $id,
+                'name'       => $updatedData['name'] ?? '',
+                'content'    => $updatedData['content'] ?? '',
+                'category'   => $updatedData['category'] ?? 'General',
+                'created_at' => isset($updatedData['created_at']) ? $updatedData['created_at']->formatAsString() : null,
+                'updated_at' => isset($updatedData['updated_at']) ? $updatedData['updated_at']->formatAsString() : null,
+            ]
         ]);
         exit;
     }

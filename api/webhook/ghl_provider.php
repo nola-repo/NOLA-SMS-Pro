@@ -408,6 +408,15 @@ if ($usingFreeCredits) {
                 $txMetadata
             );
         }
+
+        // ── Low Balance Trigger Coverage (ghl_provider paid deduction check) ────
+        try {
+            require_once __DIR__ . '/../services/NotificationService.php';
+            $newBalance = $creditManager->get_balance($account_id);
+            NotificationService::checkLowBalance($db, $locationId, $newBalance);
+        } catch (\Throwable $e) {
+            error_log('[LowBalanceAlert][ghl_provider] ' . $e->getMessage());
+        }
     } catch (\Exception $e) {
         $errData = json_decode($e->getMessage(), true) ?: null;
         if ($errData && ($errData['error'] ?? '') === 'insufficient_credits') {

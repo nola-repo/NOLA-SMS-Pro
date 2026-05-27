@@ -134,6 +134,104 @@ class NotificationService
      * @param bool   $cycleTag
      * @return string|null Managed Contact ID
      */
+    /**
+     * Resolve NOLA SMS friendly custom field keys to GoHighLevel Custom Field IDs.
+     * Checks stored cache first under integrations/ghl_{locId}.notification_preferences.ghl_custom_field_ids
+     * and falls back to fetching them dynamically via GHL /locations/{locId}/customFields endpoint.
+     */
+    private static function resolveGhlCustomFieldIds($db, $ghlClient, string $locationId): array
+    {
+        $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
+        $docRef = $db->collection('integrations')->document($intDocId);
+        $snap = $docRef->snapshot();
+        
+        $cachedIds = [];
+        if ($snap->exists()) {
+            $data = $snap->data();
+            $cachedIds = $data['notification_preferences']['ghl_custom_field_ids'] ?? [];
+        }
+
+        $requiredKeys = [
+            'nola_sms_balance',
+            'nola_sms_low_balance_threshold',
+            'nola_sms_alert_type',
+            'nola_sms_alert_id',
+            'nola_sms_alerted_at',
+            'nola_sms_message_id',
+            'nola_sms_delivery_status',
+            'nola_sms_recipient',
+        ];
+
+        $hasAll = true;
+        foreach ($requiredKeys as $rk) {
+            if (empty($cachedIds[$rk])) {
+                $hasAll = false;
+                break;
+            }
+        }
+
+        if ($hasAll) {
+            return $cachedIds;
+        }
+
+        // Fetch from GHL to dynamically populate the IDs
+        try {
+            $response = $ghlClient->request('GET', "/locations/{$locationId}/customFields");
+            if ($response['status'] === 200) {
+                $respData = json_decode($response['body'], true);
+                $fieldsList = $respData['customFields'] ?? [];
+                if (is_array($fieldsList)) {
+                    $newMapping = is_array($cachedIds) ? $cachedIds : [];
+                    foreach ($fieldsList as $field) {
+                        $fieldName = $field['name'] ?? '';
+                        $fieldKey = $field['fieldKey'] ?? '';
+                        $fieldId = $field['id'] ?? '';
+
+                        if (!$fieldId) continue;
+
+                        // Clean names and keys to see if they match any required key
+                        $normName = strtolower(preg_replace('/[^a-zA-Z0-9]/', '_', trim($fieldName)));
+                        $normKey = strtolower(preg_replace('/[^a-zA-Z0-9]/', '_', str_replace('contact.', '', $fieldKey)));
+
+                        foreach ($requiredKeys as $rk) {
+                            if ($normName === $rk || $normKey === $rk) {
+                                $newMapping[$rk] = $fieldId;
+                            }
+                        }
+                    }
+
+                    // Save resolved mapping back to Firestore
+                    $existingPrefs = [];
+                    if ($snap->exists()) {
+                        $existingPrefs = $snap->data()['notification_preferences'] ?? [];
+                    }
+                    $existingPrefs['ghl_custom_field_ids'] = $newMapping;
+                    $docRef->set([
+                        'notification_preferences' => $existingPrefs
+                    ], ['merge' => true]);
+                    $cachedIds = $newMapping;
+                }
+            } else {
+                error_log("[NotificationService::resolveGhlCustomFieldIds] Failed to fetch custom fields from GHL (HTTP " . $response['status'] . "): " . $response['body']);
+            }
+        } catch (\Throwable $e) {
+            error_log("[NotificationService::resolveGhlCustomFieldIds] Exception fetching custom fields: " . $e->getMessage());
+        }
+
+        return $cachedIds;
+    }
+
+    /**
+     * Create or update a GHL contact for the account owner email and sync custom fields and tags.
+     *
+     * @param \Google\Cloud\Firestore\FirestoreClient $db
+     * @param string $locationId
+     * @param string $email
+     * @param string $name
+     * @param array  $customFields
+     * @param bool   $cycleTag
+     * @return string|null Managed Contact ID
+     */
     private static function syncGhlContactBridge($db, string $locationId, string $email, string $name, array $customFields, bool $cycleTag = true): ?string
     {
         require_once __DIR__ . '/GhlClient.php';
@@ -142,6 +240,22 @@ class NotificationService
             // Resolve registry key
             $jwtCtx = auth_get_optional_jwt_context($db);
             $tokenRegistryId = auth_resolve_ghl_token_registry_id($db, $jwtCtx, $locationId);
+
+            // Fallback for background contexts (no JWT) when no direct token doc exists for the location
+            if (!$jwtCtx) {
+                $directDocExists = $db->collection('ghl_tokens')->document($locationId)->snapshot()->exists();
+                if (!$directDocExists) {
+                    require_once __DIR__ . '/GhlTokenProvider.php';
+                    $companyId = \GhlTokenProvider::resolveCompanyIdForLocation($db, $locationId);
+                    if ($companyId) {
+                        $companyDocExists = $db->collection('ghl_tokens')->document($companyId)->snapshot()->exists();
+                        if ($companyDocExists) {
+                            $tokenRegistryId = $companyId;
+                            error_log("[NotificationService::syncGhlContactBridge] Background call fallback resolved company tokenRegistryId: {$companyId} for location: {$locationId}");
+                        }
+                    }
+                }
+            }
 
             $ghlClient = new \GhlClient($db, $locationId, $tokenRegistryId);
         } catch (\Throwable $e) {
@@ -180,11 +294,18 @@ class NotificationService
             $lastName = $parts[1] ?? '';
         }
 
+        // Resolve NOLA friendly keys to real GHL Custom Field IDs
+        $fieldIdMap = self::resolveGhlCustomFieldIds($db, $ghlClient, $locationId);
+
         // Prepare GHL payload format for custom fields
         $ghlCustomFields = [];
         foreach ($customFields as $k => $v) {
+            $fieldId = $fieldIdMap[$k] ?? $k;
+            if ($fieldId === $k) {
+                error_log("[NotificationService::syncGhlContactBridge] Warning: Friendly key '{$k}' could not be resolved to GHL custom field ID.");
+            }
             $ghlCustomFields[] = [
-                'id' => $k,
+                'id' => $fieldId,
                 'value' => $v,
             ];
         }
@@ -203,7 +324,7 @@ class NotificationService
             try {
                 $updateResp = $ghlClient->request('PUT', "/contacts/{$contactId}", json_encode($contactPayload));
                 if ($updateResp['status'] >= 400) {
-                    error_log("[NotificationService::syncGhlContactBridge] Contact update failed (HTTP " . $updateResp['status'] . "): " . $updateResp['body']);
+                    error_log("[NotificationService::syncGhlContactBridge] GHL Contact Update FAIL! LocationID: {$locationId}, Email: {$email}, Status: " . $updateResp['status'] . ", Response: " . $updateResp['body']);
                 }
             } catch (\Throwable $e) {
                 error_log("[NotificationService::syncGhlContactBridge] Contact update exception: " . $e->getMessage());
@@ -216,7 +337,7 @@ class NotificationService
                     $createData = json_decode($createResp['body'], true);
                     $contactId = $createData['contact']['id'] ?? $createData['id'] ?? null;
                 } else {
-                    error_log("[NotificationService::syncGhlContactBridge] Contact creation failed (HTTP " . $createResp['status'] . "): " . $createResp['body']);
+                    error_log("[NotificationService::syncGhlContactBridge] GHL Contact Create FAIL! LocationID: {$locationId}, Email: {$email}, Status: " . $createResp['status'] . ", Response: " . $createResp['body']);
                 }
             } catch (\Throwable $e) {
                 error_log("[NotificationService::syncGhlContactBridge] Contact creation exception: " . $e->getMessage());
@@ -278,7 +399,21 @@ class NotificationService
         $threshold = $prefs['low_balance_threshold'];
 
         if ($currentBalance > $threshold) {
-            return; // Balance is healthy — nothing to do
+            // Balance is healthy — clear last_low_balance_notified_at so the user can be alerted again immediately after dropping below threshold next time
+            $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
+            $docRef = $db->collection('integrations')->document($intDocId);
+            $snap = $docRef->snapshot();
+            if ($snap->exists()) {
+                $existingPrefs = $snap->data()['notification_preferences'] ?? [];
+                if (isset($existingPrefs['last_low_balance_notified_at'])) {
+                    unset($existingPrefs['last_low_balance_notified_at']);
+                    $docRef->set([
+                        'notification_preferences' => $existingPrefs
+                    ], ['merge' => true]);
+                    error_log("[LowBalanceAlert] Cleared last_low_balance_notified_at for location {$locationId} because currentBalance {$currentBalance} > threshold {$threshold}");
+                }
+            }
+            return;
         }
 
         if (!$prefs['ghl_workflow_sync_enabled']) {
