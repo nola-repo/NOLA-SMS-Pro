@@ -225,6 +225,8 @@ class CreditManager
             throw new \Exception(json_encode($result));
         }
 
+        $this->invalidateSubaccountCache($location_id);
+
         return $result;
     }
 
@@ -360,6 +362,8 @@ class CreditManager
             throw new \Exception(json_encode($result));
         }
 
+        $this->invalidateSubaccountCache($location_id);
+
         return $result;
     }
 
@@ -463,6 +467,8 @@ class CreditManager
             throw new \Exception(json_encode($result));
         }
 
+        $this->invalidateSubaccountCache($location_id);
+
         return $result;
     }
 
@@ -519,6 +525,8 @@ class CreditManager
 
             return $new_balance;
         });
+
+        $this->invalidateSubaccountCache($account_id);
 
         return $result;
     }
@@ -587,6 +595,10 @@ class CreditManager
             return $new_balance;
         });
 
+        if ($wallet_scope !== 'agency') {
+            $this->invalidateSubaccountCache($account_id);
+        }
+
         return $result;
     }
 
@@ -628,6 +640,8 @@ class CreditManager
         ]);
 
         $batch->commit();
+
+        $this->invalidateSubaccountCache($account_id);
 
         return true;
     }
@@ -810,5 +824,18 @@ class CreditManager
         }
 
         return $this->db->collection('agency_wallet')->document($agency_id);
+    }
+
+    private function invalidateSubaccountCache(string $locId): void
+    {
+        try {
+            $rawLocId = preg_replace('/^ghl_/', '', trim($locId));
+            if ($rawLocId !== '' && $rawLocId !== 'default') {
+                require_once __DIR__ . '/../cache_helper.php';
+                NolaCache::deleteRegistry("credits_registry_" . $rawLocId);
+            }
+        } catch (\Throwable $e) {
+            error_log("[CreditManager] Cache invalidation failed: " . $e->getMessage());
+        }
     }
 }

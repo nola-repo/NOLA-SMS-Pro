@@ -34,6 +34,20 @@ try {
 
     // ── GET — list all templates for this location ──────────────────────
     if ($method === 'GET') {
+        require_once __DIR__ . '/cache_helper.php';
+        $cacheKey = "templates_list_{$locId}";
+        $registryKey = "templates_registry_{$locId}";
+
+        $cachedTemplates = NolaCache::get($cacheKey);
+        if ($cachedTemplates !== null) {
+            echo json_encode([
+                'success' => true,
+                'data'    => $cachedTemplates,
+                'cached'  => true,
+            ], JSON_PRETTY_PRINT);
+            exit;
+        }
+
         $query = $db->collection('integrations')->document($intDocId)->collection('templates')
             ->orderBy('updated_at', 'DESC')
             ->documents();
@@ -52,9 +66,12 @@ try {
             ];
         }
 
+        NolaCache::setWithRegistry($registryKey, $cacheKey, $rows, 600); // 10 minutes cache
+
         echo json_encode([
             'success' => true,
             'data'    => $rows,
+            'cached'  => false,
         ], JSON_PRETTY_PRINT);
         exit;
     }
@@ -91,6 +108,14 @@ try {
             'created_at'  => new \Google\Cloud\Core\Timestamp($now),
             'updated_at'  => new \Google\Cloud\Core\Timestamp($now),
         ]);
+
+        // Invalidate templates cache
+        try {
+            require_once __DIR__ . '/cache_helper.php';
+            NolaCache::deleteRegistry("templates_registry_{$locId}");
+        } catch (\Throwable $cacheEx) {
+            error_log("[templates] Cache invalidation failed: " . $cacheEx->getMessage());
+        }
 
         echo json_encode([
             'success' => true,
@@ -151,6 +176,14 @@ try {
 
         $docRef->set($updateData, ['merge' => true]);
 
+        // Invalidate templates cache
+        try {
+            require_once __DIR__ . '/cache_helper.php';
+            NolaCache::deleteRegistry("templates_registry_{$locId}");
+        } catch (\Throwable $cacheEx) {
+            error_log("[templates] Cache invalidation failed: " . $cacheEx->getMessage());
+        }
+
         echo json_encode([
             'success' => true,
             'message' => 'Template updated',
@@ -178,6 +211,14 @@ try {
         }
 
         $docRef->delete();
+
+        // Invalidate templates cache
+        try {
+            require_once __DIR__ . '/cache_helper.php';
+            NolaCache::deleteRegistry("templates_registry_{$locId}");
+        } catch (\Throwable $cacheEx) {
+            error_log("[templates] Cache invalidation failed: " . $cacheEx->getMessage());
+        }
 
         echo json_encode([
             'success' => true,

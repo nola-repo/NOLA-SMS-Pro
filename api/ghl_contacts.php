@@ -73,6 +73,16 @@ $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 // ── GET: fetch contacts (with pagination) ─────────────────────────────────
 if ($method === 'GET') {
+    require_once __DIR__ . '/cache_helper.php';
+    $cacheKey = "ghl_contacts_list_{$locationId}";
+    $registryKey = "ghl_contacts_registry_{$locationId}";
+
+    $cachedContacts = NolaCache::get($cacheKey);
+    if ($cachedContacts !== null) {
+        echo json_encode(['contacts' => $cachedContacts, 'cached' => true]);
+        exit;
+    }
+
     $allContacts = [];
     $path        = '/contacts/?locationId=' . urlencode($locationId) . '&limit=100';
     $pageCount   = 0;
@@ -108,8 +118,10 @@ if ($method === 'GET') {
         $pageCount++;
     } while ($path && $pageCount < $maxPages);
 
+    NolaCache::setWithRegistry($registryKey, $cacheKey, $allContacts, 1800); // Cache for 30 minutes
+
     error_log("[ghl_contacts] Successfully fetched " . count($allContacts) . " contacts (Pages: $pageCount)");
-    echo json_encode(['contacts' => $allContacts]);
+    echo json_encode(['contacts' => $allContacts, 'cached' => false]);
     exit;
 }
 
@@ -140,6 +152,14 @@ if ($method === 'POST') {
         http_response_code($resp['status']);
         echo $resp['body'];
         exit;
+    }
+
+    // Invalidate contacts cache
+    try {
+        require_once __DIR__ . '/cache_helper.php';
+        NolaCache::deleteRegistry("ghl_contacts_registry_{$locationId}");
+    } catch (\Throwable $cacheEx) {
+        error_log("[ghl_contacts] Cache invalidation failed: " . $cacheEx->getMessage());
     }
 
     $data    = json_decode($resp['body'], true);
@@ -184,6 +204,14 @@ if ($method === 'PUT') {
         exit;
     }
 
+    // Invalidate contacts cache
+    try {
+        require_once __DIR__ . '/cache_helper.php';
+        NolaCache::deleteRegistry("ghl_contacts_registry_{$locationId}");
+    } catch (\Throwable $cacheEx) {
+        error_log("[ghl_contacts] Cache invalidation failed: " . $cacheEx->getMessage());
+    }
+
     $data    = json_decode($resp['body'], true);
     $contact = $data['contact'] ?? $data;
 
@@ -212,6 +240,14 @@ if ($method === 'DELETE') {
         http_response_code($resp['status']);
         echo $resp['body'];
         exit;
+    }
+
+    // Invalidate contacts cache
+    try {
+        require_once __DIR__ . '/cache_helper.php';
+        NolaCache::deleteRegistry("ghl_contacts_registry_{$locationId}");
+    } catch (\Throwable $cacheEx) {
+        error_log("[ghl_contacts] Cache invalidation failed: " . $cacheEx->getMessage());
     }
 
     echo json_encode(['success' => $resp['status'] === 200 || $resp['status'] === 204]);

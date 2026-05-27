@@ -32,6 +32,21 @@ try {
     $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 50;
 
     $month = $_GET['month'] ?? null;
+    
+    require_once __DIR__ . '/cache_helper.php';
+    $paramsHash = md5(serialize([$accountId, $limit, $month]));
+    $cacheKey = "transactions_list_{$accountId}_{$paramsHash}";
+    $registryKey = "credits_registry_{$locId}";
+
+    if ($locId) {
+        $cachedData = NolaCache::get($cacheKey);
+        if ($cachedData !== null) {
+            $cachedData['cached'] = true;
+            echo json_encode($cachedData, JSON_PRETTY_PRINT);
+            exit;
+        }
+    }
+
     $monthStart = null;
     $monthEnd   = null;
     if ($month && preg_match('/^\d{4}-\d{2}$/', $month)) {
@@ -41,9 +56,15 @@ try {
     
     // Query credit_transactions for this account, sorted by newest first
     $transactionsRef = $db->collection('credit_transactions');
-    $query = $transactionsRef->where('account_id', '=', $accountId)
-                             ->orderBy('created_at', 'DESC')
-                             ->limit($limit);
+    $query = $transactionsRef->where('account_id', '=', $accountId);
+    
+    if ($monthStart !== null) {
+        $query = $query->where('created_at', '>=', new \Google\Cloud\Core\Timestamp($monthStart))
+                       ->where('created_at', '<', new \Google\Cloud\Core\Timestamp($monthEnd));
+    }
+    
+    $query = $query->orderBy('created_at', 'DESC')
+                   ->limit($limit);
                              
     $documents = $query->documents();
     
@@ -51,17 +72,6 @@ try {
     foreach ($documents as $doc) {
         if ($doc->exists()) {
             $data = $doc->data();
-            
-            // Month filter
-            if ($monthStart !== null) {
-                $createdAt = $data['created_at'] ?? null;
-                if ($createdAt instanceof \Google\Cloud\Core\Timestamp) {
-                    $dt = $createdAt->get();
-                    if ($dt->getTimestamp() < $monthStart->getTimestamp() || $dt->getTimestamp() >= $monthEnd->getTimestamp()) {
-                        continue;
-                    }
-                }
-            }
 
             // Format timestamp if present
             if (isset($data['created_at']) && $data['created_at'] instanceof \Google\Cloud\Core\Timestamp) {
@@ -72,12 +82,19 @@ try {
         }
     }
 
-    echo json_encode([
+    $responsePayload = [
         'success'      => true,
         'account_id'   => $accountId,
         'count'        => count($transactions),
         'transactions' => $transactions,
-    ], JSON_PRETTY_PRINT);
+    ];
+
+    if ($locId) {
+        NolaCache::setWithRegistry($registryKey, $cacheKey, $responsePayload, 300); // Cache for 5 minutes
+    }
+
+    $responsePayload['cached'] = false;
+    echo json_encode($responsePayload, JSON_PRETTY_PRINT);
 } catch (\Throwable $e) {
     http_response_code(500);
     echo json_encode([

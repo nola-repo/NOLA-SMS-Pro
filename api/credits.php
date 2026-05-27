@@ -155,6 +155,17 @@ try {
         exit;
     }
 
+    require_once __DIR__ . '/cache_helper.php';
+    $cacheKey = "credits_data_{$locId}";
+    $registryKey = "credits_registry_{$locId}";
+
+    $cachedData = NolaCache::get($cacheKey);
+    if ($cachedData !== null) {
+        $cachedData['cached'] = true;
+        echo json_encode($cachedData, JSON_PRETTY_PRINT);
+        exit;
+    }
+
     $docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
     $docRef = $db->collection('integrations')->document($docId);
 
@@ -285,7 +296,7 @@ try {
     }
     // -----------------------
 
-    echo json_encode([
+    $responsePayload = [
         'success' => true,
         'account_id' => $locId,
         'credit_balance' => $creditBalance,
@@ -295,7 +306,12 @@ try {
         'created_at' => $createdAt,
         'updated_at' => $updatedAt,
         'stats' => $stats
-    ], JSON_PRETTY_PRINT);
+    ];
+
+    NolaCache::setWithRegistry($registryKey, $cacheKey, $responsePayload, 300); // Cache for 5 minutes
+
+    $responsePayload['cached'] = false;
+    echo json_encode($responsePayload, JSON_PRETTY_PRINT);
 }
 catch (\Throwable $e) {
     http_response_code(500);

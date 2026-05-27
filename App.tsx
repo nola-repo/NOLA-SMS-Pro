@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+ï»¿import React, { useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { Dashboard } from "./pages/Dashboard";
 import { GhlCallback } from "./pages/GhlCallback";
@@ -78,7 +78,7 @@ const AppLayout: React.FC = () => {
         <Route path="/register"               element={<Navigate to="/login" replace />} />
         <Route path="/register-from-install"  element={<RegisterFromInstall />} />
         <Route path="/oauth/callback"         element={<GhlCallback />} />
-        {/* Protected routes GÇö requires a valid auth token */}
+        {/* Protected routes GÃ‡Ã¶ requires a valid auth token */}
         <Route element={<ProtectedRoute />}>
           <Route
             path="/"
