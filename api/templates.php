@@ -46,6 +46,7 @@ try {
                 'id'         => $doc->id(),
                 'name'       => $d['name'] ?? '',
                 'content'    => $d['content'] ?? '',
+                'category'   => $d['category'] ?? 'General',
                 'created_at' => isset($d['created_at']) ? $d['created_at']->formatAsString() : null,
                 'updated_at' => isset($d['updated_at']) ? $d['updated_at']->formatAsString() : null,
             ];
@@ -70,6 +71,15 @@ try {
             exit;
         }
 
+        $category = trim($input['category'] ?? '');
+        if (!$category) {
+            $category = 'General';
+        }
+        $allowed = ['Appointments', 'Marketing', 'Transactional', 'General'];
+        if (!in_array($category, $allowed, true)) {
+            $category = 'General';
+        }
+
         $now   = new \DateTimeImmutable();
         $docId = uniqid('tpl_', true);
 
@@ -77,6 +87,7 @@ try {
             'id'          => $docId,
             'name'        => $name,
             'content'     => $content,
+            'category'    => $category,
             'created_at'  => new \Google\Cloud\Core\Timestamp($now),
             'updated_at'  => new \Google\Cloud\Core\Timestamp($now),
         ]);
@@ -84,9 +95,10 @@ try {
         echo json_encode([
             'success' => true,
             'data'    => [
-                'id'      => $docId,
-                'name'    => $name,
-                'content' => $content,
+                'id'       => $docId,
+                'name'     => $name,
+                'content'  => $content,
+                'category' => $category,
             ],
             'message' => 'Template created',
         ]);
@@ -100,15 +112,17 @@ try {
         $name    = trim($input['name'] ?? '');
         $content = trim($input['content'] ?? '');
 
+        $category = isset($input['category']) ? trim((string)$input['category']) : null;
+
         if (!$id) {
             http_response_code(400);
             echo json_encode(['success' => false, 'error' => 'id is required']);
             exit;
         }
 
-        if (!$name && !$content) {
+        if (!$name && !$content && $category === null) {
             http_response_code(400);
-            echo json_encode(['success' => false, 'error' => 'name or content is required']);
+            echo json_encode(['success' => false, 'error' => 'name, content, or category is required']);
             exit;
         }
 
@@ -127,6 +141,13 @@ try {
         ];
         if ($name)    $updateData['name']    = $name;
         if ($content) $updateData['content'] = $content;
+        if ($category !== null) {
+            $allowed = ['Appointments', 'Marketing', 'Transactional', 'General'];
+            if ($category === '' || !in_array($category, $allowed, true)) {
+                $category = 'General';
+            }
+            $updateData['category'] = $category;
+        }
 
         $docRef->set($updateData, ['merge' => true]);
 
