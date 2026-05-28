@@ -560,7 +560,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_POST           => true,
             CURLOPT_HTTPHEADER     => ['Content-Type: application/json', 'Accept: application/json'],
-            CURLOPT_POSTFIELDS     => json_encode(['email' => $email, 'password' => $password]),
+            CURLOPT_POSTFIELDS     => json_encode([
+                'email' => $email,
+                'password' => $password,
+                'location_id' => $locationIdRaw
+            ]),
             CURLOPT_TIMEOUT        => 15,
         ]);
         $resp = curl_exec($ch);

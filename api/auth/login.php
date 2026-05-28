@@ -105,6 +105,40 @@ try {
         }
     }
 
+    $reqLocationId = trim((string)($input['location_id'] ?? ''));
+    if ($reqLocationId !== '' && $role !== 'agency') {
+        if (empty($companyId)) {
+            http_response_code(400);
+            echo json_encode(['error' => 'Login failed: user location metadata is incomplete.']);
+            exit;
+        }
+
+        $locationDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $reqLocationId);
+        $locationSnap = $db->collection('integrations')->document($locationDocId)->snapshot();
+        if ($locationSnap->exists()) {
+            $locationData = $locationSnap->data();
+            $locationCompanyId = $locationData['companyId'] ?? $locationData['company_id'] ?? null;
+            if ($locationCompanyId !== null && (string)$locationCompanyId !== (string)$companyId) {
+                http_response_code(403);
+                echo json_encode(['error' => 'Login failed: location is not authorized for this account.']);
+                exit;
+            }
+        }
+
+        // Update user active_location_id in Firestore
+        try {
+            $db->collection('users')->document($userId)->set([
+                'active_location_id' => $reqLocationId,
+                'updatedAt' => new \Google\Cloud\Core\Timestamp(new \DateTime())
+            ], ['merge' => true]);
+            $locationId = $reqLocationId;
+            $userData['active_location_id'] = $reqLocationId;
+            error_log("[api/auth/login.php] Updated user {$email} active_location_id to {$reqLocationId}");
+        } catch (Exception $e) {
+            error_log("[api/auth/login.php] Failed to update user active_location_id: " . $e->getMessage());
+        }
+    }
+
     if ($locationId !== null && $role !== 'agency') {
         if (empty($companyId)) {
             http_response_code(400);
