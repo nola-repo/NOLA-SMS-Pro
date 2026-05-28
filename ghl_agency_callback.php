@@ -1,6 +1,6 @@
 <?php
-require __DIR__ . '/../webhook/firestore_client.php';
-require_once __DIR__ . '/../jwt_helper.php';
+require __DIR__ . '/api/webhook/firestore_client.php';
+require_once __DIR__ . '/api/jwt_helper.php';
 
 function agency_render_error(string $msg, array $details = []): void
 {

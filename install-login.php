@@ -12,9 +12,9 @@
  * Drop this file in the repo root alongside ghl_callback.php.
  */
 
-require_once __DIR__ . '/../jwt_helper.php';
-require_once __DIR__ . '/../webhook/firestore_client.php';
-require_once __DIR__ . '/../install_helpers.php';
+require_once __DIR__ . '/api/jwt_helper.php';
+require_once __DIR__ . '/api/webhook/firestore_client.php';
+require_once __DIR__ . '/api/install_helpers.php';
 
 $apiBase  = 'https://smspro-api.nolacrm.io';
 $reactApp = 'https://app.nolasmspro.com';

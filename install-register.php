@@ -4,10 +4,10 @@
  * Served at: https://smspro-api.nolacrm.io/register
  */
 
-require_once __DIR__ . '/../jwt_helper.php';
-require_once __DIR__ . '/../webhook/firestore_client.php';
-require_once __DIR__ . '/../auth_helpers.php';
-require_once __DIR__ . '/../install_helpers.php';
+require_once __DIR__ . '/api/jwt_helper.php';
+require_once __DIR__ . '/api/webhook/firestore_client.php';
+require_once __DIR__ . '/api/auth_helpers.php';
+require_once __DIR__ . '/api/install_helpers.php';
 
 $jwtSecret   = getenv('JWT_SECRET');
 if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
