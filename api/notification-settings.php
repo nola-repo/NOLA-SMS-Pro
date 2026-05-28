@@ -158,8 +158,9 @@ try {
         }
         if (isset($input['lowBalanceAlert'])) {
             $updatePrefs['low_balance_alert_enabled'] = (bool) $input['lowBalanceAlert'];
-            // Single customer-facing toggle saves both lowBalanceAlert and ghlWorkflowSyncEnabled
-            $updatePrefs['ghl_workflow_sync_enabled'] = (bool) $input['lowBalanceAlert'];
+            // Note: ghl_workflow_sync_enabled is preserved for old clients that still
+            // send/read it, but the central low-balance email sync no longer depends on it.
+            // Only low_balance_alert_enabled gates the central alert path.
         }
         if (isset($input['lowBalanceThreshold'])) {
             $updatePrefs['low_balance_threshold'] = max(0, (int) $input['lowBalanceThreshold']);

@@ -4,9 +4,14 @@
  * NotificationService — Dispatch logic for system notifications.
  *
  * Handles:
- * - Low balance alerts (with 24-hour circuit breaker)
- * - Delivery report notifications (Failed/Delivered)
- * - Email dispatch (placeholder — swap for SendGrid/Mailgun when ready)
+ * - Low balance alerts via central NOLA CRM GHL location (24-hour circuit breaker)
+ * - Delivery report notifications (Failed/Delivered) via customer-location GHL contact bridge
+ * - Email dispatch through central GHL workflow (no external email provider required)
+ *
+ * Required env vars for central low-balance alerts:
+ *   NOLA_ALERT_GHL_LOCATION_ID         — Central NOLA CRM GHL location id (required)
+ *   NOLA_ALERT_GHL_TOKEN_REGISTRY_ID   — Firestore ghl_tokens doc id (defaults to NOLA_ALERT_GHL_LOCATION_ID)
+ *   NOLA_ALERT_GHL_TAG                 — Tag to cycle on alert (default: nola-low-balance-alert)
  */
 require_once __DIR__ . '/../auth_helpers.php';
 require_once __DIR__ . '/../install_helpers.php';
@@ -378,18 +383,322 @@ class NotificationService
         return $contactId;
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // Central Low-Balance Alert Helpers
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Resolve NOLA SMS central custom field keys to GoHighLevel Custom Field IDs.
+     *
+     * Cache is stored in admin_config/nola_alerts.custom_field_ids.
+     * Never writes to customer integrations/ghl_{locId} documents.
+     *
+     * @param \Google\Cloud\Firestore\FirestoreClient $db
+     * @param \GhlClient                              $ghlClient   Client initialised for the central location
+     * @param string                                  $centralLocationId
+     * @return array<string, string>  Map of friendly key → real GHL custom field id
+     */
+    private static function resolveCentralGhlCustomFieldIds($db, $ghlClient, string $centralLocationId): array
+    {
+        $adminRef  = $db->collection('admin_config')->document('nola_alerts');
+        $adminSnap = $adminRef->snapshot();
+
+        $cachedIds = [];
+        if ($adminSnap->exists()) {
+            $cachedIds = $adminSnap->data()['custom_field_ids'] ?? [];
+        }
+
+        $requiredKeys = [
+            'nola_sms_alert_type',
+            'nola_sms_alert_id',
+            'nola_sms_balance',
+            'nola_sms_low_balance_threshold',
+            'nola_sms_alerted_at',
+            'nola_sms_registered_email',
+            'nola_sms_source_location_id',
+            'nola_sms_source_location_name',
+        ];
+
+        // Return immediately if all required IDs are already cached
+        $hasAll = true;
+        foreach ($requiredKeys as $rk) {
+            if (empty($cachedIds[$rk])) {
+                $hasAll = false;
+                break;
+            }
+        }
+        if ($hasAll) {
+            return $cachedIds;
+        }
+
+        // Fetch custom fields from the central GHL location
+        try {
+            $response = $ghlClient->request('GET', "/locations/{$centralLocationId}/customFields");
+            if ($response['status'] === 200) {
+                $respData   = json_decode($response['body'], true);
+                $fieldsList = $respData['customFields'] ?? [];
+                if (is_array($fieldsList)) {
+                    $newMapping = is_array($cachedIds) ? $cachedIds : [];
+                    foreach ($fieldsList as $field) {
+                        $fieldName = $field['name']     ?? '';
+                        $fieldKey  = $field['fieldKey'] ?? '';
+                        $fieldId   = $field['id']       ?? '';
+                        if (!$fieldId) continue;
+
+                        // Normalise name and key, strip GHL "contact." prefix
+                        $normName = strtolower(preg_replace('/[^a-zA-Z0-9]/', '_', trim($fieldName)));
+                        $normKey  = strtolower(preg_replace('/[^a-zA-Z0-9]/', '_', str_replace('contact.', '', $fieldKey)));
+
+                        foreach ($requiredKeys as $rk) {
+                            if ($normName === $rk || $normKey === $rk) {
+                                $newMapping[$rk] = $fieldId;
+                            }
+                        }
+                    }
+
+                    // Persist resolved mapping to admin_config/nola_alerts
+                    $adminRef->set(['custom_field_ids' => $newMapping], ['merge' => true]);
+                    $cachedIds = $newMapping;
+                }
+            } else {
+                error_log(
+                    "[NotificationService::resolveCentralGhlCustomFieldIds] Failed to fetch custom fields "
+                    . "from central location {$centralLocationId} (HTTP " . $response['status'] . "): "
+                    . $response['body']
+                );
+            }
+        } catch (\Throwable $e) {
+            error_log("[NotificationService::resolveCentralGhlCustomFieldIds] Exception: " . $e->getMessage());
+        }
+
+        return $cachedIds;
+    }
+
+    /**
+     * Create or update a contact in the central NOLA CRM GHL location and
+     * populate the eight NOLA alert custom fields. Optionally cycles the
+     * alert tag so the central workflow triggers.
+     *
+     * Required env vars:
+     *   NOLA_ALERT_GHL_LOCATION_ID       — central GHL location id
+     *   NOLA_ALERT_GHL_TOKEN_REGISTRY_ID — Firestore ghl_tokens key (defaults to location id)
+     *   NOLA_ALERT_GHL_TAG               — tag name (default: nola-low-balance-alert)
+     *
+     * @param \Google\Cloud\Firestore\FirestoreClient $db
+     * @param string $sourceLocationId    Customer GHL location id
+     * @param string $email               Registered account email
+     * @param string $name                Account owner name
+     * @param int    $currentBalance      Balance after deduction
+     * @param int    $threshold           Low-balance threshold
+     * @param string $sourceLocationName  Customer workspace display name
+     * @return string|null  Central GHL contact id on success, null on failure
+     */
+    private static function syncCentralLowBalanceAlertContact(
+        $db,
+        string $sourceLocationId,
+        string $email,
+        string $name,
+        int $currentBalance,
+        int $threshold,
+        string $sourceLocationName
+    ): ?string {
+        require_once __DIR__ . '/GhlClient.php';
+
+        // ── 1. Read required env vars ──────────────────────────────────────
+        $centralLocationId = getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: '';
+        if ($centralLocationId === '') {
+            error_log(
+                "[LowBalanceAlert::syncCentral] NOLA_ALERT_GHL_LOCATION_ID is not set. "
+                . "Cannot send low-balance email for source location {$sourceLocationId}."
+            );
+            return null;
+        }
+
+        $centralTokenRegistryId = getenv('NOLA_ALERT_GHL_TOKEN_REGISTRY_ID') ?: $centralLocationId;
+        $alertTag               = getenv('NOLA_ALERT_GHL_TAG') ?: 'nola-low-balance-alert';
+
+        // ── 2. Initialise GHL client for the central location ──────────────
+        try {
+            $ghlClient = new \GhlClient($db, $centralLocationId, $centralTokenRegistryId);
+        } catch (\Throwable $e) {
+            error_log(
+                "[LowBalanceAlert::syncCentral] Failed to initialise GhlClient "
+                . "(central={$centralLocationId}, registry={$centralTokenRegistryId}, "
+                . "source={$sourceLocationId}): " . $e->getMessage()
+            );
+            return null;
+        }
+
+        $contactId = null;
+
+        // ── 3. Search for existing contact by email in central location ────
+        try {
+            $searchUrl  = '/contacts/?locationId=' . urlencode($centralLocationId) . '&query=' . urlencode($email);
+            $searchResp = $ghlClient->request('GET', $searchUrl);
+            if ($searchResp['status'] === 200) {
+                $searchData = json_decode($searchResp['body'], true);
+                $contacts   = $searchData['contacts'] ?? $searchData['data'] ?? [];
+                if (is_array($contacts)) {
+                    foreach ($contacts as $c) {
+                        if (isset($c['email']) && strtolower(trim((string)$c['email'])) === strtolower(trim($email))) {
+                            $contactId = $c['id'];
+                            break;
+                        }
+                    }
+                }
+            } else {
+                error_log(
+                    "[LowBalanceAlert::syncCentral] Contact search failed "
+                    . "(central={$centralLocationId}, source={$sourceLocationId}, email={$email}, "
+                    . "operation=search, http=" . $searchResp['status'] . "): "
+                    . substr($searchResp['body'], 0, 500)
+                );
+            }
+        } catch (\Throwable $e) {
+            error_log(
+                "[LowBalanceAlert::syncCentral] Contact search exception "
+                . "(central={$centralLocationId}, source={$sourceLocationId}): " . $e->getMessage()
+            );
+        }
+
+        // ── 4. Resolve real GHL custom field IDs from cache or API ─────────
+        $fieldIdMap = self::resolveCentralGhlCustomFieldIds($db, $ghlClient, $centralLocationId);
+
+        // ── 5. Build alert custom fields payload ───────────────────────────
+        $now       = new \DateTimeImmutable();
+        $timestamp = $now->format('c');
+        $alertId   = "low_balance_{$sourceLocationId}_" . $now->format('YmdHis');
+
+        $alertFields = [
+            'nola_sms_alert_type'            => 'low_balance',
+            'nola_sms_alert_id'              => $alertId,
+            'nola_sms_balance'               => $currentBalance,
+            'nola_sms_low_balance_threshold' => $threshold,
+            'nola_sms_alerted_at'            => $timestamp,
+            'nola_sms_registered_email'      => $email,
+            'nola_sms_source_location_id'    => $sourceLocationId,
+            'nola_sms_source_location_name'  => $sourceLocationName,
+        ];
+
+        $ghlCustomFields = [];
+        foreach ($alertFields as $k => $v) {
+            $fieldId = $fieldIdMap[$k] ?? null;
+            if (!$fieldId) {
+                error_log("[LowBalanceAlert::syncCentral] Warning: no GHL field ID for key '{$k}' — field will be skipped.");
+                continue;
+            }
+            $ghlCustomFields[] = ['id' => $fieldId, 'value' => $v];
+        }
+
+        // ── 6. Build contact name parts ────────────────────────────────────
+        $firstName = 'NOLA SMS';
+        $lastName  = 'Alert Contact';
+        if ($name) {
+            $parts     = explode(' ', trim($name), 2);
+            $firstName = $parts[0];
+            $lastName  = $parts[1] ?? '';
+        }
+
+        $contactPayload = [
+            'locationId'   => $centralLocationId,
+            'email'        => $email,
+            'firstName'    => $firstName,
+            'lastName'     => $lastName,
+            'customFields' => $ghlCustomFields,
+        ];
+
+        // ── 7. Upsert contact (update if found, create if not) ─────────────
+        if ($contactId) {
+            try {
+                $updateResp = $ghlClient->request('PUT', "/contacts/{$contactId}", json_encode($contactPayload));
+                if ($updateResp['status'] >= 400) {
+                    error_log(
+                        "[LowBalanceAlert::syncCentral] Contact update failed "
+                        . "(central={$centralLocationId}, source={$sourceLocationId}, email={$email}, "
+                        . "contact={$contactId}, operation=update, http=" . $updateResp['status'] . "): "
+                        . substr($updateResp['body'], 0, 500)
+                    );
+                    return null;
+                }
+            } catch (\Throwable $e) {
+                error_log(
+                    "[LowBalanceAlert::syncCentral] Contact update exception "
+                    . "(central={$centralLocationId}, source={$sourceLocationId}): " . $e->getMessage()
+                );
+                return null;
+            }
+        } else {
+            try {
+                $createResp = $ghlClient->request('POST', '/contacts/', json_encode($contactPayload));
+                if ($createResp['status'] === 200 || $createResp['status'] === 201) {
+                    $createData = json_decode($createResp['body'], true);
+                    $contactId  = $createData['contact']['id'] ?? $createData['id'] ?? null;
+                } else {
+                    error_log(
+                        "[LowBalanceAlert::syncCentral] Contact create failed "
+                        . "(central={$centralLocationId}, source={$sourceLocationId}, email={$email}, "
+                        . "operation=create, http=" . $createResp['status'] . "): "
+                        . substr($createResp['body'], 0, 500)
+                    );
+                    return null;
+                }
+            } catch (\Throwable $e) {
+                error_log(
+                    "[LowBalanceAlert::syncCentral] Contact create exception "
+                    . "(central={$centralLocationId}, source={$sourceLocationId}): " . $e->getMessage()
+                );
+                return null;
+            }
+        }
+
+        if (!$contactId) {
+            error_log(
+                "[LowBalanceAlert::syncCentral] No contact id after upsert "
+                . "(central={$centralLocationId}, source={$sourceLocationId}, email={$email})"
+            );
+            return null;
+        }
+
+        // ── 8. Cycle alert tag to trigger the central workflow ─────────────
+        try {
+            $ghlClient->request('DELETE', "/contacts/{$contactId}/tags", json_encode(['tags' => [$alertTag]]));
+            $tagResp = $ghlClient->request('POST', "/contacts/{$contactId}/tags", json_encode(['tags' => [$alertTag]]));
+            if ($tagResp['status'] >= 400) {
+                // Non-fatal: contact is updated; only the tag failed
+                error_log(
+                    "[LowBalanceAlert::syncCentral] Tag cycle failed "
+                    . "(central={$centralLocationId}, source={$sourceLocationId}, contact={$contactId}, "
+                    . "operation=tag, http=" . $tagResp['status'] . "): "
+                    . substr($tagResp['body'], 0, 300)
+                );
+            }
+        } catch (\Throwable $e) {
+            error_log(
+                "[LowBalanceAlert::syncCentral] Tag cycle exception "
+                . "(central={$centralLocationId}, source={$sourceLocationId}): " . $e->getMessage()
+            );
+        }
+
+        return $contactId;
+    }
+
     /**
      * Check if a low-balance alert should be sent after a credit deduction.
      *
-     * Circuit breaker: only sends once per 24 hours while balance remains
-     * at or below the threshold.
+     * Uses the central NOLA CRM GHL location to send a single workflow email
+     * for every connected NOLA SMS Pro account. No customer-subaccount workflow
+     * is required. Central sync is gated only on low_balance_alert_enabled.
+     *
+     * Circuit breaker: fires at most once per 24 hours while balance stays at
+     * or below the threshold. Resets automatically when balance rises above it.
      *
      * @param \Google\Cloud\Firestore\FirestoreClient $db
-     * @param string $locationId
-     * @param int    $currentBalance  Balance AFTER the deduction
+     * @param string $locationId    Source customer GHL location id
+     * @param int    $currentBalance Balance AFTER the deduction
      */
     public static function checkLowBalance($db, string $locationId, int $currentBalance): void
     {
+        // ── 1. Load source-location notification preferences ────────────
         $prefs = self::getPreferences($db, $locationId);
 
         if (!$prefs['low_balance_alert_enabled']) {
@@ -398,91 +707,106 @@ class NotificationService
 
         $threshold = $prefs['low_balance_threshold'];
 
+        // ── 2. Circuit breaker reset when balance recovers ──────────────
+        $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
+        $docRef   = $db->collection('integrations')->document($intDocId);
+
         if ($currentBalance > $threshold) {
-            // Balance is healthy — clear last_low_balance_notified_at so the user can be alerted again immediately after dropping below threshold next time
-            $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
-            $docRef = $db->collection('integrations')->document($intDocId);
+            // Balance is healthy — clear circuit breaker so the next dip fires immediately
             $snap = $docRef->snapshot();
             if ($snap->exists()) {
                 $existingPrefs = $snap->data()['notification_preferences'] ?? [];
                 if (isset($existingPrefs['last_low_balance_notified_at'])) {
                     unset($existingPrefs['last_low_balance_notified_at']);
-                    $docRef->set([
-                        'notification_preferences' => $existingPrefs
-                    ], ['merge' => true]);
-                    error_log("[LowBalanceAlert] Cleared last_low_balance_notified_at for location {$locationId} because currentBalance {$currentBalance} > threshold {$threshold}");
+                    $docRef->set(['notification_preferences' => $existingPrefs], ['merge' => true]);
+                    error_log("[LowBalanceAlert] Cleared last_low_balance_notified_at for location {$locationId} (balance {$currentBalance} > threshold {$threshold})");
                 }
             }
             return;
         }
 
-        if (!$prefs['ghl_workflow_sync_enabled']) {
-            return; // Stop if ghl_workflow_sync_enabled is false
-        }
+        // NOTE: ghl_workflow_sync_enabled is NOT required for the central alert path.
+        // The only customer-facing gate is low_balance_alert_enabled (checked above).
 
-        // ── Circuit breaker: check last notification time ───────────────
-        $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
-        $docRef = $db->collection('integrations')->document($intDocId);
-        $snap = $docRef->snapshot();
+        // ── 3. Circuit breaker: suppress if alerted within 24 hours ─────
+        $snap         = $docRef->snapshot();
         $existingPrefs = [];
 
         if ($snap->exists()) {
-            $data = $snap->data();
+            $data          = $snap->data();
             $existingPrefs = $data['notification_preferences'] ?? [];
-            $lastNotified = $existingPrefs['last_low_balance_notified_at'] ?? null;
+            $lastNotified  = $existingPrefs['last_low_balance_notified_at'] ?? null;
             if ($lastNotified) {
                 $lastTs = $lastNotified instanceof \Google\Cloud\Core\Timestamp
                     ? $lastNotified->get()->getTimestamp()
                     : (int) $lastNotified;
-
-                // Suppress if notified within the last 24 hours
                 if (time() - $lastTs < 86400) {
                     return;
                 }
             }
         }
 
-        // ── Send the alert via GHL Contact Bridge ───────────────────────
+        // ── 4. Resolve registered account email ────────────────────────
         $details = self::getAccountDetails($db, $locationId);
-        $email = $details['email'];
-        $name = $details['name'] ?? 'NOLA Owner';
+        $email   = $details['email'];
+        $name    = $details['name'] ?? 'NOLA Owner';
 
         if (!$email) {
-            error_log("[LowBalanceAlert] No registered account email found for location {$locationId}, skipping bridge.");
+            error_log("[LowBalanceAlert] No registered account email found for location {$locationId}, skipping central sync.");
             return;
         }
 
-        $now = new \DateTimeImmutable();
+        // ── 5. Resolve source location name for the central contact ─────
+        $sourceLocationName = '';
+        try {
+            if ($snap->exists()) {
+                $sourceLocationName = (string) ($snap->data()['location_name'] ?? '');
+            }
+            if ($sourceLocationName === '') {
+                $tokenSnap = $db->collection('ghl_tokens')->document($locationId)->snapshot();
+                if ($tokenSnap->exists()) {
+                    $sourceLocationName = (string) ($tokenSnap->data()['location_name'] ?? '');
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log("[LowBalanceAlert] Could not resolve location name for {$locationId}: " . $e->getMessage());
+        }
+
+        // ── 6. Build central alert fields ──────────────────────────────
+        $now       = new \DateTimeImmutable();
         $timestamp = $now->format('c'); // ISO 8601
-        $alertId = "low_balance_{$locationId}_" . $now->format('YmdHis');
+        $alertId   = "low_balance_{$locationId}_" . $now->format('YmdHis');
 
-        $customFields = [
-            'nola_sms_balance'               => $currentBalance,
-            'nola_sms_low_balance_threshold' => $threshold,
-            'nola_sms_alert_type'            => 'low_balance',
-            'nola_sms_alert_id'              => $alertId,
-            'nola_sms_alerted_at'            => $timestamp,
-        ];
+        // ── 7. Sync to central GHL location ────────────────────────────
+        error_log("[LowBalanceAlert] Triggering central GHL sync for location {$locationId} (email: {$email}, balance: {$currentBalance})");
 
-        error_log("[LowBalanceAlert] Triggering GHL Contact Bridge for location {$locationId} (email: {$email}, balance: {$currentBalance})");
-        $contactId = self::syncGhlContactBridge($db, $locationId, $email, $name, $customFields, true);
+        $centralContactId = self::syncCentralLowBalanceAlertContact(
+            $db,
+            $locationId,
+            $email,
+            $name,
+            $currentBalance,
+            $threshold,
+            $sourceLocationName
+        );
 
-        // Update circuit breaker timestamp inside integration preferences
-        $existingPrefs = [];
-        $snap = $docRef->snapshot();
-        if ($snap->exists()) {
-            $existingPrefs = $snap->data()['notification_preferences'] ?? [];
-        }
+        // ── 8. Save metadata back to source integration document ────────
+        $snap          = $docRef->snapshot();
+        $existingPrefs = $snap->exists() ? ($snap->data()['notification_preferences'] ?? []) : [];
+
         $existingPrefs['last_low_balance_notified_at'] = new \Google\Cloud\Core\Timestamp($now);
-        if ($contactId) {
-            $existingPrefs['ghl_alert_contact_id'] = $contactId;
+        $existingPrefs['last_low_balance_email_sent_to'] = $email;
+
+        if ($centralContactId !== null) {
+            $existingPrefs['last_low_balance_email_status']  = 'sent';
+            $existingPrefs['central_ghl_alert_contact_id']   = $centralContactId;
+            error_log("[LowBalanceAlert] Central sync succeeded for location {$locationId} → contact {$centralContactId}");
+        } else {
+            $existingPrefs['last_low_balance_email_status'] = 'failed';
+            error_log("[LowBalanceAlert] Central sync failed for location {$locationId} — see earlier logs for details.");
         }
 
-        $docRef->set([
-            'notification_preferences' => $existingPrefs
-        ], ['merge' => true]);
-
-        error_log("[LowBalanceAlert] Updated last_low_balance_notified_at and bridge for location {$locationId}");
+        $docRef->set(['notification_preferences' => $existingPrefs], ['merge' => true]);
     }
 
     /**
