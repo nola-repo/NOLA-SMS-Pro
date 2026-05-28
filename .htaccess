@@ -28,10 +28,10 @@
     RewriteRule ^api/v2/(.*)$ /api/v2/index.php [NC,L,QSA]
 
     # ── OAuth ────────────────────────────────────────────────────────────
-    # /oauth/callback         -> /ghl_callback.php          (subaccount app)
-    # /oauth/agency-callback  -> /ghl_agency_callback.php   (agency app)
-    RewriteRule ^oauth/callback/?$        /ghl_callback.php        [NC,L,QSA]
-    RewriteRule ^oauth/agency-callback/?$ /ghl_agency_callback.php [NC,L,QSA]
+    # /oauth/callback         -> /api/oauth/ghl_callback.php          (subaccount app)
+    # /oauth/agency-callback  -> /api/oauth/ghl_agency_callback.php   (agency app)
+    RewriteRule ^oauth/callback/?$        /api/oauth/ghl_callback.php        [NC,L,QSA]
+    RewriteRule ^oauth/agency-callback/?$ /api/oauth/ghl_agency_callback.php [NC,L,QSA]
 
     # ── Hide .php extension: redirect direct .php access to clean URLs ──
     # This prevents users from accessing the .php files directly if they know the path.
@@ -49,8 +49,8 @@
     RewriteRule ^api/credits\.php$ /api/credits [R=301,L]
     RewriteCond %{THE_REQUEST} \s/+api/get_credit_transactions\.php[\s?] [NC]
     RewriteRule ^api/get_credit_transactions\.php$ /api/get_credit_transactions [R=301,L]
-    RewriteCond %{THE_REQUEST} \s/+ghl_callback\.php[\s?] [NC]
-    RewriteRule ^ghl_callback\.php$ /oauth/callback [R=301,L]
+    RewriteCond %{THE_REQUEST} \s/+api/oauth/ghl_callback\.php[\s?] [NC]
+    RewriteRule ^api/oauth/ghl_callback\.php$ /oauth/callback [R=301,L]
 
     # ── Webhook endpoints (public URLs without /api/ prefix) ─────────
     # /webhook/send_sms     -> /api/webhook/send_sms.php
@@ -75,9 +75,12 @@
     RewriteRule ^api/ghl-conversations/?$ /api/ghl-conversations.php [NC,L,QSA]
 
     # ── Public / Auth endpoints ────────────────────────────────────────────
-    RewriteRule ^register/?$ install-register.php [NC,L,QSA]
-    RewriteRule ^login/?$    install-login.php    [NC,L,QSA]
+    RewriteRule ^register/?$ api/install/install-register.php [NC,L,QSA]
+    RewriteRule ^login/?$    api/install/install-login.php    [NC,L,QSA]
     
+    # ── Admin dashboard redirects ──────────────────────────────────────────
+    RewriteRule ^api/admin_([a-zA-Z_]+)/?$ /api/admin/admin_$1.php [NC,L,QSA]
+
     RewriteRule ^api/public/whitelabel/?$ /api/public/whitelabel.php [NC,L,QSA]
     RewriteRule ^api/auth/register-from-install/?$ /api/auth/register_from_install.php [NC,L,QSA]
     RewriteRule ^api/auth/resolve-install-selection/?$ /api/auth/resolve_install_selection.php [NC,L,QSA]

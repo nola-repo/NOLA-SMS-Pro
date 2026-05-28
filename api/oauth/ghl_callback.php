@@ -1,7 +1,7 @@
 <?php
 
-require __DIR__ . '/api/webhook/firestore_client.php';
-require_once __DIR__ . '/api/install_helpers.php';
+require __DIR__ . '/../webhook/firestore_client.php';
+require_once __DIR__ . '/../install_helpers.php';
 
 // ─── Global Context ────────────────────────────────────────────────────────────
 $locationIdSafe = '';
@@ -1354,7 +1354,7 @@ if (($data['userType'] ?? '') === 'Company') {
             ]);
         }
 
-        require_once __DIR__ . '/api/jwt_helper.php';
+        require_once __DIR__ . '/../jwt_helper.php';
         $jwtSecret2 = getenv('JWT_SECRET');
         if ($jwtSecret2 === false || trim((string)$jwtSecret2) === '') {
             error_log('[GHL_CALLBACK] JWT_SECRET missing; cannot generate install token.');
@@ -1421,7 +1421,7 @@ if (($data['userType'] ?? '') === 'Company') {
     }
 
     if (count($locationsArrayIds) > 1) {
-        require_once __DIR__ . '/api/jwt_helper.php';
+        require_once __DIR__ . '/../jwt_helper.php';
         $jwtSecretSelect = getenv('JWT_SECRET');
         if ($jwtSecretSelect === false || trim((string)$jwtSecretSelect) === '') {
             error_log('[GHL_CALLBACK] JWT_SECRET missing; cannot generate ambiguous selection session.');
@@ -1485,7 +1485,7 @@ if (($data['userType'] ?? '') === 'Company') {
     }
 
     if (empty($locationsArrayIds)) {
-        require_once __DIR__ . '/api/jwt_helper.php';
+        require_once __DIR__ . '/../jwt_helper.php';
         $jwtSecretSelect = getenv('JWT_SECRET');
         if ($jwtSecretSelect === false || trim((string)$jwtSecretSelect) === '') {
             error_log('[GHL_CALLBACK] JWT_SECRET missing; cannot generate selection-required recovery session.');
@@ -1580,7 +1580,7 @@ if (!$locationId) {
     $finalCandidateIds = $finalResolution['candidate_ids'] ?? [];
     $finalCompanyId = trim((string)($data['companyId'] ?? ''));
     if ($finalCompanyId !== '' && ($data['userType'] ?? '') === 'Company') {
-        require_once __DIR__ . '/api/jwt_helper.php';
+        require_once __DIR__ . '/../jwt_helper.php';
         $jwtSecretSelect = getenv('JWT_SECRET');
         if ($jwtSecretSelect === false || trim((string)$jwtSecretSelect) === '') {
             error_log('[GHL_CALLBACK] JWT_SECRET missing; cannot generate final selection session.');
@@ -1847,7 +1847,7 @@ catch (Exception $e) {
 
 // ─── Redirect Logic (replaces the old static success page) ────────────────────
 
-require_once __DIR__ . '/api/jwt_helper.php';
+require_once __DIR__ . '/../jwt_helper.php';
 
 $jwtSecret = getenv('JWT_SECRET');
 if ($jwtSecret === false || trim((string)$jwtSecret) === '') {

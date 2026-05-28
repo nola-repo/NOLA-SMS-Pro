@@ -6,12 +6,12 @@
  * Returns all documents from the `users` Firestore collection, enriched with integration data.
  */
 
-require_once __DIR__ . '/cors.php';
+require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 
-require_once __DIR__ . '/../vendor/autoload.php';
-require_once __DIR__ . '/webhook/firestore_client.php';
-require_once __DIR__ . '/jwt_helper.php';
+require_once __DIR__ . '/../../vendor/autoload.php';
+require_once __DIR__ . '/../webhook/firestore_client.php';
+require_once __DIR__ . '/../jwt_helper.php';
 
 // ─── JWT Auth Guard ───────────────────────────────────────────────────────────
 function require_admin_auth(): array {
