@@ -91,6 +91,9 @@ class GhlClient
                 $options[CURLOPT_POSTFIELDS] = $body;
             } elseif ($method === 'DELETE') {
                 $options[CURLOPT_CUSTOMREQUEST] = 'DELETE';
+                if ($body !== null) {
+                    $options[CURLOPT_POSTFIELDS] = $body;
+                }
             }
 
             curl_setopt_array($ch, $options);
