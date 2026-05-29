@@ -237,7 +237,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $requestId = $payload['request_id'] ?? null;
     $status = $payload['status'] ?? null; // 'approved' or 'rejected'
     $apiKey = $payload['api_key'] ?? null;
-    $note = $payload['note'] ?? null;
+    $note = $payload['note'] ?? $payload['rejection_note'] ?? null;
 
     if (!$requestId || !in_array($status, ['approved', 'rejected', 'revoked', 'deleted'])) {
         http_response_code(400);
@@ -294,17 +294,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
         ], ['merge' => true]);
 
+        // Keep one active Sender ID per location in the request history.
+        $sameLocationRequests = $db->collection('sender_id_requests')
+            ->where('location_id', '==', $locId)
+            ->documents();
+        foreach ($sameLocationRequests as $sameRequest) {
+            if (!$sameRequest->exists() || $sameRequest->id() === $requestId) {
+                continue;
+            }
+            $sameData = $sameRequest->data();
+            if (($sameData['status'] ?? '') === 'approved') {
+                $sameRequest->reference()->set([
+                    'status' => 'revoked',
+                    'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
+                ], ['merge' => true]);
+                if (!empty($sameData['requested_id'])) {
+                    $db->collection('admin_config')->document('master_senders')->set([
+                        'approved_senders' => \Google\Cloud\Firestore\FieldValue::arrayRemove([$sameData['requested_id']]),
+                        'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+                    ], ['merge' => true]);
+                }
+            }
+        }
+
     } elseif ($status === 'revoked') {
-        // Clear the sender ID from the account mapping
+        // Clear the sender ID from the account mapping only if this request is still active.
         $docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
         $accountRef = $db->collection('integrations')->document($docId);
-        
-        $accountRef->set([
-            'approved_sender_id' => null,
-            'nola_pro_api_key'   => null,
-            'semaphore_api_key'  => null,
-            'updated_at'         => new \Google\Cloud\Core\Timestamp(new \DateTime())
-        ], ['merge' => true]);
+
+        $accountSnap = $accountRef->snapshot();
+        $activeSender = $accountSnap->exists() ? (string)($accountSnap->data()['approved_sender_id'] ?? '') : '';
+        if ($activeSender === (string)($reqData['requested_id'] ?? '')) {
+            $accountRef->set([
+                'approved_sender_id' => null,
+                'nola_pro_api_key'   => null,
+                'semaphore_api_key'  => null,
+                'updated_at'         => new \Google\Cloud\Core\Timestamp(new \DateTime())
+            ], ['merge' => true]);
+        }
 
         // ── Remove sender from dynamic master whitelist ─────────────────────────
         if (!empty($reqData['requested_id'])) {
@@ -315,9 +342,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
     } elseif ($status === 'deleted') {
+        // If this deleted request is the active sender, remove it from the account too.
+        $docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
+        $accountRef = $db->collection('integrations')->document($docId);
+        $accountSnap = $accountRef->snapshot();
+        $activeSender = $accountSnap->exists() ? (string)($accountSnap->data()['approved_sender_id'] ?? '') : '';
+        if ($activeSender === (string)($reqData['requested_id'] ?? '')) {
+            $accountRef->set([
+                'approved_sender_id' => null,
+                'nola_pro_api_key'   => null,
+                'semaphore_api_key'  => null,
+                'updated_at'         => new \Google\Cloud\Core\Timestamp(new \DateTime())
+            ], ['merge' => true]);
+        }
+
+        if (!empty($reqData['requested_id'])) {
+            $db->collection('admin_config')->document('master_senders')->set([
+                'approved_senders' => \Google\Cloud\Firestore\FieldValue::arrayRemove([$reqData['requested_id']]),
+                'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+            ], ['merge' => true]);
+        }
+
         // Physical deletion of the request document
         $requestRef->delete();
-        echo json_encode(['status' => 'success', 'message' => "Request deleted successfully."]);
+        echo json_encode(['status' => 'success', 'message' => "Request deleted and active sender cleared if it was in use."]);
         exit;
     }
 
