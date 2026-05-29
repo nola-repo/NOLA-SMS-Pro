@@ -77,6 +77,15 @@ foreach ($subaccountQuery as $doc) {
                 'subaccount'
             );
             echo "SUCCESS\n";
+
+            // Strip 'ghl_' prefix to get pure location_id
+            $locationId = str_replace('ghl_', '', $doc->id());
+            try {
+                require_once __DIR__ . '/../services/NotificationService.php';
+                NotificationService::notifyTopUpSuccess($db, $locationId, $amount, $balance + $amount);
+            } catch (\Throwable $e) {
+                error_log("[auto_recharge_cron.php] Failed to send top up success notification: " . $e->getMessage());
+            }
         } catch (\Exception $e) {
             echo "FAILED: " . $e->getMessage() . "\n";
         }

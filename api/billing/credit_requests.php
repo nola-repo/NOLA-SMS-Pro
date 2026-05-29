@@ -176,6 +176,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             if (!$result['success']) {
                 http_response_code(400);
+            } else {
+                try {
+                    require_once __DIR__ . '/../services/NotificationService.php';
+                    NotificationService::notifyTopUpSuccess($db, $location_id, $amount, (int)$result['subaccount_balance']);
+                } catch (\Throwable $e) {
+                    error_log("[credit_requests.php] Failed to send top up success notification: " . $e->getMessage());
+                }
             }
             echo json_encode($result);
         }

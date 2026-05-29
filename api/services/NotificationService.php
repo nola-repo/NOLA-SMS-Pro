@@ -948,6 +948,260 @@ class NotificationService
     }
 
     /**
+     * Create or update a contact in the central NOLA CRM GHL location and
+     * populate the NOLA alert custom fields for a Top-up Success event.
+     * Optionally cycles the alert tag so the central workflow triggers.
+     *
+     * Required env vars:
+     *   NOLA_ALERT_GHL_LOCATION_ID       — central GHL location id
+     *   NOLA_ALERT_GHL_TOKEN_REGISTRY_ID — Firestore ghl_tokens key (defaults to location id)
+     *   NOLA_ALERT_TOP_UP_SUCCESS_TAG    — tag name (default: nola-top-up-success-alert)
+     */
+    private static function syncCentralTopUpSuccessContact(
+        $db,
+        string $sourceLocationId,
+        string $email,
+        string $name,
+        int $newBalance,
+        string $description,
+        string $sourceLocationName
+    ): ?string {
+        require_once __DIR__ . '/GhlClient.php';
+
+        // ── 1. Read required env vars ──────────────────────────────────────
+        $centralLocationId = getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: '';
+        if ($centralLocationId === '') {
+            error_log(
+                "[TopUpSuccessAlert::syncCentral] NOLA_ALERT_GHL_LOCATION_ID is not set. "
+                . "Cannot send top-up success email for source location {$sourceLocationId}."
+            );
+            return null;
+        }
+
+        $centralTokenRegistryId = getenv('NOLA_ALERT_GHL_TOKEN_REGISTRY_ID') ?: $centralLocationId;
+        $alertTag               = getenv('NOLA_ALERT_TOP_UP_SUCCESS_TAG') ?: 'nola-top-up-success-alert';
+
+        // ── 2. Initialise GHL client for the central location ──────────────
+        try {
+            $ghlClient = new \GhlClient($db, $centralLocationId, $centralTokenRegistryId);
+        } catch (\Throwable $e) {
+            error_log(
+                "[TopUpSuccessAlert::syncCentral] Failed to initialise GhlClient "
+                . "(central={$centralLocationId}, registry={$centralTokenRegistryId}, "
+                . "source={$sourceLocationId}): " . $e->getMessage()
+            );
+            return null;
+        }
+
+        $contactId = null;
+
+        // ── 3. Search for existing contact by email in central location ────
+        try {
+            $searchUrl  = '/contacts/?locationId=' . urlencode($centralLocationId) . '&query=' . urlencode($email);
+            $searchResp = $ghlClient->request('GET', $searchUrl);
+            if ($searchResp['status'] === 200) {
+                $searchData = json_decode($searchResp['body'], true);
+                $contacts   = $searchData['contacts'] ?? $searchData['data'] ?? [];
+                if (is_array($contacts)) {
+                    foreach ($contacts as $c) {
+                        if (isset($c['email']) && strtolower(trim((string)$c['email'])) === strtolower(trim($email))) {
+                            $contactId = $c['id'];
+                            break;
+                        }
+                    }
+                }
+            } else {
+                error_log(
+                    "[TopUpSuccessAlert::syncCentral] Contact search failed "
+                    . "(central={$centralLocationId}, source={$sourceLocationId}, email={$email}, "
+                    . "operation=search, http=" . $searchResp['status'] . "): "
+                    . substr($searchResp['body'], 0, 500)
+                );
+            }
+        } catch (\Throwable $e) {
+            error_log(
+                "[TopUpSuccessAlert::syncCentral] Contact search exception "
+                . "(central={$centralLocationId}, source={$sourceLocationId}): " . $e->getMessage()
+            );
+        }
+
+        // ── 4. Resolve real GHL custom field IDs from cache or API ─────────
+        $fieldIdMap = self::resolveCentralGhlCustomFieldIds($db, $ghlClient, $centralLocationId);
+
+        // ── 5. Build alert custom fields payload ───────────────────────────
+        $now       = new \DateTimeImmutable();
+        $timestamp = $now->format('c');
+        $alertId   = "top_up_{$sourceLocationId}_" . $now->format('YmdHis');
+
+        $alertFields = [
+            'nola_sms_alert_type'            => 'top_up_success',
+            'nola_sms_alert_id'              => $alertId,
+            'nola_sms_alerted_at'            => $timestamp,
+            'nola_sms_registered_email'      => $email,
+            'nola_sms_source_location_id'    => $sourceLocationId,
+            'nola_sms_source_location_name'  => $sourceLocationName,
+            'nola_sms_balance'               => $newBalance,
+            'nola_sms_admin_notes'           => $description,
+        ];
+
+        $ghlCustomFields = [];
+        foreach ($alertFields as $k => $v) {
+            $fieldId = $fieldIdMap[$k] ?? null;
+            if (!$fieldId) {
+                error_log("[TopUpSuccessAlert::syncCentral] Warning: no GHL field ID for key '{$k}' — field will be skipped.");
+                continue;
+            }
+            $ghlCustomFields[] = ['id' => $fieldId, 'value' => (string) $v];
+        }
+
+        // ── 6. Build contact name parts ────────────────────────────────────
+        $firstName = 'NOLA SMS';
+        $lastName  = 'Alert Contact';
+        if ($name) {
+            $parts     = explode(' ', trim($name), 2);
+            $firstName = $parts[0];
+            $lastName  = $parts[1] ?? '';
+        }
+
+        $contactPayload = [
+            'locationId'   => $centralLocationId,
+            'email'        => $email,
+            'firstName'    => $firstName,
+            'lastName'     => $lastName,
+            'customFields' => $ghlCustomFields,
+        ];
+
+        // ── 7. Upsert contact (update if found, create if not) ─────────────
+        if ($contactId) {
+            try {
+                $updatePayload = $contactPayload;
+                unset($updatePayload['locationId']);
+                $updateResp = $ghlClient->request('PUT', "/contacts/{$contactId}", json_encode($updatePayload));
+                if ($updateResp['status'] >= 400) {
+                    error_log(
+                        "[TopUpSuccessAlert::syncCentral] Contact update failed "
+                        . "(central={$centralLocationId}, source={$sourceLocationId}, email={$email}, "
+                        . "contact={$contactId}, operation=update, http=" . $updateResp['status'] . "): "
+                        . substr($updateResp['body'], 0, 500)
+                    );
+                    return null;
+                }
+            } catch (\Throwable $e) {
+                error_log(
+                    "[TopUpSuccessAlert::syncCentral] Contact update exception "
+                    . "(central={$centralLocationId}, source={$sourceLocationId}): " . $e->getMessage()
+                );
+                return null;
+            }
+        } else {
+            try {
+                $createResp = $ghlClient->request('POST', '/contacts/', json_encode($contactPayload));
+                if ($createResp['status'] === 200 || $createResp['status'] === 201) {
+                    $createData = json_decode($createResp['body'], true);
+                    $contactId  = $createData['contact']['id'] ?? $createData['id'] ?? null;
+                } else {
+                    error_log(
+                        "[TopUpSuccessAlert::syncCentral] Contact create failed "
+                        . "(central={$centralLocationId}, source={$sourceLocationId}, email={$email}, "
+                        . "operation=create, http=" . $createResp['status'] . "): "
+                        . substr($createResp['body'], 0, 500)
+                    );
+                    return null;
+                }
+            } catch (\Throwable $e) {
+                error_log(
+                    "[TopUpSuccessAlert::syncCentral] Contact create exception "
+                    . "(central={$centralLocationId}, source={$sourceLocationId}): " . $e->getMessage()
+                );
+                return null;
+            }
+        }
+
+        if (!$contactId) {
+            error_log(
+                "[TopUpSuccessAlert::syncCentral] No contact id after upsert "
+                . "(central={$centralLocationId}, source={$sourceLocationId}, email={$email})"
+            );
+            return null;
+        }
+
+        // ── 8. Cycle alert tag to trigger the central workflow ─────────────
+        try {
+            $ghlClient->request('DELETE', "/contacts/{$contactId}/tags", json_encode(['tags' => [$alertTag]]));
+            $tagResp = $ghlClient->request('POST', "/contacts/{$contactId}/tags", json_encode(['tags' => [$alertTag]]));
+            if ($tagResp['status'] >= 400) {
+                error_log(
+                    "[TopUpSuccessAlert::syncCentral] Tag cycle failed "
+                    . "(central={$centralLocationId}, source={$sourceLocationId}, contact={$contactId}, "
+                    . "operation=tag, http=" . $tagResp['status'] . "): "
+                    . substr($tagResp['body'], 0, 300)
+                );
+            }
+        } catch (\Throwable $e) {
+            error_log(
+                "[TopUpSuccessAlert::syncCentral] Tag cycle exception "
+                . "(central={$centralLocationId}, source={$sourceLocationId}): " . $e->getMessage()
+            );
+        }
+
+        return $contactId;
+    }
+
+    /**
+     * Dispatch email notification for a successful Top-up.
+     *
+     * @param \Google\Cloud\Firestore\FirestoreClient $db
+     * @param string $locationId
+     * @param int $amount
+     * @param int $newBalance
+     */
+    public static function notifyTopUpSuccess($db, string $locationId, int $amount, int $newBalance): void
+    {
+        // ── 1. Resolve registered account details ────────────────────────
+        $details = self::getAccountDetails($db, $locationId);
+        $email   = $details['email'];
+        $name    = $details['name'] ?? 'NOLA Owner';
+
+        if (!$email) {
+            error_log("[TopUpSuccessAlert] No registered account email found for location {$locationId}, skipping central sync.");
+            return;
+        }
+
+        // ── 2. Resolve source location name ──────────────────────────────
+        $sourceLocationName = '';
+        try {
+            $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
+            $snap = $db->collection('integrations')->document($intDocId)->snapshot();
+            if ($snap->exists()) {
+                $sourceLocationName = (string) ($snap->data()['location_name'] ?? '');
+            }
+            if ($sourceLocationName === '') {
+                $tokenSnap = $db->collection('ghl_tokens')->document($locationId)->snapshot();
+                if ($tokenSnap->exists()) {
+                    $sourceLocationName = (string) ($tokenSnap->data()['location_name'] ?? '');
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log("[TopUpSuccessAlert] Could not resolve location name for {$locationId}: " . $e->getMessage());
+        }
+
+        $description = "+{$amount} credits successfully loaded";
+
+        // ── 3. Sync to central GHL location ──────────────────────────────
+        error_log("[TopUpSuccessAlert] Triggering central GHL sync for location {$locationId} (email: {$email}, amount: {$amount}, balance: {$newBalance})");
+
+        self::syncCentralTopUpSuccessContact(
+            $db,
+            $locationId,
+            $email,
+            $name,
+            $newBalance,
+            $description,
+            $sourceLocationName
+        );
+    }
+
+    /**
      * Check if a low-balance alert should be sent after a credit deduction.
      *
      * Uses the central NOLA CRM GHL location to send a single workflow email
