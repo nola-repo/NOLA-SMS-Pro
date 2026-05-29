@@ -112,6 +112,14 @@ try {
             'updated_at' => $now
         ]);
 
+        // 3. Dispatch pending email notification
+        try {
+            require_once __DIR__ . '/services/NotificationService.php';
+            NotificationService::notifySenderIdStatus($db, $locId, $requestedId, 'pending');
+        } catch (\Throwable $e) {
+            error_log("[sender-requests.php] Failed to send sender ID pending notification: " . $e->getMessage());
+        }
+
         echo json_encode(['status' => 'success', 'id' => $requestId]);
         exit;
     }

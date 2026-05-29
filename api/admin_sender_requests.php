@@ -321,6 +321,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
+    // 3. Dispatch approval or rejection notification
+    if (in_array($status, ['approved', 'rejected'])) {
+        try {
+            require_once __DIR__ . '/services/NotificationService.php';
+            NotificationService::notifySenderIdStatus($db, $locId, $reqData['requested_id'], $status, $note);
+        } catch (\Throwable $e) {
+            error_log("[admin_sender_requests.php] Failed to send sender ID notification ($status): " . $e->getMessage());
+        }
+    }
+
     echo json_encode(['status' => 'success', 'message' => "Request $status and account updated."]);
     exit;
 }

@@ -419,6 +419,8 @@ class NotificationService
             'nola_sms_registered_email',
             'nola_sms_source_location_id',
             'nola_sms_source_location_name',
+            'nola_sms_requested_sender_id',
+            'nola_sms_admin_notes',
         ];
 
         // Return immediately if all required IDs are already cached
@@ -685,6 +687,264 @@ class NotificationService
         }
 
         return $contactId;
+    }
+
+    /**
+     * Create or update a contact in the central NOLA CRM GHL location and
+     * populate the NOLA alert custom fields for a Sender ID request.
+     * Optionally cycles the alert tag so the central workflow triggers.
+     *
+     * Required env vars:
+     *   NOLA_ALERT_GHL_LOCATION_ID       — central GHL location id
+     *   NOLA_ALERT_GHL_TOKEN_REGISTRY_ID — Firestore ghl_tokens key (defaults to location id)
+     *   NOLA_ALERT_SENDER_ID_TAG         — tag name (default: nola-sender-id-alert)
+     */
+    private static function syncCentralSenderIdContact(
+        $db,
+        string $sourceLocationId,
+        string $email,
+        string $name,
+        string $requestedSenderId,
+        string $alertType, // 'sender_id_pending', 'sender_id_approved', 'sender_id_rejected'
+        ?string $adminNotes,
+        string $sourceLocationName
+    ): ?string {
+        require_once __DIR__ . '/GhlClient.php';
+
+        // ── 1. Read required env vars ──────────────────────────────────────
+        $centralLocationId = getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: '';
+        if ($centralLocationId === '') {
+            error_log(
+                "[SenderIdAlert::syncCentral] NOLA_ALERT_GHL_LOCATION_ID is not set. "
+                . "Cannot send sender ID email for source location {$sourceLocationId}."
+            );
+            return null;
+        }
+
+        $centralTokenRegistryId = getenv('NOLA_ALERT_GHL_TOKEN_REGISTRY_ID') ?: $centralLocationId;
+        $alertTag               = getenv('NOLA_ALERT_SENDER_ID_TAG') ?: 'nola-sender-id-alert';
+
+        // ── 2. Initialise GHL client for the central location ──────────────
+        try {
+            $ghlClient = new \GhlClient($db, $centralLocationId, $centralTokenRegistryId);
+        } catch (\Throwable $e) {
+            error_log(
+                "[SenderIdAlert::syncCentral] Failed to initialise GhlClient "
+                . "(central={$centralLocationId}, registry={$centralTokenRegistryId}, "
+                . "source={$sourceLocationId}): " . $e->getMessage()
+            );
+            return null;
+        }
+
+        $contactId = null;
+
+        // ── 3. Search for existing contact by email in central location ────
+        try {
+            $searchUrl  = '/contacts/?locationId=' . urlencode($centralLocationId) . '&query=' . urlencode($email);
+            $searchResp = $ghlClient->request('GET', $searchUrl);
+            if ($searchResp['status'] === 200) {
+                $searchData = json_decode($searchResp['body'], true);
+                $contacts   = $searchData['contacts'] ?? $searchData['data'] ?? [];
+                if (is_array($contacts)) {
+                    foreach ($contacts as $c) {
+                        if (isset($c['email']) && strtolower(trim((string)$c['email'])) === strtolower(trim($email))) {
+                            $contactId = $c['id'];
+                            break;
+                        }
+                    }
+                }
+            } else {
+                error_log(
+                    "[SenderIdAlert::syncCentral] Contact search failed "
+                    . "(central={$centralLocationId}, source={$sourceLocationId}, email={$email}, "
+                    . "operation=search, http=" . $searchResp['status'] . "): "
+                    . substr($searchResp['body'], 0, 500)
+                );
+            }
+        } catch (\Throwable $e) {
+            error_log(
+                "[SenderIdAlert::syncCentral] Contact search exception "
+                . "(central={$centralLocationId}, source={$sourceLocationId}): " . $e->getMessage()
+            );
+        }
+
+        // ── 4. Resolve real GHL custom field IDs from cache or API ─────────
+        $fieldIdMap = self::resolveCentralGhlCustomFieldIds($db, $ghlClient, $centralLocationId);
+
+        // ── 5. Build alert custom fields payload ───────────────────────────
+        $now       = new \DateTimeImmutable();
+        $timestamp = $now->format('c');
+        $alertId   = "sender_id_{$sourceLocationId}_{$requestedSenderId}_" . $now->format('YmdHis');
+
+        $alertFields = [
+            'nola_sms_alert_type'            => $alertType,
+            'nola_sms_alert_id'              => $alertId,
+            'nola_sms_alerted_at'            => $timestamp,
+            'nola_sms_registered_email'      => $email,
+            'nola_sms_source_location_id'    => $sourceLocationId,
+            'nola_sms_source_location_name'  => $sourceLocationName,
+            'nola_sms_requested_sender_id'   => $requestedSenderId,
+            'nola_sms_admin_notes'           => $adminNotes ?? '',
+        ];
+
+        $ghlCustomFields = [];
+        foreach ($alertFields as $k => $v) {
+            $fieldId = $fieldIdMap[$k] ?? null;
+            if (!$fieldId) {
+                error_log("[SenderIdAlert::syncCentral] Warning: no GHL field ID for key '{$k}' — field will be skipped.");
+                continue;
+            }
+            $ghlCustomFields[] = ['id' => $fieldId, 'value' => (string) $v];
+        }
+
+        // ── 6. Build contact name parts ────────────────────────────────────
+        $firstName = 'NOLA SMS';
+        $lastName  = 'Alert Contact';
+        if ($name) {
+            $parts     = explode(' ', trim($name), 2);
+            $firstName = $parts[0];
+            $lastName  = $parts[1] ?? '';
+        }
+
+        $contactPayload = [
+            'locationId'   => $centralLocationId,
+            'email'        => $email,
+            'firstName'    => $firstName,
+            'lastName'     => $lastName,
+            'customFields' => $ghlCustomFields,
+        ];
+
+        // ── 7. Upsert contact (update if found, create if not) ─────────────
+        if ($contactId) {
+            try {
+                $updatePayload = $contactPayload;
+                unset($updatePayload['locationId']);
+                $updateResp = $ghlClient->request('PUT', "/contacts/{$contactId}", json_encode($updatePayload));
+                if ($updateResp['status'] >= 400) {
+                    error_log(
+                        "[SenderIdAlert::syncCentral] Contact update failed "
+                        . "(central={$centralLocationId}, source={$sourceLocationId}, email={$email}, "
+                        . "contact={$contactId}, operation=update, http=" . $updateResp['status'] . "): "
+                        . substr($updateResp['body'], 0, 500)
+                    );
+                    return null;
+                }
+            } catch (\Throwable $e) {
+                error_log(
+                    "[SenderIdAlert::syncCentral] Contact update exception "
+                    . "(central={$centralLocationId}, source={$sourceLocationId}): " . $e->getMessage()
+                );
+                return null;
+            }
+        } else {
+            try {
+                $createResp = $ghlClient->request('POST', '/contacts/', json_encode($contactPayload));
+                if ($createResp['status'] === 200 || $createResp['status'] === 201) {
+                    $createData = json_decode($createResp['body'], true);
+                    $contactId  = $createData['contact']['id'] ?? $createData['id'] ?? null;
+                } else {
+                    error_log(
+                        "[SenderIdAlert::syncCentral] Contact create failed "
+                        . "(central={$centralLocationId}, source={$sourceLocationId}, email={$email}, "
+                        . "operation=create, http=" . $createResp['status'] . "): "
+                        . substr($createResp['body'], 0, 500)
+                    );
+                    return null;
+                }
+            } catch (\Throwable $e) {
+                error_log(
+                    "[SenderIdAlert::syncCentral] Contact create exception "
+                    . "(central={$centralLocationId}, source={$sourceLocationId}): " . $e->getMessage()
+                );
+                return null;
+            }
+        }
+
+        if (!$contactId) {
+            error_log(
+                "[SenderIdAlert::syncCentral] No contact id after upsert "
+                . "(central={$centralLocationId}, source={$sourceLocationId}, email={$email})"
+            );
+            return null;
+        }
+
+        // ── 8. Cycle alert tag to trigger the central workflow ─────────────
+        try {
+            $ghlClient->request('DELETE', "/contacts/{$contactId}/tags", json_encode(['tags' => [$alertTag]]));
+            $tagResp = $ghlClient->request('POST', "/contacts/{$contactId}/tags", json_encode(['tags' => [$alertTag]]));
+            if ($tagResp['status'] >= 400) {
+                error_log(
+                    "[SenderIdAlert::syncCentral] Tag cycle failed "
+                    . "(central={$centralLocationId}, source={$sourceLocationId}, contact={$contactId}, "
+                    . "operation=tag, http=" . $tagResp['status'] . "): "
+                    . substr($tagResp['body'], 0, 300)
+                );
+            }
+        } catch (\Throwable $e) {
+            error_log(
+                "[SenderIdAlert::syncCentral] Tag cycle exception "
+                . "(central={$centralLocationId}, source={$sourceLocationId}): " . $e->getMessage()
+            );
+        }
+
+        return $contactId;
+    }
+
+    /**
+     * Dispatch email notification for Sender ID requests and status updates.
+     *
+     * @param \Google\Cloud\Firestore\FirestoreClient $db
+     * @param string $locationId
+     * @param string $requestedSenderId
+     * @param string $status                  'pending', 'approved', 'rejected'
+     * @param string|null $adminNotes         Notes or rejection reason
+     */
+    public static function notifySenderIdStatus($db, string $locationId, string $requestedSenderId, string $status, ?string $adminNotes = null): void
+    {
+        // ── 1. Resolve registered account details ────────────────────────
+        $details = self::getAccountDetails($db, $locationId);
+        $email   = $details['email'];
+        $name    = $details['name'] ?? 'NOLA Owner';
+
+        if (!$email) {
+            error_log("[SenderIdAlert] No registered account email found for location {$locationId}, skipping central sync.");
+            return;
+        }
+
+        // ── 2. Resolve source location name ──────────────────────────────
+        $sourceLocationName = '';
+        try {
+            $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
+            $snap = $db->collection('integrations')->document($intDocId)->snapshot();
+            if ($snap->exists()) {
+                $sourceLocationName = (string) ($snap->data()['location_name'] ?? '');
+            }
+            if ($sourceLocationName === '') {
+                $tokenSnap = $db->collection('ghl_tokens')->document($locationId)->snapshot();
+                if ($tokenSnap->exists()) {
+                    $sourceLocationName = (string) ($tokenSnap->data()['location_name'] ?? '');
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log("[SenderIdAlert] Could not resolve location name for {$locationId}: " . $e->getMessage());
+        }
+
+        // ── 3. Normalize alert type ──────────────────────────────────────
+        $alertType = 'sender_id_' . strtolower($status);
+
+        // ── 4. Sync to central GHL location ──────────────────────────────
+        error_log("[SenderIdAlert] Triggering central GHL sync for location {$locationId} (email: {$email}, sender: {$requestedSenderId}, status: {$status})");
+
+        self::syncCentralSenderIdContact(
+            $db,
+            $locationId,
+            $email,
+            $name,
+            $requestedSenderId,
+            $alertType,
+            $adminNotes,
+            $sourceLocationName
+        );
     }
 
     /**
