@@ -327,7 +327,9 @@ class NotificationService
         if ($contactId) {
             // Update
             try {
-                $updateResp = $ghlClient->request('PUT', "/contacts/{$contactId}", json_encode($contactPayload));
+                $updatePayload = $contactPayload;
+                unset($updatePayload['locationId']);
+                $updateResp = $ghlClient->request('PUT', "/contacts/{$contactId}", json_encode($updatePayload));
                 if ($updateResp['status'] >= 400) {
                     error_log("[NotificationService::syncGhlContactBridge] GHL Contact Update FAIL! LocationID: {$locationId}, Email: {$email}, Status: " . $updateResp['status'] . ", Response: " . $updateResp['body']);
                 }
@@ -610,7 +612,9 @@ class NotificationService
         // ── 7. Upsert contact (update if found, create if not) ─────────────
         if ($contactId) {
             try {
-                $updateResp = $ghlClient->request('PUT', "/contacts/{$contactId}", json_encode($contactPayload));
+                $updatePayload = $contactPayload;
+                unset($updatePayload['locationId']);
+                $updateResp = $ghlClient->request('PUT', "/contacts/{$contactId}", json_encode($updatePayload));
                 if ($updateResp['status'] >= 400) {
                     error_log(
                         "[LowBalanceAlert::syncCentral] Contact update failed "
