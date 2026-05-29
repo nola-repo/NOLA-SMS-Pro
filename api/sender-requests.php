@@ -124,6 +124,44 @@ try {
         exit;
     }
 
+    if ($method === 'DELETE') {
+        $raw = file_get_contents('php://input');
+        $payload = json_decode($raw, true);
+        if (!is_array($payload)) $payload = $_GET;
+
+        $requestId = $payload['request_id'] ?? $payload['id'] ?? null;
+        if (!$requestId) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'Missing request_id']);
+            exit;
+        }
+
+        $requestRef = $db->collection('sender_id_requests')->document((string)$requestId);
+        $requestSnap = $requestRef->snapshot();
+        if (!$requestSnap->exists()) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Request not found']);
+            exit;
+        }
+
+        $data = $requestSnap->data();
+        if (($data['location_id'] ?? '') !== $locId) {
+            http_response_code(403);
+            echo json_encode(['status' => 'error', 'message' => 'Request does not belong to this account']);
+            exit;
+        }
+
+        if (($data['status'] ?? 'pending') !== 'pending') {
+            http_response_code(409);
+            echo json_encode(['status' => 'error', 'message' => 'Only pending requests can be cancelled']);
+            exit;
+        }
+
+        $requestRef->delete();
+        echo json_encode(['status' => 'success', 'message' => 'Sender request cancelled']);
+        exit;
+    }
+
     http_response_code(405);
     echo json_encode(['status' => 'error', 'message' => 'Method Not Allowed']);
 
