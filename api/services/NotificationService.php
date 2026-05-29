@@ -589,7 +589,8 @@ class NotificationService
                 error_log("[LowBalanceAlert::syncCentral] Warning: no GHL field ID for key '{$k}' — field will be skipped.");
                 continue;
             }
-            $ghlCustomFields[] = ['id' => $fieldId, 'value' => $v];
+            // GHL API requires string values for TEXT custom fields; ints may be silently ignored.
+            $ghlCustomFields[] = ['id' => $fieldId, 'value' => (string) $v];
         }
 
         // ── 6. Build contact name parts ────────────────────────────────────
