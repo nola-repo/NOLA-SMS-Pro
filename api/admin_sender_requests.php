@@ -125,6 +125,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $updateData['approved_sender_id'] = $payload['sender_id'];
         }
         if (isset($payload['api_key']) && !empty($payload['api_key'])) {
+            $apiKeyToValidate = $payload['api_key'];
+            $ch = curl_init('https://api.semaphore.co/api/v4/account?apikey=' . urlencode($apiKeyToValidate));
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+            curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if ($httpCode !== 200) {
+                http_response_code(400);
+                echo json_encode(['status' => 'error', 'message' => 'Invalid API Key. Verification failed.']);
+                exit;
+            }
+
             $updateData['nola_pro_api_key']   = $payload['api_key'];
             $updateData['semaphore_api_key']  = $payload['api_key'];
         }
@@ -257,6 +271,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $reqData = $reqSnapshot->data();
     $locId = $reqData['location_id'];
+
+    if ($status === 'approved' && !empty($apiKey)) {
+        $ch = curl_init('https://api.semaphore.co/api/v4/account?apikey=' . urlencode($apiKey));
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+        curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($httpCode !== 200) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'Invalid API Key. Verification failed.']);
+            exit;
+        }
+    }
 
     $updateData = ['status' => $status];
     if ($status === 'rejected' && $note) {
