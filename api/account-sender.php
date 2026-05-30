@@ -35,12 +35,35 @@ try {
 
         $data = $intSnap->exists() ? $intSnap->data() : [];
 
+        $approvedSenderId = $data['approved_sender_id'] ?? null;
+
+        if ($approvedSenderId) {
+            $approvedQuery = $db->collection('sender_id_requests')
+                ->where('location_id', '==', $locId)
+                ->where('status', '==', 'approved')
+                ->documents();
+
+            $stillApproved = false;
+            foreach ($approvedQuery as $requestDoc) {
+                if (!$requestDoc->exists()) continue;
+                $requestData = $requestDoc->data();
+                if (strtolower(trim((string)($requestData['requested_id'] ?? ''))) === strtolower(trim((string)$approvedSenderId))) {
+                    $stillApproved = true;
+                    break;
+                }
+            }
+
+            if (!$stillApproved) {
+                $approvedSenderId = null;
+            }
+        }
+
         echo json_encode([
             'status' => 'success',
             'data' => [
-                'sender_id' => $data['approved_sender_id'] ?? null,
-                'verified' => !empty($data['approved_sender_id']),
-                'approved_sender_id' => $data['approved_sender_id'] ?? null,
+                'sender_id' => $approvedSenderId,
+                'verified' => !empty($approvedSenderId),
+                'approved_sender_id' => $approvedSenderId,
                 'nola_pro_api_key' => $data['nola_pro_api_key'] ?? ($data['semaphore_api_key'] ?? null),
                 'free_usage_count' => $data['free_usage_count'] ?? 0,
                 'free_credits_total' => $data['free_credits_total'] ?? 10,

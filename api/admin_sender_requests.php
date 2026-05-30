@@ -324,7 +324,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $accountSnap = $accountRef->snapshot();
         $activeSender = $accountSnap->exists() ? (string)($accountSnap->data()['approved_sender_id'] ?? '') : '';
-        if ($activeSender === (string)($reqData['requested_id'] ?? '')) {
+        $requestSender = (string)($reqData['requested_id'] ?? '');
+        if ($requestSender !== '' && strtolower(trim($activeSender)) === strtolower(trim($requestSender))) {
             $accountRef->set([
                 'approved_sender_id' => null,
                 'nola_pro_api_key'   => null,
@@ -347,7 +348,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $accountRef = $db->collection('integrations')->document($docId);
         $accountSnap = $accountRef->snapshot();
         $activeSender = $accountSnap->exists() ? (string)($accountSnap->data()['approved_sender_id'] ?? '') : '';
-        if ($activeSender === (string)($reqData['requested_id'] ?? '')) {
+        $requestSender = (string)($reqData['requested_id'] ?? '');
+        if ($requestSender !== '' && strtolower(trim($activeSender)) === strtolower(trim($requestSender))) {
             $accountRef->set([
                 'approved_sender_id' => null,
                 'nola_pro_api_key'   => null,
