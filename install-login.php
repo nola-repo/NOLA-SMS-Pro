@@ -47,23 +47,26 @@ function il_page(string $title, string $body): void {
             overflow-x: hidden;
         }
         .blob {
-            display: none;
+            position: fixed;
+            border-radius: 50%;
+            filter: blur(150px);
+            opacity: 0.06;
+            pointer-events: none;
+            z-index: 0;
         }
         .blob-tl {
-            top: -12%;
-            left: -12%;
-            width: 55vw;
-            height: 55vw;
-            background: radial-gradient(circle, #2b83fa 0%, #1e40af 70%);
-            animation: drift-tl 20s ease-in-out infinite alternate;
+            top: -15%;
+            left: -15%;
+            width: 50vw;
+            height: 50vw;
+            background: #2b83fa;
         }
         .blob-br {
-            bottom: -12%;
-            right: -12%;
-            width: 55vw;
-            height: 55vw;
-            background: radial-gradient(circle, #1d6bd4 0%, #2b83fa 70%);
-            animation: drift-br 25s ease-in-out infinite alternate;
+            bottom: -15%;
+            right: -15%;
+            width: 50vw;
+            height: 50vw;
+            background: #1d6bd4;
         }
         @keyframes drift-tl {
             0% { transform: translate(0, 0) scale(1) rotate(0deg); }
