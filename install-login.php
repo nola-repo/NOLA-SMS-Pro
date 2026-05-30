@@ -34,7 +34,7 @@ function il_page(string $title, string $body): void {
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-        html { font-family: 'Poppins', system-ui, sans-serif; background: #080c14; color: #f4f6fa; -webkit-font-smoothing: antialiased; }
+        html { font-family: 'Poppins', system-ui, sans-serif; background: #151515; color: #f4f6fa; -webkit-font-smoothing: antialiased; }
         body {
             min-height: 100vh;
             display: flex;
@@ -42,18 +42,12 @@ function il_page(string $title, string $body): void {
             justify-content: center;
             align-items: center;
             padding: 20px;
-            background: #080c14;
+            background: #151515;
             position: relative;
             overflow-x: hidden;
         }
         .blob {
-            position: fixed;
-            border-radius: 50%;
-            filter: blur(140px);
-            opacity: 0.15;
-            pointer-events: none;
-            z-index: 0;
-            transition: all 1s ease-in-out;
+            display: none;
         }
         .blob-tl {
             top: -12%;
@@ -83,12 +77,10 @@ function il_page(string $title, string $body): void {
         }
         .card {
             max-width: 460px; width: 100%;
-            background: rgba(13, 18, 30, 0.45);
-            backdrop-filter: blur(30px) saturate(200%);
-            -webkit-backdrop-filter: blur(30px) saturate(200%);
+            background: #1a1b1e;
             border-radius: 28px; padding: 44px 38px;
-            box-shadow: 0 30px 70px -10px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(255, 255, 255, 0.04);
+            box-shadow: 0 30px 70px -10px rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.05);
             animation: card-in 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
             z-index: 10; text-align: left;
         }
@@ -151,14 +143,14 @@ function il_page(string $title, string $body): void {
         
         input[type=email], input[type=password], input[type=text] {
             width: 100%; padding: 13px 16px 13px 42px; border-radius: 14px;
-            border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(13, 18, 30, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.05); background: #151515;
             font-family: inherit; font-size: 14px; outline: none; transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
             color: #f4f6fa; position: relative;
         }
         .pw-wrap input[type=password], .pw-wrap input[type=text] {
             padding-right: 48px;
         }
-        input:focus { border-color: #2b83fa; background: rgba(13, 18, 30, 0.6); box-shadow: 0 0 0 4px rgba(43, 131, 250, 0.25); }
+        input:focus { border-color: #2b83fa; background: #151515; box-shadow: 0 0 0 4px rgba(43, 131, 250, 0.25); }
         .input-wrap-focus .input-icon { color: #2b83fa; }
         
         .pw-wrap { position: relative; }
