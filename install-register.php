@@ -80,7 +80,7 @@ function ir_page(string $title, string $body): void {
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-        html { font-family: 'Poppins', system-ui, sans-serif; background: #151515; color: #f4f6fa; -webkit-font-smoothing: antialiased; }
+        html { font-family: 'Poppins', system-ui, sans-serif; background: #0a0a0b; color: #f4f6fa; -webkit-font-smoothing: antialiased; }
         body {
             min-height: 100vh;
             display: flex;
@@ -88,31 +88,31 @@ function ir_page(string $title, string $body): void {
             justify-content: center;
             align-items: center;
             padding: 20px;
-            background: #151515;
+            background: #0a0a0b;
             position: relative;
             overflow-x: hidden;
         }
         .blob {
             position: fixed;
             border-radius: 50%;
-            filter: blur(150px);
-            opacity: 0.06;
+            filter: blur(120px);
+            opacity: 0.1;
             pointer-events: none;
             z-index: 0;
         }
         .blob-tl {
-            top: -15%;
-            left: -15%;
+            top: -10%;
+            left: -10%;
             width: 50vw;
             height: 50vw;
-            background: #2b83fa;
+            background: #3b82f6;
         }
         .blob-br {
-            bottom: -15%;
-            right: -15%;
+            bottom: -10%;
+            right: -10%;
             width: 50vw;
             height: 50vw;
-            background: #1d6bd4;
+            background: #3b82f6;
         }
         @keyframes drift-tl {
             0% { transform: translate(0, 0) scale(1) rotate(0deg); }
@@ -126,10 +126,12 @@ function ir_page(string $title, string $body): void {
         }
         .card {
             max-width: 480px; width: 100%;
-            background: #1a1b1e;
+            background: rgba(26, 27, 30, 0.7);
+            backdrop-filter: blur(24px) saturate(180%);
+            -webkit-backdrop-filter: blur(24px) saturate(180%);
             border-radius: 28px; padding: 44px 38px;
-            box-shadow: 0 30px 70px -10px rgba(0, 0, 0, 0.5);
-            border: 1px solid rgba(255, 255, 255, 0.05);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.1);
             position: relative; z-index: 10;
             overflow: hidden;
             animation: card-in 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
@@ -170,10 +172,10 @@ function ir_page(string $title, string $body): void {
         .input-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); width: 16px; height: 16px; color: #64748b; pointer-events: none; transition: color 0.25s ease; z-index: 2; }
         input[type=text], input[type=email], input[type=password], input[type=tel] {
             width: 100%; padding: 13px 16px 13px 42px; border-radius: 14px;
-            border: 1px solid rgba(255, 255, 255, 0.05); background: #151515;
+            border: 1px solid rgba(255, 255, 255, 0.05); background: rgba(0, 0, 0, 0.4);
             font-family: inherit; font-size: 14px; outline: none; transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); color: #f4f6fa; position: relative;
         }
-        input:focus { border-color: #2b83fa; background: #151515; box-shadow: 0 0 0 4px rgba(43, 131, 250, 0.25); }
+        input:focus { border-color: #3b82f6; background: rgba(0, 0, 0, 0.4); box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.25); }
         input:focus + .pw-toggle { color: #2b83fa; }
         .input-wrap-focus .input-icon { color: #2b83fa; }
         .pw-toggle { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; color: #64748b; display: flex; align-items: center; justify-content: center; transition: color 0.2s; z-index: 3; }
