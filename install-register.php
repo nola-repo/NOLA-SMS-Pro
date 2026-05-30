@@ -80,7 +80,7 @@ function ir_page(string $title, string $body): void {
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-        html { font-family: 'Poppins', system-ui, sans-serif; background: #f4f6fa; color: #1a1a1a; -webkit-font-smoothing: antialiased; }
+        html { font-family: 'Poppins', system-ui, sans-serif; background: #080c14; color: #f4f6fa; -webkit-font-smoothing: antialiased; }
         body {
             min-height: 100vh;
             display: flex;
@@ -88,7 +88,7 @@ function ir_page(string $title, string $body): void {
             justify-content: center;
             align-items: center;
             padding: 20px;
-            background: linear-gradient(135deg, #f5f8ff 0%, #fcfbfe 50%, #f4f6fc 100%);
+            background: radial-gradient(circle at center, #0c1220 0%, #05080f 100%);
             position: relative;
             overflow-x: hidden;
         }
@@ -96,7 +96,7 @@ function ir_page(string $title, string $body): void {
             position: fixed;
             border-radius: 50%;
             filter: blur(140px);
-            opacity: 0.18;
+            opacity: 0.15;
             pointer-events: none;
             z-index: 0;
             transition: all 1s ease-in-out;
@@ -106,7 +106,7 @@ function ir_page(string $title, string $body): void {
             left: -12%;
             width: 55vw;
             height: 55vw;
-            background: radial-gradient(circle, #2b83fa 0%, #4f46e5 70%);
+            background: radial-gradient(circle, #2b83fa 0%, #1e40af 70%);
             animation: drift-tl 20s ease-in-out infinite alternate;
         }
         .blob-br {
@@ -114,7 +114,7 @@ function ir_page(string $title, string $body): void {
             right: -12%;
             width: 55vw;
             height: 55vw;
-            background: radial-gradient(circle, #7c3aed 0%, #db2777 70%);
+            background: radial-gradient(circle, #00f2fe 0%, #4facfe 70%);
             animation: drift-br 25s ease-in-out infinite alternate;
         }
         @keyframes drift-tl {
@@ -129,31 +129,31 @@ function ir_page(string $title, string $body): void {
         }
         .card {
             max-width: 480px; width: 100%;
-            background: rgba(255, 255, 255, 0.85);
+            background: rgba(13, 18, 30, 0.45);
             backdrop-filter: blur(30px) saturate(200%);
             -webkit-backdrop-filter: blur(30px) saturate(200%);
             border-radius: 28px; padding: 44px 38px;
-            box-shadow: 0 30px 70px -10px rgba(43, 131, 250, 0.12), 0 12px 30px -15px rgba(0, 0, 0, 0.04), inset 0 0 0 1px rgba(255, 255, 255, 0.6);
-            border: 1px solid rgba(255, 255, 255, 0.45);
+            box-shadow: 0 30px 70px -10px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.04);
             position: relative; z-index: 10;
             overflow: hidden;
             animation: card-in 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
         }
         @keyframes card-in { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
         .logo-wrap { display: flex; flex-direction: column; align-items: center; margin-bottom: 32px; text-align: center; }
-        .logo-img { max-height: 52px; width: auto; object-fit: contain; display: block; margin: 0 auto 12px; transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); }
+        .logo-img { max-height: 52px; width: auto; object-fit: contain; display: block; margin: 0 auto 12px; transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); filter: drop-shadow(0 4px 8px rgba(0,0,0,0.3)); }
         .logo-img:hover { transform: scale(1.04); }
         .badge { font-size: 10px; font-weight: 700; color: #2b83fa; text-transform: uppercase; letter-spacing: 1.2px; background: rgba(43, 131, 250, 0.08); padding: 5px 14px; border-radius: 99px; border: 1px solid rgba(43, 131, 250, 0.12); }
         
         /* Step Indicator */
         .steps { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 32px; }
         .step { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 56px; }
-        .step-circle { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; border: 2px solid rgba(0, 0, 0, 0.08); color: #8e8e93; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); background: rgba(248, 250, 252, 0.8); }
-        .step.active .step-circle { background: #fff; border-color: #2b83fa; color: #2b83fa; box-shadow: 0 0 0 4px rgba(43, 131, 250, 0.1); }
+        .step-circle { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; border: 2px solid rgba(255, 255, 255, 0.08); color: #8e8e93; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); background: rgba(13, 18, 30, 0.4); }
+        .step.active .step-circle { background: rgba(13, 18, 30, 0.6); border-color: #2b83fa; color: #2b83fa; box-shadow: 0 0 0 4px rgba(43, 131, 250, 0.2); }
         .step.done .step-circle { background: #2b83fa; border-color: #2b83fa; color: #fff; box-shadow: 0 4px 10px rgba(43, 131, 250, 0.15); }
         .step-label { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: #8e8e93; text-align: center; }
         .step.active .step-label { color: #2b83fa; }
-        .step-line { width: 48px; height: 2px; background: rgba(0, 0, 0, 0.06); margin-top: -16px; transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1); border-radius: 2px; }
+        .step-line { width: 48px; height: 2px; background: rgba(255, 255, 255, 0.08); margin-top: -16px; transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1); border-radius: 2px; }
         .step-line.done { background: #2b83fa; }
         
         h1 {
@@ -162,33 +162,33 @@ function ir_page(string $title, string $body): void {
             letter-spacing: -0.6px;
             margin-bottom: 6px;
             text-align: center;
-            background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);
+            background: linear-gradient(135deg, #ffffff 0%, #93c5fd 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
         }
-        p.subtitle { font-size: 13.5px; color: #64748b; margin-bottom: 24px; text-align: center; line-height: 1.45; }
+        p.subtitle { font-size: 13.5px; color: #94a3b8; margin-bottom: 24px; text-align: center; line-height: 1.45; }
         
         /* Form fields */
         .field { margin-bottom: 20px; text-align: left; position: relative; }
-        label { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748b; letter-spacing: 0.8px; margin-bottom: 8px; }
+        label { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; color: #94a3b8; letter-spacing: 0.8px; margin-bottom: 8px; }
         .input-wrap { position: relative; }
-        .input-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); width: 16px; height: 16px; color: #94a3b8; pointer-events: none; transition: color 0.25s ease; z-index: 2; }
+        .input-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); width: 16px; height: 16px; color: #64748b; pointer-events: none; transition: color 0.25s ease; z-index: 2; }
         input[type=text], input[type=email], input[type=password], input[type=tel] {
             width: 100%; padding: 13px 16px 13px 42px; border-radius: 14px;
-            border: 1px solid rgba(0,0,0,0.08); background: rgba(248, 250, 252, 0.7);
-            font-family: inherit; font-size: 14px; outline: none; transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); color: #0f172a; position: relative;
+            border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(13, 18, 30, 0.4);
+            font-family: inherit; font-size: 14px; outline: none; transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); color: #f4f6fa; position: relative;
         }
-        input:focus { border-color: #2b83fa; background: #fff; box-shadow: 0 0 0 4px rgba(43, 131, 250, 0.12); }
+        input:focus { border-color: #2b83fa; background: rgba(13, 18, 30, 0.6); box-shadow: 0 0 0 4px rgba(43, 131, 250, 0.25); }
         input:focus + .pw-toggle { color: #2b83fa; }
         .input-wrap-focus .input-icon { color: #2b83fa; }
-        .pw-toggle { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; color: #94a3b8; display: flex; align-items: center; justify-content: center; transition: color 0.2s; z-index: 3; }
+        .pw-toggle { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; color: #64748b; display: flex; align-items: center; justify-content: center; transition: color 0.2s; z-index: 3; }
         .pw-toggle:hover { color: #2b83fa; }
         .error-msg { font-size: 11.5px; color: #ef4444; font-weight: 600; margin-top: 6px; display: none; align-items: center; gap: 6px; }
         
         /* Strength meter */
         .strength-wrap { display: flex; gap: 6px; margin-bottom: 6px; margin-top: -10px; }
-        .str-bar { height: 4px; flex: 1; border-radius: 2px; background: rgba(0, 0, 0, 0.05); transition: all 0.3s; }
-        .str-text { font-size: 11px; color: #8e8e93; font-weight: 500; margin-bottom: 16px; }
+        .str-bar { height: 4px; flex: 1; border-radius: 2px; background: rgba(255, 255, 255, 0.05); transition: all 0.3s; }
+        .str-text { font-size: 11px; color: #94a3b8; font-weight: 500; margin-bottom: 16px; }
         .str-1 { background: #ef4444; } .str-2 { background: #f59e0b; } .str-3 { background: #60a5fa; } .str-4 { background: #10b981; }
         
         /* Buttons */
@@ -196,13 +196,13 @@ function ir_page(string $title, string $body): void {
             width: 100%; padding: 14px; border-radius: 14px;
             background: linear-gradient(135deg, #2b83fa 0%, #1a70e7 100%); color: #fff; font-size: 14px; font-weight: 700;
             border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;
-            box-shadow: 0 8px 20px -4px rgba(43, 131, 250, 0.3); transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 8px 20px -4px rgba(43, 131, 250, 0.4); transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
         }
-        .btn-submit:hover { box-shadow: 0 12px 28px -4px rgba(43, 131, 250, 0.4); transform: translateY(-2px); }
+        .btn-submit:hover { box-shadow: 0 12px 28px -4px rgba(43, 131, 250, 0.5); transform: translateY(-2px); }
         .btn-submit:active { transform: scale(0.985) translateY(0); }
         .btn-submit:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
-        .btn-back { width: auto; padding: 14px 24px; border-radius: 14px; background: #fff; border: 1px solid rgba(0,0,0,0.08); color: #6e6e73; font-size: 13.5px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; transition: all 0.2s; }
-        .btn-back:hover { background: #f8fafc; border-color: rgba(0, 0, 0, 0.15); color: #111; }
+        .btn-back { width: auto; padding: 14px 24px; border-radius: 14px; background: rgba(13, 18, 30, 0.4); border: 1px solid rgba(255, 255, 255, 0.08); color: #94a3b8; font-size: 13.5px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; transition: all 0.2s; }
+        .btn-back:hover { background: rgba(13, 18, 30, 0.6); border-color: rgba(255, 255, 255, 0.15); color: #fff; }
         
         /* Step containers */
         .step-content { display: none; animation: fade-in 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
@@ -210,22 +210,22 @@ function ir_page(string $title, string $body): void {
         @keyframes fade-in { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: translateX(0); } }
         
         /* Review table */
-        .review-box { background: rgba(248, 250, 252, 0.7); border: 1px solid rgba(0,0,0,0.06); border-radius: 16px; padding: 22px; margin-bottom: 20px; }
-        .review-row { display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 13px; border-bottom: 1px solid rgba(0, 0, 0, 0.03); padding-bottom: 12px; }
+        .review-box { background: rgba(13, 18, 30, 0.4); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 16px; padding: 22px; margin-bottom: 20px; }
+        .review-row { display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 13px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding-bottom: 12px; }
         .review-row:last-child { margin-bottom: 0; border-bottom: none; padding-bottom: 0; }
-        .review-label { color: #6e6e73; font-weight: 600; }
-        .review-val { color: #111; font-weight: 700; text-align: right; word-break: break-all; max-width: 60%; }
+        .review-label { color: #94a3b8; font-weight: 600; }
+        .review-val { color: #f4f6fa; font-weight: 700; text-align: right; word-break: break-all; max-width: 60%; }
         .review-val.hl { color: #2b83fa; }
         
         .checkbox-wrap { display: flex; align-items: flex-start; gap: 12px; cursor: pointer; margin-bottom: 24px; }
-        .checkbox { width: 20px; height: 20px; border-radius: 6px; border: 2px solid rgba(0, 0, 0, 0.12); display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all 0.2s ease; background: #fff; }
+        .checkbox { width: 20px; height: 20px; border-radius: 6px; border: 2px solid rgba(255, 255, 255, 0.15); display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all 0.2s ease; background: rgba(13, 18, 30, 0.4); }
         .checkbox.checked { background: #2b83fa; border-color: #2b83fa; box-shadow: 0 4px 10px rgba(43, 131, 250, 0.2); }
-        .check-text { font-size: 12.5px; color: #6e6e73; line-height: 1.5; font-weight: 500; }
+        .check-text { font-size: 12.5px; color: #94a3b8; line-height: 1.5; font-weight: 500; }
         .check-text a { color: #2b83fa; font-weight: 700; text-decoration: none; transition: color 0.2s; }
-        .check-text a:hover { color: #1a70e7; text-decoration: underline; }
+        .check-text a:hover { color: #3b82f6; text-decoration: underline; }
         
-        .api-error { display: none; background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.15); color: #dc2626; padding: 12px; border-radius: 12px; font-size: 12.5px; font-weight: 600; margin-bottom: 20px; align-items: flex-start; gap: 8px; position: relative; overflow: hidden; }
-        .api-error::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: #dc2626; }
+        .api-error { display: none; background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.25); color: #fca5a5; padding: 12px; border-radius: 12px; font-size: 12.5px; font-weight: 600; margin-bottom: 20px; align-items: flex-start; gap: 8px; position: relative; overflow: hidden; }
+        .api-error::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: #ef4444; }
         
         /* Success */
         .success-circle { width: 80px; height: 80px; border-radius: 50%; background: linear-gradient(135deg, #34d399, #059669); margin: 0 auto 24px; display: flex; align-items: center; justify-content: center; box-shadow: 0 12px 30px rgba(16, 185, 129, 0.3); animation: scale-in 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) both; }
@@ -235,9 +235,9 @@ function ir_page(string $title, string $body): void {
         .debug-banner {
             margin-bottom: 18px;
             border-radius: 14px;
-            border: 1px solid rgba(245, 158, 11, 0.2);
-            background: rgba(245, 158, 11, 0.05);
-            color: #92400e;
+            border: 1px solid rgba(245, 158, 11, 0.25);
+            background: rgba(245, 158, 11, 0.08);
+            color: #fcd34d;
             padding: 12px 14px;
             text-align: left;
             font-size: 11px;

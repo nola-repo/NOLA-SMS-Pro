@@ -34,7 +34,7 @@ function il_page(string $title, string $body): void {
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-        html { font-family: 'Poppins', system-ui, sans-serif; background: #f4f6fa; color: #1a1a1a; -webkit-font-smoothing: antialiased; }
+        html { font-family: 'Poppins', system-ui, sans-serif; background: #080c14; color: #f4f6fa; -webkit-font-smoothing: antialiased; }
         body {
             min-height: 100vh;
             display: flex;
@@ -42,7 +42,7 @@ function il_page(string $title, string $body): void {
             justify-content: center;
             align-items: center;
             padding: 20px;
-            background: linear-gradient(135deg, #f5f8ff 0%, #fcfbfe 50%, #f4f6fc 100%);
+            background: radial-gradient(circle at center, #0c1220 0%, #05080f 100%);
             position: relative;
             overflow-x: hidden;
         }
@@ -50,7 +50,7 @@ function il_page(string $title, string $body): void {
             position: fixed;
             border-radius: 50%;
             filter: blur(140px);
-            opacity: 0.18;
+            opacity: 0.15;
             pointer-events: none;
             z-index: 0;
             transition: all 1s ease-in-out;
@@ -60,7 +60,7 @@ function il_page(string $title, string $body): void {
             left: -12%;
             width: 55vw;
             height: 55vw;
-            background: radial-gradient(circle, #2b83fa 0%, #4f46e5 70%);
+            background: radial-gradient(circle, #2b83fa 0%, #1e40af 70%);
             animation: drift-tl 20s ease-in-out infinite alternate;
         }
         .blob-br {
@@ -68,7 +68,7 @@ function il_page(string $title, string $body): void {
             right: -12%;
             width: 55vw;
             height: 55vw;
-            background: radial-gradient(circle, #7c3aed 0%, #db2777 70%);
+            background: radial-gradient(circle, #00f2fe 0%, #4facfe 70%);
             animation: drift-br 25s ease-in-out infinite alternate;
         }
         @keyframes drift-tl {
@@ -83,18 +83,18 @@ function il_page(string $title, string $body): void {
         }
         .card {
             max-width: 460px; width: 100%;
-            background: rgba(255, 255, 255, 0.85);
+            background: rgba(13, 18, 30, 0.45);
             backdrop-filter: blur(30px) saturate(200%);
             -webkit-backdrop-filter: blur(30px) saturate(200%);
             border-radius: 28px; padding: 44px 38px;
-            box-shadow: 0 30px 70px -10px rgba(43, 131, 250, 0.12), 0 12px 30px -15px rgba(0, 0, 0, 0.04), inset 0 0 0 1px rgba(255, 255, 255, 0.6);
-            border: 1px solid rgba(255, 255, 255, 0.45);
+            box-shadow: 0 30px 70px -10px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.04);
             animation: card-in 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
             z-index: 10; text-align: left;
         }
         @keyframes card-in { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
         .logo-wrap { text-align: center; margin-bottom: 32px; }
-        .logo-img { max-height: 52px; width: auto; object-fit: contain; display: block; margin: 0 auto; transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); }
+        .logo-img { max-height: 52px; width: auto; object-fit: contain; display: block; margin: 0 auto; transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); filter: drop-shadow(0 4px 8px rgba(0,0,0,0.3)); }
         .logo-img:hover { transform: scale(1.04); }
         h1 {
             font-size: 26px;
@@ -102,38 +102,38 @@ function il_page(string $title, string $body): void {
             letter-spacing: -0.8px;
             margin-bottom: 6px;
             text-align: center;
-            background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);
+            background: linear-gradient(135deg, #ffffff 0%, #93c5fd 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
         }
-        .subtitle { font-size: 13.5px; color: #64748b; margin-bottom: 28px; font-weight: 500; text-align: center; line-height: 1.45; }
+        .subtitle { font-size: 13.5px; color: #94a3b8; margin-bottom: 28px; font-weight: 500; text-align: center; line-height: 1.45; }
         
         /* Banners */
         .banner-blue {
-            background: rgba(43, 131, 250, 0.05); border: 1px solid rgba(43, 131, 250, 0.15);
+            background: rgba(43, 131, 250, 0.08); border: 1px solid rgba(43, 131, 250, 0.25);
             border-radius: 16px; padding: 14px 18px; margin-bottom: 24px;
             position: relative; overflow: hidden;
         }
         .banner-blue::before {
             content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: #2b83fa;
         }
-        .banner-blue p { font-size: 13px; color: #1e40af; line-height: 1.5; font-weight: 500; padding-left: 4px; }
-        .banner-blue strong { font-weight: 700; color: #1e3a8a; }
+        .banner-blue p { font-size: 13px; color: #93c5fd; line-height: 1.5; font-weight: 500; padding-left: 4px; }
+        .banner-blue strong { font-weight: 700; color: #bfdbfe; }
         
         .banner-amber {
-            background: rgba(245, 158, 11, 0.05); border: 1px solid rgba(245, 158, 11, 0.2);
+            background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.25);
             border-radius: 16px; padding: 14px 18px; margin-bottom: 24px;
             position: relative; overflow: hidden;
         }
         .banner-amber::before {
             content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: #f59e0b;
         }
-        .banner-amber p { font-size: 13px; color: #92400e; line-height: 1.5; font-weight: 500; padding-left: 4px; }
-        .banner-amber strong { font-weight: 700; color: #78350f; }
+        .banner-amber p { font-size: 13px; color: #fcd34d; line-height: 1.5; font-weight: 500; padding-left: 4px; }
+        .banner-amber strong { font-weight: 700; color: #fef08a; }
         
-        .install-progress { height: 6px; border-radius: 999px; background: rgba(245, 158, 11, 0.1); overflow: hidden; margin: 12px 0 10px; }
-        .install-progress-fill { display: block; height: 100%; width: 0%; border-radius: inherit; background: linear-gradient(90deg, #2b83fa, #7c3aed); transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1); }
-        .install-status-detail { font-size: 12px !important; color: #b45309 !important; margin-top: 8px; font-weight: 600; }
+        .install-progress { height: 6px; border-radius: 999px; background: rgba(255, 255, 255, 0.08); overflow: hidden; margin: 12px 0 10px; }
+        .install-progress-fill { display: block; height: 100%; width: 0%; border-radius: inherit; background: linear-gradient(90deg, #2b83fa, #00f2fe); transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1); }
+        .install-status-detail { font-size: 12px !important; color: #fcd34d !important; margin-top: 8px; font-weight: 600; }
         .install-next {
             display: none; margin-top: 14px; width: 100%; text-align: center;
             padding: 12px; border-radius: 14px; background: linear-gradient(135deg, #2b83fa 0%, #1a70e7 100%);
@@ -143,60 +143,60 @@ function il_page(string $title, string $body): void {
         .install-next:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(43, 131, 250, 0.3); }
         
         /* Form */
-        label { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748b; margin-bottom: 8px; letter-spacing: 0.8px; }
+        label { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; color: #94a3b8; margin-bottom: 8px; letter-spacing: 0.8px; }
         .field { margin-bottom: 20px; }
         
         .input-wrap { position: relative; }
-        .input-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); width: 16px; height: 16px; color: #94a3b8; pointer-events: none; transition: color 0.25s ease; z-index: 2; }
+        .input-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); width: 16px; height: 16px; color: #64748b; pointer-events: none; transition: color 0.25s ease; z-index: 2; }
         
         input[type=email], input[type=password], input[type=text] {
             width: 100%; padding: 13px 16px 13px 42px; border-radius: 14px;
-            border: 1px solid rgba(0, 0, 0, 0.08); background: rgba(248, 250, 252, 0.7);
+            border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(13, 18, 30, 0.4);
             font-family: inherit; font-size: 14px; outline: none; transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-            color: #0f172a; position: relative;
+            color: #f4f6fa; position: relative;
         }
         .pw-wrap input[type=password], .pw-wrap input[type=text] {
             padding-right: 48px;
         }
-        input:focus { border-color: #2b83fa; background: #fff; box-shadow: 0 0 0 4px rgba(43, 131, 250, 0.12); }
+        input:focus { border-color: #2b83fa; background: rgba(13, 18, 30, 0.6); box-shadow: 0 0 0 4px rgba(43, 131, 250, 0.25); }
         .input-wrap-focus .input-icon { color: #2b83fa; }
         
         .pw-wrap { position: relative; }
-        .pw-toggle { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; color: #94a3b8; padding: 4px; display: flex; align-items: center; justify-content: center; transition: color 0.2s; z-index: 3; }
+        .pw-toggle { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; color: #64748b; padding: 4px; display: flex; align-items: center; justify-content: center; transition: color 0.2s; z-index: 3; }
         .pw-toggle:hover { color: #2b83fa; }
         
         .btn-submit {
             width: 100%; padding: 14px; border-radius: 14px;
             background: linear-gradient(135deg, #2b83fa 0%, #1a70e7 100%); color: #fff; font-size: 14.5px; font-weight: 700;
             border: none; cursor: pointer; margin-top: 8px;
-            box-shadow: 0 8px 20px -4px rgba(43, 131, 250, 0.3);
+            box-shadow: 0 8px 20px -4px rgba(43, 131, 250, 0.4);
             transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); font-family: inherit;
             display: flex; align-items: center; justify-content: center; gap: 8px;
         }
-        .btn-submit:hover { transform: translateY(-2px); box-shadow: 0 12px 28px -4px rgba(43, 131, 250, 0.4); }
+        .btn-submit:hover { transform: translateY(-2px); box-shadow: 0 12px 28px -4px rgba(43, 131, 250, 0.5); }
         .btn-submit:active { transform: scale(0.985) translateY(0); }
         .btn-submit:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
         
         .error-box {
-            background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.15); border-radius: 14px;
+            background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 14px;
             padding: 12px 16px; margin-bottom: 24px;
-            font-size: 13px; color: #dc2626; font-weight: 600; line-height: 1.45;
+            font-size: 13px; color: #fca5a5; font-weight: 600; line-height: 1.45;
             position: relative; overflow: hidden;
         }
         .error-box::before {
-            content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: #dc2626;
+            content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: #ef4444;
         }
         
         .banner-success {
-            background: rgba(16, 185, 129, 0.05); border: 1px solid rgba(16, 185, 129, 0.15);
+            background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25);
             border-radius: 16px; padding: 14px 18px; margin-bottom: 24px;
             position: relative; overflow: hidden;
         }
         .banner-success::before {
             content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: #10b981;
         }
-        .banner-success p { font-size: 13px; color: #065f46; line-height: 1.5; font-weight: 500; padding-left: 4px; }
-        .banner-success strong { font-weight: 700; color: #047857; }
+        .banner-success p { font-size: 13px; color: #6ee7b7; line-height: 1.5; font-weight: 500; padding-left: 4px; }
+        .banner-success strong { font-weight: 700; color: #a7f3d0; }
         
         .hidden { display: none !important; }
         .fade-in-up { animation: fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) both; }
@@ -205,9 +205,9 @@ function il_page(string $title, string $body): void {
             to { opacity: 1; transform: translateY(0); }
         }
         
-        .footer { font-size: 12.5px; color: #64748b; text-align: center; margin-top: 24px; font-weight: 500; }
+        .footer { font-size: 12.5px; color: #94a3b8; text-align: center; margin-top: 24px; font-weight: 500; }
         .footer a { text-decoration: none; transition: color 0.2s; }
-        .footer a:hover { color: #1a70e7 !important; }
+        .footer a:hover { color: #3b82f6 !important; }
     </style>
 </head>
 <body>
