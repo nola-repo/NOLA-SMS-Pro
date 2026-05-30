@@ -76,7 +76,7 @@ function ir_page(string $title, string $body): void {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{$title} — NOLA SMS Pro</title>
-    <link rel="icon" type="image/png" href="https://smspro-api.nolacrm.io/favicon.png">
+    <link rel="icon" type="image/png" href="https://assets.cdn.filesafe.space/ugBqfQsPtGijLjrmLdmA/media/6a1a6106045e32379f0aa915.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
