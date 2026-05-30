@@ -42,7 +42,7 @@ function il_page(string $title, string $body): void {
             justify-content: center;
             align-items: center;
             padding: 20px;
-            background: radial-gradient(circle at center, #0c1220 0%, #05080f 100%);
+            background: #080c14;
             position: relative;
             overflow-x: hidden;
         }
@@ -68,7 +68,7 @@ function il_page(string $title, string $body): void {
             right: -12%;
             width: 55vw;
             height: 55vw;
-            background: radial-gradient(circle, #00f2fe 0%, #4facfe 70%);
+            background: radial-gradient(circle, #1d6bd4 0%, #2b83fa 70%);
             animation: drift-br 25s ease-in-out infinite alternate;
         }
         @keyframes drift-tl {
@@ -167,13 +167,13 @@ function il_page(string $title, string $body): void {
         
         .btn-submit {
             width: 100%; padding: 14px; border-radius: 14px;
-            background: linear-gradient(135deg, #2b83fa 0%, #1a70e7 100%); color: #fff; font-size: 14.5px; font-weight: 700;
+            background: linear-gradient(90deg, #2b83fa 0%, #1d6bd4 100%); color: #fff; font-size: 14.5px; font-weight: 700;
             border: none; cursor: pointer; margin-top: 8px;
-            box-shadow: 0 8px 20px -4px rgba(43, 131, 250, 0.4);
+            box-shadow: 0 8px 25px rgba(43, 131, 250, 0.4);
             transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); font-family: inherit;
             display: flex; align-items: center; justify-content: center; gap: 8px;
         }
-        .btn-submit:hover { transform: translateY(-2px); box-shadow: 0 12px 28px -4px rgba(43, 131, 250, 0.5); }
+        .btn-submit:hover { transform: translateY(-2px); box-shadow: 0 12px 28px rgba(43, 131, 250, 0.5); }
         .btn-submit:active { transform: scale(0.985) translateY(0); }
         .btn-submit:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
         
