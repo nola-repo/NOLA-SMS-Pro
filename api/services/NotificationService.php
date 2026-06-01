@@ -421,6 +421,7 @@ class NotificationService
             'nola_sms_source_location_name',
             'nola_sms_requested_sender_id',
             'nola_sms_admin_notes',
+            'nola_sms_otp_code',
         ];
 
         // Return immediately if all required IDs are already cached
@@ -1451,5 +1452,97 @@ class NotificationService
         // For now, log the email so it appears in Cloud Run logs.
         error_log("[NotificationService::sendEmail] TO: {$to} | SUBJECT: {$subject}");
         error_log("[NotificationService::sendEmail] BODY: {$body}");
+    }
+
+    /**
+     * Dispatch OTP code via central GHL workflow.
+     *
+     * @param \Google\Cloud\Firestore\FirestoreClient $db
+     * @param string $email
+     * @param string $otp
+     */
+    public static function notifyForgotPasswordOtp($db, string $email, string $otp): void
+    {
+        $centralLocationId = getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: '';
+        if ($centralLocationId === '') {
+            error_log("[forgot_password_otp] NOLA_ALERT_GHL_LOCATION_ID not set. Skipping GHL delivery.");
+            return;
+        }
+
+        require_once __DIR__ . '/GhlClient.php';
+        $centralTokenRegistryId = getenv('NOLA_ALERT_GHL_TOKEN_REGISTRY_ID') ?: $centralLocationId;
+        $alertTag = getenv('NOLA_ALERT_OTP_TAG') ?: 'nola-otp-alert';
+
+        try {
+            $ghlClient = new \GhlClient($db, $centralLocationId, $centralTokenRegistryId);
+            
+            // 1. Search for contact in central location
+            $contactId = null;
+            $searchUrl = '/contacts/?locationId=' . urlencode($centralLocationId) . '&query=' . urlencode($email);
+            $searchResp = $ghlClient->request('GET', $searchUrl);
+            if ($searchResp['status'] === 200) {
+                $searchData = json_decode($searchResp['body'], true);
+                $contacts = $searchData['contacts'] ?? $searchData['data'] ?? [];
+                if (is_array($contacts)) {
+                    foreach ($contacts as $c) {
+                        if (isset($c['email']) && strtolower(trim((string)$c['email'])) === strtolower(trim($email))) {
+                            $contactId = $c['id'];
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // 2. Resolve custom field IDs
+            $fieldIdMap = self::resolveCentralGhlCustomFieldIds($db, $ghlClient, $centralLocationId);
+            
+            $now = new \DateTimeImmutable();
+            $timestamp = $now->format('c');
+            $alertId = "otp_{$email}_" . $now->format('YmdHis');
+
+            $alertFields = [
+                'nola_sms_alert_type' => 'forgot_password_otp',
+                'nola_sms_alert_id'   => $alertId,
+                'nola_sms_otp_code'   => $otp,
+                'nola_sms_alerted_at' => $timestamp,
+            ];
+
+            $ghlCustomFields = [];
+            foreach ($alertFields as $k => $v) {
+                $fieldId = $fieldIdMap[$k] ?? null;
+                if ($fieldId) {
+                    $ghlCustomFields[] = ['id' => $fieldId, 'value' => (string) $v];
+                }
+            }
+
+            $contactPayload = [
+                'locationId'   => $centralLocationId,
+                'email'        => $email,
+                'firstName'    => 'NOLA SMS',
+                'lastName'     => 'User',
+                'customFields' => $ghlCustomFields,
+            ];
+
+            // 3. Upsert
+            if ($contactId) {
+                unset($contactPayload['locationId']);
+                $ghlClient->request('PUT', "/contacts/{$contactId}", json_encode($contactPayload));
+            } else {
+                $createResp = $ghlClient->request('POST', '/contacts/', json_encode($contactPayload));
+                if ($createResp['status'] === 200 || $createResp['status'] === 201) {
+                    $createData = json_decode($createResp['body'], true);
+                    $contactId = $createData['contact']['id'] ?? $createData['id'] ?? null;
+                }
+            }
+
+            // 4. Cycle tag to trigger GHL Workflow
+            if ($contactId) {
+                $ghlClient->request('DELETE', "/contacts/{$contactId}/tags", json_encode(['tags' => [$alertTag]]));
+                $ghlClient->request('POST', "/contacts/{$contactId}/tags", json_encode(['tags' => [$alertTag]]));
+                error_log("[forgot_password_otp] Successfully synced OTP contact to GHL: {$contactId}");
+            }
+        } catch (\Throwable $e) {
+            error_log("[forgot_password_otp] GHL Contact Bridge sync failed: " . $e->getMessage());
+        }
     }
 }

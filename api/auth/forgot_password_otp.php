@@ -90,6 +90,14 @@ try {
             'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
         ], ['merge' => true]);
 
+        // Trigger GHL OTP Notification
+        try {
+            require_once __DIR__ . '/../services/NotificationService.php';
+            \NotificationService::notifyForgotPasswordOtp($db, $email, $otp);
+        } catch (\Throwable $e) {
+            error_log("[forgot_password_otp] GHL Notification Service failed: " . $e->getMessage());
+        }
+
         // Send OTP email with beautiful design
         $subject = "Your 6-Digit Password Reset Verification Code";
         $headers = "From: noreply@nolacrm.io\r\n" .
