@@ -18,6 +18,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 $input = json_decode(file_get_contents('php://input'), true);
 $email = strtolower(trim($input['email'] ?? ''));
+$otpCheck = trim($input['otp_check'] ?? '');
 
 // Always return success to prevent user enumeration
 $response = ['status' => 'success', 'message' => 'If your email is registered, you will receive an OTP code shortly.'];
@@ -74,6 +75,40 @@ try {
                 break;
             }
         }
+    }
+
+    if ($otpCheck !== '') {
+        if (!$userDoc) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'Invalid email or verification code']);
+            exit;
+        }
+
+        $userData = $userDoc->data();
+        $dbOtp = $userData['otp_code'] ?? null;
+        $dbExpires = $userData['otp_expires'] ?? null;
+        $dbVerified = $userData['otp_verified'] ?? false;
+
+        if ($dbOtp === null || $dbOtp !== $otpCheck || $dbVerified === true) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'Invalid or already used verification code']);
+            exit;
+        }
+
+        $isExpired = true;
+        if ($dbExpires instanceof \Google\Cloud\Core\Timestamp) {
+            $isExpired = (time() > $dbExpires->get()->getTimestamp());
+        }
+
+        if ($isExpired) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'Verification code has expired']);
+            exit;
+        }
+
+        // Return successful verification
+        echo json_encode(['status' => 'success', 'message' => 'Verification code verified successfully']);
+        exit;
     }
 
     if ($userDoc) {

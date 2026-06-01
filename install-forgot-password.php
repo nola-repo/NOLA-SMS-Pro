@@ -165,7 +165,8 @@ function ifp_page(string $title, string $body): void {
             margin-bottom: 28px;
         }
         .otp-cell {
-            width: 52px; height: 60px;
+            width: 52px !important; height: 60px;
+            padding: 0 !important;
             border-radius: 14px;
             border: 1.5px solid rgba(255,255,255,0.09);
             background: rgba(0,0,0,0.38);
@@ -301,14 +302,7 @@ $bodyContent = <<<HTML
          STEP 1 — Email Entry
     ════════════════════════════════════════ -->
     <div id="step1-wrapper">
-        <!-- Progress -->
-        <div class="step-progress">
-            <div class="step-dot active" id="dot1">1</div>
-            <div class="step-line" id="line1"></div>
-            <div class="step-dot pending" id="dot2">2</div>
-            <div class="step-line" id="line2"></div>
-            <div class="step-dot pending" id="dot3">3</div>
-        </div>
+
 
         <h1>Forgot Password</h1>
         <p class="subtitle">Enter your email address and we'll send<br>you a 6-digit verification code.</p>
@@ -338,14 +332,7 @@ $bodyContent = <<<HTML
             <img src="https://smspro-api.nolacrm.io/PNG%20-%20NOLA%20SMS%20PRO%20Standard.png" alt="NOLA SMS Pro" class="logo-img">
         </div>
 
-        <!-- Progress -->
-        <div class="step-progress">
-            <div class="step-dot done" id="dot1b">✓</div>
-            <div class="step-line done" id="line1b"></div>
-            <div class="step-dot active" id="dot2b">2</div>
-            <div class="step-line" id="line2b"></div>
-            <div class="step-dot pending" id="dot3b">3</div>
-        </div>
+
 
         <h1>Enter Your Code</h1>
         <p class="subtitle" id="step2-subtitle">We sent a 6-digit code to your email.<br>It expires in 10 minutes.</p>
@@ -385,14 +372,7 @@ $bodyContent = <<<HTML
             <img src="https://smspro-api.nolacrm.io/PNG%20-%20NOLA%20SMS%20PRO%20Standard.png" alt="NOLA SMS Pro" class="logo-img">
         </div>
 
-        <!-- Progress -->
-        <div class="step-progress">
-            <div class="step-dot done">✓</div>
-            <div class="step-line done"></div>
-            <div class="step-dot done">✓</div>
-            <div class="step-line done"></div>
-            <div class="step-dot active">3</div>
-        </div>
+
 
         <h1>Set New Password</h1>
         <p class="subtitle">Create a strong password to secure<br>your NOLA SMS Pro account.</p>
