@@ -866,7 +866,7 @@ il_page('Sign In', <<<HTML
             <div class="field">
                 <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 7px;">
                     <label for="password" style="margin-bottom: 0;">Password</label>
-                    <a href="#" id="forgot-pw-link" style="font-size: 11px; font-weight: 700; color: #2b83fa; text-decoration: none; text-transform: uppercase; letter-spacing: 0.05em;">Forgot Password?</a>
+                    <a href="/forgot-password" style="font-size: 11px; font-weight: 700; color: #2b83fa; text-decoration: none; text-transform: uppercase; letter-spacing: 0.05em;">Forgot Password?</a>
                 </div>
                 <div class="input-wrap pw-wrap">
                     <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
@@ -882,26 +882,6 @@ il_page('Sign In', <<<HTML
         {$footerHtml}
     </div>
 
-    <div id="forgot-form-wrapper" class="hidden">
-        <h1>Forgot Password</h1>
-        <p class="subtitle">Enter your email address to request a password reset.</p>
-        <form id="forgot-form" method="POST" action="{$formAction}">
-            <input type="hidden" name="form_action" value="forgot">
-            <div class="field">
-                <label for="forgot-email">Email Address</label>
-                <div class="input-wrap">
-                    <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
-                    <input id="forgot-email" name="email" type="email" required
-                        placeholder="you@company.com" autocomplete="email">
-                </div>
-            </div>
-            <button id="forgot-submit-btn" type="submit" class="btn-submit">Send Reset Link</button>
-        </form>
-        <p class="footer" style="margin-top: 24px;">
-            <a href="#" id="back-to-login-link" style="color: #2b83fa; font-weight: 600; text-decoration: none;">Back to Sign In</a>
-        </p>
-    </div>
-
     <script>
       (function() {
         // Toggle input focus active classes
@@ -915,37 +895,6 @@ il_page('Sign In', <<<HTML
             if (wrap) wrap.classList.remove('input-wrap-focus');
           });
         });
-
-        var forgotLink = document.getElementById('forgot-pw-link');
-        var backToLoginLink = document.getElementById('back-to-login-link');
-        var loginWrapper = document.getElementById('login-form-wrapper');
-        var forgotWrapper = document.getElementById('forgot-form-wrapper');
-        
-        if (forgotLink && backToLoginLink && loginWrapper && forgotWrapper) {
-          forgotLink.addEventListener('click', function(e) {
-            e.preventDefault();
-            loginWrapper.classList.add('hidden');
-            forgotWrapper.classList.remove('hidden');
-            forgotWrapper.classList.add('fade-in-up');
-          });
-          backToLoginLink.addEventListener('click', function(e) {
-            e.preventDefault();
-            forgotWrapper.classList.add('hidden');
-            loginWrapper.classList.remove('hidden');
-            loginWrapper.classList.add('fade-in-up');
-          });
-        }
-        
-        var forgotForm = document.getElementById('forgot-form');
-        if (forgotForm) {
-          forgotForm.addEventListener('submit', function() {
-            var btn = document.getElementById('forgot-submit-btn');
-            if (btn) {
-              btn.disabled = true;
-              btn.textContent = 'Sending…';
-            }
-          });
-        }
       })();
     </script>
     {$bulkStatusScript}

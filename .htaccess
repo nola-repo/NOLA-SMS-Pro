@@ -77,6 +77,10 @@
     # ── Public / Auth endpoints ────────────────────────────────────────────
     RewriteRule ^register/?$ install-register.php [NC,L,QSA]
     RewriteRule ^login/?$    install-login.php    [NC,L,QSA]
+    RewriteRule ^forgot-password/?$ install-forgot-password.php [NC,L,QSA]
+
+    RewriteRule ^api/auth/forgot-password-otp/?$ /api/auth/forgot_password_otp.php [NC,L,QSA]
+    RewriteRule ^api/auth/reset-password-otp/?$  /api/auth/reset_password_otp.php  [NC,L,QSA]
     
     RewriteRule ^api/public/whitelabel/?$ /api/public/whitelabel.php [NC,L,QSA]
     RewriteRule ^api/auth/register-from-install/?$ /api/auth/register_from_install.php [NC,L,QSA]
