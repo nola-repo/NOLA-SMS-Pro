@@ -16,7 +16,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
-$input = json_decode(file_get_contents('php://input'), true);
+$input = json_decode(file_get_contents('php://input'), true) ?? [];
 $email = strtolower(trim($input['email'] ?? ''));
 $otpCheck = trim($input['otp_check'] ?? '');
 
@@ -34,17 +34,12 @@ try {
     $userDoc = null;
     $userCollection = null;
 
-    // 1. Search in admins collection (query by email)
-    $results = $db->collection('admins')
-        ->where('email', '=', $email)
-        ->limit(1)
-        ->documents();
-    foreach ($results as $doc) {
-        if ($doc->exists()) {
-            $userDoc = $doc;
-            $userCollection = 'admins';
-            break;
-        }
+    // 1. Direct fetch from admins collection
+    $adminRef = $db->collection('admins')->document($email);
+    $adminSnap = $adminRef->snapshot();
+    if ($adminSnap->exists()) {
+        $userDoc = $adminSnap;
+        $userCollection = 'admins';
     }
 
     // 2. Search in agency_users collection

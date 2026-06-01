@@ -54,6 +54,10 @@ function format_ts($ts): ?string {
 }
 
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
+function admin_email_from_input(array $input): string {
+    return strtolower(trim($input['email'] ?? $input['username'] ?? ''));
+}
+
 $claims = require_admin_auth();
 $db     = get_firestore();
 $method = $_SERVER['REQUEST_METHOD'];
@@ -69,6 +73,7 @@ if ($method === 'GET') {
             $d = $doc->data();
 
             $admins[] = [
+                'email'      => $doc->id(),
                 'username'   => $doc->id(),
                 'role'       => $d['role']       ?? 'viewer',
                 'active'     => (bool)($d['active'] ?? false),
@@ -77,8 +82,8 @@ if ($method === 'GET') {
             ];
         }
 
-        // Sort by username for a stable list
-        usort($admins, fn($a, $b) => strcmp($a['username'], $b['username']));
+        // Sort by email for a stable list
+        usort($admins, fn($a, $b) => strcmp($a['email'], $b['email']));
 
         echo json_encode(['status' => 'success', 'data' => $admins]);
     } catch (Exception $e) {
@@ -95,13 +100,13 @@ if ($method === 'POST') {
 
     // ── Create Admin ──────────────────────────────────────────────────────────
     if ($action === 'create') {
-        $username = trim($input['username'] ?? '');
+        $email    = admin_email_from_input($input);
         $password = $input['password']      ?? '';
         $role     = $input['role']          ?? 'viewer';
 
-        if (empty($username) || empty($password)) {
+        if (empty($email) || empty($password)) {
             http_response_code(400);
-            echo json_encode(['status' => 'error', 'message' => 'username and password are required']);
+            echo json_encode(['status' => 'error', 'message' => 'email and password are required']);
             exit;
         }
 
@@ -113,17 +118,17 @@ if ($method === 'POST') {
         }
 
         try {
-            $docRef  = $db->collection('admins')->document($username);
+            $docRef  = $db->collection('admins')->document($email);
             $snap    = $docRef->snapshot();
 
             if ($snap->exists()) {
                 http_response_code(409);
-                echo json_encode(['status' => 'error', 'message' => "Admin '{$username}' already exists"]);
+                echo json_encode(['status' => 'error', 'message' => "Admin '{$email}' already exists"]);
                 exit;
             }
 
             $docRef->set([
-                'username'        => $username,
+                'email'           => $email,
                 'role'            => $role,
                 'active'          => true,
                 'hashed_password' => password_hash($password, PASSWORD_BCRYPT),
@@ -131,7 +136,7 @@ if ($method === 'POST') {
                 'last_login'      => null,
             ]);
 
-            echo json_encode(['status' => 'success', 'message' => "Admin '{$username}' created successfully"]);
+            echo json_encode(['status' => 'success', 'message' => "Admin '{$email}' created successfully"]);
         } catch (Exception $e) {
             http_response_code(500);
             echo json_encode(['status' => 'error', 'message' => 'Database error: ' . $e->getMessage()]);
@@ -141,22 +146,22 @@ if ($method === 'POST') {
 
     // ── Reset Password ────────────────────────────────────────────────────────
     if ($action === 'reset_password') {
-        $username     = trim($input['username']     ?? '');
+        $email        = admin_email_from_input($input);
         $new_password = $input['new_password'] ?? '';
 
-        if (empty($username) || empty($new_password)) {
+        if (empty($email) || empty($new_password)) {
             http_response_code(400);
-            echo json_encode(['status' => 'error', 'message' => 'username and new_password are required']);
+            echo json_encode(['status' => 'error', 'message' => 'email and new_password are required']);
             exit;
         }
 
         try {
-            $docRef = $db->collection('admins')->document($username);
+            $docRef = $db->collection('admins')->document($email);
             $snap   = $docRef->snapshot();
 
             if (!$snap->exists()) {
                 http_response_code(404);
-                echo json_encode(['status' => 'error', 'message' => "Admin '{$username}' not found"]);
+                echo json_encode(['status' => 'error', 'message' => "Admin '{$email}' not found"]);
                 exit;
             }
 
@@ -164,7 +169,7 @@ if ($method === 'POST') {
                 ['path' => 'hashed_password', 'value' => password_hash($new_password, PASSWORD_BCRYPT)],
             ]);
 
-            echo json_encode(['status' => 'success', 'message' => "Password reset for '{$username}'"]);
+            echo json_encode(['status' => 'success', 'message' => "Password reset for '{$email}'"]);
         } catch (Exception $e) {
             http_response_code(500);
             echo json_encode(['status' => 'error', 'message' => 'Database error: ' . $e->getMessage()]);
@@ -174,22 +179,22 @@ if ($method === 'POST') {
 
     // ── Toggle Status ─────────────────────────────────────────────────────────
     if ($action === 'toggle_status') {
-        $username = trim($input['username'] ?? '');
+        $email    = admin_email_from_input($input);
         $active   = $input['active']        ?? null;
 
-        if (empty($username) || !is_bool($active)) {
+        if (empty($email) || !is_bool($active)) {
             http_response_code(400);
-            echo json_encode(['status' => 'error', 'message' => 'username and active (boolean) are required']);
+            echo json_encode(['status' => 'error', 'message' => 'email and active (boolean) are required']);
             exit;
         }
 
         try {
-            $docRef = $db->collection('admins')->document($username);
+            $docRef = $db->collection('admins')->document($email);
             $snap   = $docRef->snapshot();
 
             if (!$snap->exists()) {
                 http_response_code(404);
-                echo json_encode(['status' => 'error', 'message' => "Admin '{$username}' not found"]);
+                echo json_encode(['status' => 'error', 'message' => "Admin '{$email}' not found"]);
                 exit;
             }
 
@@ -198,7 +203,7 @@ if ($method === 'POST') {
             ]);
 
             $state = $active ? 'activated' : 'deactivated';
-            echo json_encode(['status' => 'success', 'message' => "Admin '{$username}' {$state}"]);
+            echo json_encode(['status' => 'success', 'message' => "Admin '{$email}' {$state}"]);
         } catch (Exception $e) {
             http_response_code(500);
             echo json_encode(['status' => 'error', 'message' => 'Database error: ' . $e->getMessage()]);
@@ -214,22 +219,22 @@ if ($method === 'POST') {
 
 // ─── DELETE: Delete Admin ─────────────────────────────────────────────────────
 if ($method === 'DELETE') {
-    $input    = json_decode(file_get_contents('php://input'), true) ?? [];
-    $username = trim($input['username'] ?? '');
+    $input = json_decode(file_get_contents('php://input'), true) ?? [];
+    $email = admin_email_from_input($input);
 
-    if (empty($username)) {
+    if (empty($email)) {
         http_response_code(400);
-        echo json_encode(['status' => 'error', 'message' => 'username is required']);
+        echo json_encode(['status' => 'error', 'message' => 'email is required']);
         exit;
     }
 
     try {
-        $docRef = $db->collection('admins')->document($username);
+        $docRef = $db->collection('admins')->document($email);
         $snap   = $docRef->snapshot();
 
         if (!$snap->exists()) {
             http_response_code(404);
-            echo json_encode(['status' => 'error', 'message' => "Admin '{$username}' not found"]);
+            echo json_encode(['status' => 'error', 'message' => "Admin '{$email}' not found"]);
             exit;
         }
 
@@ -258,7 +263,7 @@ if ($method === 'DELETE') {
         }
 
         $docRef->delete();
-        echo json_encode(['status' => 'success', 'message' => "Admin '{$username}' deleted"]);
+        echo json_encode(['status' => 'success', 'message' => "Admin '{$email}' deleted"]);
     } catch (Exception $e) {
         http_response_code(500);
         echo json_encode(['status' => 'error', 'message' => 'Database error: ' . $e->getMessage()]);

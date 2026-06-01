@@ -12,20 +12,20 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
-$input = json_decode(file_get_contents('php://input'), true);
-$username = $input['username'] ?? '';
+$input = json_decode(file_get_contents('php://input'), true) ?? [];
+$email = strtolower(trim($input['email'] ?? $input['username'] ?? ''));
 $password = $input['password'] ?? '';
 
-if (empty($username) || empty($password)) {
+if (empty($email) || empty($password)) {
     http_response_code(400);
-    echo json_encode(['status' => 'error', 'message' => 'Username and password are required']);
+    echo json_encode(['status' => 'error', 'message' => 'Email and password are required']);
     exit;
 }
 
 $db = get_firestore();
 
 try {
-    $adminRef = $db->collection('admins')->document($username);
+    $adminRef = $db->collection('admins')->document($email);
     $snapshot = $adminRef->snapshot();
 
     if (!$snapshot->exists()) {
@@ -48,7 +48,8 @@ try {
         // Generate JWT
         $secret = getenv('JWT_SECRET') ?: 'nola-super-admin-secret';
         $token = jwt_sign([
-            'username' => $username,
+            'email' => $email,
+            'username' => $email,
             'role' => $adminData['role'] ?? 'admin'
         ], $secret);
 
@@ -58,7 +59,8 @@ try {
             'message' => 'Login successful',
             'token' => $token,
             'user' => [
-                'username' => $username,
+                'email' => $email,
+                'username' => $email,
                 'role' => $adminData['role'] ?? 'admin'
             ]
         ]);

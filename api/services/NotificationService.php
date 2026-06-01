@@ -1520,21 +1520,18 @@ class NotificationService
             $lastName = '';
 
             // Search in admins collection
-            $results = $db->collection('admins')->where('email', '=', $email)->limit(1)->documents();
-            foreach ($results as $doc) {
-                if ($doc->exists()) {
-                    $userData = $doc->data();
-                    $firstName = $userData['firstName'] ?? '';
-                    $lastName = $userData['lastName'] ?? '';
-                    if ($firstName === '' && $lastName === '') {
-                        $name = $userData['name'] ?? '';
-                        if ($name !== '') {
-                            $parts = explode(' ', trim($name), 2);
-                            $firstName = $parts[0];
-                            $lastName = $parts[1] ?? '';
-                        }
+            $adminSnap = $db->collection('admins')->document($email)->snapshot();
+            if ($adminSnap->exists()) {
+                $userData = $adminSnap->data();
+                $firstName = $userData['firstName'] ?? '';
+                $lastName = $userData['lastName'] ?? '';
+                if ($firstName === '' && $lastName === '') {
+                    $name = $userData['name'] ?? '';
+                    if ($name !== '') {
+                        $parts = explode(' ', trim($name), 2);
+                        $firstName = $parts[0];
+                        $lastName = $parts[1] ?? '';
                     }
-                    break;
                 }
             }
 

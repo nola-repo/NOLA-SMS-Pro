@@ -11,13 +11,13 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
-$input = json_decode(file_get_contents('php://input'), true);
-$username = $input['username'] ?? '';
+$input = json_decode(file_get_contents('php://input'), true) ?? [];
+$email = strtolower(trim($input['email'] ?? $input['username'] ?? ''));
 
 // To prevent user enumeration, we always return success
 $response = ['status' => 'success', 'message' => 'Reset email sent'];
 
-if (empty($username)) {
+if (empty($email)) {
     echo json_encode($response);
     exit;
 }
@@ -25,12 +25,12 @@ if (empty($username)) {
 $db = get_firestore();
 
 try {
-    $adminRef = $db->collection('admins')->document($username);
+    $adminRef = $db->collection('admins')->document($email);
     $snapshot = $adminRef->snapshot();
 
     if ($snapshot->exists()) {
         $data = $snapshot->data();
-        $email = $data['email'] ?? null;
+        $adminEmail = $data['email'] ?? $email;
         
         // Generate a secure reset token
         $token = bin2hex(random_bytes(32));
@@ -44,8 +44,8 @@ try {
         ], ['merge' => true]);
 
         // Send email if address exists
-        if ($email) {
-            send_reset_email($email, $token);
+        if ($adminEmail) {
+            send_reset_email($adminEmail, $token);
         }
     }
 
