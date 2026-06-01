@@ -20,7 +20,10 @@ require_once __DIR__ . '/jwt_helper.php';
 
 // ─── JWT Auth Guard ───────────────────────────────────────────────────────────
 function require_admin_auth(): array {
-    $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
+    // Apache may pass the header as REDIRECT_HTTP_AUTHORIZATION when RewriteRule is active
+    $authHeader = $_SERVER['HTTP_AUTHORIZATION']
+        ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION']
+        ?? '';
     if (!str_starts_with($authHeader, 'Bearer ')) {
         http_response_code(401);
         echo json_encode(['status' => 'error', 'message' => 'Unauthorized: missing token']);

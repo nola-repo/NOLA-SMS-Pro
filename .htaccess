@@ -4,6 +4,11 @@
     RewriteEngine On
     RewriteBase /
 
+    # ── Preserve Authorization header through rewrites ──────────────────
+    # Apache strips HTTP_AUTHORIZATION when a RewriteRule is processed.
+    # This rule re-exposes it so all PHP endpoints can read it via $_SERVER.
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization},L]
+
     Options -MultiViews
 
     # ── CORS: OPTIONS preflight ────────────────────────────────────────
