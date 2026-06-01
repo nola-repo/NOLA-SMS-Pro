@@ -1535,6 +1535,26 @@ class NotificationService
                 }
             }
 
+            if ($firstName === '' && $lastName === '') {
+                $results = $db->collection('admins')->where('email', '=', $email)->limit(1)->documents();
+                foreach ($results as $doc) {
+                    if ($doc->exists()) {
+                        $userData = $doc->data();
+                        $firstName = $userData['firstName'] ?? '';
+                        $lastName = $userData['lastName'] ?? '';
+                        if ($firstName === '' && $lastName === '') {
+                            $name = $userData['name'] ?? '';
+                            if ($name !== '') {
+                                $parts = explode(' ', trim($name), 2);
+                                $firstName = $parts[0];
+                                $lastName = $parts[1] ?? '';
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+
             // Search in agency_users collection
             if ($firstName === '' && $lastName === '') {
                 $results = $db->collection('agency_users')->where('email', '=', $email)->limit(1)->documents();

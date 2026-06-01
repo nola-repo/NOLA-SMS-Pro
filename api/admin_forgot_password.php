@@ -28,6 +28,21 @@ try {
     $adminRef = $db->collection('admins')->document($email);
     $snapshot = $adminRef->snapshot();
 
+    if (!$snapshot->exists()) {
+        $matches = $db->collection('admins')
+            ->where('email', '=', $email)
+            ->limit(1)
+            ->documents();
+
+        foreach ($matches as $doc) {
+            if ($doc->exists()) {
+                $adminRef = $db->collection('admins')->document($doc->id());
+                $snapshot = $doc;
+                break;
+            }
+        }
+    }
+
     if ($snapshot->exists()) {
         $data = $snapshot->data();
         $adminEmail = $data['email'] ?? $email;

@@ -29,6 +29,20 @@ try {
     $snapshot = $adminRef->snapshot();
 
     if (!$snapshot->exists()) {
+        $legacyMatches = $db->collection('admins')
+            ->where('email', '=', $email)
+            ->limit(1)
+            ->documents();
+
+        foreach ($legacyMatches as $legacyDoc) {
+            if ($legacyDoc->exists()) {
+                $snapshot = $legacyDoc;
+                break;
+            }
+        }
+    }
+
+    if (!$snapshot->exists()) {
         http_response_code(401);
         echo json_encode(['status' => 'error', 'message' => 'Invalid credentials']);
         exit;

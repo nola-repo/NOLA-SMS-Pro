@@ -58,6 +58,29 @@ function admin_email_from_input(array $input): string {
     return strtolower(trim($input['email'] ?? $input['username'] ?? ''));
 }
 
+function admin_doc_for_email($db, string $email): array {
+    $docRef = $db->collection('admins')->document($email);
+    $snap = $docRef->snapshot();
+
+    if ($snap->exists()) {
+        return [$docRef, $snap];
+    }
+
+    $matches = $db->collection('admins')
+        ->where('email', '=', $email)
+        ->limit(1)
+        ->documents();
+
+    foreach ($matches as $doc) {
+        if ($doc->exists()) {
+            $legacyRef = $db->collection('admins')->document($doc->id());
+            return [$legacyRef, $doc];
+        }
+    }
+
+    return [$docRef, $snap];
+}
+
 $claims = require_admin_auth();
 $db     = get_firestore();
 $method = $_SERVER['REQUEST_METHOD'];
@@ -72,8 +95,10 @@ if ($method === 'GET') {
             if (!$doc->exists()) continue;
             $d = $doc->data();
 
+            $adminEmail = strtolower(trim((string)($d['email'] ?? $doc->id())));
+
             $admins[] = [
-                'email'      => $doc->id(),
+                'email'      => $adminEmail,
                 'username'   => $doc->id(),
                 'role'       => $d['role']       ?? 'viewer',
                 'active'     => (bool)($d['active'] ?? false),
@@ -118,8 +143,7 @@ if ($method === 'POST') {
         }
 
         try {
-            $docRef  = $db->collection('admins')->document($email);
-            $snap    = $docRef->snapshot();
+            [$docRef, $snap] = admin_doc_for_email($db, $email);
 
             if ($snap->exists()) {
                 http_response_code(409);
@@ -156,8 +180,7 @@ if ($method === 'POST') {
         }
 
         try {
-            $docRef = $db->collection('admins')->document($email);
-            $snap   = $docRef->snapshot();
+            [$docRef, $snap] = admin_doc_for_email($db, $email);
 
             if (!$snap->exists()) {
                 http_response_code(404);
@@ -189,8 +212,7 @@ if ($method === 'POST') {
         }
 
         try {
-            $docRef = $db->collection('admins')->document($email);
-            $snap   = $docRef->snapshot();
+            [$docRef, $snap] = admin_doc_for_email($db, $email);
 
             if (!$snap->exists()) {
                 http_response_code(404);
@@ -229,8 +251,7 @@ if ($method === 'DELETE') {
     }
 
     try {
-        $docRef = $db->collection('admins')->document($email);
-        $snap   = $docRef->snapshot();
+        [$docRef, $snap] = admin_doc_for_email($db, $email);
 
         if (!$snap->exists()) {
             http_response_code(404);

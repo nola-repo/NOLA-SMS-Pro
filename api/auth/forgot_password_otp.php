@@ -42,7 +42,22 @@ try {
         $userCollection = 'admins';
     }
 
-    // 2. Search in agency_users collection
+    // 2. Search in admins collection by email for pre-migration username-ID docs
+    if (!$userDoc) {
+        $results = $db->collection('admins')
+            ->where('email', '=', $email)
+            ->limit(1)
+            ->documents();
+        foreach ($results as $doc) {
+            if ($doc->exists()) {
+                $userDoc = $doc;
+                $userCollection = 'admins';
+                break;
+            }
+        }
+    }
+
+    // 3. Search in agency_users collection
     if (!$userDoc) {
         $results = $db->collection('agency_users')
             ->where('email', '=', $email)
@@ -57,7 +72,7 @@ try {
         }
     }
 
-    // 3. Search in users collection
+    // 4. Search in users collection
     if (!$userDoc) {
         $results = $db->collection('users')
             ->where('email', '=', $email)
