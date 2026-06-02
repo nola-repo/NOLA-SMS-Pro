@@ -190,11 +190,10 @@ class GhlSyncService
         try {
             $resp = $this->ghlClient->request(
                 'POST',
-                '/conversations/messages/status',
+                '/conversations/messages/' . urlencode($ghlMessageId) . '/status',
                 json_encode([
-                    'locationId' => $this->locationId,
-                    'messageId'  => $ghlMessageId,
                     'status'     => $ghlStatus,
+                    'locationId' => $this->locationId,
                 ]),
                 '2021-04-15'
             );

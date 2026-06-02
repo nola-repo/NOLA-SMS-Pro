@@ -525,6 +525,7 @@ $logData = [
     'message'         => $message,
     'sender_id'       => $sender,
     'status'          => $semMsg['status'] ?? 'Queued',
+    'ghl_message_id'  => $messageId,
     'date_created'    => $ts,
     'source'          => 'ghl_provider',
     'credits_used'    => $required_credits,
