@@ -207,7 +207,7 @@ class GhlSyncService
                 '2021-04-15'
             );
 
-            error_log("[GhlSyncService] syncMessageStatus sent '{$ghlStatus}' for GHL messageId={$ghlMessageId} (src status='{$status}')");
+            error_log("[GhlSyncService] syncMessageStatus sent '{$ghlStatus}' for GHL messageId={$ghlMessageId} (src status='{$status}') → HTTP {$resp['status']} body=" . substr((string)($resp['body'] ?? ''), 0, 400));
             return ['success' => $resp['status'] < 300, 'ghl_response' => $resp];
         } catch (\Exception $e) {
             return ['success' => false, 'error' => $e->getMessage()];

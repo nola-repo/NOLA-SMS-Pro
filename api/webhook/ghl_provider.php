@@ -22,11 +22,24 @@
  * Developer Portal under Conversation Providers → Custom Headers).
  * If GHL does not support custom headers, falls back to token-based auth
  * using the location's stored GHL tokens.
+ *
+ * IMPORTANT — Early-Response Architecture:
+ * GHL's custom provider webhook has a ~10-15 second timeout. Our processing
+ * (billing + Semaphore API + Firestore writes) can take 15-25 seconds.
+ * To prevent GHL from marking messages as "failed" due to timeout, we:
+ *   1. Validate the request and check the credit balance (< 1s)
+ *   2. Flush HTTP 200 back to GHL immediately (Connection: close)
+ *   3. Continue billing deduction, Semaphore send, and Firestore writes
+ *      in the background while Apache keeps the worker alive.
  */
 
 ini_set('display_errors', 0);
 ini_set('display_startup_errors', 0);
 error_reporting(E_ALL);
+
+// Keep the worker alive after GHL closes the HTTP connection.
+ignore_user_abort(true);
+set_time_limit(120);
 
 require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
@@ -319,6 +332,81 @@ error_log("[ghl_provider] BILLING DECISION for loc={$locationId}: " . json_encod
     'intSnap_exists'       => $intSnap->exists(),
 ]));
 
+// ── Pre-flight Credit Balance Check (must happen BEFORE early response) ────
+// We need to know if the account has enough credits before we tell GHL "success".
+// We don't deduct yet — that happens after the early response flush.
+$preflightSubBalance = null;
+if (!$usingFreeCredits) {
+    try {
+        $preflightSubBalance = $creditManager->get_balance($account_id);
+        if ($preflightSubBalance <= 0) {
+            http_response_code(402);
+            echo json_encode([
+                'success'            => false,
+                'error'              => 'insufficient_credits',
+                'message'            => 'Your account has no credits. Please top up or request credits from your agency.',
+                'subaccount_balance' => $preflightSubBalance,
+            ]);
+            exit;
+        }
+    } catch (\Exception $e) {
+        error_log('[ghl_provider] Pre-flight balance check failed: ' . $e->getMessage());
+        // Continue — let the deduction step handle this
+    }
+}
+
+// ── EARLY RESPONSE TO GHL ────────────────────────────────────────────────────
+// GHL's provider webhook times out at ~10-15s. Our billing + Semaphore send can
+// take 15-25s. We flush HTTP 200 NOW (with Content-Length so GHL closes its side),
+// then continue all slow work in the background.
+$earlyResponseBody = json_encode([
+    'success'              => true,
+    'messageId'            => $messageId,
+    'status'               => 'success',
+    'message'              => "SMS sent successfully to {$normalizedPhone}",
+    'execution_log'        => "NOLA Provider: SMS accepted for $normalizedPhone via $sender. Credits: $required_credits.",
+    'action_executed_from' => 'Nola Web',
+    'event_details'        => [
+        'Status'       => 'Success',
+        'Recipient'    => $normalizedPhone,
+        'SMS Message'  => $message,
+        'Credits Used' => $required_credits,
+        'Sender ID'    => $sender,
+        'Location ID'  => $locationId,
+        'Timestamp'    => date('Y-m-d H:i:s'),
+    ],
+    'data' => [
+        'messageId'   => $messageId,
+        'number'      => $normalizedPhone,
+        'credits_used'=> $required_credits,
+        'location_id' => $locationId,
+        'sender'      => $sender,
+    ],
+]);
+
+http_response_code(200);
+header('Connection: close');
+header('Content-Length: ' . strlen($earlyResponseBody));
+echo $earlyResponseBody;
+
+// Flush all output buffers so GHL receives the response immediately
+if (function_exists('fastcgi_finish_request')) {
+    fastcgi_finish_request();
+} else {
+    while (ob_get_level() > 0) {
+        ob_end_flush();
+    }
+    flush();
+}
+
+error_log('[ghl_provider][EARLY_RESPONSE_FLUSHED] ' . json_encode([
+    'req_id'     => $providerReqId,
+    'locationId' => $locationId,
+    'messageId'  => $messageId,
+]));
+
+// ── BACKGROUND PROCESSING (after HTTP 200 has been flushed to GHL) ───────────
+
 // ── Credit Deduction & Trial Logging ─────────────────────────────────────────
 if ($usingFreeCredits) {
     error_log("[ghl_provider] BILLING PATH: FreeTrial for loc={$locationId}");
@@ -345,19 +433,6 @@ if ($usingFreeCredits) {
         $agencyDoc = $db->collection('agency_subaccounts')->document($locationId)->snapshot();
         $agency_id = $agencyDoc->exists() ? ($agencyDoc->data()['agency_id'] ?? '') : '';
         $provider  = $usingOwnApiKey ? 'semaphore_custom' : 'semaphore';
-
-        // ── Pre-flight: subaccount balance check ────────────────────────────
-        $subBalance = $creditManager->get_balance($account_id);
-        if ($subBalance <= 0) {
-            http_response_code(402);
-            echo json_encode([
-                'success'            => false,
-                'error'              => 'insufficient_credits',
-                'message'            => 'Your account has no credits. Please top up or request credits from your agency.',
-                'subaccount_balance' => $subBalance,
-            ]);
-            exit;
-        }
 
         $refId = $messageId ?? ('ghl_prov_' . bin2hex(random_bytes(4)));
         $desc = "SMS to {$normalizedPhone}";
@@ -418,85 +493,89 @@ if ($usingFreeCredits) {
             error_log('[LowBalanceAlert][ghl_provider] ' . $e->getMessage());
         }
     } catch (\Exception $e) {
-        $errData = json_decode($e->getMessage(), true) ?: null;
-        if ($errData && ($errData['error'] ?? '') === 'insufficient_credits') {
-            http_response_code(402);
-            echo json_encode([
-                'success'            => false,
-                'error'              => 'insufficient_credits',
-                'message'            => 'Your account has no credits. Please top up or request credits from your agency.',
-                'subaccount_balance' => $errData['subaccount_balance'] ?? null,
-            ]);
-        } else {
-            http_response_code(500);
-            echo json_encode(['success' => false, 'error' => 'Credit deduction failed: ' . $e->getMessage()]);
-        }
-        exit;
+        // We already sent 200 to GHL, so we can't change the HTTP response.
+        // Log the billing failure so it can be investigated / manually refunded.
+        error_log('[ghl_provider][BILLING_ERROR_POST_FLUSH] Credit deduction failed for loc=' . $locationId . ' msgId=' . $messageId . ': ' . $e->getMessage());
+        // Note: SMS will still be sent below. This is a billing error only.
     }
 }
 
 
-    // ── Send SMS via Semaphore (System Default) ────────────────────────
-    $smsData = [
-        'apikey' => $activeApiKey,
-        'number' => $normalizedPhone,
-        'message' => $message,
-        'sendername' => $sender,
-    ];
+// ── Send SMS via Semaphore ────────────────────────────────────────────────────
+$smsData = [
+    'apikey'     => $activeApiKey,
+    'number'     => $normalizedPhone,
+    'message'    => $message,
+    'sendername' => $sender,
+];
 
-    $ch = curl_init($SEMAPHORE_URL);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($smsData));
+$ch = curl_init($SEMAPHORE_URL);
+curl_setopt($ch, CURLOPT_POST, true);
+curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($smsData));
 
-    $smsResponse = curl_exec($ch);
-    $smsStatus = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+$smsResponse = curl_exec($ch);
+$smsStatus   = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+curl_close($ch);
 
-$smsResult = json_decode($smsResponse, true);
+$smsResult      = json_decode($smsResponse, true);
 $gatewayAccepted = ($smsStatus >= 200 && $smsStatus < 300);
-    error_log('[ghl_provider] Semaphore response: ' . $smsResponse);
+error_log('[ghl_provider] Semaphore response: ' . $smsResponse);
 error_log('[ghl_provider][GATEWAY_RESULT] ' . json_encode([
-    'req_id' => $providerReqId,
-    'http_status' => $smsStatus,
-    'gateway_accepted' => $gatewayAccepted,
+    'req_id'          => $providerReqId,
+    'http_status'     => $smsStatus,
+    'gateway_accepted'=> $gatewayAccepted,
     'normalizedPhone' => $normalizedPhone,
-    'locationId' => $locationId,
-    'sender' => $sender,
+    'locationId'      => $locationId,
+    'sender'          => $sender,
 ]));
 
-
 if (!$gatewayAccepted) {
-    // Refund credits if SMS failed and we deducted
-    if (!$usingOwnApiKey) {
+    // Semaphore rejected the message. We already sent 200 to GHL, so we can't
+    // return an error HTTP code. Instead, refund the credits and call the GHL
+    // status API with 'failed' so GHL updates the message badge correctly.
+    error_log('[ghl_provider][SEMAPHORE_FAILED_POST_FLUSH] Semaphore rejected msg for loc=' . $locationId . ' msgId=' . $messageId . ' status=' . $smsStatus);
+
+    if (!$usingFreeCredits) {
         try {
             $creditManager->add_credits(
                 $account_id,
                 $required_credits,
                 $messageId ?? 'refund_ghl_prov',
-                'Refund — SMS failed to send',
+                'Refund — SMS failed to send (Semaphore rejected)',
                 'refund'
             );
-        }
-        catch (\Throwable $e) {
+        } catch (\Throwable $e) {
             error_log('[ghl_provider] Credit refund failed: ' . $e->getMessage());
         }
     }
 
-    http_response_code(502);
-    echo json_encode(['success' => false, 'error' => 'SMS gateway error', 'sms_status' => $smsStatus]);
+    // Signal GHL that the message failed so the badge updates correctly
+    try {
+        require_once __DIR__ . '/../services/GhlSyncService.php';
+        $ghlSyncFail = new \Nola\Services\GhlSyncService($db, $locationId);
+        $failResult  = $ghlSyncFail->syncMessageStatus($messageId, 'Failed');
+        error_log('[ghl_provider][SEMAPHORE_FAIL_STATUS_SYNC] ' . json_encode([
+            'req_id'     => $providerReqId,
+            'messageId'  => $messageId,
+            'ghl_status' => $failResult['ghl_response']['status'] ?? null,
+            'ghl_body'   => substr((string)($failResult['ghl_response']['body'] ?? ''), 0, 200),
+        ]));
+    } catch (\Throwable $e) {
+        error_log('[ghl_provider] Failed status GHL sync error: ' . $e->getMessage());
+    }
     exit;
 }
 
 // ── Persist to Firestore ────────────────────────────────────────────────────
-$now = new \DateTime();
-$ts = new \Google\Cloud\Core\Timestamp($now);
-$convId = $locationId . '_conv_' . $normalizedPhone;
-$semMsg = is_array($smsResult) ? ($smsResult[0] ?? $smsResult) : [];
+$now        = new \DateTime();
+$ts         = new \Google\Cloud\Core\Timestamp($now);
+$convId     = $locationId . '_conv_' . $normalizedPhone;
+$semMsg     = is_array($smsResult) ? ($smsResult[0] ?? $smsResult) : [];
 $storedMsgId = (string)($semMsg['message_id'] ?? $messageId ?? uniqid('ghl_'));
 
-// Derive a display name — GHL provider doesn't always send contact name, fall back to phone
+// Derive a display name — GHL provider doesn't always send contact name
 $displayName = $payload['contactName'] ?? $payload['name'] ?? $normalizedPhone;
 
 $msgData = [
@@ -542,47 +621,27 @@ $db->collection('conversations')->document($convId)->set([
     'updated_at'      => $ts,
     'type'            => 'direct',
     'members'         => [$normalizedPhone],
-    'name'            => $displayName,   // Required by web UI sidebar
+    'name'            => $displayName,
     'ghl_contact_id'  => $contactId,
 ], ['merge' => true]);
 
-// ── Sync Status back to GHL immediately ─────────────────────────────────────
+// ── Sync 'delivered' status back to GHL (background, after SMS confirmed sent) ────
 try {
     require_once __DIR__ . '/../services/GhlSyncService.php';
-    $ghlSync = new \Nola\Services\GhlSyncService($db, $locationId);
-    $ghlSync->syncMessageStatus($messageId, 'Sent');
+    $ghlSync  = new \Nola\Services\GhlSyncService($db, $locationId);
+    $syncResult = $ghlSync->syncMessageStatus($messageId, 'Sent');
+    error_log('[ghl_provider][STATUS_SYNC] ' . json_encode([
+        'req_id'     => $providerReqId,
+        'messageId'  => $messageId,
+        'ghl_http'   => $syncResult['ghl_response']['status'] ?? null,
+        'ghl_body'   => substr((string)($syncResult['ghl_response']['body'] ?? ''), 0, 300),
+        'skipped'    => $syncResult['skipped'] ?? false,
+        'skip_reason'=> $syncResult['reason'] ?? null,
+    ]));
 } catch (\Throwable $e) {
-    error_log('[ghl_provider] Immediate GHL status sync failed: ' . $e->getMessage());
+    error_log('[ghl_provider] GHL status sync failed: ' . $e->getMessage());
 }
 
-// ── Success ─────────────────────────────────────────────────────────────────
-http_response_code(200);
-echo json_encode([
-    'success'    => true,
-    'messageId'  => $messageId,   // Echo back GHL's own messageId as the provider contract requires
-    'status'     => 'success',
-    'message'    => "SMS sent successfully to {$normalizedPhone}",
-    'execution_log'        => "NOLA Provider: SMS sent to $normalizedPhone via $sender. Credits: $required_credits.",
-    'action_executed_from' => 'Nola Web',
-    'event_details' => [
-        'Status'      => 'Success',
-        'Recipient'   => $normalizedPhone,
-        'SMS Message' => $message,
-        'Credits Used'=> $required_credits,
-        'Sender ID'   => $sender,
-        'Location ID' => $locationId,
-        'Timestamp'   => date('Y-m-d H:i:s')
-    ],
-    'data' => [
-        'messageId'       => $messageId,          // GHL-provided message ID (echoed back)
-        'semaphore_id'    => $storedMsgId,         // Semaphore's own message ID
-        'conversation_id' => $convId,
-        'number'          => $normalizedPhone,
-        'credits_used'    => $required_credits,
-        'location_id'     => $locationId,
-        'sender'          => $sender,
-    ],
-]);
 error_log('[ghl_provider][SUCCESS] ' . json_encode([
     'req_id'            => $providerReqId,
     'locationId'        => $locationId,
