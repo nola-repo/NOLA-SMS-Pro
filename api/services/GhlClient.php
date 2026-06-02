@@ -283,11 +283,41 @@ class GhlClient
      */
     private function loadIntegration(string $registryKey): ?array
     {
+        // Try file-based cache first to avoid Firestore reads and speed up executions
+        try {
+            require_once __DIR__ . '/Cache.php';
+            $cache = new Cache('tokens');
+            $cached = $cache->get('token_' . $registryKey, 180); // 3 minutes TTL
+            if ($cached && isset($cached['access_token'])) {
+                // Ensure cached token is still valid (not expiring in next 2 minutes)
+                $expiresAt = $cached['expires_at'] ?? 0;
+                $expiresSeconds = $expiresAt instanceof \Google\Cloud\Core\Timestamp
+                    ? $expiresAt->get()->getTimestamp()
+                    : (int) $expiresAt;
+                if ($expiresSeconds - time() > 120) {
+                    $this->canonicalDocExistedAtLoad = $cached['_canonical_preload_existed'] ?? true;
+                    return $cached;
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log('[GhlClient] Cache read error: ' . $e->getMessage());
+        }
+
         $data = GhlTokenProvider::loadIntegration($this->db, $registryKey);
         if ($data) {
             $this->canonicalDocExistedAtLoad = !empty($data['_canonical_preload_existed']);
-            unset($data['_lookup_source'], $data['_canonical_preload_existed']);
+            
+            // Cache loaded token payload
+            try {
+                $cacheData = $data;
+                $cacheData['_canonical_preload_existed'] = $this->canonicalDocExistedAtLoad;
+                $cache = new Cache('tokens');
+                $cache->set('token_' . $registryKey, $cacheData);
+            } catch (\Throwable $e) {
+                error_log('[GhlClient] Cache write error: ' . $e->getMessage());
+            }
 
+            unset($data['_lookup_source'], $data['_canonical_preload_existed']);
             return $data;
         }
 
@@ -768,6 +798,16 @@ class GhlClient
         $this->integration['refresh_token'] = $updateData['refresh_token'];
         $this->integration['expires_at'] = $expiresAtUnix;
 
-        $this->clearCache();
+        // Populate new values back to the local cache immediately to prevent cached stale token lookups
+        try {
+            require_once __DIR__ . '/Cache.php';
+            $cache = new Cache('tokens');
+            $cacheData = $this->integration;
+            $cacheData['firestore_doc_id'] = $docId;
+            $cacheData['_canonical_preload_existed'] = $this->canonicalDocExistedAtLoad;
+            $cache->set('token_' . $this->tokenRegistryId, $cacheData);
+        } catch (\Throwable $e) {
+            error_log('[GhlClient] Cache write back error: ' . $e->getMessage());
+        }
     }
 }
