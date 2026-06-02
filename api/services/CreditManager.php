@@ -779,11 +779,49 @@ class CreditManager
         $query = $this->db->collection('agency_users')->where('company_id', '=', $companyId)->limit(1)->documents();
         foreach ($query as $doc) {
             if ($doc->exists()) {
+                $this->backfill_agency_balance_from_legacy($doc->reference(), $companyId);
                 return $doc->reference();
             }
         }
 
         return null;
+    }
+
+    private function backfill_agency_balance_from_legacy($agencyRef, string $agencyId): void
+    {
+        try {
+            $legacySnap = $this->db->collection('agency_wallet')->document($agencyId)->snapshot();
+            if (!$legacySnap->exists()) {
+                return;
+            }
+
+            $legacyData = [];
+            foreach ($legacySnap->data() as $key => $value) {
+                $legacyData[trim((string)$key)] = $value;
+            }
+
+            if (!array_key_exists('balance', $legacyData) || !is_numeric($legacyData['balance'])) {
+                return;
+            }
+
+            $legacyBalance = max(0, (int)$legacyData['balance']);
+            $agencySnap = $agencyRef->snapshot();
+            $agencyData = $agencySnap->exists() ? $agencySnap->data() : [];
+            $currentBalance = array_key_exists('balance', $agencyData) && is_numeric($agencyData['balance'])
+                ? max(0, (int)$agencyData['balance'])
+                : null;
+
+            if ($currentBalance !== null && $currentBalance >= $legacyBalance) {
+                return;
+            }
+
+            $agencyRef->set([
+                'balance' => $legacyBalance,
+                'updated_at' => new Timestamp(new \DateTimeImmutable()),
+            ], ['merge' => true]);
+        } catch (\Throwable $e) {
+            error_log('[CreditManager] agency balance backfill skipped for ' . $agencyId . ': ' . $e->getMessage());
+        }
     }
 
     /**
