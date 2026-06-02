@@ -525,7 +525,8 @@ foreach ($chunks as $chunk) {
 
     $response = curl_exec($ch);
     $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    if ($status != 200) {
+    // Treat any 2xx response as success. Some gateway/API versions return 201/202.
+    if ($status < 200 || $status >= 300) {
         $total_status = $status;
     }
     $result = json_decode($response, true);
@@ -680,7 +681,8 @@ if (!empty($all_results)) {
 }
 
 // GHL-friendly log structure
-$ghlStatus = $total_status == 200 ? "success" : "error";
+$gatewayAccepted = ($total_status >= 200 && $total_status < 300);
+$ghlStatus = $gatewayAccepted ? "success" : "error";
 $summary = "Sent to " . implode(', ', $validNumbers);
 if (count($validNumbers) > 3) {
     $summary = "Sent to " . count($validNumbers) . " recipients";
@@ -702,7 +704,7 @@ echo json_encode([
         "Timestamp" => date('Y-m-d H:i:s')
     ],
     "output" => [
-        "success" => ($total_status == 200),
+        "success" => $gatewayAccepted,
         "summary" => $summary,
         "credits" => $required_credits,
         "location_id" => $locId,
