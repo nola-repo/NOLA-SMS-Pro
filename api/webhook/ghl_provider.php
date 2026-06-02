@@ -454,18 +454,20 @@ if ($usingFreeCredits) {
     $smsStatus = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
-    $smsResult = json_decode($smsResponse, true);
+$smsResult = json_decode($smsResponse, true);
+$gatewayAccepted = ($smsStatus >= 200 && $smsStatus < 300);
     error_log('[ghl_provider] Semaphore response: ' . $smsResponse);
 error_log('[ghl_provider][GATEWAY_RESULT] ' . json_encode([
     'req_id' => $providerReqId,
     'http_status' => $smsStatus,
+    'gateway_accepted' => $gatewayAccepted,
     'normalizedPhone' => $normalizedPhone,
     'locationId' => $locationId,
     'sender' => $sender,
 ]));
 
 
-if ($smsStatus !== 200 || empty($smsResult)) {
+if (!$gatewayAccepted) {
     // Refund credits if SMS failed and we deducted
     if (!$usingOwnApiKey) {
         try {
