@@ -546,6 +546,15 @@ $db->collection('conversations')->document($convId)->set([
     'ghl_contact_id'  => $contactId,
 ], ['merge' => true]);
 
+// ── Sync Status back to GHL immediately ─────────────────────────────────────
+try {
+    require_once __DIR__ . '/../services/GhlSyncService.php';
+    $ghlSync = new \Nola\Services\GhlSyncService($db, $locationId);
+    $ghlSync->syncMessageStatus($messageId, 'Sent');
+} catch (\Throwable $e) {
+    error_log('[ghl_provider] Immediate GHL status sync failed: ' . $e->getMessage());
+}
+
 // ── Success ─────────────────────────────────────────────────────────────────
 http_response_code(200);
 echo json_encode([
