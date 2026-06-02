@@ -546,36 +546,37 @@ $db->collection('conversations')->document($convId)->set([
 ], ['merge' => true]);
 
 // ── Success ─────────────────────────────────────────────────────────────────
-// ── Success ─────────────────────────────────────────────────────────────────
+http_response_code(200);
 echo json_encode([
-    'success' => true,
-    'status' => 'success',
-    'message' => $sender,
-    'execution_log' => "NOLA Provider: SMS sent to $normalizedPhone via $sender. Credits: $required_credits.",
+    'success'    => true,
+    'messageId'  => $messageId,   // Echo back GHL's own messageId as the provider contract requires
+    'status'     => 'success',
+    'message'    => "SMS sent successfully to {$normalizedPhone}",
+    'execution_log'        => "NOLA Provider: SMS sent to $normalizedPhone via $sender. Credits: $required_credits.",
     'action_executed_from' => 'Nola Web',
     'event_details' => [
-        'Status' => 'Success',
-        'Recipient' => $normalizedPhone,
+        'Status'      => 'Success',
+        'Recipient'   => $normalizedPhone,
         'SMS Message' => $message,
-        'Credits Used' => $required_credits,
-        'Sender ID' => $sender,
+        'Credits Used'=> $required_credits,
+        'Sender ID'   => $sender,
         'Location ID' => $locationId,
-        'Timestamp' => date('Y-m-d H:i:s')
+        'Timestamp'   => date('Y-m-d H:i:s')
     ],
     'data' => [
-        'messageId' => $storedMsgId,
+        'messageId'       => $messageId,          // GHL-provided message ID (echoed back)
+        'semaphore_id'    => $storedMsgId,         // Semaphore's own message ID
         'conversation_id' => $convId,
-        'number' => $normalizedPhone,
-        'credits_used' => $required_credits,
-        'location_id' => $locationId
+        'number'          => $normalizedPhone,
+        'credits_used'    => $required_credits,
+        'location_id'     => $locationId,
+        'sender'          => $sender,
     ],
-    // Some GHL UI versions use these top-level keys
-    'message_body' => $message,
-    'sender' => $sender
 ]);
 error_log('[ghl_provider][SUCCESS] ' . json_encode([
-    'req_id' => $providerReqId,
-    'locationId' => $locationId,
+    'req_id'            => $providerReqId,
+    'locationId'        => $locationId,
+    'ghl_message_id'    => $messageId,
     'stored_message_id' => $storedMsgId,
-    'conversation_id' => $convId,
+    'conversation_id'   => $convId,
 ]));

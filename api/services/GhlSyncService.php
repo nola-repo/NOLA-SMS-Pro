@@ -172,20 +172,34 @@ class GhlSyncService
     {
         if (!$ghlMessageId) return ['success' => false, 'error' => 'Missing GHL Message ID'];
 
-        try {
-            $ghlStatus = (strtolower($status) === 'sent' || strtolower($status) === 'delivered') ? 'delivered' : 'failed';
+        $normalised = strtolower(trim($status));
 
+        // Only sync terminal statuses to GHL.
+        // In-progress states (queued, pending, sending) must NEVER be reported as
+        // 'failed' — doing so triggers the GHL "Retry" badge even on delivered messages.
+        if (in_array($normalised, ['sent', 'delivered', 'success'])) {
+            $ghlStatus = 'delivered';
+        } elseif (in_array($normalised, ['failed', 'expired', 'rejected', 'undelivered'])) {
+            $ghlStatus = 'failed';
+        } else {
+            // 'queued', 'pending', 'sending' — still in-flight, skip GHL update entirely.
+            error_log("[GhlSyncService] syncMessageStatus skipped for in-progress status '{$status}' (messageId={$ghlMessageId})");
+            return ['success' => true, 'skipped' => true, 'reason' => 'status_not_terminal'];
+        }
+
+        try {
             $resp = $this->ghlClient->request(
                 'POST',
                 '/conversations/messages/status',
                 json_encode([
                     'locationId' => $this->locationId,
-                    'messageId' => $ghlMessageId,
-                    'status' => $ghlStatus,
+                    'messageId'  => $ghlMessageId,
+                    'status'     => $ghlStatus,
                 ]),
                 '2021-04-15'
             );
 
+            error_log("[GhlSyncService] syncMessageStatus sent '{$ghlStatus}' for GHL messageId={$ghlMessageId} (src status='{$status}')");
             return ['success' => $resp['status'] < 300, 'ghl_response' => $resp];
         } catch (\Exception $e) {
             return ['success' => false, 'error' => $e->getMessage()];
