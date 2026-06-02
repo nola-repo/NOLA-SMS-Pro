@@ -7,7 +7,10 @@
     # ── Preserve Authorization header through rewrites ──────────────────
     # Apache strips HTTP_AUTHORIZATION when a RewriteRule is processed.
     # This rule re-exposes it so all PHP endpoints can read it via $_SERVER.
-    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization},L]
+    # NOTE: No [L] flag here — we must NOT stop rewrite processing after this
+    # rule, otherwise ALL routing rules below would be skipped and every
+    # request would return a 404 from Apache.
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
 
     Options -MultiViews
 
