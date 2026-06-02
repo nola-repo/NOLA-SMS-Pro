@@ -648,10 +648,21 @@ if (!empty($all_results)) {
         ->set($convData, ['merge' => true]);
 
     // ── GHL Bidirectional Sync (Best-Effort) ─────────────────────────────────
-    if (!$isBulk && $locId) {
+    if (!$isBulk && $locId && !empty($messageId)) {
         try {
             $ghlSync = new \Nola\Services\GhlSyncService($db, $locId, $ghlTokenRegistryId);
-            $ghlSync->syncOutboundMessage($validNumbers[0], $message, $contactId);
+            $syncRes = $ghlSync->syncOutboundMessage($validNumbers[0], $message, $contactId);
+            if (!empty($syncRes['ghl_message_id'])) {
+                $ghlMessageId = $syncRes['ghl_message_id'];
+                
+                // Update Firestore messages and sms_logs with GHL Message ID
+                $db->collection('messages')->document($messageId)->update([
+                    ['path' => 'ghl_message_id', 'value' => $ghlMessageId]
+                ]);
+                $db->collection('sms_logs')->document($messageId)->update([
+                    ['path' => 'ghl_message_id', 'value' => $ghlMessageId]
+                ]);
+            }
         } catch (\Throwable $e) {
             error_log('[GHL Sync] Failed (non-fatal): ' . $e->getMessage());
         }

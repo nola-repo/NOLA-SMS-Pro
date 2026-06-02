@@ -90,8 +90,17 @@ class GhlSyncService
                     'ghl_response' => $resp
                 ];
             }
+            $ghlMessageId = null;
+            if ($resp['status'] < 300 && !empty($resp['body'])) {
+                $respData = json_decode($resp['body'], true);
+                $ghlMessageId = $respData['messageId'] ?? null;
+            }
 
-            return ['success' => $resp['status'] < 300, 'ghl_response' => $resp];
+            return [
+                'success' => $resp['status'] < 300,
+                'ghl_response' => $resp,
+                'ghl_message_id' => $ghlMessageId
+            ];
         } catch (\Exception $e) {
             return ['success' => false, 'error' => $e->getMessage()];
         }
