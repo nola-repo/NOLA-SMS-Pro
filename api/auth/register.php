@@ -119,6 +119,20 @@ try {
     $collection = ($role === 'agency') ? 'agency_users' : 'users';
     $db->collection($collection)->add($data);
 
+    try {
+        require_once __DIR__ . '/../services/NotificationService.php';
+        \NotificationService::notifyWelcome(
+            $db,
+            $locationId ?: ($companyId ?: ''),
+            $email,
+            trim($firstName . ' ' . $lastName),
+            $phone,
+            $role
+        );
+    } catch (\Throwable $welcomeError) {
+        error_log('[register.php] notifyWelcome trigger failed: ' . $welcomeError->getMessage());
+    }
+
     http_response_code(201);
     echo json_encode(['status' => 'success', 'message' => 'Account created.']);
 

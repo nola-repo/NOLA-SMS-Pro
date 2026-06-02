@@ -422,6 +422,7 @@ class NotificationService
             'nola_sms_requested_sender_id',
             'nola_sms_admin_notes',
             'nola_sms_otp_code',
+            'nola_sms_sender_id_registered',
         ];
 
         // Return immediately if all required IDs are already cached
@@ -691,6 +692,169 @@ class NotificationService
     }
 
     /**
+     * Dispatch welcome alert and sync registration details to central GHL.
+     *
+     * @param \Google\Cloud\Firestore\FirestoreClient $db
+     * @param string $locationId
+     * @param string $email
+     * @param string $fullName
+     * @param string $phone
+     * @param string $role
+     */
+    public static function notifyWelcome($db, string $locationId, string $email, string $fullName, string $phone, string $role): void
+    {
+        $centralLocationId = getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: '';
+        if ($centralLocationId === '') {
+            error_log("[WelcomeAlert] NOLA_ALERT_GHL_LOCATION_ID is not set. Skipping GHL delivery.");
+            return;
+        }
+
+        $email = strtolower(trim($email));
+        if ($email === '') {
+            error_log("[WelcomeAlert] Email is empty. Skipping GHL delivery.");
+            return;
+        }
+
+        require_once __DIR__ . '/GhlClient.php';
+
+        $centralTokenRegistryId = getenv('NOLA_ALERT_GHL_TOKEN_REGISTRY_ID') ?: $centralLocationId;
+        $alertTag = getenv('NOLA_ALERT_WELCOME_TAG') ?: 'nola-welcome-alert';
+
+        try {
+            $ghlClient = new \GhlClient($db, $centralLocationId, $centralTokenRegistryId);
+
+            $contactId = null;
+            $searchUrl = '/contacts/?locationId=' . urlencode($centralLocationId) . '&query=' . urlencode($email);
+            $searchResp = $ghlClient->request('GET', $searchUrl);
+            if ($searchResp['status'] === 200) {
+                $searchData = json_decode($searchResp['body'], true);
+                $contacts = $searchData['contacts'] ?? $searchData['data'] ?? [];
+                if (is_array($contacts)) {
+                    foreach ($contacts as $contact) {
+                        if (isset($contact['email']) && strtolower(trim((string) $contact['email'])) === $email) {
+                            $contactId = $contact['id'];
+                            break;
+                        }
+                    }
+                }
+            }
+
+            $fieldIdMap = self::resolveCentralGhlCustomFieldIds($db, $ghlClient, $centralLocationId);
+
+            $locationName = '';
+            if ($locationId !== '') {
+                try {
+                    $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
+                    $snap = $db->collection('integrations')->document($intDocId)->snapshot();
+                    if ($snap->exists()) {
+                        $locationName = (string) ($snap->data()['location_name'] ?? '');
+                    }
+                    if ($locationName === '') {
+                        $tokenSnap = $db->collection('ghl_tokens')->document($locationId)->snapshot();
+                        if ($tokenSnap->exists()) {
+                            $tokenData = $tokenSnap->data();
+                            $locationName = (string) ($tokenData['location_name'] ?? '');
+                            if ($locationName === '') {
+                                $locationName = install_extract_company_name($tokenData) ?: '';
+                            }
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    error_log("[WelcomeAlert] Could not resolve location name for {$locationId}: " . $e->getMessage());
+                }
+            }
+
+            $now = new \DateTimeImmutable();
+            $alertId = 'welcome_' . ($locationId !== '' ? $locationId : $role) . '_' . $now->format('YmdHis');
+
+            $alertFields = [
+                'nola_sms_alert_type'            => 'welcome',
+                'nola_sms_alert_id'              => $alertId,
+                'nola_sms_alerted_at'            => $now->format('c'),
+                'nola_sms_registered_email'      => $email,
+                'nola_sms_source_location_id'    => $locationId,
+                'nola_sms_source_location_name'  => $locationName,
+                'nola_sms_sender_id_registered'  => 'no',
+            ];
+
+            $ghlCustomFields = [];
+            foreach ($alertFields as $key => $value) {
+                $fieldId = $fieldIdMap[$key] ?? null;
+                if (!$fieldId) {
+                    error_log("[WelcomeAlert] Warning: no GHL field ID for key '{$key}' - field will be skipped.");
+                    continue;
+                }
+                $ghlCustomFields[] = ['id' => $fieldId, 'value' => (string) $value];
+            }
+
+            $firstName = 'NOLA SMS';
+            $lastName = 'User';
+            if (trim($fullName) !== '') {
+                $parts = explode(' ', trim($fullName), 2);
+                $firstName = $parts[0];
+                $lastName = $parts[1] ?? '';
+            }
+
+            $contactPayload = [
+                'locationId'   => $centralLocationId,
+                'email'        => $email,
+                'firstName'    => $firstName,
+                'lastName'     => $lastName,
+                'customFields' => $ghlCustomFields,
+            ];
+            if (trim($phone) !== '') {
+                $contactPayload['phone'] = trim($phone);
+            }
+
+            if ($contactId) {
+                $updatePayload = $contactPayload;
+                unset($updatePayload['locationId']);
+                $updateResp = $ghlClient->request('PUT', "/contacts/{$contactId}", json_encode($updatePayload));
+                if ($updateResp['status'] >= 400) {
+                    error_log(
+                        "[WelcomeAlert] Contact update failed "
+                        . "(central={$centralLocationId}, source={$locationId}, email={$email}, "
+                        . "contact={$contactId}, http=" . $updateResp['status'] . "): "
+                        . substr($updateResp['body'], 0, 500)
+                    );
+                    return;
+                }
+            } else {
+                $createResp = $ghlClient->request('POST', '/contacts/', json_encode($contactPayload));
+                if ($createResp['status'] === 200 || $createResp['status'] === 201) {
+                    $createData = json_decode($createResp['body'], true);
+                    $contactId = $createData['contact']['id'] ?? $createData['id'] ?? null;
+                } else {
+                    error_log(
+                        "[WelcomeAlert] Contact create failed "
+                        . "(central={$centralLocationId}, source={$locationId}, email={$email}, "
+                        . "http=" . $createResp['status'] . "): "
+                        . substr($createResp['body'], 0, 500)
+                    );
+                    return;
+                }
+            }
+
+            if ($contactId) {
+                $ghlClient->request('DELETE', "/contacts/{$contactId}/tags", json_encode(['tags' => [$alertTag]]));
+                $tagResp = $ghlClient->request('POST', "/contacts/{$contactId}/tags", json_encode(['tags' => [$alertTag]]));
+                if ($tagResp['status'] >= 400) {
+                    error_log(
+                        "[WelcomeAlert] Tag cycle failed "
+                        . "(central={$centralLocationId}, source={$locationId}, contact={$contactId}, "
+                        . "http=" . $tagResp['status'] . "): "
+                        . substr($tagResp['body'], 0, 300)
+                    );
+                } else {
+                    error_log("[WelcomeAlert] GHL welcome sync completed successfully: contactId={$contactId}");
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log("[WelcomeAlert] GHL welcome sync failed: " . $e->getMessage());
+        }
+    }
+
+    /**
      * Create or update a contact in the central NOLA CRM GHL location and
      * populate the NOLA alert custom fields for a Sender ID request.
      * Optionally cycles the alert tag so the central workflow triggers.
@@ -786,6 +950,7 @@ class NotificationService
             'nola_sms_source_location_name'  => $sourceLocationName,
             'nola_sms_requested_sender_id'   => $requestedSenderId,
             'nola_sms_admin_notes'           => $adminNotes ?? '',
+            'nola_sms_sender_id_registered'  => 'yes',
         ];
 
         $ghlCustomFields = [];

@@ -726,6 +726,22 @@ function register_from_install_run_deferred_finalize(
     $finalizeStart = microtime(true);
     try {
         install_finalize_registered_location_fast($db, $locationId, $ownerContext, $now);
+
+        if (!empty($ownerContext['owner_email'])) {
+            try {
+                require_once __DIR__ . '/../services/NotificationService.php';
+                \NotificationService::notifyWelcome(
+                    $db,
+                    $locationId,
+                    $ownerContext['owner_email'],
+                    $ownerContext['owner_name'] ?? 'NOLA Owner',
+                    $ownerContext['owner_phone'] ?? '',
+                    'user'
+                );
+            } catch (\Throwable $welcomeError) {
+                error_log('[register_from_install] notifyWelcome trigger failed: ' . $welcomeError->getMessage());
+            }
+        }
     } catch (Exception $finalizeError) {
         error_log('[register_from_install] finalize_registered_fast failed rid=' . $rid . ' location=' . $locationId . ': ' . $finalizeError->getMessage());
     }
