@@ -110,6 +110,7 @@
     # ── Billing endpoints ──────────────────────────────────────────────
     RewriteRule ^api/billing/agency_wallet/?$      /api/billing/agency_wallet.php      [NC,L,QSA]
     RewriteRule ^api/billing/subaccount_wallet/?$  /api/billing/subaccount_wallet.php  [NC,L,QSA]
+    RewriteRule ^api/billing/subscription/?$       /api/billing/subscription.php       [NC,L,QSA]
     RewriteRule ^api/billing/transactions/?$       /api/billing/transactions.php       [NC,L,QSA]
     RewriteRule ^api/billing/credit_requests/?$    /api/billing/credit_requests.php    [NC,L,QSA]
     RewriteRule ^api/billing/auto_recharge_cron/?$ /api/billing/auto_recharge_cron.php [NC,L,QSA]
