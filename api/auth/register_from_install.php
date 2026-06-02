@@ -539,7 +539,18 @@ try {
                     'owner_phone' => $phone,
                 ]
                 : [];
-            register_from_install_run_deferred_finalize($db, (string) $locationId, $ownerContext, $now, $rflogId, $rflogStart);
+            register_from_install_run_deferred_finalize(
+                $db,
+                (string) $locationId,
+                $ownerContext,
+                $email,
+                $fullName,
+                $phone,
+                $role,
+                $now,
+                $rflogId,
+                $rflogStart
+            );
         } else {
             register_from_install_log_timing($rflogId, 'total', $rflogStart);
         }
@@ -690,7 +701,18 @@ try {
                 'owner_phone' => $phone,
             ]
             : [];
-        register_from_install_run_deferred_finalize($db, (string) $locationId, $ownerContext, $now, $rflogId, $rflogStart);
+        register_from_install_run_deferred_finalize(
+            $db,
+            (string) $locationId,
+            $ownerContext,
+            $email,
+            $fullName,
+            $phone,
+            $role,
+            $now,
+            $rflogId,
+            $rflogStart
+        );
     } else {
         register_from_install_log_timing($rflogId, 'total', $rflogStart);
     }
@@ -715,6 +737,10 @@ function register_from_install_run_deferred_finalize(
     $db,
     string $locationId,
     array $ownerContext,
+    string $registrationEmail,
+    string $registrationName,
+    string $registrationPhone,
+    string $registrationRole,
     DateTimeImmutable $now,
     string $rid,
     float $sinceStart
@@ -727,16 +753,16 @@ function register_from_install_run_deferred_finalize(
     try {
         install_finalize_registered_location_fast($db, $locationId, $ownerContext, $now);
 
-        if (!empty($ownerContext['owner_email'])) {
+        if (trim($registrationEmail) !== '') {
             try {
                 require_once __DIR__ . '/../services/NotificationService.php';
                 \NotificationService::notifyWelcome(
                     $db,
                     $locationId,
-                    $ownerContext['owner_email'],
-                    $ownerContext['owner_name'] ?? 'NOLA Owner',
-                    $ownerContext['owner_phone'] ?? '',
-                    'user'
+                    strtolower(trim($registrationEmail)),
+                    trim($registrationName) !== '' ? trim($registrationName) : 'NOLA Owner',
+                    trim($registrationPhone),
+                    trim($registrationRole) !== '' ? trim($registrationRole) : 'user'
                 );
             } catch (\Throwable $welcomeError) {
                 error_log('[register_from_install] notifyWelcome trigger failed: ' . $welcomeError->getMessage());
