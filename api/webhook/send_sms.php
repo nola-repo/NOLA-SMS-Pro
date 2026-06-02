@@ -207,6 +207,35 @@ $jwtCtx = auth_get_optional_jwt_context($db);
 auth_assert_ghl_api_location_allowed($db, $jwtCtx, (string) $locId);
 $ghlTokenRegistryId = auth_resolve_ghl_token_registry_id($db, $jwtCtx, (string) $locId);
 
+// ── System Notification Detection ────────────────────────────────────────────
+// Identifies webhooks originating from the central NOLA admin location that are
+// authorized to send free system notifications (welcome, low-balance, top-up, etc.).
+// Security: the bypass is ONLY granted when the triggering GHL location matches
+// the central location env var. An explicit is_system_notification flag in
+// customData is also accepted but only when the central location is the trigger.
+$centralLocationId    = trim((string)(getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: ''));
+$triggeringLocationId = trim((string)($payload['location']['id'] ?? $payload['location_id'] ?? ''));
+
+$isSystemNotification = false;
+if ($centralLocationId !== '') {
+    // Direct match: the webhook was fired from within the central location
+    if ($triggeringLocationId === $centralLocationId) {
+        $isSystemNotification = true;
+    }
+
+    // Explicit flag in customData — trusted only when central location is involved
+    $reqSystemFlag = $customData['is_system_notification'] ?? $payload['is_system_notification'] ?? null;
+    $flagIsTrue    = ($reqSystemFlag === true || $reqSystemFlag === 'true' || $reqSystemFlag === 1 || $reqSystemFlag === '1');
+    if ($flagIsTrue && ($locId === $centralLocationId || $triggeringLocationId === $centralLocationId)) {
+        $isSystemNotification = true;
+    }
+}
+
+error_log('[send_sms] System notification check: isSystemNotification=' . ($isSystemNotification ? 'true' : 'false')
+    . ' triggeringLoc=' . $triggeringLocationId
+    . ' centralLoc=' . ($centralLocationId ?: '(not set)')
+    . ' locId=' . $locId);
+
 // ── Dynamic MASTER_APPROVED_SENDERS from Firestore ──────────────────────────
 // Replaces the old static config whitelist. Admin-approved senders are auto-added
 // to this Firestore doc by admin_sender_requests.php when a request is approved.
@@ -321,10 +350,15 @@ if ($userKey !== '' && $userKey !== $sysKey) {
 
 } else {
     // ── PATH B: Master billing gateway ──────────────────────────────────────
-    // If Admin has approved a custom sender for this subaccount, TRUST IT.
     error_log("[send_sms] Resolving Sender ID for Loc: {$locId} (requested: '{$requestedSender}')");
-    
-    if (!empty($approvedSenderId)) {
+
+    if ($isSystemNotification) {
+        // System notifications bypass the subaccount's custom approved sender.
+        // Use the sender passed in the payload (NOLASMSPro from GHL workflow),
+        // or fall back to the system default if none was specified.
+        $sender = !empty($requestedSender) ? $requestedSender : ($SENDER_IDS[0] ?? 'NOLASMSPro');
+        error_log("[send_sms] Result: System notification override. Forcing sender to '{$sender}'.");
+    } elseif (!empty($approvedSenderId)) {
         // Safe because it was approved by an Admin in the dashboard
         $sender = $approvedSenderId;
         error_log("[send_sms] Result: Using approved_sender_id '{$sender}' from Firestore.");
@@ -355,20 +389,29 @@ $usingFreeCredits = !$usingCustomSender && ($freeUsageCount + $required_credits 
 $creditManager = new CreditManager();
 $account_id = $locId ?: 'default';
 
+// System notifications skip ALL credit logic (trial and paid).
+$bypassBilling = $isSystemNotification;
+
 // ── Debug: Log the billing decision path ─────────────────────────────────────
 error_log("[send_sms] BILLING DECISION for loc={$locId}: " . json_encode([
-    'usingOwnApiKey'    => $usingCustomSender,   // true = external Semaphore key
-    'usingFreeCredits'  => $usingFreeCredits,
-    'freeUsageCount'    => $freeUsageCount,
-    'freeCreditsTotal'  => $freeCreditsTotal,
-    'required_credits'  => $required_credits,
-    'num_recipients'    => $num_recipients,
-    'account_id'        => $account_id,
+    'usingOwnApiKey'       => $usingCustomSender,
+    'usingFreeCredits'     => $usingFreeCredits,
+    'bypassBilling'        => $bypassBilling,
+    'isSystemNotification' => $isSystemNotification,
+    'freeUsageCount'       => $freeUsageCount,
+    'freeCreditsTotal'     => $freeCreditsTotal,
+    'required_credits'     => $required_credits,
+    'num_recipients'       => $num_recipients,
+    'account_id'           => $account_id,
     'customApiKey_present' => !empty($customApiKey),
 ]));
 
 // ── Credit Deduction & Trial ──────────────────────────────────────────────────
-if ($usingFreeCredits) {
+if ($bypassBilling) {
+    // Free system notification — no trial counter increment, no wallet deduction.
+    error_log("[send_sms] BILLING BYPASS: System notification. Skipping credit deduction for loc={$locId}.");
+
+} elseif ($usingFreeCredits) {
     // Free Trial (PATH B only) → increment counter, no paid credit deduction
     $intRef->set([
         'free_usage_count' => $freeUsageCount + $required_credits,
@@ -551,8 +594,8 @@ if (!empty($all_results)) {
         ? ($prefix . 'group_' . ($batch_id ?? 'bulk'))
         : ($prefix . 'conv_' . $validNumbers[0]);
 
-    // Calculate credits per message for logging
-    $credits_per_message = CreditManager::calculateRequiredCredits($message, 1);
+    // Calculate credits per message for logging (0 if this is a free system notification)
+    $credits_per_message = $bypassBilling ? 0 : CreditManager::calculateRequiredCredits($message, 1);
 
     $saved_message_ids = [];
 
@@ -700,32 +743,35 @@ if (count($validNumbers) > 3) {
 }
 
 // GHL Legacy/Success response structure
+$reportedCredits = $bypassBilling ? 0 : $required_credits;
 echo json_encode([
-    "status" => $ghlStatus,
-    "message" => $sender,
-    "execution_log" => "Workflow SMS sent via $sender to $summary. Credits: $required_credits.",
+    "status"               => $ghlStatus,
+    "message"              => $sender,
+    "execution_log"        => "Workflow SMS sent via $sender to $summary. Credits: {$reportedCredits}.",
     "action_executed_from" => "Nola Web",
-    "event_details" => [
-        "Status" => "Success",
+    "event_details"        => [
+        "Status"       => "Success",
         "Recipient(s)" => implode(', ', $validNumbers),
-        "SMS Message" => $message,
-        "Credits Used" => $required_credits,
-        "Sender ID" => $sender,
-        "Location ID" => $locId,
-        "Timestamp" => date('Y-m-d H:i:s')
+        "SMS Message"  => $message,
+        "Credits Used" => $reportedCredits,
+        "Sender ID"    => $sender,
+        "Location ID"  => $locId,
+        "Timestamp"    => date('Y-m-d H:i:s')
     ],
     "output" => [
-        "success" => $gatewayAccepted,
-        "summary" => $summary,
-        "credits" => $required_credits,
-        "location_id" => $locId,
-        "message_ids" => $saved_message_ids ?? []
+        "success"      => $gatewayAccepted,
+        "summary"      => $summary,
+        "credits"      => $reportedCredits,
+        "location_id"  => $locId,
+        "message_ids"  => $saved_message_ids ?? []
     ],
     "debug_info" => [
-        "location_id" => $locId,
-        "ghl_sync_status" => isset($msgSyncResp) ? $msgSyncResp : "skipped",
-        "is_custom_provider" => $usingCustomSender,
-        "is_free_trial" => $usingFreeCredits,
-        "used_credits" => $required_credits
+        "location_id"           => $locId,
+        "ghl_sync_status"       => isset($msgSyncResp) ? $msgSyncResp : "skipped",
+        "is_custom_provider"    => $usingCustomSender,
+        "is_free_trial"         => $usingFreeCredits,
+        "is_system_notification"=> $isSystemNotification,
+        "bypass_billing"        => $bypassBilling,
+        "used_credits"          => $reportedCredits
     ]
 ]);
