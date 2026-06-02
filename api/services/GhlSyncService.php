@@ -210,39 +210,12 @@ class GhlSyncService
     private function resolveConversation(string $phone, ?string &$contactId): ?string
     {
         $localConvId = $this->locationId . '_conv_' . $phone;
-
-        // Try local file cache first to make operations sub-millisecond
-        try {
-            require_once __DIR__ . '/Cache.php';
-            $cache = new \Cache('conversations');
-            $cached = $cache->get($localConvId, 86400); // 24 Hours TTL
-            if ($cached && !empty($cached['ghl_conversation_id'])) {
-                if (!$contactId) {
-                    $contactId = $cached['ghl_contact_id'] ?? null;
-                }
-                return $cached['ghl_conversation_id'];
-            }
-        } catch (\Throwable $e) {
-            error_log('[GhlSyncService] Cache get conversation error: ' . $e->getMessage());
-        }
-
         $convSnap = $this->db->collection('conversations')->document($localConvId)->snapshot();
         
         if ($convSnap->exists()) {
             $data = $convSnap->data();
             if (!$contactId) $contactId = $data['ghl_contact_id'] ?? null;
-            if ($data['ghl_conversation_id'] ?? null) {
-                // Populate local cache for fast lookup next time
-                try {
-                    $cache = new \Cache('conversations');
-                    $cache->set($localConvId, [
-                        'ghl_conversation_id' => $data['ghl_conversation_id'],
-                        'ghl_contact_id'      => $contactId,
-                    ]);
-                } catch (\Throwable $e) {}
-
-                return $data['ghl_conversation_id'];
-            }
+            if ($data['ghl_conversation_id'] ?? null) return $data['ghl_conversation_id'];
         }
 
         // If not cached, search GHL by phone
@@ -282,16 +255,6 @@ class GhlSyncService
                     'ghl_conversation_id' => $ghlConvId,
                     'ghl_contact_id' => $contactId,
                 ], ['merge' => true]);
-
-                // Update local cache
-                try {
-                    $cache = new \Cache('conversations');
-                    $cache->set($localConvId, [
-                        'ghl_conversation_id' => $ghlConvId,
-                        'ghl_contact_id'      => $contactId,
-                    ]);
-                } catch (\Throwable $e) {}
-
                 return $ghlConvId;
             }
         }
