@@ -1,0 +1,7 @@
+# Force shell scripts and Docker entrypoints to always use Unix LF line endings.
+# Windows CRLF in .sh files causes "not found" crashes inside Linux containers.
+*.sh    text eol=lf
+*.bash  text eol=lf
+
+# Default: auto-normalize all text files
+*       text=auto
