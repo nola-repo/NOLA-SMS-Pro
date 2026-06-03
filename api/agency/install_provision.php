@@ -232,6 +232,13 @@ try {
                 'updated_at' => new \Google\Cloud\Core\Timestamp($ts),
             ], ['merge' => true]);
 
+            // Set default rate_limit only if not already configured
+            $existingTokenSnap = $db->collection('ghl_tokens')->document((string)$locId)->snapshot();
+            if ($existingTokenSnap->exists() && !array_key_exists('rate_limit', $existingTokenSnap->data())) {
+                $db->collection('ghl_tokens')->document((string)$locId)->set(['rate_limit' => 10], ['merge' => true]);
+            }
+
+
             $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
             $intRef = $db->collection('integrations')->document($intDocId);
             $intSnap = $intRef->snapshot();

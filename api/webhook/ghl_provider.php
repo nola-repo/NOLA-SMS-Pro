@@ -432,6 +432,13 @@ if ($usingFreeCredits) {
     try {
         $agencyDoc = $db->collection('agency_subaccounts')->document($locationId)->snapshot();
         $agency_id = $agencyDoc->exists() ? ($agencyDoc->data()['agency_id'] ?? '') : '';
+        // Fallback: resolve agency_id from ghl_tokens.companyId if agency_subaccounts doesn't have a record
+        if (!$agency_id) {
+            $agency_id = (string)($tokenData['companyId'] ?? $tokenData['company_id'] ?? '');
+            if ($agency_id) {
+                error_log("[ghl_provider] agency_id resolved from ghl_tokens.companyId={$agency_id} for loc={$locationId}");
+            }
+        }
         $provider  = $usingOwnApiKey ? 'semaphore_custom' : 'semaphore';
 
         $refId = $messageId ?? ('ghl_prov_' . bin2hex(random_bytes(4)));

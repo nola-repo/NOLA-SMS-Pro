@@ -433,9 +433,17 @@ if ($bypassBilling) {
     // Paid deduction — applies to ALL sends (both PATH A and non-trial PATH B).
     // Own-API-key users consume NOLA credits for platform usage; free trial is simply skipped.
 
-    // Resolve agency_id for logging and lock check
+    // Resolve agency_id for logging and lock check.
+    // Primary: agency_subaccounts/{locId}.agency_id
+    // Fallback: companyId from the location's ghl_tokens doc (set during OAuth install)
     $agencyDoc = $db->collection('agency_subaccounts')->document($locId)->snapshot();
     $agency_id = $agencyDoc->exists() ? ($agencyDoc->data()['agency_id'] ?? '') : '';
+    if (!$agency_id) {
+        $agency_id = (string)($tokenData['companyId'] ?? $tokenData['company_id'] ?? '');
+        if ($agency_id) {
+            error_log("[send_sms] agency_id resolved from ghl_tokens.companyId={$agency_id} for loc={$locId}");
+        }
+    }
 
     // ── 1. Subaccount balance pre-flight ────────────────────────────────────
     $subBalance = $creditManager->get_balance($account_id);

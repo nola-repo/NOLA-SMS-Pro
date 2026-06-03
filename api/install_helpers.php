@@ -1570,6 +1570,11 @@ function install_finalize_registered_location_fast(
         'updated_at' => $timestamp,
     ]);
 
+    // Set a default rate limit for new subaccounts if not already set
+    if (!isset($tokenData['rate_limit'])) {
+        $tokenInstallData['rate_limit'] = 10;
+    }
+
     $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
     $intRef = $db->collection('integrations')->document($intDocId);
     $intData = [];
@@ -1652,11 +1657,15 @@ function install_finalize_location_install(
         $tokenSnap = $tokenRef->snapshot();
         $tokenData = $tokenSnap->exists() ? $tokenSnap->data() : [];
     }
+    // Set a default rate limit for new subaccounts if not already set
+    $existingRateLimit = isset($tokenData['rate_limit']) ? (int)$tokenData['rate_limit'] : null;
+
     $tokenInstallData = [
         'install_state' => INSTALL_STATE_INSTALLED,
         'install_status' => $installStatus,
         'is_live' => true,
         'toggle_enabled' => true,
+        'rate_limit' => $existingRateLimit !== null ? $existingRateLimit : 10,
         'install_resolution_mode' => $resolutionMode,
         'install_resolution_source' => $resolutionSource,
         'install_redirect_kind' => $redirectKind,

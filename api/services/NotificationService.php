@@ -1396,8 +1396,8 @@ class NotificationService
         $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
         $docRef   = $db->collection('integrations')->document($intDocId);
 
-        if ($currentBalance > $threshold) {
-            // Balance is healthy — clear circuit breaker so the next dip fires immediately
+        if ($currentBalance >= $threshold) {
+            // Balance is healthy (at or above threshold) — clear circuit breaker so the next dip fires immediately
             $snap = $docRef->snapshot();
             if ($snap->exists()) {
                 $existingPrefs = $snap->data()['notification_preferences'] ?? [];
