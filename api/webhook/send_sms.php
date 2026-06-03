@@ -353,10 +353,9 @@ if ($userKey !== '' && $userKey !== $sysKey) {
     error_log("[send_sms] Resolving Sender ID for Loc: {$locId} (requested: '{$requestedSender}')");
 
     if ($isSystemNotification) {
-        // System notifications bypass the subaccount's custom approved sender.
-        // Use the sender passed in the payload (NOLASMSPro from GHL workflow),
-        // or fall back to the system default if none was specified.
-        $sender = !empty($requestedSender) ? $requestedSender : ($SENDER_IDS[0] ?? 'NOLASMSPro');
+        // Force the central system sender 'NOLASMSPro' for all system alerts, welcome SMS,
+        // and low-balance warnings, ignoring any custom caller overrides.
+        $sender = 'NOLASMSPro';
         error_log("[send_sms] Result: System notification override. Forcing sender to '{$sender}'.");
     } elseif (!empty($approvedSenderId)) {
         // Safe because it was approved by an Admin in the dashboard
