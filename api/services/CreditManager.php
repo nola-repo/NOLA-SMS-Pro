@@ -269,7 +269,9 @@ class CreditManager
 
         $subaccountRef  = $this->get_account_ref($location_id);
         $agencyRef      = $this->get_agency_ref($agency_id);
-        
+        // Also keep agency_wallet in sync for the Billing page Firestore listener.
+        $agencyWalletRef = $this->db->collection('agency_wallet')->document(trim($agency_id));
+
         $transactionRefSub    = $this->db->collection('credit_transactions')->newDocument();
         $transactionRefAgency = $this->db->collection('credit_transactions')->newDocument();
 
@@ -279,7 +281,8 @@ class CreditManager
         $profit = round($charged - $provider_cost, 4);
 
         $result = $this->db->runTransaction(function ($transaction) use (
-            $subaccountRef, $agencyRef, $transactionRefSub, $transactionRefAgency, 
+            $subaccountRef, $agencyRef, $agencyWalletRef,
+            $transactionRefSub, $transactionRefAgency,
             $subaccount_amount, $agency_amount, $reference_id, $description,
             $agency_id, $location_id, $provider_cost, $charged, $profit, $provider, $ts, $metadata
         ) {
@@ -301,14 +304,24 @@ class CreditManager
             $new_sub_balance    = $current_sub_balance - $subaccount_amount;
             $new_agency_balance = $current_agency_balance - $agency_amount;
 
-            $transaction->set($subaccountRef, [
-                'credit_balance' => $new_sub_balance,
-                'updated_at'     => $ts,
-            ], ['merge' => true]);
-
+            // Deduct from the primary agency document (agency_users)
             $transaction->set($agencyRef, [
                 'balance'    => $new_agency_balance,
                 'updated_at' => $ts,
+            ], ['merge' => true]);
+
+            // Mirror balance to agency_wallet so the Billing page real-time listener stays accurate
+            $snapWallet = $transaction->snapshot($agencyWalletRef);
+            if ($snapWallet->exists()) {
+                $transaction->set($agencyWalletRef, [
+                    'balance'    => $new_agency_balance,
+                    'updated_at' => $ts,
+                ], ['merge' => true]);
+            }
+
+            $transaction->set($subaccountRef, [
+                'credit_balance' => $new_sub_balance,
+                'updated_at'     => $ts,
             ], ['merge' => true]);
 
             // Subaccount Transaction Log
@@ -538,6 +551,10 @@ class CreditManager
         }
 
         $accountRef = $wallet_scope === 'agency' ? $this->get_agency_ref($account_id) : $this->get_account_ref($account_id);
+        // For agency top-ups, also keep agency_wallet in sync for the Billing page listener.
+        $agencyWalletRef = $wallet_scope === 'agency'
+            ? $this->db->collection('agency_wallet')->document(trim((string)$account_id))
+            : null;
         $transactionRef = $this->db->collection('credit_transactions')->newDocument();
 
         $txAccountId = $wallet_scope === 'agency'
@@ -547,11 +564,11 @@ class CreditManager
         $now = new \DateTimeImmutable();
         $ts = new Timestamp($now);
 
-        $result = $this->db->runTransaction(function ($transaction) use ($accountRef, $transactionRef, $amount, $reference_id, $description, $type, $wallet_scope, $ts, $txAccountId) {
+        $result = $this->db->runTransaction(function ($transaction) use ($accountRef, $agencyWalletRef, $transactionRef, $amount, $reference_id, $description, $type, $wallet_scope, $ts, $txAccountId) {
             $snapshot = $transaction->snapshot($accountRef);
             $current_balance = 0;
             $currency = 'PHP';
-            
+
             $balanceKey = $wallet_scope === 'agency' ? 'balance' : 'credit_balance';
 
             if ($snapshot->exists()) {
@@ -565,7 +582,7 @@ class CreditManager
             $new_balance = $current_balance + $amount;
 
             $accountData = [
-                $balanceKey => $new_balance,
+                $balanceKey  => $new_balance,
                 'updated_at' => $ts
             ];
 
@@ -575,21 +592,31 @@ class CreditManager
                     $accountData['currency'] = $currency;
                 }
                 $transaction->set($accountRef, $accountData);
-            }
-            else {
+            } else {
                 $transaction->set($accountRef, $accountData, ['merge' => true]);
+            }
+
+            // Mirror balance to agency_wallet so the Billing page real-time listener stays accurate
+            if ($agencyWalletRef !== null) {
+                $snapWallet = $transaction->snapshot($agencyWalletRef);
+                if ($snapWallet->exists()) {
+                    $transaction->set($agencyWalletRef, [
+                        'balance'    => $new_balance,
+                        'updated_at' => $ts,
+                    ], ['merge' => true]);
+                }
             }
 
             $transaction->create($transactionRef, [
                 'transaction_id' => $transactionRef->id(),
-                'account_id' => $txAccountId,
-                'wallet_scope' => $wallet_scope,
-                'type' => $type,
-                'amount' => $amount,
-                'balance_after' => $new_balance,
-                'reference_id' => $reference_id,
-                'description' => $description,
-                'created_at' => $ts
+                'account_id'     => $txAccountId,
+                'wallet_scope'   => $wallet_scope,
+                'type'           => $type,
+                'amount'         => $amount,
+                'balance_after'  => $new_balance,
+                'reference_id'   => $reference_id,
+                'description'    => $description,
+                'created_at'     => $ts
             ]);
 
             return $new_balance;
@@ -790,6 +817,14 @@ class CreditManager
     private function backfill_agency_balance_from_legacy($agencyRef, string $agencyId): void
     {
         try {
+            // Only backfill if agency_users does NOT have its own 'balance' field yet.
+            // Once a balance field exists it is managed by deductions/top-ups — NEVER overwrite it.
+            $agencySnap = $agencyRef->snapshot();
+            $agencyData = $agencySnap->exists() ? $agencySnap->data() : [];
+            if (array_key_exists('balance', $agencyData)) {
+                return; // Balance already managed here; do not reset from legacy agency_wallet.
+            }
+
             $legacySnap = $this->db->collection('agency_wallet')->document($agencyId)->snapshot();
             if (!$legacySnap->exists()) {
                 return;
@@ -805,20 +840,13 @@ class CreditManager
             }
 
             $legacyBalance = max(0, (int)$legacyData['balance']);
-            $agencySnap = $agencyRef->snapshot();
-            $agencyData = $agencySnap->exists() ? $agencySnap->data() : [];
-            $currentBalance = array_key_exists('balance', $agencyData) && is_numeric($agencyData['balance'])
-                ? max(0, (int)$agencyData['balance'])
-                : null;
-
-            if ($currentBalance !== null && $currentBalance >= $legacyBalance) {
-                return;
-            }
 
             $agencyRef->set([
                 'balance' => $legacyBalance,
                 'updated_at' => new Timestamp(new \DateTimeImmutable()),
             ], ['merge' => true]);
+
+            error_log('[CreditManager] Agency balance seeded from agency_wallet for ' . $agencyId . ': ' . $legacyBalance);
         } catch (\Throwable $e) {
             error_log('[CreditManager] agency balance backfill skipped for ' . $agencyId . ': ' . $e->getMessage());
         }
