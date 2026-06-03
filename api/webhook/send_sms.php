@@ -210,11 +210,29 @@ $ghlTokenRegistryId = auth_resolve_ghl_token_registry_id($db, $jwtCtx, (string) 
 // ── System Notification Detection ────────────────────────────────────────────
 // Identifies webhooks originating from the central NOLA admin location that are
 // authorized to send free system notifications (welcome, low-balance, top-up, etc.).
-// Security: the bypass is ONLY granted when the triggering GHL location matches
-// the central location env var. An explicit is_system_notification flag in
-// customData is also accepted but only when the central location is the trigger.
+// Security: the bypass is granted when the triggering GHL location matches the
+// central location env var, or when an explicit is_system_notification flag is
+// paired with a known NOLA alert type. The latter covers central workflows that
+// pass the customer/source location_id for conversation/contact attribution.
 $centralLocationId    = trim((string)(getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: ''));
 $triggeringLocationId = trim((string)($payload['location']['id'] ?? $payload['location_id'] ?? ''));
+$systemAlertTypeRaw   = $customData['nola_sms_alert_type']
+    ?? $customData['alert_type']
+    ?? $payload['nola_sms_alert_type']
+    ?? $payload['alert_type']
+    ?? $data['nola_sms_alert_type']
+    ?? $data['alert_type']
+    ?? null;
+$systemAlertType = strtolower(trim((string)($systemAlertTypeRaw ?? '')));
+$knownSystemAlertTypes = [
+    'low_balance',
+    'top_up_success',
+    'welcome',
+    'sender_id_pending',
+    'sender_id_approved',
+    'sender_id_rejected',
+    'forgot_password_otp',
+];
 
 $isSystemNotification = false;
 if ($centralLocationId !== '') {
@@ -224,9 +242,10 @@ if ($centralLocationId !== '') {
     }
 
     // Explicit flag in customData — trusted only when central location is involved
-    $reqSystemFlag = $customData['is_system_notification'] ?? $payload['is_system_notification'] ?? null;
+    $reqSystemFlag = $customData['is_system_notification'] ?? $payload['is_system_notification'] ?? $data['is_system_notification'] ?? null;
     $flagIsTrue    = ($reqSystemFlag === true || $reqSystemFlag === 'true' || $reqSystemFlag === 1 || $reqSystemFlag === '1');
-    if ($flagIsTrue && ($locId === $centralLocationId || $triggeringLocationId === $centralLocationId)) {
+    $isKnownSystemAlert = $systemAlertType !== '' && in_array($systemAlertType, $knownSystemAlertTypes, true);
+    if ($flagIsTrue && ($locId === $centralLocationId || $triggeringLocationId === $centralLocationId || $isKnownSystemAlert)) {
         $isSystemNotification = true;
     }
 }
@@ -234,7 +253,8 @@ if ($centralLocationId !== '') {
 error_log('[send_sms] System notification check: isSystemNotification=' . ($isSystemNotification ? 'true' : 'false')
     . ' triggeringLoc=' . $triggeringLocationId
     . ' centralLoc=' . ($centralLocationId ?: '(not set)')
-    . ' locId=' . $locId);
+    . ' locId=' . $locId
+    . ' alertType=' . ($systemAlertType ?: '(none)'));
 
 // ── Dynamic MASTER_APPROVED_SENDERS from Firestore ──────────────────────────
 // Replaces the old static config whitelist. Admin-approved senders are auto-added
