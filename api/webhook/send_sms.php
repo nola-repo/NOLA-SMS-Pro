@@ -360,8 +360,15 @@ if ($userKey !== '' && $userKey !== $sysKey) {
     $usingCustomSender = true;
     $activeApiKey      = $customApiKey;
 
-    // Use their approved sender, or the explicitly requested sender, or the system default.
-    if (!empty($approvedSenderId)) {
+    // System notifications must always use the central NOLA SMS Pro sender,
+    // even when this location has its own API key and approved_sender_id.
+    if ($isSystemNotification) {
+        $sender = 'NOLASMSPro';
+        error_log("[send_sms] Result: System notification override on external API path. Forcing sender to '{$sender}'.");
+    } elseif (strcasecmp((string)$requestedSender, 'NOLASMSPro') === 0) {
+        $sender = 'NOLASMSPro';
+        error_log("[send_sms] Result: Explicit NOLASMSPro sender request on external API path. Using '{$sender}' instead of approved_sender_id.");
+    } elseif (!empty($approvedSenderId)) {
         $sender = $approvedSenderId;
     } elseif (!empty($requestedSender)) {
         $sender = $requestedSender;
