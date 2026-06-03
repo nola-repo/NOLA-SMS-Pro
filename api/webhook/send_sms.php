@@ -363,11 +363,15 @@ if ($userKey !== '' && $userKey !== $sysKey) {
     // System notifications must always use the central NOLA SMS Pro sender,
     // even when this location has its own API key and approved_sender_id.
     if ($isSystemNotification) {
+        $usingCustomSender = false;
+        $activeApiKey = $SEMAPHORE_API_KEY;
         $sender = 'NOLASMSPro';
-        error_log("[send_sms] Result: System notification override on external API path. Forcing sender to '{$sender}'.");
+        error_log("[send_sms] Result: System notification override on external API path. Routing via master gateway with sender '{$sender}'.");
     } elseif (strcasecmp((string)$requestedSender, 'NOLASMSPro') === 0) {
+        $usingCustomSender = false;
+        $activeApiKey = $SEMAPHORE_API_KEY;
         $sender = 'NOLASMSPro';
-        error_log("[send_sms] Result: Explicit NOLASMSPro sender request on external API path. Using '{$sender}' instead of approved_sender_id.");
+        error_log("[send_sms] Result: Explicit NOLASMSPro sender request on external API path. Routing via master gateway instead of approved_sender_id.");
     } elseif (!empty($approvedSenderId)) {
         $sender = $approvedSenderId;
     } elseif (!empty($requestedSender)) {
@@ -583,6 +587,7 @@ if ($bypassBilling) {
 
 $chunks = array_chunk($validNumbers, 500);
 $all_results = [];
+$gateway_errors = [];
 $total_status = 200;
 
 foreach ($chunks as $chunk) {
@@ -602,21 +607,56 @@ foreach ($chunks as $chunk) {
 
     $response = curl_exec($ch);
     $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    // Treat any 2xx response as success. Some gateway/API versions return 201/202.
+    if ($response === false) {
+        $gateway_errors[] = 'Semaphore cURL error: ' . curl_error($ch);
+        $status = 0;
+    }
+
+    // Treat any 2xx response as success only after response body validation below.
     if ($status < 200 || $status >= 300) {
         $total_status = $status;
     }
-    $result = json_decode($response, true);
+
+    $result = $response !== false ? json_decode($response, true) : null;
     log_sms("SEMAPHORE_RESPONSE_CHUNK", $result);
 
     if (is_array($result)) {
-        $all_results = array_merge($all_results, $result);
+        $isList = array_keys($result) === range(0, count($result) - 1);
+
+        if ($isList) {
+            foreach ($result as $row) {
+                if (is_array($row) && !empty($row['message_id'])) {
+                    $all_results[] = $row;
+                } elseif (is_array($row)) {
+                    $gateway_errors[] = $row['message'] ?? $row['error'] ?? 'Semaphore row missing message_id';
+                }
+            }
+        } elseif (!empty($result['message_id'])) {
+            $all_results[] = $result;
+        } else {
+            $gateway_errors[] = $result['message'] ?? $result['error'] ?? 'Semaphore response missing message_id';
+            if ($status >= 200 && $status < 300) {
+                $total_status = 502;
+            }
+        }
+    } else {
+        $gateway_errors[] = 'Semaphore response was not valid JSON';
+        if ($status >= 200 && $status < 300) {
+            $total_status = 502;
+        }
     }
+
+    curl_close($ch);
 }
 
 
 /* |-------------------------------------------------------------------------- | SAVE FIRESTORE |-------------------------------------------------------------------------- */
-if (!empty($all_results)) {
+$saved_message_ids = [];
+$message_results = array_values(array_filter($all_results, function ($msg) {
+    return is_array($msg) && !empty($msg['message_id']);
+}));
+
+if (!empty($message_results)) {
     $db = get_firestore();
     $now = new \DateTime();
     $ts = new \Google\Cloud\Core\Timestamp($now);
@@ -631,12 +671,7 @@ if (!empty($all_results)) {
     // Calculate credits per message for logging (0 if this is a free system notification)
     $credits_per_message = $bypassBilling ? 0 : CreditManager::calculateRequiredCredits($message, 1);
 
-    $saved_message_ids = [];
-
-    foreach ($all_results as $msg) {
-        if (!isset($msg['message_id']))
-            continue;
-
+    foreach ($message_results as $msg) {
         $messageId = (string)$msg['message_id'];
         $saved_message_ids[] = $messageId;
 
@@ -769,7 +804,28 @@ if (!empty($all_results)) {
 }
 
 // GHL-friendly log structure
-$gatewayAccepted = ($total_status >= 200 && $total_status < 300);
+$failedResultCount = 0;
+foreach (($message_results ?? []) as $msg) {
+    $rawStatus = strtolower((string)($msg['status'] ?? ''));
+    if (in_array($rawStatus, ['failed', 'expired', 'rejected', 'undelivered'], true)) {
+        $failedResultCount++;
+    }
+}
+
+$hasSavedMessages = !empty($saved_message_ids);
+$allSavedMessagesFailed = $hasSavedMessages && $failedResultCount >= count($saved_message_ids);
+$gatewayAccepted = (
+    $total_status >= 200 &&
+    $total_status < 300 &&
+    $hasSavedMessages &&
+    empty($gateway_errors) &&
+    !$allSavedMessagesFailed
+);
+
+if (!$gatewayAccepted) {
+    http_response_code($total_status >= 400 ? $total_status : 502);
+}
+
 $ghlStatus = $gatewayAccepted ? "success" : "error";
 $summary = "Sent to " . implode(', ', $validNumbers);
 if (count($validNumbers) > 3) {
@@ -784,7 +840,7 @@ echo json_encode([
     "execution_log"        => "Workflow SMS sent via $sender to $summary. Credits: {$reportedCredits}.",
     "action_executed_from" => "Nola Web",
     "event_details"        => [
-        "Status"       => "Success",
+        "Status"       => $gatewayAccepted ? "Success" : "Failed",
         "Recipient(s)" => implode(', ', $validNumbers),
         "SMS Message"  => $message,
         "Credits Used" => $reportedCredits,
@@ -806,6 +862,7 @@ echo json_encode([
         "is_free_trial"         => $usingFreeCredits,
         "is_system_notification"=> $isSystemNotification,
         "bypass_billing"        => $bypassBilling,
-        "used_credits"          => $reportedCredits
+        "used_credits"          => $reportedCredits,
+        "gateway_errors"        => $gateway_errors
     ]
 ]);
