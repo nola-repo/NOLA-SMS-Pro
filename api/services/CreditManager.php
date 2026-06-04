@@ -144,7 +144,7 @@ class CreditManager
      * @param string $description   Human-readable description (e.g. "SMS to +639...")  
      * @param float  $provider_cost Actual cost to us from the provider
      * @param float  $charged       What we bill the client per credit
-     * @param string $provider      Provider name (e.g. 'telnyx', 'semaphore')
+     * @param string $provider      Provider name (e.g. 'telnyx', 'semaphore', 'unisms')
      * @return array ['success'=>true, 'balance_after'=>int] or throws on failure
      */
     public function deduct_subaccount_only(

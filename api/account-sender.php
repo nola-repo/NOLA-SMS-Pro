@@ -65,6 +65,9 @@ try {
                 'verified' => !empty($approvedSenderId),
                 'approved_sender_id' => $approvedSenderId,
                 'nola_pro_api_key' => $data['nola_pro_api_key'] ?? ($data['semaphore_api_key'] ?? null),
+                'unisms_api_key' => $data['unisms_api_key'] ?? null,
+                'unisms_sender_id' => $data['unisms_sender_id'] ?? null,
+                'provider_preference' => $data['provider_preference'] ?? 'system',
                 'free_usage_count' => $data['free_usage_count'] ?? 0,
                 'free_credits_total' => $data['free_credits_total'] ?? 10,
                 'system_default_sender' => 'NOLASMSPro',
@@ -80,18 +83,14 @@ try {
     }
 
     if ($method === 'POST') {
-        // Update nola_pro_api_key
         $raw = file_get_contents('php://input');
         $payload = json_decode($raw, true);
         if (!is_array($payload)) $payload = $_POST;
 
         $apiKey = $payload['api_key'] ?? null;
-
-        if ($apiKey === null) {
-            http_response_code(400);
-            echo json_encode(['status' => 'error', 'message' => 'Missing api_key']);
-            exit;
-        }
+        $unismsApiKey = $payload['unisms_api_key'] ?? null;
+        $providerPreference = $payload['provider_preference'] ?? null;
+        $unismsSenderId = $payload['unisms_sender_id'] ?? null;
 
         if (!empty($apiKey)) {
             $ch = curl_init('https://api.semaphore.co/api/v4/account?apikey=' . urlencode($apiKey));
@@ -103,16 +102,42 @@ try {
 
             if ($httpCode !== 200) {
                 http_response_code(400);
-                echo json_encode(['status' => 'error', 'message' => 'Invalid API Key. Verification failed.']);
+                echo json_encode(['status' => 'error', 'message' => 'Invalid Semaphore API Key. Verification failed.']);
                 exit;
             }
         }
 
-        $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string) $locId);
-        $db->collection('integrations')->document($intDocId)->set([
-            'nola_pro_api_key' => $apiKey,
+        if (!empty($unismsApiKey)) {
+            require_once __DIR__ . '/services/providers/UniSmsProvider.php';
+            $uniSms = new UniSmsProvider([
+                'UNISMS_API_KEY' => $unismsApiKey
+            ]);
+            $accCheck = $uniSms->checkAccount();
+            if ($accCheck['status'] !== 'active') {
+                http_response_code(400);
+                echo json_encode(['status' => 'error', 'message' => 'Invalid UniSMS API Key. Verification failed.']);
+                exit;
+            }
+        }
+
+        $updateData = [
             'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
-        ], ['merge' => true]);
+        ];
+        if ($apiKey !== null) {
+            $updateData['nola_pro_api_key'] = $apiKey;
+        }
+        if ($unismsApiKey !== null) {
+            $updateData['unisms_api_key'] = $unismsApiKey;
+        }
+        if ($providerPreference !== null) {
+            $updateData['provider_preference'] = $providerPreference;
+        }
+        if ($unismsSenderId !== null) {
+            $updateData['unisms_sender_id'] = $unismsSenderId;
+        }
+
+        $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string) $locId);
+        $db->collection('integrations')->document($intDocId)->set($updateData, ['merge' => true]);
 
         echo json_encode(['status' => 'success', 'message' => 'Account sender configuration updated']);
         exit;

@@ -20,6 +20,11 @@ class StatusSync
     public static function runSync($db, $systemApiKey)
     {
         $updatedCount = 0;
+
+        // Instantiate gateway once for the whole sync session (avoids one Firestore
+        // config read per message inside the loop).
+        require_once __DIR__ . '/SmsGatewayService.php';
+        $gateway = new SmsGatewayService();
         $startTime = time();
         $maxExecutionTime = 240; // 4 minutes safety limit
         $apiKeyCache = [];
@@ -79,35 +84,29 @@ class StatusSync
 
 
 
-                // ── Semaphore API Call ────────────────────────────────
+                // ── Dynamic Provider API Call ────────────────────────────────
+                $providerName = $data['provider'] ?? 'semaphore';
+                $providerInstance = $gateway->getProviderInstance($providerName);
 
-                $url = "https://api.semaphore.co/api/v4/messages/$messageId?apikey=$activeApiKey";
-                $ch = curl_init($url);
-                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-                curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-                $resp = curl_exec($ch);
-                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-                curl_close($ch);
+                try {
+                    $statusRes = $providerInstance->checkStatus($messageId, $activeApiKey);
+                    $rawStatus = $statusRes['status'] ?? 'sending';
 
-                if ($httpCode === 404) {
-                    $retries = ($data['sync_retries'] ?? 0) + 1;
-                    if ($retries >= 3) {
-                        self::finalize($db, $doc, $messageId, 'Failed', 'Message not found on provider after retries');
-                        $updatedCount++;
-                    } else {
-                        $doc->reference()->update([
-                            ['path' => 'sync_retries', 'value' => $retries],
-                            ['path' => 'updated_at', 'value' => new \Google\Cloud\Core\Timestamp(new \DateTime())]
-                        ]);
+                    if ($rawStatus === 'not_found') {
+                        $retries = ($data['sync_retries'] ?? 0) + 1;
+                        if ($retries >= 3) {
+                            self::finalize($db, $doc, $messageId, 'Failed', 'Message not found on provider after retries');
+                            $updatedCount++;
+                        } else {
+                            $doc->reference()->update([
+                                ['path' => 'sync_retries', 'value' => $retries],
+                                ['path' => 'updated_at', 'value' => new \Google\Cloud\Core\Timestamp(new \DateTime())]
+                            ]);
+                        }
+                        continue;
                     }
-                    continue;
-                }
 
-                if ($httpCode === 200 && $resp) {
-                    $decoded = json_decode($resp, true);
-                    if ($decoded && is_array($decoded) && isset($decoded[0]['status'])) {
-                        $rawStatus = strtolower($decoded[0]['status']);
-                        
+                    if ($rawStatus !== 'error') {
                         // Strict 3-state Mapping
                         $newStatus = 'Sending';
                         if (in_array($rawStatus, ['sent', 'success', 'delivered'])) {
@@ -119,13 +118,15 @@ class StatusSync
                         if (self::isUpgrade($currentStatus, $newStatus)) {
                             self::finalize($db, $doc, $messageId, $newStatus);
                             $updatedCount++;
-                            error_log("[StatusSync] $messageId: $currentStatus -> $newStatus (raw: $rawStatus)");
+                            error_log("[StatusSync] $messageId ($providerName): $currentStatus -> $newStatus (raw: $rawStatus)");
                         } else {
                             $doc->reference()->update([
                                 ['path' => 'updated_at', 'value' => new \Google\Cloud\Core\Timestamp(new \DateTime())]
                             ]);
                         }
                     }
+                } catch (\Throwable $e) {
+                    error_log("[StatusSync] Check status failed for $messageId on $providerName: " . $e->getMessage());
                 }
 
                 usleep(500000); 
@@ -201,20 +202,24 @@ class StatusSync
             $activeApiKey = $apiKeyCache[$locId];
         }
 
-        // 6. Make the Live API Call to Semaphore
+        // 6. Make the Live API Call to Gateway
         try {
-            $url = "https://api.semaphore.co/api/v4/messages/$messageId?apikey=$activeApiKey";
-            $ch = curl_init($url);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 5); // Short timeout for inline responsiveness
-            $resp = curl_exec($ch);
-            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            curl_close($ch);
+            // Re-use a cached gateway singleton to avoid repeated Firestore reads
+            // across the multiple inline checks within one request.
+            static $gatewayInstance = null;
+            if ($gatewayInstance === null) {
+                require_once __DIR__ . '/SmsGatewayService.php';
+                $gatewayInstance = new SmsGatewayService();
+            }
+            $providerName = $data['provider'] ?? 'semaphore';
+            $providerInstance = $gatewayInstance->getProviderInstance($providerName);
+
+            $statusRes = $providerInstance->checkStatus($messageId, $activeApiKey);
+            $rawStatus = $statusRes['status'] ?? 'sending';
 
             $ts = new \Google\Cloud\Core\Timestamp(new \DateTime());
 
-            if ($httpCode === 404) {
-                // Not found yet on provider, update updated_at to throttle
+            if ($rawStatus === 'not_found') {
                 $updates = [['path' => 'updated_at', 'value' => $ts]];
                 try {
                     $db->collection('sms_logs')->document($messageId)->update($updates);
@@ -224,44 +229,30 @@ class StatusSync
                 return;
             }
 
-            if ($httpCode === 200 && $resp) {
-                $decoded = json_decode($resp, true);
-                $statusStr = '';
-                if (is_array($decoded) && isset($decoded[0]['status'])) {
-                    $statusStr = $decoded[0]['status'];
-                } elseif (is_array($decoded) && isset($decoded['status'])) {
-                    $statusStr = $decoded['status'];
+            if ($rawStatus !== 'error') {
+                $newStatus = 'Sending';
+                if (in_array($rawStatus, ['sent', 'success', 'delivered'])) {
+                    $newStatus = 'Sent';
+                } elseif (in_array($rawStatus, ['failed', 'expired', 'rejected', 'undelivered'])) {
+                    $newStatus = 'Failed';
                 }
 
-                if ($statusStr) {
-                    $rawStatus = strtolower($statusStr);
-                    
-                    // Strict 3-state Mapping
-                    $newStatus = 'Sending';
-                    if (in_array($rawStatus, ['sent', 'success', 'delivered'])) {
-                        $newStatus = 'Sent';
-                    } elseif (in_array($rawStatus, ['failed', 'expired', 'rejected', 'undelivered'])) {
-                        $newStatus = 'Failed';
-                    }
-
-                    if (self::isUpgrade($status, $newStatus)) {
-                        self::finalize($db, null, $messageId, $newStatus);
-                        $data['status'] = $newStatus;
-                        $data['updated_at'] = $ts;
-                        error_log("[StatusSync] Inline upgrade for $messageId: $status -> $newStatus (raw: $rawStatus)");
-                    } else {
-                        // Still in progress, update updated_at to reset throttle
-                        $updates = [['path' => 'updated_at', 'value' => $ts]];
-                        try {
-                            $db->collection('sms_logs')->document($messageId)->update($updates);
-                            $db->collection('messages')->document($messageId)->update($updates);
-                        } catch (\Exception $e) {}
-                        $data['updated_at'] = $ts;
-                    }
+                if (self::isUpgrade($status, $newStatus)) {
+                    self::finalize($db, null, $messageId, $newStatus);
+                    $data['status'] = $newStatus;
+                    $data['updated_at'] = $ts;
+                    error_log("[StatusSync] Inline upgrade for $messageId ($providerName): $status -> $newStatus (raw: $rawStatus)");
+                } else {
+                    $updates = [['path' => 'updated_at', 'value' => $ts]];
+                    try {
+                        $db->collection('sms_logs')->document($messageId)->update($updates);
+                        $db->collection('messages')->document($messageId)->update($updates);
+                    } catch (\Exception $e) {}
+                    $data['updated_at'] = $ts;
                 }
             }
         } catch (\Exception $e) {
-            error_log("[StatusSync] Inline sync exception for $messageId: " . $e->getMessage());
+            error_log("[StatusSync] Inline sync exception for $messageId ($providerName): " . $e->getMessage());
         }
     }
 

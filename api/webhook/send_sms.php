@@ -417,6 +417,8 @@ if ($userKey !== '' && $userKey !== $sysKey) {
 $usingFreeCredits = !$usingCustomSender && ($freeUsageCount + $required_credits <= $freeCreditsTotal);
 
 $creditManager = new CreditManager();
+require_once __DIR__ . '/../services/SmsGatewayService.php';
+$gateway = new SmsGatewayService();
 $account_id = $locId ?: 'default';
 
 // System notifications skip ALL credit logic (trial and paid).
@@ -510,7 +512,9 @@ if ($bypassBilling) {
         $refId = $batch_id ?? ('sms_' . bin2hex(random_bytes(4)));
 
         // Tag own-API-key sends so the transaction log shows the correct provider
-        $provider = $usingCustomSender ? 'semaphore_custom' : 'semaphore';
+        $activeProvider = $gateway->getProviderName();
+        $baseProvider = ($activeProvider === 'unisms') ? 'unisms' : 'semaphore';
+        $provider = $usingCustomSender ? ($baseProvider . '_custom') : $baseProvider;
 
         $txMetadata = [
             'message_body'    => $message,
@@ -585,68 +589,25 @@ if ($bypassBilling) {
     }
 }
 
-$chunks = array_chunk($validNumbers, 500);
 $all_results = [];
 $gateway_errors = [];
 $total_status = 200;
+$chosenProvider = 'semaphore';
 
-foreach ($chunks as $chunk) {
-    $sms_data = [
-        "apikey" => $activeApiKey,
-        "number" => implode(',', $chunk),
-        "message" => $message,
-        "sendername" => $sender
-    ];
-    log_sms("SEMAPHORE_REQUEST_CHUNK", ["chunk_size" => count($chunk)]);
+try {
+    $gatewayResults = $gateway->send($validNumbers, $message, $sender, $usingCustomSender ? $activeApiKey : null);
+    $chosenProvider = $gatewayResults['provider'];
+    $all_results = $gatewayResults['results'];
 
-    $ch = curl_init($SEMAPHORE_URL);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, ["Content-Type: application/json"]);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($sms_data));
-
-    $response = curl_exec($ch);
-    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    if ($response === false) {
-        $gateway_errors[] = 'Semaphore cURL error: ' . curl_error($ch);
-        $status = 0;
-    }
-
-    // Treat any 2xx response as success only after response body validation below.
-    if ($status < 200 || $status >= 300) {
-        $total_status = $status;
-    }
-
-    $result = $response !== false ? json_decode($response, true) : null;
-    log_sms("SEMAPHORE_RESPONSE_CHUNK", $result);
-
-    if (is_array($result)) {
-        $isList = array_keys($result) === range(0, count($result) - 1);
-
-        if ($isList) {
-            foreach ($result as $row) {
-                if (is_array($row) && !empty($row['message_id'])) {
-                    $all_results[] = $row;
-                } elseif (is_array($row)) {
-                    $gateway_errors[] = $row['message'] ?? $row['error'] ?? 'Semaphore row missing message_id';
-                }
-            }
-        } elseif (!empty($result['message_id'])) {
-            $all_results[] = $result;
-        } else {
-            $gateway_errors[] = $result['message'] ?? $result['error'] ?? 'Semaphore response missing message_id';
-            if ($status >= 200 && $status < 300) {
-                $total_status = 502;
-            }
-        }
-    } else {
-        $gateway_errors[] = 'Semaphore response was not valid JSON';
-        if ($status >= 200 && $status < 300) {
+    foreach ($all_results as $row) {
+        if (isset($row['status']) && $row['status'] === 'failed') {
+            $gateway_errors[] = $row['error'] ?? 'Provider send failed';
             $total_status = 502;
         }
     }
-
-    curl_close($ch);
+} catch (\Throwable $e) {
+    $gateway_errors[] = $e->getMessage();
+    $total_status = 502;
 }
 
 
@@ -711,7 +672,8 @@ if (!empty($message_results)) {
             'date_created' => $ts,
             'name' => $recipientName,
             'message_id' => $messageId,
-            'segments' => $credits_per_message
+            'segments' => $credits_per_message,
+            'provider' => $chosenProvider
         ];
 
         $db->collection('messages')
@@ -727,7 +689,8 @@ if (!empty($message_results)) {
             'sender_id' => $sender,
             'status' => $initialStatus,
             'date_created' => $ts,
-            'source' => 'semaphore',
+            'source' => $chosenProvider,
+            'provider' => $chosenProvider,
             'batch_id' => $batch_id,
             'recipient_key' => $recipient_key ?? $recipient,
             'credits_used' => $credits_per_message,

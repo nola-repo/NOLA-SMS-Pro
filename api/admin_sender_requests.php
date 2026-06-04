@@ -126,21 +126,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if (isset($payload['api_key']) && !empty($payload['api_key'])) {
             $apiKeyToValidate = $payload['api_key'];
-            $ch = curl_init('https://api.semaphore.co/api/v4/account?apikey=' . urlencode($apiKeyToValidate));
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-            curl_exec($ch);
-            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            curl_close($ch);
+            $isUniSmsKey = (str_starts_with($apiKeyToValidate, 'sk_'));
+            
+            if ($isUniSmsKey) {
+                require_once __DIR__ . '/services/providers/UniSmsProvider.php';
+                $uniSms = new UniSmsProvider(['UNISMS_API_KEY' => $apiKeyToValidate]);
+                $accCheck = $uniSms->checkAccount();
+                $isValidKey = ($accCheck['status'] === 'active');
+            } else {
+                $ch = curl_init('https://api.semaphore.co/api/v4/account?apikey=' . urlencode($apiKeyToValidate));
+                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+                curl_exec($ch);
+                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                curl_close($ch);
+                $isValidKey = ($httpCode === 200);
+            }
 
-            if ($httpCode !== 200) {
+            if (!$isValidKey) {
                 http_response_code(400);
                 echo json_encode(['status' => 'error', 'message' => 'Invalid API Key. Verification failed.']);
                 exit;
             }
 
-            $updateData['nola_pro_api_key']   = $payload['api_key'];
-            $updateData['semaphore_api_key']  = $payload['api_key'];
+            if ($isUniSmsKey) {
+                $updateData['unisms_api_key'] = $payload['api_key'];
+                $updateData['provider_preference'] = 'unisms_custom';
+            } else {
+                $updateData['nola_pro_api_key']   = $payload['api_key'];
+                $updateData['semaphore_api_key']  = $payload['api_key'];
+                $updateData['provider_preference'] = 'semaphore_custom';
+            }
         }
         if (isset($payload['free_credits_total'])) {
             $updateData['free_credits_total'] = (int)$payload['free_credits_total'];
@@ -273,14 +289,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $locId = $reqData['location_id'];
 
     if ($status === 'approved' && !empty($apiKey)) {
-        $ch = curl_init('https://api.semaphore.co/api/v4/account?apikey=' . urlencode($apiKey));
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-        curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
+        $isUniSmsKey = (str_starts_with($apiKey, 'sk_'));
+        if ($isUniSmsKey) {
+            require_once __DIR__ . '/services/providers/UniSmsProvider.php';
+            $uniSms = new UniSmsProvider(['UNISMS_API_KEY' => $apiKey]);
+            $accCheck = $uniSms->checkAccount();
+            $isValidKey = ($accCheck['status'] === 'active');
+        } else {
+            $ch = curl_init('https://api.semaphore.co/api/v4/account?apikey=' . urlencode($apiKey));
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+            curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+            $isValidKey = ($httpCode === 200);
+        }
 
-        if ($httpCode !== 200) {
+        if (!$isValidKey) {
             http_response_code(400);
             echo json_encode(['status' => 'error', 'message' => 'Invalid API Key. Verification failed.']);
             exit;
@@ -307,14 +332,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $locationName = $intSnap->data()['location_name'] ?? 'Unknown';
         }
 
-        $accountRef->set([
+        $updateFields = [
             'location_id' => $locId,
             'location_name' => $locationName,
             'approved_sender_id' => $reqData['requested_id'],
-            'nola_pro_api_key' => $apiKey, 
-            'semaphore_api_key' => $apiKey,
             'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
-        ], ['merge' => true]);
+        ];
+        if (str_starts_with($apiKey, 'sk_')) {
+            $updateFields['unisms_api_key'] = $apiKey;
+            $updateFields['provider_preference'] = 'unisms_custom';
+        } else {
+            $updateFields['nola_pro_api_key'] = $apiKey;
+            $updateFields['semaphore_api_key'] = $apiKey;
+            $updateFields['provider_preference'] = 'semaphore_custom';
+        }
+        $accountRef->set($updateFields, ['merge' => true]);
 
         // ── Auto-add sender to dynamic master whitelist ─────────────────────────
         // So send_sms.php and ghl_provider.php recognize it without config edits

@@ -53,6 +53,10 @@ try {
     $documents = $query->documents();
     $apiKeyCache = [];
 
+    // Instantiate gateway once — avoids a Firestore config read per message.
+    require_once __DIR__ . '/../services/SmsGatewayService.php';
+    $gateway = new SmsGatewayService();
+
     foreach ($documents as $doc) {
         if (!$doc->exists()) continue;
 
@@ -90,60 +94,58 @@ try {
             $activeApiKey = $apiKeyCache[$locId];
         }
 
-        // Re-check Semaphore
-        $url = "https://api.semaphore.co/api/v4/messages/$messageId?apikey=$activeApiKey";
-        $ch = curl_init($url);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-        $resp = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
+        // Re-check via Gateway
+        $providerName = $data['provider'] ?? 'semaphore';
+        $providerInstance = $gateway->getProviderInstance($providerName);
+
+        $rawStatus = 'error';
+        try {
+            $statusRes = $providerInstance->checkStatus($messageId, $activeApiKey);
+            $rawStatus = $statusRes['status'] ?? 'error';
+        } catch (\Throwable $e) {
+            error_log("[fix_failed_statuses] Gateway checkStatus failed: " . $e->getMessage());
+        }
 
         $entry = [
             'message_id' => $messageId,
             'location_id' => $locId,
             'recipient' => $recipient,
             'old_error_reason' => $errorReason,
-            'http_code' => $httpCode,
+            'provider_status' => $rawStatus,
+            'provider' => $providerName
         ];
 
-        if ($httpCode === 200 && $resp) {
-            $decoded = json_decode($resp, true);
-            if ($decoded && is_array($decoded) && isset($decoded[0]['status'])) {
-                $rawStatus = strtolower($decoded[0]['status']);
-                $entry['provider_status'] = $rawStatus;
+        if ($rawStatus !== 'error' && $rawStatus !== 'not_found') {
+            if (in_array($rawStatus, ['sent', 'success', 'delivered'])) {
+                // *** This message was actually SENT — fix it! ***
+                $entry['action'] = 'CORRECTED to Sent';
 
-                if (in_array($rawStatus, ['sent', 'success', 'delivered'])) {
-                    // *** This message was actually SENT — fix it! ***
-                    $entry['action'] = 'CORRECTED to Sent';
+                if (!$dryRun) {
+                    $ts = new \Google\Cloud\Core\Timestamp(new \DateTime());
+                    $updates = [
+                        ['path' => 'status', 'value' => 'Sent'],
+                        ['path' => 'updated_at', 'value' => $ts],
+                        ['path' => 'error_reason', 'value' => null],
+                        ['path' => 'fix_note', 'value' => "Corrected from Failed to Sent by fix_failed_statuses.php. Provider raw: $rawStatus"],
+                    ];
+                    $doc->reference()->update($updates);
 
-                    if (!$dryRun) {
-                        $ts = new \Google\Cloud\Core\Timestamp(new \DateTime());
-                        $updates = [
-                            ['path' => 'status', 'value' => 'Sent'],
-                            ['path' => 'updated_at', 'value' => $ts],
-                            ['path' => 'error_reason', 'value' => null],
-                            ['path' => 'fix_note', 'value' => "Corrected from Failed to Sent by fix_failed_statuses.php. Provider raw: $rawStatus"],
-                        ];
-                        $doc->reference()->update($updates);
-
-                        // Also update the messages collection
-                        try {
-                            $db->collection('messages')->document($messageId)->update($updates);
-                        } catch (\Exception $e) {}
-                    }
-                    $results['corrected']++;
-                } else {
-                    // Genuinely failed
-                    $entry['action'] = 'Confirmed Failed';
-                    $results['still_failed']++;
+                    // Also update the messages collection
+                    try {
+                        $db->collection('messages')->document($messageId)->update($updates);
+                    } catch (\Exception $e) {}
                 }
+                $results['corrected']++;
+            } else {
+                // Genuinely failed or still sending
+                $entry['action'] = 'Confirmed status: ' . $rawStatus;
+                $results['still_failed']++;
             }
-        } elseif ($httpCode === 404) {
+        } elseif ($rawStatus === 'not_found') {
             $entry['action'] = 'Not found on provider';
             $results['not_found']++;
         } else {
-            $entry['action'] = "API error (HTTP $httpCode)";
+            $entry['action'] = "API error or error status returned";
         }
 
         $results['details'][] = $entry;

@@ -5,6 +5,10 @@ return [
     'SEMAPHORE_API_KEY' => getenv('SEMAPHORE_API_KEY') ?: '8089fc9919bc05855ae0d354011f8e4b',
     'SEMAPHORE_URL' => getenv('SEMAPHORE_URL') ?: 'https://api.semaphore.co/api/v4/messages',
 
+    'UNISMS_API_KEY' => getenv('UNISMS_API_KEY') ?: '',
+    'UNISMS_SENDER_ID' => getenv('UNISMS_SENDER_ID') ?: '',
+    'UNISMS_ENDPOINT' => getenv('UNISMS_ENDPOINT') ?: 'https://unismsapi.com/api',
+
     'GHL_CLIENT_ID'     => '6999da2b8f278296d95f7274-mmn30t4f',
 
     'GHL_CLIENT_SECRET' => 'd91017ad-f4eb-461f-8967-b1d51cd1c1eb',

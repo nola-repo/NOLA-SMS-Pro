@@ -66,15 +66,22 @@ $mapStatus = function ($s) {
 
 $results = [];
 
+// Instantiate gateway once — provider config is read from Firestore once
+// and reused for all message IDs in this request.
+require_once __DIR__ . '/services/SmsGatewayService.php';
+$gateway = new SmsGatewayService();
+
 foreach ($messageIds as $messageId) {
     $messageId = (string)$messageId;
 
     // 1. First check Firestore — if already resolved, return immediately
+    $providerName = 'semaphore';
     try {
         $doc = $db->collection('messages')->document($messageId)->snapshot();
         if ($doc->exists()) {
             $data = $doc->data();
             $storedStatus = $mapStatus($data['status'] ?? null);
+            $providerName = $data['provider'] ?? 'semaphore';
 
             // If already in a terminal state, return from Firestore (no API call needed)
             if (in_array($storedStatus, ['Sent', 'Failed'])) {
@@ -87,54 +94,43 @@ foreach ($messageIds as $messageId) {
             }
         }
     } catch (\Exception $e) {
-        // Fall through to Semaphore API
+        // Fall through
     }
 
-    // 2. Check Semaphore API for live status
-    $url = "https://api.semaphore.co/api/v4/messages/{$messageId}?apikey={$activeApiKey}";
-    $ch = curl_init($url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 8);
-    $resp = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+    // 2. Resolve provider and check status
+    $providerInstance = $gateway->getProviderInstance($providerName);
 
     $status = 'Sending';
+    try {
+        $statusRes = $providerInstance->checkStatus($messageId, $activeApiKey);
+        $rawStatus = $statusRes['status'] ?? 'sending';
 
-    if ($httpCode === 200 && $resp) {
-        $decoded = json_decode($resp, true);
-        
-        $statusStr = '';
-        if (is_array($decoded) && isset($decoded[0]['status'])) {
-            $statusStr = $decoded[0]['status'];
-        } elseif (is_array($decoded) && isset($decoded['status'])) {
-            $statusStr = $decoded['status'];
+        if (in_array($rawStatus, ['sent', 'success', 'delivered'])) {
+            $status = 'Sent';
+        } elseif (in_array($rawStatus, ['failed', 'expired', 'rejected', 'undelivered'])) {
+            $status = 'Failed';
         }
 
-        if ($statusStr) {
-            $status = $mapStatus($statusStr);
-
-            // Persist to Firestore if resolved
-            if (in_array($status, ['Sent', 'Failed'])) {
-                $ts = new \Google\Cloud\Core\Timestamp(new \DateTime());
-                $updateFields = [
-                    ['path' => 'status',     'value' => $status],
-                    ['path' => 'updated_at', 'value' => $ts],
-                ];
-                try {
-                    $db->collection('messages')->document($messageId)->update($updateFields);
-                    $db->collection('sms_logs')->document($messageId)->update($updateFields);
-                } catch (\Exception $e) { /* non-fatal */ }
-            }
+        // Persist to Firestore if resolved
+        if (in_array($status, ['Sent', 'Failed'])) {
+            $ts = new \Google\Cloud\Core\Timestamp(new \DateTime());
+            $updateFields = [
+                ['path' => 'status',     'value' => $status],
+                ['path' => 'updated_at', 'value' => $ts],
+            ];
+            try {
+                $db->collection('messages')->document($messageId)->update($updateFields);
+                $db->collection('sms_logs')->document($messageId)->update($updateFields);
+            } catch (\Exception $e) { /* non-fatal */ }
         }
-    } elseif ($httpCode === 404) {
-        $status = 'Sending'; // Not found yet, still processing
+    } catch (\Throwable $e) {
+        error_log("[check_message_status] Gateway check status failed: " . $e->getMessage());
     }
 
     $results[] = [
         'message_id' => $messageId,
         'status'     => $status,
-        'source'     => 'semaphore',
+        'source'     => $providerName,
     ];
 }
 

@@ -49,6 +49,8 @@ require __DIR__ . '/firestore_client.php';
 require __DIR__ . '/../auth_helpers.php';
 require __DIR__ . '/../install_helpers.php';
 require __DIR__ . '/../services/CreditManager.php';
+require_once __DIR__ . '/../services/SmsGatewayService.php';
+$gateway = new SmsGatewayService();
 
 $SEMAPHORE_API_KEY      = $config['SEMAPHORE_API_KEY'];
 $SEMAPHORE_URL          = $config['SEMAPHORE_URL'];
@@ -439,7 +441,9 @@ if ($usingFreeCredits) {
                 error_log("[ghl_provider] agency_id resolved from ghl_tokens.companyId={$agency_id} for loc={$locationId}");
             }
         }
-        $provider  = $usingOwnApiKey ? 'semaphore_custom' : 'semaphore';
+        $activeProvider = $gateway->getProviderName();
+        $baseProvider = ($activeProvider === 'unisms') ? 'unisms' : 'semaphore';
+        $provider  = $usingOwnApiKey ? ($baseProvider . '_custom') : $baseProvider;
 
         $refId = $messageId ?? ('ghl_prov_' . bin2hex(random_bytes(4)));
         $desc = "SMS to {$normalizedPhone}";
@@ -508,27 +512,33 @@ if ($usingFreeCredits) {
 }
 
 
-// ── Send SMS via Semaphore ────────────────────────────────────────────────────
-$smsData = [
-    'apikey'     => $activeApiKey,
-    'number'     => $normalizedPhone,
-    'message'    => $message,
-    'sendername' => $sender,
-];
+// ── Send SMS via Gateway ────────────────────────────────────────────────────
+$chosenProvider = 'semaphore';
+$gatewayResults = [];
+$gatewayAccepted = false;
+$smsStatus = 502;
+$gateway_error = 'Unknown gateway error';
 
-$ch = curl_init($SEMAPHORE_URL);
-curl_setopt($ch, CURLOPT_POST, true);
-curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
-curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($smsData));
+try {
+    $res = $gateway->send([$normalizedPhone], $message, $sender, $usingOwnApiKey ? $activeApiKey : null);
+    $chosenProvider = $res['provider'];
+    $gatewayResults = $res['results'];
 
-$smsResponse = curl_exec($ch);
-$smsStatus   = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-curl_close($ch);
+    $firstRes = $gatewayResults[0] ?? [];
+    if (!empty($firstRes['message_id']) && $firstRes['status'] !== 'failed') {
+        $gatewayAccepted = true;
+        $smsStatus = 200;
+        $storedMsgId = $firstRes['message_id'];
+    } else {
+        $gateway_error = $firstRes['error'] ?? 'Provider rejected message';
+    }
+} catch (\Throwable $e) {
+    $gateway_error = $e->getMessage();
+    error_log("[ghl_provider] Gateway send failed: " . $gateway_error);
+}
 
-$smsResult      = json_decode($smsResponse, true);
-$gatewayAccepted = ($smsStatus >= 200 && $smsStatus < 300);
-error_log('[ghl_provider] Semaphore response: ' . $smsResponse);
+$smsResponse = json_encode($gatewayResults);
+error_log('[ghl_provider] Gateway response: ' . $smsResponse);
 error_log('[ghl_provider][GATEWAY_RESULT] ' . json_encode([
     'req_id'          => $providerReqId,
     'http_status'     => $smsStatus,
@@ -550,7 +560,7 @@ if (!$gatewayAccepted) {
                 $account_id,
                 $required_credits,
                 $messageId ?? 'refund_ghl_prov',
-                'Refund — SMS failed to send (Semaphore rejected)',
+                'Refund — SMS failed to send (' . ucfirst($chosenProvider) . ' rejected)',
                 'refund'
             );
         } catch (\Throwable $e) {
@@ -579,8 +589,16 @@ if (!$gatewayAccepted) {
 $now        = new \DateTime();
 $ts         = new \Google\Cloud\Core\Timestamp($now);
 $convId     = $locationId . '_conv_' . $normalizedPhone;
-$semMsg     = is_array($smsResult) ? ($smsResult[0] ?? $smsResult) : [];
-$storedMsgId = (string)($semMsg['message_id'] ?? $messageId ?? uniqid('ghl_'));
+$storedMsgId = isset($storedMsgId) ? $storedMsgId : (string)($messageId ?? uniqid('ghl_'));
+
+$firstRes = $gatewayResults[0] ?? [];
+$rawMsgStatus = strtolower($firstRes['status'] ?? 'queued');
+$initialStatus = 'Sending';
+if (in_array($rawMsgStatus, ['sent', 'success', 'delivered'])) {
+    $initialStatus = 'Sent';
+} elseif (in_array($rawMsgStatus, ['failed', 'expired', 'rejected', 'undelivered'])) {
+    $initialStatus = 'Failed';
+}
 
 // Derive a display name — GHL provider doesn't always send contact name
 $displayName = $payload['contactName'] ?? $payload['name'] ?? $normalizedPhone;
@@ -592,13 +610,14 @@ $msgData = [
     'message'         => $message,
     'direction'       => 'outbound',
     'sender_id'       => $sender,
-    'status'          => $semMsg['status'] ?? 'Queued',
+    'status'          => $initialStatus,
     'batch_id'        => null,
     'ghl_message_id'  => $messageId,
     'created_at'      => $ts,
     'date_created'    => $ts,
     'segments'        => $required_credits,
     'source'          => 'ghl_provider',
+    'provider'        => $chosenProvider,
     'name'            => $displayName,
 ];
 
@@ -610,10 +629,11 @@ $logData = [
     'numbers'         => [$normalizedPhone],
     'message'         => $message,
     'sender_id'       => $sender,
-    'status'          => $semMsg['status'] ?? 'Queued',
+    'status'          => $initialStatus,
     'ghl_message_id'  => $messageId,
     'date_created'    => $ts,
-    'source'          => 'ghl_provider',
+    'source'          => $chosenProvider,
+    'provider'        => $chosenProvider,
     'credits_used'    => $required_credits,
     'conversation_id' => $convId,
 ];
