@@ -712,7 +712,7 @@ function install_collect_preselect_signals(
                 || $queryPick !== null
                 || $statePick !== null
                 || $jwtPick !== null;
-            $maxAttempts = $hasDirectSignals ? 1 : 20;
+            $maxAttempts = $hasDirectSignals ? 1 : 5;
             $startPoll = microtime(true);
             for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
                 $webhookLoc = install_recent_marketplace_install_location_id($db, $companyId);
@@ -722,7 +722,7 @@ function install_collect_preselect_signals(
                     break;
                 }
                 if ($attempt < $maxAttempts - 1) {
-                    usleep(150000);
+                    usleep(500000);
                 }
             }
             if ($webhookLoc === null && !$hasDirectSignals) {
