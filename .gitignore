@@ -4,6 +4,11 @@ logs/
 api/webhook/sms_log.txt
 api/webhook/last_payload.json
 
+# Ignore debug/scratch log dumps
+raw_logs.txt
+raw_logs_utf8.txt
+scratch/*.txt
+
 # Ignore VSCode config
 .vscode/
 

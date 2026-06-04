@@ -16,3 +16,8 @@ api/webhook/nola-sms-pro-*.json
 *.log
 api/webhook/sms_log.txt
 api/webhook/last_payload.json
+
+# Debug/scratch log dumps (never in image)
+raw_logs.txt
+raw_logs_utf8.txt
+scratch/

@@ -1,0 +1,39 @@
+# .gcloudignore — Controls what gets uploaded to GCS on `gcloud builds submit`
+# Mirrors .dockerignore but also excludes git history and dev-only files.
+
+# Use .gitignore rules as a base
+.gitignore
+
+# Git internals (never needed in build context)
+.git/
+
+# IDE and OS
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Frontend (built separately, not part of PHP backend image)
+frontend/
+_nola-sms-pro-frontend/
+
+# Dependencies (installed inside container)
+vendor/
+
+# Sensitive / local config
+.env
+config.local.php
+api/webhook/nola-sms-pro-*.json
+
+# Logs and runtime dumps
+*.log
+api/webhook/sms_log.txt
+api/webhook/last_payload.json
+
+# Debug/scratch files — never deploy these
+raw_logs.txt
+raw_logs_utf8.txt
+scratch/
+
+# Backups and temp
+temp_*/
+frontend_old/
