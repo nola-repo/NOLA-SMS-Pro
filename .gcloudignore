@@ -34,6 +34,12 @@ raw_logs.txt
 raw_logs_utf8.txt
 scratch/
 
+# SSL cert bundle (not needed in build)
+cacert.pem
+
+# Planning/design docs
+docs/
+
 # Backups and temp
 temp_*/
 frontend_old/

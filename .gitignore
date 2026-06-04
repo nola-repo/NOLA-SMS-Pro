@@ -4,10 +4,16 @@ logs/
 api/webhook/sms_log.txt
 api/webhook/last_payload.json
 
-# Ignore debug/scratch log dumps
+# Ignore debug/scratch log dumps and test scripts
 raw_logs.txt
 raw_logs_utf8.txt
-scratch/*.txt
+scratch/
+
+# SSL cert bundle (local curl use only, never commit)
+cacert.pem
+
+# Planning/design docs (local reference only)
+docs/
 
 # Ignore VSCode config
 .vscode/

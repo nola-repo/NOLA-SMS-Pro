@@ -17,7 +17,13 @@ api/webhook/nola-sms-pro-*.json
 api/webhook/sms_log.txt
 api/webhook/last_payload.json
 
-# Debug/scratch log dumps (never in image)
+# Debug/scratch files — never deploy these
 raw_logs.txt
 raw_logs_utf8.txt
 scratch/
+
+# SSL cert bundle (not needed inside container)
+cacert.pem
+
+# Planning/design docs
+docs/
