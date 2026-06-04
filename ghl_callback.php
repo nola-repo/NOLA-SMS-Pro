@@ -1373,6 +1373,11 @@ if (($data['userType'] ?? '') === 'Company') {
             }
         }
 
+        // deepOwnershipFallback: skip expensive collection-group queries for fresh installs.
+        // If the location token did not exist before this callback, no owner can be found
+        // via the slow users/subaccounts fallback paths, so we avoid up to ~2 min of
+        // FAILED_PRECONDITION Firestore timeouts when the required indexes are missing.
+        $caseADeepFallback = ($caseATokenExistedBefore === true);
         $caseADecision = install_decide_location_redirect(
             $db,
             $jwtSecret2,
@@ -1381,7 +1386,8 @@ if (($data['userType'] ?? '') === 'Company') {
             (string)$companyId,
             $companyNameCaseA,
             (string)($caseAResolution['source'] ?? 'case_a_single_location'),
-            $caseATokenExistedBefore
+            $caseATokenExistedBefore,
+            $caseADeepFallback
         );
 
         error_log('[GHL_CALLBACK_DEBUG] caseA_install_decision=' . json_encode([

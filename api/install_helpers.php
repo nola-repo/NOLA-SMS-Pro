@@ -2099,7 +2099,9 @@ function install_linked_account_for_location($db, string $locationId, bool $deep
     }
 
     if (!$deepFallback) {
-        return install_linked_account_for_location_owner_fallbacks($db, $locationId);
+        // Deep (collection-group) queries are disabled: skip the slow fallback
+        // paths entirely. The canonical location_owners check above already ran.
+        return null;
     }
 
     foreach ([
