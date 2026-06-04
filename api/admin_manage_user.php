@@ -13,6 +13,7 @@ require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/webhook/firestore_client.php';
 require_once __DIR__ . '/jwt_helper.php';
 require_once __DIR__ . '/services/CreditManager.php';
+require_once __DIR__ . '/cache_helper.php';
 
 // ─── JWT Auth Guard ───────────────────────────────────────────────────────────
 function require_admin_auth(): array {
@@ -101,6 +102,13 @@ try {
             }
         }
 
+        NolaCache::invalidateAdminDashboard();
+        NolaCache::delete("admin_user_profile_" . $userId);
+        if (!empty($locId)) {
+            NolaCache::delete("account_profile_" . $locId);
+            NolaCache::deleteRegistry("credits_registry_" . $locId);
+        }
+
         echo json_encode([
             'status'  => 'success',
             'message' => 'Subaccount config and usage reset successfully.'
@@ -110,7 +118,15 @@ try {
 
     // ── Delete Account ────────────────────────────────────────────────────────
     if ($action === 'delete') {
+        $locId = $userData['active_location_id'] ?? $userData['location_id'] ?? '';
         $userRef->delete();
+        NolaCache::invalidateAdminDashboard();
+        NolaCache::delete("admin_user_profile_" . $userId);
+        if (!empty($locId)) {
+            NolaCache::delete("account_profile_" . $locId);
+            NolaCache::deleteRegistry("credits_registry_" . $locId);
+        }
+
         echo json_encode([
             'status'  => 'success',
             'message' => 'User account permanently deleted.'

@@ -80,6 +80,13 @@ try {
         ->document($userId)
         ->set(['company_id' => $companyId, 'updatedAt' => new \Google\Cloud\Core\Timestamp($now)], ['merge' => true]);
 
+    try {
+        require_once __DIR__ . '/../cache_helper.php';
+        NolaCache::delete('agency_profile_' . $userId);
+    } catch (\Throwable $e) {
+        error_log('[link_company] Cache invalidation failed: ' . $e->getMessage());
+    }
+
     echo json_encode(['status' => 'success', 'company_id' => $companyId]);
 
 } catch (Exception $e) {

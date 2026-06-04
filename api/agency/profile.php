@@ -11,6 +11,7 @@ header('Content-Type: application/json');
 require __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/../jwt_helper.php';
 require_once __DIR__ . '/../auth/user_profile_helper.php';
+require_once __DIR__ . '/../cache_helper.php';
 
 function agency_profile_extract_bearer_token(): ?string
 {
@@ -119,6 +120,13 @@ if (!$userId) {
     exit;
 }
 
+$cacheKey = "agency_profile_" . $userId;
+$cachedData = NolaCache::get($cacheKey);
+if ($cachedData !== null) {
+    echo json_encode($cachedData);
+    exit;
+}
+
 try {
     $db = get_firestore();
     $collection = (string)($payload['auth_collection'] ?? 'agency_users');
@@ -152,11 +160,14 @@ try {
     }
 
     $profile = auth_user_payload_for_api($data);
-    echo json_encode([
+    $responsePayload = [
         'status' => 'success',
         'user' => $profile,
         'data' => $profile,
-    ]);
+    ];
+    NolaCache::set($cacheKey, $responsePayload, 600); // 10 minutes cache
+
+    echo json_encode($responsePayload);
 } catch (Exception $e) {
     http_response_code(500);
     echo json_encode(['status' => 'error', 'message' => 'Failed to fetch agency profile: ' . $e->getMessage()]);

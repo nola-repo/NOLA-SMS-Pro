@@ -6,6 +6,7 @@ header('Content-Type: application/json');
 require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
 require_once __DIR__ . '/services/CreditManager.php';
+require_once __DIR__ . '/cache_helper.php';
 
 // Authentication: Admin-only secret or specialized check
 validate_api_request();
@@ -13,6 +14,13 @@ validate_api_request();
 $db = get_firestore();
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'logs') {
+    $cacheKey = "admin_dashboard_logs";
+    $cachedData = NolaCache::get($cacheKey);
+    if ($cachedData !== null) {
+        echo json_encode($cachedData);
+        exit;
+    }
+
     $unifiedLogs = [];
 
     // 1. Fetch recent messages
@@ -73,11 +81,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
     // Return the top 50
     $finalLogs = array_slice($unifiedLogs, 0, 50);
 
-    echo json_encode(['status' => 'success', 'data' => $finalLogs]);
+    $responsePayload = ['status' => 'success', 'data' => $finalLogs];
+    NolaCache::set($cacheKey, $responsePayload, 60); // 60 seconds TTL
+    echo json_encode($responsePayload);
     exit;
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && (!isset($_GET['action']) || $_GET['action'] === 'sender_requests')) {
+    $cacheKey = "admin_sender_requests_list";
+    $cachedData = NolaCache::get($cacheKey);
+    if ($cachedData !== null) {
+        echo json_encode($cachedData);
+        exit;
+    }
+
     // In production, we'd probably filter by "pending" first, but let's fetch all
     $requests = $db->collection('sender_id_requests')
         ->orderBy('created_at', 'DESC')
@@ -93,7 +110,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && (!isset($_GET['action']) || $_GET['a
         $results[] = $data;
     }
 
-    echo json_encode(['status' => 'success', 'data' => $results]);
+    $responsePayload = ['status' => 'success', 'data' => $results];
+    NolaCache::set($cacheKey, $responsePayload, 300); // 5 minutes cache
+    echo json_encode($responsePayload);
     exit;
 }
 
@@ -200,6 +219,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
+        NolaCache::invalidateAdminDashboard();
+        if ($locId) {
+            NolaCache::delete("account_profile_" . $locId);
+        }
+
         echo json_encode(['status' => 'success', 'message' => 'Account configuration updated successfully.']);
         exit;
     }
@@ -258,6 +282,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'created_at'    => new \Google\Cloud\Core\Timestamp(new \DateTime()),
                 ]);
             }
+        }
+
+        NolaCache::invalidateAdminDashboard();
+        if ($userId) {
+            NolaCache::delete("admin_user_profile_" . $userId);
+            NolaCache::delete("agency_profile_" . $userId);
         }
 
         echo json_encode(['status' => 'success', 'message' => 'Agency account updated successfully.']);
@@ -428,6 +458,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // Physical deletion of the request document
         $requestRef->delete();
+        NolaCache::invalidateAdminDashboard();
+        if ($locId) {
+            NolaCache::delete("account_profile_" . $locId);
+        }
         echo json_encode(['status' => 'success', 'message' => "Request deleted and active sender cleared if it was in use."]);
         exit;
     }
@@ -442,11 +476,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
+    NolaCache::invalidateAdminDashboard();
+    if ($locId) {
+        NolaCache::delete("account_profile_" . $locId);
+    }
+
     echo json_encode(['status' => 'success', 'message' => "Request $status and account updated."]);
     exit;
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'agencies') {
+    $cacheKey = "admin_agencies_list";
+    $cachedData = NolaCache::get($cacheKey);
+    if ($cachedData !== null) {
+        echo json_encode($cachedData);
+        exit;
+    }
+
     $results = [];
 
     // Source: ghl_tokens collection, filtered by appType == 'agency'
@@ -483,11 +529,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
         return strcmp($b['createdAt'] ?? '', $a['createdAt'] ?? '');
     });
 
-    echo json_encode(['status' => 'success', 'data' => $results]);
+    $responsePayload = ['status' => 'success', 'data' => $results];
+    NolaCache::set($cacheKey, $responsePayload, 300); // 5 minutes cache
+    echo json_encode($responsePayload);
     exit;
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'accounts') {
+    $cacheKey = "admin_accounts_list";
+    $cachedPayload = NolaCache::get($cacheKey);
+    $filterCompanyId = $_GET['company_id'] ?? null;
+
+    if ($cachedPayload !== null) {
+        if ($filterCompanyId) {
+            $filteredResults = [];
+            foreach ($cachedPayload['data'] as $item) {
+                if (($item['data']['company_id'] ?? '') === $filterCompanyId) {
+                    $filteredResults[] = $item;
+                }
+            }
+            echo json_encode(['status' => 'success', 'data' => $filteredResults]);
+        } else {
+            echo json_encode($cachedPayload);
+        }
+        exit;
+    }
+
     $results = [];
 
     // Pre-fetch all tokens in a single query to resolve agency/subaccount names and settings (saves collection reads)
@@ -605,11 +672,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
 
         $companyId = $intData['companyId'] ?? $intData['company_id'] ?? ($subCompanyMap[$locId] ?? '');
 
-        $filterCompanyId = $_GET['company_id'] ?? null;
-        if ($filterCompanyId && $companyId !== $filterCompanyId) {
-            continue;
-        }
-
         $agencyName = $companyId && isset($agencyMap[$companyId]) ? $agencyMap[$companyId] : 'No Agency';
 
         $tokData = $subTokenMap[$locId] ?? [];
@@ -667,6 +729,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
         ];
     }
 
-    echo json_encode(['status' => 'success', 'data' => $results]);
+    $responsePayload = ['status' => 'success', 'data' => $results];
+    NolaCache::set($cacheKey, $responsePayload, 300); // 5 minutes cache
+
+    if ($filterCompanyId) {
+        $filteredResults = [];
+        foreach ($results as $item) {
+            if (($item['data']['company_id'] ?? '') === $filterCompanyId) {
+                $filteredResults[] = $item;
+            }
+        }
+        echo json_encode(['status' => 'success', 'data' => $filteredResults]);
+    } else {
+        echo json_encode($responsePayload);
+    }
     exit;
 }

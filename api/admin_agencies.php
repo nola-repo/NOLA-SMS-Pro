@@ -3,6 +3,7 @@ require_once __DIR__ . '/cors.php';
 header('Content-Type: application/json');
 
 require __DIR__ . '/webhook/firestore_client.php';
+require_once __DIR__ . '/cache_helper.php';
 
 $db = get_firestore();
 
@@ -13,6 +14,13 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
 }
 
 try {
+    $cacheKey = "admin_agencies_page";
+    $cachedData = NolaCache::get($cacheKey);
+    if ($cachedData !== null) {
+        echo json_encode($cachedData);
+        exit;
+    }
+
     $tokensRef = $db->collection('ghl_tokens');
     $query = $tokensRef->where('appType', '=', 'agency')->documents();
     
@@ -40,7 +48,9 @@ try {
         }
     }
     
-    echo json_encode(['agencies' => $agencies]);
+    $responsePayload = ['agencies' => $agencies];
+    NolaCache::set($cacheKey, $responsePayload, 300); // 5 minutes cache
+    echo json_encode($responsePayload);
 } catch (Exception $e) {
     http_response_code(500);
     echo json_encode(['error' => 'Database error: ' . $e->getMessage()]);

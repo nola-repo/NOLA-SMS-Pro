@@ -78,10 +78,10 @@ try {
     // Apply updates to legacy agency_subaccounts
     $docRef->set($updates, ['merge' => true]);
 
-    // Invalidate agency subaccounts cache
     try {
         require_once __DIR__ . '/../cache_helper.php';
         NolaCache::delete('subaccounts_' . $agencyId);
+        NolaCache::delete('agency_locations_' . $agencyId);
     } catch (\Throwable $e) {
         error_log('[update_subaccount] Cache invalidation failed: ' . $e->getMessage());
     }

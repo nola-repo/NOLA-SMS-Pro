@@ -17,6 +17,7 @@ header('Content-Type: application/json');
 require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/webhook/firestore_client.php';
 require_once __DIR__ . '/jwt_helper.php';
+require_once __DIR__ . '/cache_helper.php';
 
 // ─── JWT Auth Guard ───────────────────────────────────────────────────────────
 function require_admin_auth(): array {
@@ -90,6 +91,13 @@ $method = $_SERVER['REQUEST_METHOD'];
 
 // ─── GET: List All Admins ─────────────────────────────────────────────────────
 if ($method === 'GET') {
+    $cacheKey = "admin_admins_list";
+    $cachedData = NolaCache::get($cacheKey);
+    if ($cachedData !== null) {
+        echo json_encode($cachedData);
+        exit;
+    }
+
     try {
         $snapshot = $db->collection('admins')->documents();
         $admins   = [];
@@ -113,7 +121,9 @@ if ($method === 'GET') {
         // Sort by email for a stable list
         usort($admins, fn($a, $b) => strcmp($a['email'], $b['email']));
 
-        echo json_encode(['status' => 'success', 'data' => $admins]);
+        $responsePayload = ['status' => 'success', 'data' => $admins];
+        NolaCache::set($cacheKey, $responsePayload, 300); // 5 minutes cache
+        echo json_encode($responsePayload);
     } catch (Exception $e) {
         http_response_code(500);
         echo json_encode(['status' => 'error', 'message' => 'Database error: ' . $e->getMessage()]);
@@ -163,6 +173,8 @@ if ($method === 'POST') {
                 'last_login'      => null,
             ]);
 
+            NolaCache::invalidateAdminDashboard();
+
             echo json_encode(['status' => 'success', 'message' => "Admin '{$email}' created successfully"]);
         } catch (Exception $e) {
             http_response_code(500);
@@ -195,6 +207,8 @@ if ($method === 'POST') {
                 ['path' => 'hashed_password', 'value' => password_hash($new_password, PASSWORD_BCRYPT)],
             ]);
 
+            NolaCache::invalidateAdminDashboard();
+
             echo json_encode(['status' => 'success', 'message' => "Password reset for '{$email}'"]);
         } catch (Exception $e) {
             http_response_code(500);
@@ -226,6 +240,8 @@ if ($method === 'POST') {
             $docRef->update([
                 ['path' => 'active', 'value' => $active],
             ]);
+
+            NolaCache::invalidateAdminDashboard();
 
             $state = $active ? 'activated' : 'deactivated';
             echo json_encode(['status' => 'success', 'message' => "Admin '{$email}' {$state}"]);
@@ -287,6 +303,7 @@ if ($method === 'DELETE') {
         }
 
         $docRef->delete();
+        NolaCache::invalidateAdminDashboard();
         echo json_encode(['status' => 'success', 'message' => "Admin '{$email}' deleted"]);
     } catch (Exception $e) {
         http_response_code(500);

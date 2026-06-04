@@ -5,6 +5,7 @@ header('Content-Type: application/json');
 require_once __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/auth_helper.php';
 require_once __DIR__ . '/../install_helpers.php';
+require_once __DIR__ . '/../cache_helper.php';
 
 $agencyId = validate_agency_request(true);
 
@@ -18,6 +19,13 @@ $companyId = trim((string)($_GET['company_id'] ?? $agencyId));
 if ($companyId === '') {
     http_response_code(422);
     echo json_encode(['error' => 'company_id is required']);
+    exit;
+}
+
+$cacheKey = "agency_locations_" . $companyId;
+$cachedData = NolaCache::get($cacheKey);
+if ($cachedData !== null) {
+    echo json_encode($cachedData);
     exit;
 }
 
@@ -55,7 +63,10 @@ try {
         return strcmp(strtolower($a['location_name']), strtolower($b['location_name']));
     });
 
-    echo json_encode(['locations' => $locations]);
+    $responsePayload = ['locations' => $locations];
+    NolaCache::set($cacheKey, $responsePayload, 600); // 10 minutes cache
+
+    echo json_encode($responsePayload);
 } catch (Exception $e) {
     http_response_code(500);
     echo json_encode(['error' => 'Failed to load locations']);

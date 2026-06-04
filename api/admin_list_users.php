@@ -12,6 +12,7 @@ header('Content-Type: application/json');
 require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/webhook/firestore_client.php';
 require_once __DIR__ . '/jwt_helper.php';
+require_once __DIR__ . '/cache_helper.php';
 
 // ─── JWT Auth Guard ───────────────────────────────────────────────────────────
 function require_admin_auth(): array {
@@ -104,6 +105,14 @@ function format_ts($ts): ?string {
 
 // ─── Main Logic ──────────────────────────────────────────────────────────────
 $claims = require_admin_auth();
+
+$cacheKey = "admin_users_list";
+$cachedData = NolaCache::get($cacheKey);
+if ($cachedData !== null) {
+    echo json_encode($cachedData);
+    exit;
+}
+
 $db     = get_firestore();
 
 try {
@@ -188,11 +197,13 @@ try {
         ];
     }
 
-    echo json_encode([
+    $responsePayload = [
         'status' => 'success',
         'data'   => $usersList,
         'total'  => count($usersList)
-    ]);
+    ];
+    NolaCache::set($cacheKey, $responsePayload, 300); // 5-minute TTL
+    echo json_encode($responsePayload);
 
 } catch (Exception $e) {
     http_response_code(500);

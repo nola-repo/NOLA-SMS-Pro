@@ -1421,6 +1421,17 @@ if (($data['userType'] ?? '') === 'Company') {
             ]);
         }
 
+        try {
+            require_once __DIR__ . '/api/cache_helper.php';
+            NolaCache::invalidateAdminDashboard();
+            if ($singleLocationId) {
+                NolaCache::delete("account_profile_" . $singleLocationId);
+            }
+            if ($companyId) {
+                NolaCache::delete("agency_locations_" . $companyId);
+            }
+        } catch (\Throwable $ignored) {}
+
         install_clear_marketplace_install_pick($db, (string)$companyId);
         header('Location: ' . $caseADecision['url'], true, 302);
         error_log("[GHL_CALLBACK] Single-location install done for {$singleLocationId} ({$singleLocName}); redirect={$caseADecision['kind']}.");
@@ -1922,6 +1933,17 @@ error_log('[GHL_CALLBACK_DEBUG] final_redirect=' . json_encode([
     'classification' => $directDecision['classification'],
     'redirectUrl' => $redirectUrl,
 ]));
+
+try {
+    require_once __DIR__ . '/api/cache_helper.php';
+    NolaCache::invalidateAdminDashboard();
+    if ($locationId) {
+        NolaCache::delete("account_profile_" . $locationId);
+    }
+    if ($companyId) {
+        NolaCache::delete("agency_locations_" . $companyId);
+    }
+} catch (\Throwable $ignored) {}
 
 install_clear_marketplace_install_pick($db, $companyId);
 header('Location: ' . $redirectUrl, true, 302);

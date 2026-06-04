@@ -185,4 +185,20 @@ class NolaCache
         self::delete($registryKey);
         return true;
     }
+
+    /**
+     * Flush all cached keys associated with the admin dashboard.
+     */
+    public static function invalidateAdminDashboard(): void
+    {
+        self::delete('admin_users_list');
+        self::delete('admin_accounts_list');
+        self::delete('admin_dashboard_logs');
+        self::delete('admin_sender_requests_list');
+        self::delete('admin_agencies_list');
+        self::delete('admin_agencies_page');
+        self::delete('admin_admins_list');
+        self::delete('admin_settings');
+    }
 }
+

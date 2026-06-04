@@ -13,6 +13,7 @@ require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/webhook/firestore_client.php';
 require_once __DIR__ . '/jwt_helper.php';
 require_once __DIR__ . '/services/CreditManager.php';
+require_once __DIR__ . '/cache_helper.php';
 
 // ─── JWT Auth Guard ───────────────────────────────────────────────────────────
 function require_admin_auth(): array {
@@ -60,6 +61,13 @@ if ($method === 'GET') {
     if (empty($userId)) {
         http_response_code(400);
         echo json_encode(['status' => 'error', 'message' => 'user_id parameter is required']);
+        exit;
+    }
+
+    $cacheKey = "admin_user_profile_" . $userId;
+    $cachedData = NolaCache::get($cacheKey);
+    if ($cachedData !== null) {
+        echo json_encode($cachedData);
         exit;
     }
 
@@ -132,10 +140,12 @@ if ($method === 'GET') {
             'created_at'         => format_ts($d['created_at'] ?? null)
         ];
 
-        echo json_encode([
+        $responsePayload = [
             'status' => 'success',
             'data'   => $profileData
-        ]);
+        ];
+        NolaCache::set($cacheKey, $responsePayload, 300); // 5 minutes cache
+        echo json_encode($responsePayload);
 
     } catch (Exception $e) {
         http_response_code(500);
@@ -174,6 +184,9 @@ if ($method === 'POST') {
             exit;
         }
 
+        $d = $userSnap->data();
+        $locId = $d['active_location_id'] ?? $d['location_id'] ?? '';
+
         $nameParts = preg_split('/\s+/', $name);
         $firstName = $nameParts[0] ?? '';
         $lastName  = count($nameParts) > 1 ? implode(' ', array_slice($nameParts, 1)) : '';
@@ -186,6 +199,12 @@ if ($method === 'POST') {
             ['path' => 'phone', 'value' => $phone],
             ['path' => 'updated_at', 'value' => new \Google\Cloud\Core\Timestamp(new \DateTime())]
         ]);
+
+        NolaCache::delete("admin_user_profile_" . $userId);
+        if ($locId) {
+            NolaCache::delete("account_profile_" . $locId);
+        }
+        NolaCache::invalidateAdminDashboard();
 
         echo json_encode([
             'status'  => 'success',

@@ -3,6 +3,7 @@ require_once __DIR__ . '/cors.php';
 header('Content-Type: application/json');
 
 require __DIR__ . '/webhook/firestore_client.php';
+require_once __DIR__ . '/cache_helper.php';
 
 $method = $_SERVER['REQUEST_METHOD'];
 $db = get_firestore();
@@ -10,6 +11,13 @@ $configRef = $db->collection('system_settings')->document('core');
 $pricingRef = $db->collection('admin_config')->document('global_pricing');
 
 if ($method === 'GET') {
+    $cacheKey = "admin_settings";
+    $cachedData = NolaCache::get($cacheKey);
+    if ($cachedData !== null) {
+        echo json_encode($cachedData);
+        exit;
+    }
+
     try {
         $snapshot = $configRef->snapshot();
         $pricingSnap = $pricingRef->snapshot();
@@ -27,10 +35,12 @@ if ($method === 'GET') {
             'charged_rate'     => isset($pricing['charged']) ? (float)$pricing['charged'] : 0.05,
         ];
 
-        echo json_encode([
+        $responsePayload = [
             'status' => 'success',
             'data' => $data
-        ]);
+        ];
+        NolaCache::set($cacheKey, $responsePayload, 300); // 5 minutes cache
+        echo json_encode($responsePayload);
         exit;
     } catch (Exception $e) {
         http_response_code(500);
@@ -68,6 +78,7 @@ if ($method === 'GET') {
         if (!empty($pricingData)) {
             $pricingRef->set($pricingData, ['merge' => true]);
         }
+        NolaCache::invalidateAdminDashboard();
         echo json_encode(['status' => 'success', 'message' => 'Settings updated.']);
         exit;
     } catch (Exception $e) {

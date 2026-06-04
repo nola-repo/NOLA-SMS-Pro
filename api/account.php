@@ -9,6 +9,7 @@ header('Content-Type: application/json');
 
 require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
+require_once __DIR__ . '/cache_helper.php';
 require_once __DIR__ . '/jwt_helper.php';
 require_once __DIR__ . '/install_helpers.php';
 require_once __DIR__ . '/services/CreditManager.php';
@@ -104,6 +105,11 @@ try {
                 ['path' => 'updated_at', 'value' => new \Google\Cloud\Core\Timestamp(new \DateTime())]
             ]);
 
+            if ($locId) {
+                NolaCache::delete("account_profile_" . $locId);
+            }
+            NolaCache::invalidateAdminDashboard();
+
             echo json_encode([
                 'status'  => 'success',
                 'message' => 'Profile updated successfully.'
@@ -119,6 +125,16 @@ try {
             'message' => 'Missing location_id'
         ]);
         exit;
+    }
+
+    // Cache check for GET requests
+    $cacheKey = "account_profile_" . $locId;
+    if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+        $cachedData = NolaCache::get($cacheKey);
+        if ($cachedData !== null) {
+            echo json_encode($cachedData);
+            exit;
+        }
     }
     
     // 3. Database Query
@@ -249,7 +265,7 @@ try {
     $registrationStatus = install_registration_status_for_account($db, (string)$locId);
 
     // 4. Response format
-    echo json_encode([
+    $responsePayload = [
         'status' => 'success',
         'data' => [
             'location_id'       => $locId,
@@ -270,7 +286,12 @@ try {
             'credit_balance'      => $creditBalanceDisplay,
             'currency'            => $intData['currency'] ?? 'PHP'
         ]
-    ]);
+    ];
+
+    $registryKey = "credits_registry_" . $locId;
+    NolaCache::setWithRegistry($registryKey, $cacheKey, $responsePayload, 300);
+
+    echo json_encode($responsePayload);
 
 } catch (\Throwable $e) {
     error_log('[api/account.php] Internal error: ' . $e->getMessage() . '\n' . $e->getTraceAsString());
