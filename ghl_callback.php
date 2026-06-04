@@ -1415,6 +1415,7 @@ if (($data['userType'] ?? '') === 'Company') {
             ]);
         }
 
+        install_clear_marketplace_install_pick($db, (string)$companyId);
         header('Location: ' . $caseADecision['url'], true, 302);
         error_log("[GHL_CALLBACK] Single-location install done for {$singleLocationId} ({$singleLocName}); redirect={$caseADecision['kind']}.");
         exit;
@@ -1916,6 +1917,7 @@ error_log('[GHL_CALLBACK_DEBUG] final_redirect=' . json_encode([
     'redirectUrl' => $redirectUrl,
 ]));
 
+install_clear_marketplace_install_pick($db, $companyId);
 header('Location: ' . $redirectUrl, true, 302);
 exit;
 

@@ -308,7 +308,9 @@ function install_handle_marketplace_webhook($db, array $payload, array $config =
 
     if ($eventType === 'INSTALL') {
         if ($locationId !== null && $companyId !== null) {
-            install_record_marketplace_install_pick($db, $companyId, $locationId);
+            $userId = isset($payload['userId']) ? trim((string)$payload['userId']) : (isset($payload['user_id']) ? trim((string)$payload['user_id']) : null);
+            $installationId = isset($payload['installationId']) ? trim((string)$payload['installationId']) : (isset($payload['installation_id']) ? trim((string)$payload['installation_id']) : null);
+            install_record_marketplace_install_pick($db, $companyId, $locationId, $userId, $installationId);
         }
 
         return [
@@ -585,7 +587,7 @@ function install_location_id_from_oauth_access_token(?string $accessToken): ?str
 /**
  * Persist the sub-account chosen in a GHL INSTALL webhook for the OAuth callback to read.
  */
-function install_record_marketplace_install_pick($db, ?string $companyId, ?string $locationId): void
+function install_record_marketplace_install_pick($db, ?string $companyId, ?string $locationId, ?string $userId = null, ?string $installationId = null): void
 {
     $companyId = install_clean_location_id($companyId);
     $locationId = install_clean_location_id($locationId);
@@ -595,12 +597,19 @@ function install_record_marketplace_install_pick($db, ?string $companyId, ?strin
 
     try {
         $now = new DateTimeImmutable();
-        $db->collection('marketplace_install_picks')->document($companyId)->set([
+        $data = [
             'company_id' => $companyId,
             'location_id' => $locationId,
             'picked_at' => new \Google\Cloud\Core\Timestamp($now),
             'expires_at' => new \Google\Cloud\Core\Timestamp($now->modify('+30 minutes')),
-        ], ['merge' => true]);
+        ];
+        if ($userId !== null && $userId !== '') {
+            $data['userId'] = $userId;
+        }
+        if ($installationId !== null && $installationId !== '') {
+            $data['installationId'] = $installationId;
+        }
+        $db->collection('marketplace_install_picks')->document($companyId)->set($data, ['merge' => true]);
     } catch (Exception $e) {
         error_log('[install_helpers] marketplace_install_pick write failed: ' . $e->getMessage());
     }
@@ -626,6 +635,15 @@ function install_recent_marketplace_install_location_id($db, string $companyId):
         $expiresAt = $data['expires_at'] ?? null;
         if ($expiresAt instanceof \Google\Cloud\Core\Timestamp) {
             if ($expiresAt->get()->getTimestamp() < time()) {
+                return null;
+            }
+        }
+
+        // Ensure the installation selection is fresh (within 2 minutes)
+        $pickedAt = $data['picked_at'] ?? null;
+        if ($pickedAt instanceof \Google\Cloud\Core\Timestamp) {
+            $age = time() - $pickedAt->get()->getTimestamp();
+            if ($age > 120) {
                 return null;
             }
         }
@@ -694,15 +712,22 @@ function install_collect_preselect_signals(
                 || $queryPick !== null
                 || $statePick !== null
                 || $jwtPick !== null;
-            $maxAttempts = $hasDirectSignals ? 1 : 3;
+            $maxAttempts = $hasDirectSignals ? 1 : 20;
+            $startPoll = microtime(true);
             for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
                 $webhookLoc = install_recent_marketplace_install_location_id($db, $companyId);
                 if ($webhookLoc !== null) {
+                    $elapsed = (int)round((microtime(true) - $startPoll) * 1000);
+                    error_log("[install_helpers] Webhook pick found on attempt={$attempt} after {$elapsed}ms: {$webhookLoc}");
                     break;
                 }
                 if ($attempt < $maxAttempts - 1) {
-                    usleep(80000);
+                    usleep(150000);
                 }
+            }
+            if ($webhookLoc === null && !$hasDirectSignals) {
+                $elapsed = (int)round((microtime(true) - $startPoll) * 1000);
+                error_log("[install_helpers] Webhook pick NOT found after polling {$maxAttempts} times over {$elapsed}ms");
             }
             $webhookPickCache[$companyId] = $webhookLoc;
         }
@@ -3134,4 +3159,21 @@ function install_decide_location_redirect(
         ),
         'classification' => $classification,
     ];
+}
+
+/**
+ * Delete a marketplace installation pick from Firestore once it has been consumed.
+ */
+function install_clear_marketplace_install_pick($db, string $companyId): void
+{
+    $companyId = install_clean_location_id($companyId);
+    if ($companyId === null) {
+        return;
+    }
+    try {
+        $db->collection('marketplace_install_picks')->document($companyId)->delete();
+        error_log("[install_helpers] Cleared marketplace_install_picks for company={$companyId}");
+    } catch (Exception $e) {
+        error_log('[install_helpers] Failed to delete marketplace_install_pick: ' . $e->getMessage());
+    }
 }
