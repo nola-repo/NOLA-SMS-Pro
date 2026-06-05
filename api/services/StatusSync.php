@@ -55,12 +55,16 @@ class StatusSync
                 if (!$messageId) continue;
 
                 // ── Skip GHL Provider Messages ─────────────────────────────
-                // Messages sent via ghl_provider.php have a ghl_message_id field.
-                // GHL manages their delivery status directly — polling Semaphore/UniSMS
-                // for these IDs will always return 'not_found' and incorrectly mark them Failed.
-                if (!empty($data['ghl_message_id'])) {
-                    // If it's still stuck as Sending after 5 minutes, mark it Sent
-                    // (GHL already confirmed delivery via syncMessageStatus in ghl_provider.php)
+                // Messages from ghl_provider.php (source='ghl_provider') have the GHL
+                // message ID stored AS the message_id — NOT a Semaphore ID.
+                // Polling Semaphore with a GHL message ID always returns 'not_found'.
+                // ghl_provider.php already calls syncMessageStatus('Sent') immediately
+                // after send, so we just need to auto-promote if still stuck after 5 min.
+                //
+                // Messages from send_sms.php may ALSO have a ghl_message_id (stored
+                // separately) but their message_id IS a real Semaphore ID — poll normally.
+                $isGhlProviderSource = ($data['source'] ?? '') === 'ghl_provider';
+                if ($isGhlProviderSource) {
                     $dateCreated = self::parseTs($data['date_created'] ?? $data['created_at'] ?? null);
                     if ($dateCreated && (time() - $dateCreated > 300)) {
                         self::finalize($db, $doc, $messageId, 'Sent', null);
@@ -183,8 +187,11 @@ class StatusSync
         }
 
         // ── Skip GHL Provider Messages ─────────────────────────────────────
-        // GHL manages their own status. Don't poll the SMS provider for these.
-        if (!empty($data['ghl_message_id'])) {
+        // Only skip messages whose source is ghl_provider — those use the GHL
+        // message ID as the Semaphore ID (they don't have a Semaphore ID at all).
+        // Messages from send_sms.php with a separate ghl_message_id are fine to
+        // poll — their message_id IS a real Semaphore ID.
+        if (($data['source'] ?? '') === 'ghl_provider') {
             return;
         }
 
