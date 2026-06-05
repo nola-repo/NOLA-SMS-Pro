@@ -91,6 +91,24 @@ class SmsGatewayService
         // 1. Resolve preferred/forced provider
         $providerName = $providerPreference ?: $this->activeProviderName;
 
+        // 2. Dynamic Routing Override
+        if ($customApiKey !== null) {
+            // Path A: Subaccount custom API key determines provider
+            $providerName = str_starts_with(trim($customApiKey), 'sk_') ? 'unisms' : 'semaphore';
+        } else {
+            // Path B: Master gateway sender ID determines provider
+            $unismsSender = trim($this->config['UNISMS_SENDER_ID'] ?? '');
+            if ($unismsSender !== '' && strcasecmp(trim($senderId), $unismsSender) === 0) {
+                $providerName = 'unisms';
+            } else {
+                // If the selected sender is not the dedicated UniSMS sender, assume Semaphore
+                // (or allow auto_failover to run its course if that's the active provider)
+                if ($providerName !== 'auto_failover') {
+                    $providerName = 'semaphore';
+                }
+            }
+        }
+
         if ($providerName !== 'auto_failover') {
             $prov = $this->getProviderInstance($providerName);
             $results = $prov->sendBulk($numbers, $message, $senderId, $customApiKey);
