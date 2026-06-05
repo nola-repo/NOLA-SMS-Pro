@@ -611,6 +611,16 @@ try {
 } catch (\Throwable $e) {
     $gateway_errors[] = $e->getMessage();
     $total_status = 502;
+    
+    // Create dummy failed results so Firestore logging still executes and the UI shows 'Failed' instead of disappearing
+    $all_results = array_map(function($num) use ($e) {
+        return [
+            'message_id' => 'failed_' . bin2hex(random_bytes(4)),
+            'status' => 'failed',
+            'recipient' => $num,
+            'error' => $e->getMessage()
+        ];
+    }, $validNumbers);
 }
 
 
