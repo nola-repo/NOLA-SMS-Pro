@@ -40,7 +40,8 @@ $config = require __DIR__ . '/webhook/config.php';
 $db = get_firestore();
 
 // Resolve the API key for this location
-$activeApiKey = $config['SEMAPHORE_API_KEY'];
+$systemApiKey = $config['SEMAPHORE_API_KEY'];
+$customKey = null;
 if ($locId) {
     try {
         $intDoc = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
@@ -48,7 +49,6 @@ if ($locId) {
         if ($snap->exists()) {
             $idat = $snap->data();
             $customKey = $idat['nola_pro_api_key'] ?? ($idat['semaphore_api_key'] ?? null);
-            if ($customKey) $activeApiKey = $customKey;
         }
     } catch (\Exception $e) {
         // Fall back to system key
@@ -76,12 +76,14 @@ foreach ($messageIds as $messageId) {
 
     // 1. First check Firestore — if already resolved, return immediately
     $providerName = 'semaphore';
+    $isSystem = false;
     try {
         $doc = $db->collection('messages')->document($messageId)->snapshot();
         if ($doc->exists()) {
             $data = $doc->data();
             $storedStatus = $mapStatus($data['status'] ?? null);
             $providerName = $data['provider'] ?? 'semaphore';
+            $isSystem = !empty($data['is_system']);
 
             // If already in a terminal state, return from Firestore (no API call needed)
             if (in_array($storedStatus, ['Sent', 'Failed'])) {
@@ -99,6 +101,7 @@ foreach ($messageIds as $messageId) {
 
     // 2. Resolve provider and check status
     $providerInstance = $gateway->getProviderInstance($providerName);
+    $activeApiKey = ($customKey && !$isSystem) ? $customKey : $systemApiKey;
 
     $status = 'Sending';
     try {

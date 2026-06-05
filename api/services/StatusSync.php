@@ -56,7 +56,8 @@ class StatusSync
 
                 // ── API Key Selection ──────────────────────────────────────
                 $activeApiKey = $systemApiKey;
-                if ($locId) {
+                $isSystem = !empty($data['is_system']);
+                if ($locId && !$isSystem) {
                     if (!isset($apiKeyCache[$locId])) {
                         try {
                             $intDoc = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
@@ -185,7 +186,8 @@ class StatusSync
         // 5. Select the correct API key
         $locId = $data['location_id'] ?? '';
         $activeApiKey = $systemApiKey;
-        if ($locId) {
+        $isSystem = !empty($data['is_system']);
+        if ($locId && !$isSystem) {
             if (!isset($apiKeyCache[$locId])) {
                 try {
                     $intDoc = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);

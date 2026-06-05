@@ -149,8 +149,10 @@ $contactId = $customData['contactId'] ?? $customData['contact_id']
 $message = $customData['message'] ?? $payload['message'] ?? $data['message'] ?? '';
 
 if ($message) {
-    $message = strip_tags($message);
-    $message = html_entity_decode($message);
+    // NOTE: Do NOT use strip_tags() here — it removes anything resembling an HTML tag,
+    // e.g. "hi <3" becomes "hi " which silently truncates the user's message.
+    // The message arrives as JSON (not HTML) so HTML stripping is never needed.
+    $message = html_entity_decode($message, ENT_QUOTES | ENT_HTML5, 'UTF-8');
     
     // Sanitize smart unicode punctuation to GSM-7 equivalents to prevent UCS-2 segment limits
     $message = str_replace(
@@ -159,7 +161,8 @@ if ($message) {
         $message
     );
 
-    $message = preg_replace('/\s+/', ' ', $message);
+    // Collapse runs of spaces/tabs but preserve intentional newlines (multi-line SMS)
+    $message = preg_replace('/[^\S\n]+/', ' ', $message);
     $message = trim($message);
 }
 log_sms("MESSAGE_CLEANED", $message);
@@ -622,7 +625,11 @@ if (!empty($message_results)) {
     $now = new \DateTime();
     $ts = new \Google\Cloud\Core\Timestamp($now);
 
-    $isBulk = count($validNumbers) > 1;
+    // A send is "bulk" (uses a shared group conversation) when:
+    //   - Multiple numbers are in this single request (GHL Marketplace style), OR
+    //   - A batch_id is present — the frontend always sets batch_id for bulk sends,
+    //     even though it calls this endpoint one phone at a time.
+    $isBulk = count($validNumbers) > 1 || !empty($batch_id);
     $prefix = $locId . '_';
 
     $conversation_id = $isBulk
@@ -673,7 +680,8 @@ if (!empty($message_results)) {
             'name' => $recipientName,
             'message_id' => $messageId,
             'segments' => $credits_per_message,
-            'provider' => $chosenProvider
+            'provider' => $chosenProvider,
+            'is_system' => $isSystemNotification
         ];
 
         $db->collection('messages')
@@ -695,6 +703,7 @@ if (!empty($message_results)) {
             'recipient_key' => $recipient_key ?? $recipient,
             'credits_used' => $credits_per_message,
             'conversation_id' => $conversation_id,
+            'is_system' => $isSystemNotification
         ];
 
         if ($locId) {
@@ -723,7 +732,9 @@ if (!empty($message_results)) {
         ->set($convData, ['merge' => true]);
 
     // ── GHL Bidirectional Sync (Best-Effort) ─────────────────────────────────
-    if (!$isBulk && $locId && !empty($messageId)) {
+    // GHL bidirectional sync: run for every individual-number send (including bulk
+    // recipients), since each message should appear in its GHL contact's conversation.
+    if (count($validNumbers) === 1 && $locId && !empty($messageId)) {
         try {
             $ghlSync = new \Nola\Services\GhlSyncService($db, $locId, $ghlTokenRegistryId);
             $syncRes = $ghlSync->syncOutboundMessage($validNumbers[0], $message, $contactId);
