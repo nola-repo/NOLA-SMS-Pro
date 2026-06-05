@@ -725,21 +725,38 @@ if (!empty($message_results)) {
             ->set($logData, ['merge' => true]);
     }
 
-    $convData = [
-        'id' => $conversation_id,
-        'location_id' => $locId,
-        'last_message' => $message,
-        'last_message_at' => $ts,
-        'updated_at' => $ts,
-        'members' => $validNumbers,
-        'name' => $isBulk ? 'Bulk Campaign' : ($recipientName ?: $validNumbers[0]),
-        'type' => $isBulk ? 'group' : 'direct'
-    ];
-
-    // Conversation doc for UI sidebar
-    $db->collection('conversations')
-        ->document($conversation_id)
-        ->set($convData, ['merge' => true]);
+    // For bulk sends the frontend calls this endpoint once per recipient (sequential),
+    // all sharing the same batch_id. Using arrayUnion in a set+merge means each call
+    // atomically appends its recipient to the members list — works whether the doc
+    // already exists or is being created for the very first time.
+    // For direct (single) sends, we simply set the members array normally.
+    if ($isBulk) {
+        $db->collection('conversations')
+            ->document($conversation_id)
+            ->set([
+                'id'              => $conversation_id,
+                'location_id'     => $locId,
+                'last_message'    => $message,
+                'last_message_at' => $ts,
+                'updated_at'      => $ts,
+                'type'            => 'group',
+                // arrayUnion creates the field if missing, appends if it exists — never duplicates
+                'members'         => \Google\Cloud\Firestore\FieldValue::arrayUnion($validNumbers),
+            ], ['merge' => true]);
+    } else {
+        $db->collection('conversations')
+            ->document($conversation_id)
+            ->set([
+                'id'              => $conversation_id,
+                'location_id'     => $locId,
+                'last_message'    => $message,
+                'last_message_at' => $ts,
+                'updated_at'      => $ts,
+                'members'         => $validNumbers,
+                'name'            => $recipientName ?: $validNumbers[0],
+                'type'            => 'direct',
+            ], ['merge' => true]);
+    }
 
     // ── GHL Bidirectional Sync (Best-Effort) ─────────────────────────────────
     // GHL bidirectional sync: run for every individual-number send (including bulk
