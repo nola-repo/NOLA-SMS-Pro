@@ -198,7 +198,7 @@ try {
             ->where('location_id', '==', $locId)
             ->where('conversation_id', '==', $conv);
 
-        $query = $q->orderBy('created_at', 'DESC')
+        $query = $q->orderBy('date_created', 'DESC')
             ->limit($limit)
             ->offset($offset);
 
@@ -218,7 +218,8 @@ try {
                 'status' => $mapStatus($d['status'] ?? null),
                 'batch_id' => $d['batch_id'] ?? null,
                 'recipient_key' => $d['recipient_key'] ?? null,
-                'created_at' => isset($d['created_at']) ? $d['created_at']->formatAsString() : null,
+                'date_created' => isset($d['date_created']) ? $d['date_created']->formatAsString() : null,
+                'created_at' => isset($d['created_at']) ? $d['created_at']->formatAsString() : (isset($d['date_created']) ? $d['date_created']->formatAsString() : null),
                 'name' => $d['name'] ?? null,
             ];
         }
@@ -232,7 +233,7 @@ try {
             ->where('location_id', '==', $locId)
             ->where('conversation_id', '==', $conversationId);
 
-        $query = $q->orderBy('created_at', 'DESC')
+        $query = $q->orderBy('date_created', 'DESC')
             ->limit($limit)
             ->offset($offset);
         foreach ($query->documents() as $doc) {
@@ -251,7 +252,8 @@ try {
                 'status' => $mapStatus($d['status'] ?? null),
                 'batch_id' => $d['batch_id'] ?? null,
                 'recipient_key' => $d['recipient_key'] ?? null,
-                'created_at' => isset($d['created_at']) ? $d['created_at']->formatAsString() : null,
+                'date_created' => isset($d['date_created']) ? $d['date_created']->formatAsString() : null,
+                'created_at' => isset($d['created_at']) ? $d['created_at']->formatAsString() : (isset($d['date_created']) ? $d['date_created']->formatAsString() : null),
                 'name' => $d['name'] ?? null,
             ];
         }
