@@ -54,7 +54,28 @@ class StatusSync
 
                 if (!$messageId) continue;
 
-                // ── API Key Selection ──────────────────────────────────────
+                // ── Skip GHL Provider Messages ─────────────────────────────
+                // Messages sent via ghl_provider.php have a ghl_message_id field.
+                // GHL manages their delivery status directly — polling Semaphore/UniSMS
+                // for these IDs will always return 'not_found' and incorrectly mark them Failed.
+                if (!empty($data['ghl_message_id'])) {
+                    // If it's still stuck as Sending after 5 minutes, mark it Sent
+                    // (GHL already confirmed delivery via syncMessageStatus in ghl_provider.php)
+                    $dateCreated = self::parseTs($data['date_created'] ?? $data['created_at'] ?? null);
+                    if ($dateCreated && (time() - $dateCreated > 300)) {
+                        self::finalize($db, $doc, $messageId, 'Sent', null);
+                        $updatedCount++;
+                    }
+                    continue;
+                }
+
+                // ── Skip failed_ placeholder IDs (generated on gateway exception) ─
+                // These were never accepted by the provider, polling would return not_found.
+                if (str_starts_with($messageId, 'failed_')) {
+                    self::finalize($db, $doc, $messageId, 'Failed', 'Gateway rejected send');
+                    $updatedCount++;
+                    continue;
+                }
                 $activeApiKey = $systemApiKey;
                 $isSystem = !empty($data['is_system']);
                 if ($locId && !$isSystem) {
@@ -158,6 +179,17 @@ class StatusSync
         // 1. Only process outbound messages that are in a non-final state
         $status = $data['status'] ?? '';
         if (!in_array(strtolower($status), ['queued', 'pending', 'sending'])) {
+            return;
+        }
+
+        // ── Skip GHL Provider Messages ─────────────────────────────────────
+        // GHL manages their own status. Don't poll the SMS provider for these.
+        if (!empty($data['ghl_message_id'])) {
+            return;
+        }
+
+        // ── Skip failed_ placeholder IDs ───────────────────────────────────
+        if (str_starts_with((string)$messageId, 'failed_')) {
             return;
         }
 
