@@ -24,7 +24,7 @@ class StatusSync
         // Instantiate gateway once for the whole sync session (avoids one Firestore
         // config read per message inside the loop).
         require_once __DIR__ . '/SmsGatewayService.php';
-        $gateway = new SmsGatewayService();
+        $gateway = new \SmsGatewayService();
         $startTime = time();
         $maxExecutionTime = 240; // 4 minutes safety limit
         $apiKeyCache = [];
@@ -250,7 +250,7 @@ class StatusSync
             static $gatewayInstance = null;
             if ($gatewayInstance === null) {
                 require_once __DIR__ . '/SmsGatewayService.php';
-                $gatewayInstance = new SmsGatewayService();
+                $gatewayInstance = new \SmsGatewayService();
             }
             $providerName = $data['provider'] ?? 'semaphore';
             $providerInstance = $gatewayInstance->getProviderInstance($providerName);
