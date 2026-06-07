@@ -16,10 +16,13 @@ import {
     type AccountSettings, type NotificationSettings, type StoredSenderId
 } from "../utils/settingsStorage";
 import { SenderRequestModal } from "../components/SenderRequestModal";
-import { useGhlLocation } from "../hooks/useGhlLocation";
+import { useGhlLocation, useGhlCompany, useIsInGhlIframe } from "../hooks/useGhlLocation";
 import { fetchSenderRequests, fetchAccountSenderConfig, type SenderRequest, type AccountSenderConfig } from "../api/senderRequests";
-import { fetchAccountProfile } from "../api/account";
-import { useUserProfile } from "../hooks/useUserProfile";
+import { fetchAccountProfile, fetchAgencyProfile } from "../api/account";
+import { useUserProfileContext } from "../context/UserProfileContext";
+import { useAuth } from "../context/AuthContext";
+import { safeStorage } from "../utils/safeStorage";
+import { getSession, SESSION_KEYS } from "../services/authService";
 
 
 
@@ -93,61 +96,89 @@ const Toggle: React.FC<{ checked: boolean; onChange: (v: boolean) => void; id: s
 
 
 
+function readCachedProfile(): Record<string, unknown> {
+    try {
+        const raw =
+            safeStorage.getItem(SESSION_KEYS.user) ||
+            safeStorage.getItem('nola_auth_user') ||
+            safeStorage.getItem('nola_user') ||
+            '{}';
+        return JSON.parse(raw);
+    } catch {
+        return {};
+    }
+}
+
 // ΓöÇΓöÇΓöÇ Section: Account ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 const AccountSection: React.FC = () => {
     const [form] = useState<AccountSettings>(getAccountSettings);
+    const { isAgency } = useAuth();
     const ghlLocationIdFromHook = useGhlLocation();
+    const ghlCompanyIdFromHook = useGhlCompany();
+    const isInGhlIframe = useIsInGhlIframe();
+    const liveProfile = useUserProfileContext();
+    const cachedProfile = readCachedProfile();
+    const userProfile = liveProfile || cachedProfile;
 
-    // Initialize fetchedName from cached location_name ΓÇö prevents GHL API failure from overriding known good value
-    const [fetchedName, setFetchedName] = useState<string | null>(() => {
-        try {
-            const authUser = JSON.parse(localStorage.getItem('nola_auth_user') || '{}');
-            if (authUser?.location_name) return authUser.location_name;
-            return JSON.parse(localStorage.getItem('nola_user') || '{}').location_name || null;
-        }
-        catch { return null; }
-    });
+    const initialWorkspaceName = isAgency
+        ? ((userProfile.company_name as string | undefined) || null)
+        : ((userProfile.location_name as string | undefined) || null);
+
+    const [fetchedName, setFetchedName] = useState<string | null>(initialWorkspaceName);
     const [isFetchingLocation, setIsFetchingLocation] = useState(false);
-    
-    // Call the hook to get fresh user profile
-    const hookUserProfile = useUserProfile();
-    
-    // Read personal profile from nola_auth_user / nola_user (populated at login/registration)
-    // Fallback to nola_user to gracefully handle legacy cache if hookUserProfile hasn't loaded yet.
-    const userProfile = hookUserProfile || (() => {
-        try { 
-            const authUser = JSON.parse(localStorage.getItem('nola_auth_user') || '{}');
-            if (Object.keys(authUser).length > 0) return authUser;
-            return JSON.parse(localStorage.getItem('nola_user') || '{}'); 
-        }
-        catch { return {}; }
-    })();
 
-    // Synchronize hook state with local variables if needed
     useEffect(() => {
-        if (hookUserProfile) {
-            if (hookUserProfile.location_name) setFetchedName(hookUserProfile.location_name);
+        if (isAgency) {
+            if (userProfile.company_name) setFetchedName(String(userProfile.company_name));
+            return;
         }
-    }, [hookUserProfile]);
+        if (userProfile.location_name) setFetchedName(String(userProfile.location_name));
+    }, [isAgency, userProfile.company_name, userProfile.location_name]);
 
-    // Manage input location ID state
     const [inputLocationId, setInputLocationId] = useState<string>(() => {
-        return ghlLocationIdFromHook || userProfile.location_id || getAccountSettings().ghlLocationId || "";
+        return ghlLocationIdFromHook || String(userProfile.location_id || getAccountSettings().ghlLocationId || "");
     });
 
     useEffect(() => {
-        if (hookUserProfile?.location_id && !inputLocationId) {
-            setInputLocationId(hookUserProfile.location_id);
+        if (!isAgency && userProfile.location_id && !inputLocationId) {
+            setInputLocationId(String(userProfile.location_id));
         }
-    }, [hookUserProfile, inputLocationId]);
+    }, [isAgency, userProfile.location_id, inputLocationId]);
 
-    // Update if hook updates (e.g. from URL or from postMessage)
     useEffect(() => {
-        if (ghlLocationIdFromHook && ghlLocationIdFromHook !== inputLocationId) {
+        if (!isAgency && ghlLocationIdFromHook && ghlLocationIdFromHook !== inputLocationId) {
             setInputLocationId(ghlLocationIdFromHook);
             fetchAndSetLocation(ghlLocationIdFromHook);
         }
-    }, [ghlLocationIdFromHook]);
+    }, [ghlLocationIdFromHook, inputLocationId, isAgency]);
+
+    const fetchAndSetAgencyProfile = async () => {
+        setIsFetchingLocation(true);
+        const profile = await fetchAgencyProfile();
+        setIsFetchingLocation(false);
+        if (!profile) return;
+
+        if (profile.company_name && profile.company_name !== "Unknown") {
+            setFetchedName(profile.company_name);
+        }
+
+        try {
+            const cached = readCachedProfile();
+            const merged = {
+                ...cached,
+                ...profile,
+                company_name: profile.company_name ?? cached.company_name,
+                company_id: profile.company_id ?? cached.company_id,
+                name: profile.name ?? profile.full_name ?? cached.name,
+                email: profile.email ?? cached.email,
+                phone: profile.phone ?? cached.phone,
+            };
+            const serialized = JSON.stringify(merged);
+            safeStorage.setItem(SESSION_KEYS.user, serialized);
+            safeStorage.setItem('nola_user', serialized);
+            safeStorage.setItem('nola_auth_user', serialized);
+        } catch {}
+    };
 
     const fetchAndSetLocation = async (locId: string) => {
          if (!locId || locId.trim() === "") return;
@@ -156,7 +187,6 @@ const AccountSection: React.FC = () => {
          const currentSettings = getAccountSettings();
          if (currentSettings.ghlLocationId !== locId) {
              saveAccountSettings({ ...currentSettings, ghlLocationId: locId });
-             // Notify LocationContext so all subscribers get the new location reactively
              window.dispatchEvent(
                  new CustomEvent('ghl-location-set', { detail: { locationId: locId } })
              );
@@ -166,11 +196,12 @@ const AccountSection: React.FC = () => {
          setIsFetchingLocation(false);
          if (profile && profile.location_name && profile.location_name !== "Unknown") {
              setFetchedName(profile.location_name);
-             // Also patch the nola_user cache with the fresh location name
              try {
-                 const cached = JSON.parse(localStorage.getItem('nola_user') || '{}');
+                 const cached = readCachedProfile();
                  cached.location_name = profile.location_name;
-                 localStorage.setItem('nola_user', JSON.stringify(cached));
+                 const serialized = JSON.stringify(cached);
+                 safeStorage.setItem('nola_user', serialized);
+                 safeStorage.setItem('nola_auth_user', serialized);
              } catch {}
              const fresh = getAccountSettings();
              if (fresh.displayName !== profile.location_name) {
@@ -178,17 +209,18 @@ const AccountSection: React.FC = () => {
                  window.dispatchEvent(new Event("account-settings-updated"));
              }
          }
-         // Note: do NOT set fetchedName to "Location Not Found" on failure ΓÇö
-         // we already have the correct value from nola_user cache (set at login/register)
     };
 
-    // Initial fetch on mount
     useEffect(() => {
+        if (isAgency) {
+            fetchAndSetAgencyProfile();
+            return;
+        }
         if (inputLocationId) {
             fetchAndSetLocation(inputLocationId);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [isAgency]);
 
     const handleSaveLocation = () => {
         fetchAndSetLocation(inputLocationId);
@@ -224,22 +256,33 @@ const AccountSection: React.FC = () => {
     };
 
     // Derived values
-    // subaccountName: use the fetchedName if it's a real value, otherwise fallback to profile cache
-    const subaccountName = (fetchedName && fetchedName !== "Location Not Found")
-        ? fetchedName
-        : (userProfile.location_name || form.displayName || "Not Found");
     const statusCfg = STATUS_CONFIG[form.accountStatus];
     // fullName: use `name` field; fall back to legacy firstName+lastName for old sessions
-    const cachedRaw = (() => { try { return JSON.parse(localStorage.getItem('nola_user') || '{}'); } catch { return {}; } })();
     const fullName = userProfile.name
-        || (cachedRaw.name)
-        || (`${cachedRaw.firstName ?? ''} ${cachedRaw.lastName ?? ''}`.trim())
+        || userProfile.full_name
+        || (`${userProfile.firstName ?? ''} ${userProfile.lastName ?? ''}`.trim())
         || 'N/A';
+    const resolvedCompanyId =
+        ghlCompanyIdFromHook ||
+        userProfile.company_id ||
+        getSession()?.companyId ||
+        safeStorage.getItem(SESSION_KEYS.companyId) ||
+        '';
     const resolvedLocationId = ghlLocationIdFromHook || userProfile.location_id || inputLocationId || '';
+    const workspaceTitle = isAgency
+        ? (fetchedName || userProfile.company_name || form.displayName || "Not Found")
+        : (fetchedName && fetchedName !== "Location Not Found"
+            ? fetchedName
+            : (userProfile.location_name || form.displayName || "Not Found"));
 
     return (
         <div className="space-y-5">
-            <SectionHeader title="Account Details" subtitle="View your profile and GoHighLevel workspace information." />
+            <SectionHeader
+                title="Account Details"
+                subtitle={isAgency
+                    ? "View your agency profile and GoHighLevel company information."
+                    : "View your profile and GoHighLevel workspace information."}
+            />
 
             {/* Status Banner */}
             <div className={`flex items-center gap-2.5 px-4 py-3 rounded-xl border ${statusCfg.bg} border-transparent`}>
@@ -287,14 +330,16 @@ const AccountSection: React.FC = () => {
             <Card>
                 <div className="flex items-center gap-4 mb-5">
                     <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-500">
-                        <FiMapPin className="w-6 h-6" />
+                        {isAgency ? <FiBriefcase className="w-6 h-6" /> : <FiMapPin className="w-6 h-6" />}
                     </div>
                     <div>
                         <h3 className="text-[15px] font-bold text-[#111111] dark:text-[#ececf1]">
-                            {fetchedName === 'Location Not Found' ? <span className="text-red-500">Not Found</span> : subaccountName}
+                            {workspaceTitle === 'Location Not Found'
+                                ? <span className="text-red-500">Not Found</span>
+                                : workspaceTitle}
                         </h3>
                         <p className="text-[12px] text-[#9aa0a6]">
-                            {userProfile.company_name ? `Agency: ${userProfile.company_name}` : 'GHL Workspace'}
+                            {isAgency ? 'GHL Agency Company' : (userProfile.company_name ? `Agency: ${userProfile.company_name}` : 'GHL Workspace')}
                         </p>
                     </div>
                 </div>
@@ -302,14 +347,16 @@ const AccountSection: React.FC = () => {
                 <div className="space-y-4 pt-4 border-t border-[#f0f0f0] dark:border-[#ffffff05]">
                     <div>
                         <label className="block text-[11px] font-bold text-[#9aa0a6] uppercase tracking-wider mb-1.5 flex items-center justify-between">
-                            <span>Location Name</span>
+                            <span>{isAgency ? 'Company Name' : 'Location Name'}</span>
                             {isFetchingLocation && <span className="text-amber-500 normal-case tracking-normal">Fetching...</span>}
                         </label>
                         <div className="px-4 py-2.5 rounded-xl bg-[#f7f7f7] dark:bg-[#0d0e10] border border-[#e0e0e0] dark:border-[#ffffff0a] text-[13px] text-[#111111] dark:text-[#ececf1] font-semibold">
-                            {fetchedName === 'Location Not Found' ? <span className="text-red-500">Not Found</span> : subaccountName}
+                            {workspaceTitle === 'Location Not Found'
+                                ? <span className="text-red-500">Not Found</span>
+                                : workspaceTitle}
                         </div>
                     </div>
-                    {userProfile.company_name && (
+                    {!isAgency && userProfile.company_name && (
                         <div>
                             <label className="block text-[11px] font-bold text-[#9aa0a6] uppercase tracking-wider mb-1.5">Agency / Company</label>
                             <div className="px-4 py-2.5 rounded-xl bg-[#f7f7f7] dark:bg-[#0d0e10] border border-[#e0e0e0] dark:border-[#ffffff0a] text-[13px] text-[#111111] dark:text-[#ececf1] font-semibold">
@@ -319,8 +366,8 @@ const AccountSection: React.FC = () => {
                     )}
                     <div>
                         <label className="flex text-[11px] font-bold text-[#9aa0a6] uppercase tracking-wider mb-1.5 items-center justify-between gap-2">
-                            <span>GHL Location ID</span>
-                            {window.self === window.top && (
+                            <span>{isAgency ? 'GHL Company ID' : 'GHL Location ID'}</span>
+                            {!isInGhlIframe && !isAgency && (
                                 <button
                                     onClick={() => window.location.href = 'https://marketplace.gohighlevel.com/oauth/chooselocation?appId=65f8a0c2837bc281e59eef7b'}
                                     className="text-[10px] font-bold bg-[#2b83fa]/10 text-[#2b83fa] hover:bg-[#2b83fa]/20 px-2 py-1 rounded-md transition-colors"
@@ -329,7 +376,7 @@ const AccountSection: React.FC = () => {
                                 </button>
                             )}
                         </label>
-                        {window.self === window.top ? (
+                        {!isInGhlIframe && !isAgency ? (
                             <div className="flex gap-2 relative">
                                 <div className="relative flex-1">
                                     <input
@@ -362,7 +409,7 @@ const AccountSection: React.FC = () => {
                             </div>
                         ) : (
                             <div className="px-4 py-2.5 rounded-xl bg-[#f7f7f7] dark:bg-[#0d0e10] border border-[#e0e0e0] dark:border-[#ffffff0a] text-[13px] text-[#111111] dark:text-[#ececf1] font-mono flex items-center justify-between">
-                                <span>{resolvedLocationId || "Not Found"}</span>
+                                <span>{isAgency ? (resolvedCompanyId || "Not Found") : (resolvedLocationId || "Not Found")}</span>
                                 {isFetchingLocation && <FiRefreshCw className="w-4 h-4 text-[#2b83fa] animate-spin" />}
                             </div>
                         )}
@@ -370,7 +417,7 @@ const AccountSection: React.FC = () => {
                 </div>
             </Card>
 
-            {window.self === window.top && (
+            {!isInGhlIframe && !isAgency && (
                 <div className="p-4 rounded-xl bg-blue-50/50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-900/20">
                     <p className="text-[12px] text-blue-700 dark:text-blue-300 leading-relaxed">
                         <strong>Note:</strong> Account information is automatically synced from your GoHighLevel workspace. Type your Location ID above to fetch your details automatically.

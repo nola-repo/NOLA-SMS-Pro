@@ -15,6 +15,7 @@ require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 require __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/../jwt_helper.php';
+require_once __DIR__ . '/../auth/user_profile_helper.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
@@ -72,8 +73,8 @@ try {
     $db = get_firestore();
 
     // ── Find the agency account linked to this company_id ────────────────────
-    $results = $db->collection('users')
-        ->where('role',       '=', 'agency')
+    $authCollection = 'agency_users';
+    $results = $db->collection('agency_users')
         ->where('company_id', '=', $companyId)
         ->limit(1)
         ->documents();
@@ -89,6 +90,23 @@ try {
     }
 
     if (!$userData) {
+        $authCollection = 'users';
+        $results = $db->collection('users')
+            ->where('role',       '=', 'agency')
+            ->where('company_id', '=', $companyId)
+            ->limit(1)
+            ->documents();
+
+        foreach ($results as $doc) {
+            if ($doc->exists()) {
+                $userId   = $doc->id();
+                $userData = $doc->data();
+                break;
+            }
+        }
+    }
+
+    if (!$userData) {
         error_log('[GHL_AUTOLOGIN] No existing agency user found for company_id: ' . $companyId . '. Verifying ghl_tokens...');
 
         if (!has_agency_token($db, $companyId)) {
@@ -99,7 +117,6 @@ try {
         }
 
         error_log('[GHL_AUTOLOGIN] Validation passed. Creating new user doc on the fly.');
-        // Automatically create a new user document on the fly
         $userData = [
             'role'       => 'agency',
             'company_id' => $companyId,
@@ -107,9 +124,9 @@ try {
             'active'     => true,
             'email'      => 'agency_' . $companyId . '@ghl.nolasmspro.com'
         ];
-        // Insert into firestore and get the auto-generated ID
-        $newUserRef = $db->collection('users')->add($userData);
+        $newUserRef = $db->collection('agency_users')->add($userData);
         $userId = $newUserRef->id();
+        $authCollection = 'agency_users';
     } else {
         error_log('[GHL_AUTOLOGIN] Found existing agency user for company_id: ' . $companyId . ' (User ID: ' . $userId . ')');
     }
@@ -120,23 +137,43 @@ try {
         exit;
     }
 
+    if (empty($userData['company_name'])) {
+        foreach (['ghl_agency_tokens', 'ghl_tokens'] as $collection) {
+            try {
+                $snap = $db->collection($collection)->document($companyId)->snapshot();
+                if (!$snap->exists()) {
+                    continue;
+                }
+                $tokenData = $snap->data();
+                $companyName = $tokenData['company_name']
+                    ?? $tokenData['agency_name']
+                    ?? $tokenData['location_name']
+                    ?? null;
+                if ($companyName !== null && trim((string)$companyName) !== '') {
+                    $userData['company_name'] = trim((string)$companyName);
+                    break;
+                }
+            } catch (Exception $ignored) {
+            }
+        }
+    }
+
+    $profile = auth_user_payload_for_api($userData, (string)($userData['email'] ?? ''));
+
     // ── Sign JWT (8 h) ────────────────────────────────────────────────────────
     $token = jwt_sign([
-        'sub'        => $userId,
-        'email'      => $userData['email'] ?? '',
-        'role'       => 'agency',
-        'company_id' => $companyId,
+        'sub'             => $userId,
+        'email'           => $userData['email'] ?? '',
+        'role'            => 'agency',
+        'company_id'      => $companyId,
+        'auth_collection' => $authCollection,
     ], $jwtSecret, 28800);
 
     echo json_encode([
         'token'      => $token,
         'role'       => 'agency',
         'company_id' => $companyId,
-        'user'       => [
-            'firstName' => $userData['firstName'] ?? '',
-            'lastName'  => $userData['lastName']  ?? '',
-            'email'     => $userData['email']      ?? '',
-        ],
+        'user'       => $profile,
     ]);
 
 } catch (Exception $e) {

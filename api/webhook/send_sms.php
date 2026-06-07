@@ -26,6 +26,8 @@ $db_maintenance = get_firestore();
 $globalConfigRef = $db_maintenance->collection('admin_config')->document('global');
 $globalConfigSnap = $globalConfigRef->snapshot();
 if ($globalConfigSnap->exists() && !empty($globalConfigSnap->data()['maintenance_mode'])) {
+    Logger::error('Request blocked: system maintenance mode active', ['endpoint' => 'send_sms']);
+    Logger::response(503, ['status' => 'error', 'message' => 'System is currently in maintenance mode.']);
     http_response_code(503);
     echo json_encode(['status' => 'error', 'message' => 'System is currently in maintenance mode.']);
     exit;
@@ -173,6 +175,8 @@ $validNumbers = clean_numbers($numberRaw);
 $num_recipients = count($validNumbers);
 
 if ($num_recipients === 0) {
+    Logger::error('No valid PH numbers in request', ['raw_number' => is_string($numberRaw) ? substr($numberRaw, 0, 40) : gettype($numberRaw)]);
+    Logger::response(400, ['status' => 'error', 'message' => 'No valid Philippine mobile numbers provided.']);
     http_response_code(400);
     echo json_encode(["status" => "error", "message" => "No valid Philippine mobile numbers provided."]);
     exit;
@@ -200,6 +204,8 @@ if (!$locId) {
     }
 }
 if (!$locId) {
+    Logger::error('Missing location_id', ['endpoint' => 'send_sms', 'hint' => 'Pass X-GHL-Location-ID header or location_id in body']);
+    Logger::response(400, ['error' => 'Missing location_id.']);
     http_response_code(400);
     echo json_encode(['error' => 'Missing location_id. Pass it via X-GHL-Location-ID header or as location_id in the request body.']);
     exit;
@@ -283,6 +289,8 @@ $attemptCount = isset($tokenData['attempt_count']) ? (int)$tokenData['attempt_co
 $lastReset = $tokenData['last_reset_date'] ?? '';
 
 if (!$toggleEnabled) {
+    Logger::error('SMS toggle disabled for location', ['location_id' => $locId]);
+    Logger::response(403, ['status' => 'error', 'message' => 'SMS sending is currently disabled.']);
     http_response_code(403);
     echo json_encode([
         'status' => 'error',
@@ -314,6 +322,8 @@ if ($lastReset !== $today) {
 
 // Block if limit reached
 if ($rateLimit > 0 && $attemptCount >= $rateLimit) {
+    Logger::error('Rate limit reached', ['location_id' => $locId, 'rate_limit' => $rateLimit, 'attempt_count' => $attemptCount]);
+    Logger::response(403, ['status' => 'error', 'error' => 'rate_limit_reached']);
     http_response_code(403);
     echo json_encode([
         "status" => "error", 
@@ -428,6 +438,16 @@ $account_id = $locId ?: 'default';
 $bypassBilling = $isSystemNotification;
 
 // ── Debug: Log the billing decision path ─────────────────────────────────────
+Logger::info('SMS billing decision', [
+    'location_id'          => $locId,
+    'num_recipients'       => $num_recipients,
+    'required_credits'     => $required_credits,
+    'using_own_api_key'    => $usingCustomSender,
+    'using_free_credits'   => $usingFreeCredits,
+    'bypass_billing'       => $bypassBilling,
+    'is_system_notif'      => $isSystemNotification,
+    'sender'               => $sender,
+]);
 error_log("[send_sms] BILLING DECISION for loc={$locId}: " . json_encode([
     'usingOwnApiKey'       => $usingCustomSender,
     'usingFreeCredits'     => $usingFreeCredits,
@@ -484,6 +504,8 @@ if ($bypassBilling) {
     // ── 1. Subaccount balance pre-flight ────────────────────────────────────
     $subBalance = $creditManager->get_balance($account_id);
     if ($subBalance <= 0) {
+        Logger::error('Insufficient credits — subaccount balance zero', ['location_id' => $locId, 'balance' => $subBalance]);
+        Logger::response(402, ['status' => 'error', 'error' => 'insufficient_credits']);
         http_response_code(402);
         echo json_encode([
             'status'             => 'error',
@@ -608,7 +630,20 @@ try {
             $total_status = 502;
         }
     }
+
+    Logger::info('Gateway send completed', [
+        'provider'       => $chosenProvider,
+        'location_id'    => $locId,
+        'num_recipients' => $num_recipients,
+        'total_status'   => $total_status,
+        'failed_count'   => count($gateway_errors),
+    ]);
 } catch (\Throwable $e) {
+    Logger::error('Gateway send threw exception', [
+        'provider'    => $gateway->getProviderName(),
+        'location_id' => $locId,
+        'exception'   => $e->getMessage(),
+    ]);
     $gateway_errors[] = $e->getMessage();
     $total_status = 502;
     
@@ -835,6 +870,22 @@ if (count($validNumbers) > 3) {
 
 // GHL Legacy/Success response structure
 $reportedCredits = $bypassBilling ? 0 : $required_credits;
+
+Logger::response(
+    $gatewayAccepted ? 200 : ($total_status >= 400 ? $total_status : 502),
+    [
+        'success'        => $gatewayAccepted,
+        'status'         => $ghlStatus,
+        'location_id'    => $locId,
+        'num_recipients' => $num_recipients,
+        'credits_used'   => $reportedCredits,
+        'provider'       => $chosenProvider,
+        'sender'         => $sender,
+        'bypass_billing' => $bypassBilling,
+        'is_system_notif'=> $isSystemNotification,
+    ]
+);
+
 echo json_encode([
     "status"               => $ghlStatus,
     "message"              => $sender,

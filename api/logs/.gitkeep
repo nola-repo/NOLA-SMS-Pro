@@ -1,0 +1,2 @@
+# This file keeps the logs/ directory in git while *.log files are ignored.
+# See .gitignore: api/logs/*.log

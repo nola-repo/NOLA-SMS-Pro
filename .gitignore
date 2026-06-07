@@ -1,6 +1,11 @@
 # Ignore logs and runtime files (SMS)
 logs/
 *.log
+
+# Keep the api/logs/ directory itself (for daily rotating log files)
+# but ignore the actual log files inside it
+!api/logs/
+api/logs/*.log
 api/webhook/sms_log.txt
 api/webhook/last_payload.json
 

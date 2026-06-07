@@ -9,13 +9,10 @@ import { LocationProvider } from "./context/LocationContext";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { safeStorage } from "./utils/safeStorage";
 import { useUserProfile } from "./hooks/useUserProfile";
-
-const ProfileSync: React.FC = () => {
-  useUserProfile();
-  return null;
-};
+import { UserProfileContext } from "./context/UserProfileContext";
 
 const AppLayout: React.FC = () => {
+  const userProfile = useUserProfile();
   const [darkMode, setDarkMode] = useState(() => {
     const saved = safeStorage.getItem('darkMode');
     if (saved !== null) {
@@ -44,14 +41,10 @@ const AppLayout: React.FC = () => {
 
   const hideTogglePaths = ['/login', '/register-from-install'];
   const hideToggle = hideTogglePaths.includes(location.pathname.toLowerCase());
-  const publicProfileSyncPaths = ['/login', '/register-from-install', '/oauth/callback'];
-  const shouldSyncProfile =
-    !publicProfileSyncPaths.includes(location.pathname.toLowerCase()) &&
-    !!safeStorage.getItem('nola_auth_token');
 
   return (
+    <UserProfileContext.Provider value={userProfile}>
     <div className="h-screen bg-[#ffffff] dark:bg-[#1a1b1e]">
-      {shouldSyncProfile && <ProfileSync />}
       {/* Theme Toggle - Fixed top right (Desktop only) */}
       {!hideToggle && (
         <div className="hidden md:flex fixed top-3 right-3 gap-2 z-50">
@@ -160,6 +153,7 @@ const AppLayout: React.FC = () => {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </div>
+    </UserProfileContext.Provider>
   );
 };
 

@@ -4,6 +4,13 @@
  * Handles CORS headers and OPTIONS preflight requests.
  */
 
+// ── Logging ───────────────────────────────────────────────────────────────────
+// The logger is the very first thing loaded so every request is captured.
+// Logger::init() is idempotent — safe even if cors.php is included multiple times.
+require_once __DIR__ . '/logger.php';
+Logger::init();
+// ─────────────────────────────────────────────────────────────────────────────
+
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '*';
 
 // If credentials are required, Access-Control-Allow-Origin cannot be '*'
@@ -16,6 +23,8 @@ header('Access-Control-Max-Age: 86400');
 
 // Handle OPTIONS preflight request
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
+    Logger::response(204);
     http_response_code(204);
     exit;
 }
+

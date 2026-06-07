@@ -27,6 +27,7 @@ function validate_api_request(): void
 
     $expectedSecret = getenv('WEBHOOK_SECRET');
     if ($expectedSecret === false || trim((string)$expectedSecret) === '') {
+        Logger::error('Server misconfiguration: WEBHOOK_SECRET missing', ['method' => 'webhook-secret']);
         header('Content-Type: application/json');
         http_response_code(500);
         echo json_encode(['status' => 'error', 'message' => 'Server misconfiguration: WEBHOOK_SECRET missing']);
@@ -34,11 +35,14 @@ function validate_api_request(): void
     }
 
     if (!hash_equals($expectedSecret, (string)$receivedSecret)) {
+        Logger::auth(false, 'webhook-secret', ['ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown']);
         header('Content-Type: application/json');
         http_response_code(401);
         echo json_encode(['status' => 'error', 'message' => 'Unauthorized Access']);
         exit;
     }
+
+    Logger::auth(true, 'webhook-secret', ['ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown']);
 }
 
 /**
@@ -100,6 +104,7 @@ function validate_jwt(): array
     }
 
     if (!$authHeader || !str_starts_with($authHeader, 'Bearer ')) {
+        Logger::auth(false, 'jwt', ['reason' => 'missing-bearer-header']);
         header('Content-Type: application/json');
         http_response_code(401);
         echo json_encode(['success' => false, 'error' => 'Invalid or expired token.']);
@@ -109,6 +114,7 @@ function validate_jwt(): array
     $token = substr($authHeader, 7); // strip "Bearer "
     $secret = getenv('JWT_SECRET');
     if ($secret === false || trim((string)$secret) === '') {
+        Logger::error('Server misconfiguration: JWT secret missing', ['method' => 'jwt']);
         header('Content-Type: application/json');
         http_response_code(500);
         echo json_encode(['success' => false, 'error' => 'Server misconfiguration: JWT secret missing.']);
@@ -118,12 +124,14 @@ function validate_jwt(): array
     $payload = jwt_verify($token, $secret);
 
     if (!$payload) {
+        Logger::auth(false, 'jwt', ['reason' => 'invalid-or-expired-token']);
         header('Content-Type: application/json');
         http_response_code(401);
         echo json_encode(['success' => false, 'error' => 'Invalid or expired token.']);
         exit;
     }
 
+    Logger::auth(true, 'jwt', ['sub' => $payload['sub'] ?? null, 'role' => $payload['role'] ?? null]);
     return $payload;
 }
 
@@ -298,6 +306,7 @@ function auth_get_optional_jwt_context($db): ?array
 
     $payload = jwt_verify($jwt, $secret);
     if (!$payload) {
+        Logger::auth(false, 'optional-jwt', ['reason' => 'invalid-or-expired-token']);
         header('Content-Type: application/json');
         http_response_code(401);
         echo json_encode(['error' => 'Invalid or expired token.']);
@@ -306,6 +315,7 @@ function auth_get_optional_jwt_context($db): ?array
 
     $userId = $payload['sub'] ?? null;
     if (!$userId) {
+        Logger::auth(false, 'optional-jwt', ['reason' => 'missing-sub-in-payload']);
         header('Content-Type: application/json');
         http_response_code(401);
         echo json_encode(['error' => 'Invalid token payload.']);
@@ -328,6 +338,11 @@ function auth_get_optional_jwt_context($db): ?array
         echo json_encode(['error' => 'User profile not found.']);
         exit;
     }
+
+    Logger::auth(true, 'optional-jwt', [
+        'sub'  => (string) $userId,
+        'role' => $payload['role'] ?? null,
+    ]);
 
     return [
         'payload' => $payload,

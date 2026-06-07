@@ -70,6 +70,8 @@ function billing_subscription_find_agency($db, string $agencyId): array
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $agencyId = trim((string) ($_GET['agency_id'] ?? ''));
     if ($agencyId === '') {
+        Logger::error('Missing required param: agency_id', ['endpoint' => 'subscription', 'method' => 'GET']);
+        Logger::response(400, ['success' => false, 'error' => 'agency_id is required.']);
         http_response_code(400);
         echo json_encode(['success' => false, 'error' => 'agency_id is required.']);
         exit;
@@ -155,9 +157,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         ],
     ];
 
+    Logger::response(200, ['success' => true, 'plan' => $plan, 'status' => $status]);
     echo json_encode($payload);
     exit;
 }
 
+Logger::error('Method not allowed', ['allowed' => 'GET', 'received' => $_SERVER['REQUEST_METHOD'] ?? 'UNKNOWN']);
+Logger::response(405, ['success' => false, 'error' => 'Method not allowed']);
 http_response_code(405);
 echo json_encode(['success' => false, 'error' => 'Method not allowed']);

@@ -54,15 +54,22 @@ try {
         }
         $payload = jwt_verify($authJwt, $jwtSecret);
         $authUserId = $payload['sub'] ?? null;
+        $authRole = (string)($payload['role'] ?? 'user');
+        $authCollection = (string)($payload['auth_collection'] ?? ($authRole === 'agency' ? 'agency_users' : 'users'));
         if ($authUserId) {
-            $authSnap = $db->collection('users')->document((string)$authUserId)->snapshot();
+            $authSnap = $db->collection($authCollection)->document((string)$authUserId)->snapshot();
+            if (!$authSnap->exists() && $authCollection !== 'users') {
+                $authSnap = $db->collection('users')->document((string)$authUserId)->snapshot();
+            }
             if ($authSnap->exists()) {
                 $candidate = $authSnap->data();
                 $candidateRole = $candidate['role'] ?? 'user';
                 $candidateLocs = install_user_location_ids($candidate);
                 $candidateLoc = $candidateLocs[0] ?? null;
                 $candidateActive = !array_key_exists('active', $candidate) || !empty($candidate['active']);
-                if ($candidateActive && $candidateRole !== 'agency' && $candidateLoc) {
+                if ($candidateActive && $candidateRole === 'agency') {
+                    $authUserData = $candidate;
+                } elseif ($candidateActive && $candidateRole !== 'agency' && $candidateLoc) {
                     $authUserData = $candidate;
                     $locId = (string)$candidateLoc;
                 }
@@ -169,7 +176,10 @@ try {
     $userLastName  = null;
 
     try {
-        if ($authUserData !== null && (string)($authUserData['active_location_id'] ?? '') === (string)$requestedLocId) {
+        if ($authUserData !== null) {
+            $authRole = (string)($authUserData['role'] ?? 'user');
+            $matchesLocation = (string)($authUserData['active_location_id'] ?? '') === (string)$requestedLocId;
+            if ($authRole === 'agency' || $matchesLocation) {
             $userName      = isset($authUserData['name'])      ? trim((string)$authUserData['name'])      : '';
             $userFirstName = isset($authUserData['firstName']) ? trim((string)$authUserData['firstName']) : null;
             $userLastName  = isset($authUserData['lastName'])  ? trim((string)$authUserData['lastName'])  : null;
@@ -179,6 +189,7 @@ try {
             if ($userName === '') {
                 $joined = trim(($userFirstName ?? '') . ' ' . ($userLastName ?? ''));
                 $userName = $joined !== '' ? $joined : null;
+            }
             }
         }
 
