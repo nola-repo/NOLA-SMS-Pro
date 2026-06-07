@@ -152,6 +152,13 @@ try {
         exit;
     }
 
+    if (empty($data['company_id'])) {
+        $jwtCompanyId = trim((string)($payload['company_id'] ?? ''));
+        if ($jwtCompanyId !== '') {
+            $data['company_id'] = $jwtCompanyId;
+        }
+    }
+
     if (empty($data['company_name'])) {
         $companyName = agency_profile_resolve_company_name($db, $data);
         if ($companyName !== null) {
