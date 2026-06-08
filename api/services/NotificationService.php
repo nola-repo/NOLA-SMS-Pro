@@ -506,7 +506,8 @@ class NotificationService
         string $name,
         int $currentBalance,
         int $threshold,
-        string $sourceLocationName
+        string $sourceLocationName,
+        string $alertType
     ): ?string {
         require_once __DIR__ . '/GhlClient.php';
 
@@ -573,10 +574,10 @@ class NotificationService
         // ── 5. Build alert custom fields payload ───────────────────────────
         $now       = new \DateTimeImmutable();
         $timestamp = $now->format('c');
-        $alertId   = "low_balance_{$sourceLocationId}_" . $now->format('YmdHis');
+        $alertId   = "{$alertType}_{$sourceLocationId}_" . $now->format('YmdHis');
 
         $alertFields = [
-            'nola_sms_alert_type'            => 'low_balance',
+            'nola_sms_alert_type'            => $alertType,
             'nola_sms_alert_id'              => $alertId,
             'nola_sms_balance'               => $currentBalance,
             'nola_sms_low_balance_threshold' => $threshold,
@@ -1383,7 +1384,7 @@ class NotificationService
      */
     public static function checkLowBalance($db, string $locationId, int $currentBalance): void
     {
-        // ── 1. Load source-location notification preferences ────────────
+        // 1. Load source-location notification preferences
         $prefs = self::getPreferences($db, $locationId);
 
         if (!$prefs['low_balance_alert_enabled']) {
@@ -1392,79 +1393,68 @@ class NotificationService
 
         $threshold = $prefs['low_balance_threshold'];
 
-        // ── 2. Circuit breaker reset when balance recovers ──────────────
         $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
         $docRef   = $db->collection('integrations')->document($intDocId);
 
+        // 2. Reset circuit breakers if balance recovers above threshold
         if ($currentBalance >= $threshold) {
-            // Balance is healthy (at or above threshold) — clear circuit breaker so the next dip fires immediately
             $snap = $docRef->snapshot();
             if ($snap->exists()) {
                 $existingPrefs = $snap->data()['notification_preferences'] ?? [];
-                if (isset($existingPrefs['last_low_balance_notified_at'])) {
-                    unset($existingPrefs['last_low_balance_notified_at']);
+                if (isset($existingPrefs['last_low_balance_notified_at']) || isset($existingPrefs['last_zero_balance_notified_at'])) {
+                    $existingPrefs['last_low_balance_notified_at'] = \Google\Cloud\Firestore\FieldValue::delete();
+                    $existingPrefs['last_zero_balance_notified_at'] = \Google\Cloud\Firestore\FieldValue::delete();
                     $docRef->set(['notification_preferences' => $existingPrefs], ['merge' => true]);
-                    error_log("[LowBalanceAlert] Cleared last_low_balance_notified_at for location {$locationId} (balance {$currentBalance} > threshold {$threshold})");
+                    error_log("[LowBalanceAlert] Cleared last_low_balance_notified_at and last_zero_balance_notified_at for location {$locationId}");
                 }
             }
             return;
         }
 
-        // NOTE: ghl_workflow_sync_enabled is NOT required for the central alert path.
-        // The only customer-facing gate is low_balance_alert_enabled (checked above).
+        // 3. Determine alert type
+        $alertType = ($currentBalance <= 0) ? 'zero_balance' : 'low_balance';
 
-        // ── 3. Circuit breaker: suppress if alerted within 24 hours ─────
-        $snap         = $docRef->snapshot();
+        // 4. Check appropriate circuit breaker (24-hour limit)
+        $snap = $docRef->snapshot();
         $existingPrefs = [];
-
         if ($snap->exists()) {
-            $data          = $snap->data();
+            $data = $snap->data();
             $existingPrefs = $data['notification_preferences'] ?? [];
-            $lastNotified  = $existingPrefs['last_low_balance_notified_at'] ?? null;
+            
+            $breakerField = ($alertType === 'zero_balance') 
+                ? 'last_zero_balance_notified_at' 
+                : 'last_low_balance_notified_at';
+                
+            $lastNotified = $existingPrefs[$breakerField] ?? null;
             if ($lastNotified) {
                 $lastTs = $lastNotified instanceof \Google\Cloud\Core\Timestamp
                     ? $lastNotified->get()->getTimestamp()
                     : (int) $lastNotified;
+                
                 if (time() - $lastTs < 86400) {
+                    // Suppress duplicate alert (already sent within last 24h)
                     return;
                 }
             }
         }
 
-        // ── 4. Resolve registered account email ────────────────────────
+        // 5. Resolve registered account details
         $details = self::getAccountDetails($db, $locationId);
         $email   = $details['email'];
         $name    = $details['name'] ?? 'NOLA Owner';
 
         if (!$email) {
-            error_log("[LowBalanceAlert] No registered account email found for location {$locationId}, skipping central sync.");
+            error_log("[LowBalanceAlert] No registered account email found for location {$locationId}, skipping alert.");
             return;
         }
 
-        // ── 5. Resolve source location name for the central contact ─────
         $sourceLocationName = '';
-        try {
-            if ($snap->exists()) {
-                $sourceLocationName = (string) ($snap->data()['location_name'] ?? '');
-            }
-            if ($sourceLocationName === '') {
-                $tokenSnap = $db->collection('ghl_tokens')->document($locationId)->snapshot();
-                if ($tokenSnap->exists()) {
-                    $sourceLocationName = (string) ($tokenSnap->data()['location_name'] ?? '');
-                }
-            }
-        } catch (\Throwable $e) {
-            error_log("[LowBalanceAlert] Could not resolve location name for {$locationId}: " . $e->getMessage());
+        if ($snap->exists()) {
+            $sourceLocationName = (string) ($snap->data()['location_name'] ?? '');
         }
 
-        // ── 6. Build central alert fields ──────────────────────────────
-        $now       = new \DateTimeImmutable();
-        $timestamp = $now->format('c'); // ISO 8601
-        $alertId   = "low_balance_{$locationId}_" . $now->format('YmdHis');
-
-        // ── 7. Sync to central GHL location ────────────────────────────
-        error_log("[LowBalanceAlert] Triggering central GHL sync for location {$locationId} (email: {$email}, balance: {$currentBalance})");
-
+        // 6. Sync to Central GHL Location (triggers GHL Workflow)
+        error_log("[LowBalanceAlert] Triggering central GHL sync for location {$locationId} (email: {$email}, balance: {$currentBalance}, type: {$alertType})");
         $centralContactId = self::syncCentralLowBalanceAlertContact(
             $db,
             $locationId,
@@ -1472,26 +1462,43 @@ class NotificationService
             $name,
             $currentBalance,
             $threshold,
-            $sourceLocationName
+            $sourceLocationName,
+            $alertType // Pass the dynamically resolved alert type
         );
 
-        // ── 8. Save metadata back to source integration document ────────
-        $snap          = $docRef->snapshot();
-        $existingPrefs = $snap->exists() ? ($snap->data()['notification_preferences'] ?? []) : [];
+        // 7. Save metadata and update circuit breaker key
+        $now = new \DateTimeImmutable();
+        $timestampField = ($alertType === 'zero_balance') 
+            ? 'last_zero_balance_notified_at' 
+            : 'last_low_balance_notified_at';
 
-        $existingPrefs['last_low_balance_notified_at'] = new \Google\Cloud\Core\Timestamp($now);
+        $existingPrefs[$timestampField] = new \Google\Cloud\Core\Timestamp($now);
         $existingPrefs['last_low_balance_email_sent_to'] = $email;
 
         if ($centralContactId !== null) {
             $existingPrefs['last_low_balance_email_status']  = 'sent';
             $existingPrefs['central_ghl_alert_contact_id']   = $centralContactId;
-            error_log("[LowBalanceAlert] Central sync succeeded for location {$locationId} → contact {$centralContactId}");
         } else {
             $existingPrefs['last_low_balance_email_status'] = 'failed';
-            error_log("[LowBalanceAlert] Central sync failed for location {$locationId} — see earlier logs for details.");
         }
-
         $docRef->set(['notification_preferences' => $existingPrefs], ['merge' => true]);
+
+        // 8. Create Internal Admin Notification in Firestore
+        try {
+            $db->collection('admin_notifications')->add([
+                'type'          => $alertType,
+                'location_id'   => $locationId,
+                'location_name' => $sourceLocationName,
+                'email'         => $email,
+                'balance'       => $currentBalance,
+                'threshold'     => $threshold,
+                'created_at'    => new \Google\Cloud\Core\Timestamp($now),
+                'read'          => false
+            ]);
+            error_log("[AdminNotification] Successfully logged {$alertType} notification for {$locationId}");
+        } catch (\Throwable $e) {
+            error_log("[AdminNotification] Failed to log internal admin notification: " . $e->getMessage());
+        }
     }
 
     /**
