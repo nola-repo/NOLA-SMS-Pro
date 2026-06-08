@@ -130,15 +130,18 @@ if ($method === 'GET') {
             if ($doc->exists()) {
                 $d = $doc->data();
                 $data[] = [
-                    'id' => $doc->id(),
-                    'type' => $d['type'] ?? '',
-                    'location_id' => $d['location_id'] ?? '',
+                    'id'            => $doc->id(),
+                    'type'          => $d['type'] ?? '',
+                    'location_id'   => $d['location_id'] ?? '',
                     'location_name' => $d['location_name'] ?? '',
-                    'email' => $d['email'] ?? '',
-                    'balance' => isset($d['balance']) ? (int)$d['balance'] : 0,
-                    'threshold' => isset($d['threshold']) ? (int)$d['threshold'] : 0,
-                    'created_at' => format_ts($d['created_at'] ?? null),
-                    'read' => (bool)($d['read'] ?? false),
+                    'email'         => $d['email'] ?? '',
+                    'balance'       => array_key_exists('balance', $d) ? (int)$d['balance'] : null,
+                    'threshold'     => array_key_exists('threshold', $d) ? (int)$d['threshold'] : null,
+                    'created_at'    => format_ts($d['created_at'] ?? null),
+                    'read'          => (bool)($d['read'] ?? false),
+                    'metadata'      => (isset($d['metadata']) && is_array($d['metadata']))
+                                          ? $d['metadata']
+                                          : new \stdClass(), // serialises to {} not null
                 ];
             }
         }

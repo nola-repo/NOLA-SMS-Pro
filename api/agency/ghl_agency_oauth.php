@@ -78,6 +78,9 @@ if ($http_status == 200 && is_array($result) && isset($result['access_token'])) 
 
     // Save token in ghl_tokens as agency
     try {
+        $agencyName = $result['companyName'] ?? $result['company_name'] ?? 'Unknown Agency';
+        $agencyEmail = $result['userEmail'] ?? $result['email'] ?? '';
+
         $db->collection('ghl_tokens')
             ->document($companyId)
             ->set([
@@ -88,9 +91,23 @@ if ($http_status == 200 && is_array($result) && isset($result['access_token'])) 
                 'access_token' => $result['access_token'],
                 'refresh_token' => $result['refresh_token'],
                 'expires_at' => time() + (int)($result['expires_in'] ?? 86399),
-                'location_name' => 'Agency Name',
+                'location_name' => $agencyName,
                 'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
             ]);
+
+        // Write admin_notifications entry for new_agency registration
+        try {
+            require_once __DIR__ . '/../services/NotificationService.php';
+            NotificationService::createAdminNotification($db, [
+                'type'          => 'new_agency',
+                'location_id'   => $companyId,
+                'location_name' => $agencyName,
+                'email'         => $agencyEmail,
+                'metadata'      => ['agency_name' => $agencyName],
+            ]);
+        } catch (\Throwable $e) {
+            error_log('[ghl_agency_oauth.php] Failed to log admin notification: ' . $e->getMessage());
+        }
 
         // 2. Update the user document associated with this specifically linked company_id
         // We only update if a user ALREADY exists for this ID. If not, ghl_autologin.php

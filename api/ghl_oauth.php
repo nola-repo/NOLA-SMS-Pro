@@ -149,6 +149,19 @@ if ($http_status == 200 && is_array($result) && isset($result['access_token'])) 
             'created_at'    => new \Google\Cloud\Core\Timestamp($now)
         ], ['merge' => true]);
 
+        // Write admin_notifications entry for new_subaccount connection
+        try {
+            require_once __DIR__ . '/services/NotificationService.php';
+            $ownerDetails = NotificationService::getAccountDetails($db, $locationId);
+            NotificationService::createAdminNotification($db, [
+                'type'          => 'new_subaccount',
+                'location_id'   => $locationId,
+                'location_name' => $locationName,
+                'email'         => $ownerDetails['email'] ?? '',
+            ]);
+        } catch (\Throwable $e) {
+            error_log('[ghl_oauth.php] Failed to log admin notification: ' . $e->getMessage());
+        }
 
         echo json_encode([
             "status" => "success",

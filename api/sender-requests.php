@@ -120,6 +120,21 @@ try {
             error_log("[sender-requests.php] Failed to send sender ID pending notification: " . $e->getMessage());
         }
 
+        // 4. Write admin_notifications entry for sender_request
+        try {
+            $accountDetails = NotificationService::getAccountDetails($db, $locId);
+            $locationName   = NotificationService::resolveLocationName($db, $locId);
+            NotificationService::createAdminNotification($db, [
+                'type'          => 'sender_request',
+                'location_id'   => $locId,
+                'location_name' => $locationName,
+                'email'         => $accountDetails['email'] ?? '',
+                'metadata'      => ['sender_id' => $requestedId],
+            ]);
+        } catch (\Throwable $e) {
+            error_log("[sender-requests.php] Failed to log admin notification: " . $e->getMessage());
+        }
+
         echo json_encode(['status' => 'success', 'id' => $requestId]);
         exit;
     }

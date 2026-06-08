@@ -1608,6 +1608,72 @@ class NotificationService
         return $defaults;
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // Admin Notification Helpers
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Resolve a GHL location's display name from Firestore.
+     *
+     * Checks integrations/ghl_{locId}.location_name first, then falls back
+     * to ghl_tokens/{locId}.location_name. Returns empty string if not found.
+     *
+     * @param \Google\Cloud\Firestore\FirestoreClient $db
+     * @param string $locationId
+     * @return string
+     */
+    public static function resolveLocationName($db, string $locationId): string
+    {
+        try {
+            $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
+            $snap = $db->collection('integrations')->document($intDocId)->snapshot();
+            if ($snap->exists()) {
+                $name = (string)($snap->data()['location_name'] ?? '');
+                if ($name !== '') {
+                    return $name;
+                }
+            }
+            $tokenSnap = $db->collection('ghl_tokens')->document($locationId)->snapshot();
+            if ($tokenSnap->exists()) {
+                return (string)($tokenSnap->data()['location_name'] ?? '');
+            }
+        } catch (\Throwable $e) {
+            error_log("[NotificationService::resolveLocationName] Failed for {$locationId}: " . $e->getMessage());
+        }
+        return '';
+    }
+
+    /**
+     * Write a single document to the admin_notifications Firestore collection.
+     *
+     * Automatically sets created_at (server-side timestamp) and read=false.
+     * The $fields array must include at minimum: type, location_id, location_name.
+     * Optional keys: email, balance, threshold, metadata (array).
+     *
+     * @param \Google\Cloud\Firestore\FirestoreClient $db
+     * @param array $fields  Notification fields (excluding created_at / read).
+     */
+    public static function createAdminNotification($db, array $fields): void
+    {
+        try {
+            $payload = array_merge([
+                'created_at' => new \Google\Cloud\Core\Timestamp(new \DateTimeImmutable()),
+                'read'       => false,
+            ], $fields);
+
+            // Ensure metadata is always a proper Firestore map, never null
+            if (!isset($payload['metadata']) || !is_array($payload['metadata'])) {
+                unset($payload['metadata']); // omit entirely so the field doesn't exist
+            }
+
+            $db->collection('admin_notifications')->add($payload);
+            error_log('[AdminNotification] Logged notification type=' . ($fields['type'] ?? '?')
+                . ' location=' . ($fields['location_id'] ?? '?'));
+        } catch (\Throwable $e) {
+            error_log('[AdminNotification] Failed to write notification: ' . $e->getMessage());
+        }
+    }
+
     /**
      * Send an email notification.
      *
