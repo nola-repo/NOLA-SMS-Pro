@@ -81,7 +81,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
     // Return the top 50
     $finalLogs = array_slice($unifiedLogs, 0, 50);
 
-    $responsePayload = ['status' => 'success', 'data' => $finalLogs];
+    $totalMessages = 0;
+    try {
+        $totalMessages = $db->collection('messages')->count()->get()->get('count');
+    } catch (\Throwable $e) {
+        try {
+            $totalMessages = iterator_count($db->collection('messages')->documents());
+        } catch (\Throwable $e2) {
+            $totalMessages = 0;
+        }
+    }
+
+    $responsePayload = [
+        'status' => 'success',
+        'data' => $finalLogs,
+        'total_messages' => $totalMessages
+    ];
     NolaCache::set($cacheKey, $responsePayload, 60); // 60 seconds TTL
     echo json_encode($responsePayload);
     exit;
