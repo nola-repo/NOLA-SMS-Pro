@@ -3,9 +3,13 @@ require_once __DIR__ . '/cors.php';
 header('Content-Type: application/json');
 
 require __DIR__ . '/webhook/firestore_client.php';
+require_once __DIR__ . '/admin_auth_helper.php';
 require_once __DIR__ . '/cache_helper.php';
 
 $method = $_SERVER['REQUEST_METHOD'];
+$claims = require_secure_admin_auth($method === 'GET'
+    ? ['super_admin', 'support', 'viewer']
+    : ['super_admin']);
 $db = get_firestore();
 $configRef = $db->collection('system_settings')->document('core');
 $pricingRef = $db->collection('admin_config')->document('global_pricing');

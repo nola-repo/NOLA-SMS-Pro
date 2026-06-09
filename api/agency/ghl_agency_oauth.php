@@ -4,10 +4,8 @@ ini_set('display_errors', 0);
 ini_set('display_startup_errors', 0);
 error_reporting(E_ALL);
 
+require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
-header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Methods: POST, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type');
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
@@ -29,8 +27,8 @@ $code = $payload['code'];
 $redirectUri = $payload['redirectUri'] ?? '';
 
 // Agency App Credentials — do NOT fall back to GHL_CLIENT_ID (that's the Subaccount app)
-$clientId = getenv('GHL_AGENCY_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3';
-$clientSecret = getenv('GHL_AGENCY_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322';
+$clientId = getenv('GHL_AGENCY_CLIENT_ID') ?: '';
+$clientSecret = getenv('GHL_AGENCY_CLIENT_SECRET') ?: '';
 
 if (!$clientId || !$clientSecret) {
     http_response_code(500);

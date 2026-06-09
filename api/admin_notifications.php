@@ -12,9 +12,12 @@ header('Content-Type: application/json');
 require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/webhook/firestore_client.php';
 require_once __DIR__ . '/jwt_helper.php';
+require_once __DIR__ . '/admin_auth_helper.php';
 
 // ─── JWT Auth Guard ───────────────────────────────────────────────────────────
 function require_admin_auth(): array {
+    return require_secure_admin_auth();
+
     // 1. Try legacy admin headers first
     $adminAuth = $_SERVER['HTTP_X_ADMIN_AUTH'] ?? '';
     $adminUser = $_SERVER['HTTP_X_ADMIN_USER'] ?? '';
@@ -56,7 +59,7 @@ function require_admin_auth(): array {
     }
 
     $token  = substr($authHeader, 7);
-    $secret = getenv('JWT_SECRET') ?: 'nola-super-admin-secret';
+    $secret = getenv('JWT_SECRET') ?: '';
 
     // Verify token validity specifically to return descriptive errors
     $parts = explode('.', $token);
@@ -103,7 +106,7 @@ function format_ts($ts): ?string {
 }
 
 // ─── Main Logic ──────────────────────────────────────────────────────────────
-$claims = require_admin_auth();
+$claims = require_secure_admin_auth();
 $db = get_firestore();
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';

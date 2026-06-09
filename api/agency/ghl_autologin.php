@@ -34,7 +34,12 @@ if (!$companyId) {
 }
 error_log('[GHL_AUTOLOGIN] Attempting auto-login for company_id: ' . $companyId);
 
-$jwtSecret = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
+$jwtSecret = getenv('JWT_SECRET') ?: '';
+if ($jwtSecret === '') {
+    http_response_code(500);
+    echo json_encode(['error' => 'Server misconfiguration: JWT secret missing.']);
+    exit;
+}
 
 function has_agency_token($db, string $companyId): bool
 {

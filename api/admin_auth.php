@@ -60,7 +60,12 @@ try {
 
     if (password_verify($password, $storedHash)) {
         // Generate JWT
-        $secret = getenv('JWT_SECRET') ?: 'nola-super-admin-secret';
+        $secret = getenv('JWT_SECRET');
+        if ($secret === false || trim((string) $secret) === '') {
+            http_response_code(500);
+            echo json_encode(['status' => 'error', 'message' => 'Server misconfiguration: JWT secret missing.']);
+            exit;
+        }
         $token = jwt_sign([
             'email' => $email,
             'username' => $email,

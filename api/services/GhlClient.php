@@ -352,10 +352,10 @@ class GhlClient
             }
         }
 
-        $subaccountClientId = getenv('GHL_CLIENT_ID') ?: '6999da2b8f278296d95f7274-mmn30t4f';
-        $subaccountSecret = getenv('GHL_CLIENT_SECRET') ?: 'd91017ad-f4eb-461f-8967-b1d51cd1c1eb';
-        $agencyClientId = getenv('GHL_AGENCY_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3';
-        $agencySecret = getenv('GHL_AGENCY_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322';
+        $subaccountClientId = getenv('GHL_CLIENT_ID') ?: '';
+        $subaccountSecret = getenv('GHL_CLIENT_SECRET') ?: '';
+        $agencyClientId = getenv('GHL_AGENCY_CLIENT_ID') ?: '';
+        $agencySecret = getenv('GHL_AGENCY_CLIENT_SECRET') ?: '';
 
         $companyData = null;
         $companyAccessToken = null;

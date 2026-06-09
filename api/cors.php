@@ -11,13 +11,23 @@ require_once __DIR__ . '/logger.php';
 Logger::init();
 // ─────────────────────────────────────────────────────────────────────────────
 
-$origin = $_SERVER['HTTP_ORIGIN'] ?? '*';
+$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+$configuredOrigins = array_filter(array_map('trim', explode(',', (string) (getenv('CORS_ALLOWED_ORIGINS') ?: ''))));
+$defaultOrigins = [
+    'https://smspro.nolacrm.io',
+    'https://app.nolacrm.io',
+    'http://localhost:3000',
+    'http://localhost:5173',
+];
+$allowedOrigins = $configuredOrigins ?: $defaultOrigins;
+$allowOrigin = in_array($origin, $allowedOrigins, true) ? $origin : $allowedOrigins[0];
 
 // If credentials are required, Access-Control-Allow-Origin cannot be '*'
 // We mirror the origin or use a fallback if missing.
-header('Access-Control-Allow-Origin: ' . $origin);
+header('Access-Control-Allow-Origin: ' . $allowOrigin);
+header('Vary: Origin');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE, PATCH');
-header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Webhook-Secret, X-GHL-Location-ID, X-GHL-LocationID, X-Agency-ID, X-Admin-Auth, X-Admin-User');
+header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Webhook-Secret, X-GHL-Location-ID, X-GHL-LocationID, X-Agency-ID');
 header('Access-Control-Allow-Credentials: true');
 header('Access-Control-Max-Age: 86400');
 

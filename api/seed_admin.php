@@ -1,5 +1,12 @@
 <?php
 
+$appEnv = strtolower((string) (getenv('APP_ENV') ?: getenv('ENVIRONMENT') ?: 'production'));
+if ($appEnv === 'production') {
+    http_response_code(404);
+    echo "Not found\n";
+    exit;
+}
+
 require __DIR__ . '/webhook/firestore_client.php';
 
 $db = get_firestore();

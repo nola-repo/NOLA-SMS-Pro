@@ -17,10 +17,13 @@ header('Content-Type: application/json');
 require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/webhook/firestore_client.php';
 require_once __DIR__ . '/jwt_helper.php';
+require_once __DIR__ . '/admin_auth_helper.php';
 require_once __DIR__ . '/cache_helper.php';
 
 // ─── JWT Auth Guard ───────────────────────────────────────────────────────────
 function require_admin_auth(): array {
+    return require_secure_admin_auth(['super_admin']);
+
     // Apache may pass the header as REDIRECT_HTTP_AUTHORIZATION when RewriteRule is active
     $authHeader = $_SERVER['HTTP_AUTHORIZATION']
         ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION']
@@ -32,7 +35,7 @@ function require_admin_auth(): array {
     }
 
     $token  = substr($authHeader, 7);
-    $secret = getenv('JWT_SECRET') ?: 'nola-super-admin-secret';
+    $secret = getenv('JWT_SECRET') ?: '';
     $claims = jwt_verify($token, $secret);
 
     if (!$claims) {
@@ -85,7 +88,7 @@ function admin_doc_for_email($db, string $email): array {
     return [$docRef, $snap];
 }
 
-$claims = require_admin_auth();
+$claims = require_secure_admin_auth(['super_admin']);
 $db     = get_firestore();
 $method = $_SERVER['REQUEST_METHOD'];
 

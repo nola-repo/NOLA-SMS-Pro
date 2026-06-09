@@ -26,7 +26,12 @@ $creditManager = new CreditManager();
 
 // Optional JWT decode
 if ($bearerToken) {
-    $jwtSecret = getenv('JWT_SECRET') ?: 'nola_sms_pro_jwt_secret_change_in_production';
+    $jwtSecret = getenv('JWT_SECRET') ?: '';
+    if ($jwtSecret === '') {
+        http_response_code(500);
+        echo json_encode(['error' => 'Server misconfiguration: JWT secret missing.']);
+        exit;
+    }
     $claims = jwt_verify($bearerToken, $jwtSecret);
 }
 

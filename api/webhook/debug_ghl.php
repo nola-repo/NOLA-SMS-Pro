@@ -4,6 +4,14 @@
  * Saves headers and body to a JSON file for inspection.
  */
 
+$appEnv = strtolower((string) (getenv('APP_ENV') ?: getenv('ENVIRONMENT') ?: 'production'));
+if ($appEnv === 'production') {
+    http_response_code(404);
+    header('Content-Type: application/json');
+    echo json_encode(['status' => 'error', 'message' => 'Not found']);
+    exit;
+}
+
 // 1. Capture Headers
 $headers = function_exists('getallheaders') ? getallheaders() : [];
 
