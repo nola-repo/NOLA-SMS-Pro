@@ -110,7 +110,20 @@ class AuthV2Controller extends Controller
             }
 
             $doc = $snap->data();
-            if ($role === 'agency' && empty($doc['company_name'])) {
+            if ($role === 'agency' && empty($doc['company_id'])) {
+                $jwtCompanyId = trim((string) ($payload['company_id'] ?? ''));
+                if ($jwtCompanyId !== '') {
+                    $doc['company_id'] = $jwtCompanyId;
+                }
+            }
+
+            $fallbackNames = ['No Agency', 'Unnamed Agency', 'Unknown Agency', 'Unknown'];
+            $existingCompanyName = trim((string) ($doc['company_name'] ?? ''));
+            $needsCompanyNameResolution = $role === 'agency' && (
+                $existingCompanyName === '' ||
+                in_array($existingCompanyName, $fallbackNames, true)
+            );
+            if ($needsCompanyNameResolution) {
                 $companyName = $this->resolveAgencyCompanyName($db, $doc);
                 if ($companyName !== null) {
                     $doc['company_name'] = $companyName;
@@ -187,6 +200,7 @@ class AuthV2Controller extends Controller
                 }
                 $tokenData = $snap->data();
                 $companyName = $tokenData['company_name']
+                    ?? $tokenData['companyName']
                     ?? $tokenData['agency_name']
                     ?? $tokenData['location_name']
                     ?? null;

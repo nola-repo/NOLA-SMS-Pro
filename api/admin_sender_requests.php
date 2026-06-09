@@ -572,27 +572,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
 
     $results = [];
 
-    // Pre-fetch all tokens in a single query to resolve agency/subaccount names and settings (saves collection reads)
-    $allTokens = $db->collection('ghl_tokens')->documents();
+    // Pre-fetch tokens to resolve agency/subaccount names and settings (saves collection reads).
+    // Agency-level installs may live in either legacy ghl_agency_tokens or canonical ghl_tokens.
     $agencyMap = [];
     $subTokenMap = [];
     $subCompanyMap = [];
 
-    foreach ($allTokens as $tokenDoc) {
-        if ($tokenDoc->exists()) {
-            $tData = $tokenDoc->data();
-            $appType = $tData['appType'] ?? '';
+    foreach (['ghl_agency_tokens', 'ghl_tokens'] as $tokenCollection) {
+        $allTokens = $db->collection($tokenCollection)->documents();
+        foreach ($allTokens as $tokenDoc) {
+            if ($tokenDoc->exists()) {
+                $tData = $tokenDoc->data();
+                $appType = $tData['appType'] ?? '';
+                $isAgencyToken = $tokenCollection === 'ghl_agency_tokens' || $appType === 'agency';
 
-            if ($appType === 'agency') {
-                $comp = $tData['companyId'] ?? $tData['company_id'] ?? $tokenDoc->id();
-                $agencyMap[$comp] = $tData['company_name'] ?? $tData['companyName'] ?? $tData['agency_name'] ?? 'Unknown Agency';
-            } else {
-                $locIdStr = $tData['locationId'] ?? $tData['location_id'] ?? $tokenDoc->id();
-                if ($locIdStr) {
-                    $subTokenMap[$locIdStr] = $tData;
-                    $subCompStr = $tData['companyId'] ?? $tData['company_id'] ?? null;
-                    if ($subCompStr) {
-                        $subCompanyMap[$locIdStr] = $subCompStr;
+                if ($isAgencyToken) {
+                    $comp = trim((string)($tData['companyId'] ?? $tData['company_id'] ?? $tokenDoc->id()));
+                    $agencyName = $tData['company_name']
+                        ?? $tData['companyName']
+                        ?? $tData['agency_name']
+                        ?? $tData['location_name']
+                        ?? '';
+                    if ($comp !== '' && trim((string)$agencyName) !== '') {
+                        $agencyMap[$comp] = trim((string)$agencyName);
+                    }
+                } else {
+                    $locIdStr = $tData['locationId'] ?? $tData['location_id'] ?? $tokenDoc->id();
+                    if ($locIdStr) {
+                        $subTokenMap[$locIdStr] = $tData;
+                        $subCompStr = $tData['companyId'] ?? $tData['company_id'] ?? null;
+                        if ($subCompStr) {
+                            $subCompanyMap[$locIdStr] = $subCompStr;
+                        }
                     }
                 }
             }

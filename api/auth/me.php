@@ -88,6 +88,7 @@ function auth_resolve_agency_company_name($db, array $d): ?string
             }
             $tokenData = $snap->data();
             $companyName = $tokenData['company_name']
+                ?? $tokenData['companyName']
                 ?? $tokenData['agency_name']
                 ?? $tokenData['location_name']
                 ?? null;
@@ -156,7 +157,22 @@ try {
     }
 
     $d = $snap->data();
-    if ($isAgency && empty($d['company_name'])) {
+
+    // Resolve company_id from JWT payload if missing in the Firestore doc
+    if ($isAgency && empty($d['company_id'])) {
+        $jwtCompanyId = trim((string)($payload['company_id'] ?? ''));
+        if ($jwtCompanyId !== '') {
+            $d['company_id'] = $jwtCompanyId;
+        }
+    }
+
+    $fallbackNames = ['No Agency', 'Unnamed Agency', 'Unknown Agency', 'Unknown'];
+    $existingCompanyName = trim((string)($d['company_name'] ?? ''));
+    $needsResolution = $isAgency && (
+        empty($existingCompanyName) ||
+        in_array($existingCompanyName, $fallbackNames, true)
+    );
+    if ($needsResolution) {
         $companyName = auth_resolve_agency_company_name($db, $d);
         if ($companyName !== null) {
             $d['company_name'] = $companyName;

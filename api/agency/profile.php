@@ -67,6 +67,7 @@ function agency_profile_resolve_company_name($db, array $d): ?string
             }
             $tokenData = $snap->data();
             $companyName = $tokenData['company_name']
+                ?? $tokenData['companyName']
                 ?? $tokenData['agency_name']
                 ?? $tokenData['location_name']
                 ?? null;
@@ -159,7 +160,10 @@ try {
         }
     }
 
-    if (empty($data['company_name'])) {
+    $fallbackNames = ['No Agency', 'Unnamed Agency', 'Unknown Agency', 'Unknown'];
+    $existingCompanyName = trim((string)($data['company_name'] ?? ''));
+    $needsResolution = empty($existingCompanyName) || in_array($existingCompanyName, $fallbackNames, true);
+    if ($needsResolution) {
         $companyName = agency_profile_resolve_company_name($db, $data);
         if ($companyName !== null) {
             $data['company_name'] = $companyName;
