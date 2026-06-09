@@ -89,6 +89,7 @@ Route::any('/api/v2/webhook/ghl_marketplace_events', [WebhookV2LegacyBridgeContr
 Route::any('/api/v2/admin_auth', [AdminV2LegacyBridgeController::class, 'auth']);
 Route::any('/api/v2/admin_agencies', [AdminV2LegacyBridgeController::class, 'agencies']);
 Route::any('/api/v2/admin_users', [AdminV2LegacyBridgeController::class, 'users']);
+Route::any('/api/v2/admin_list_agency_users', [AdminV2LegacyBridgeController::class, 'agencyUsers']);
 Route::any('/api/v2/admin_settings', [AdminV2LegacyBridgeController::class, 'settings']);
 Route::any('/api/v2/admin_sender_requests', [AdminV2LegacyBridgeController::class, 'senderRequests']);
 Route::any('/api/v2/admin_forgot_password', [AdminV2LegacyBridgeController::class, 'forgotPassword']);

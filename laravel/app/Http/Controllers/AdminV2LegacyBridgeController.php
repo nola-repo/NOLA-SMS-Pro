@@ -27,6 +27,11 @@ class AdminV2LegacyBridgeController extends Controller
         return $this->forwardToLegacy(base_path('../api/admin_users.php'), $request->method(), $request->query->all(), (string) $request->getContent());
     }
 
+    public function agencyUsers(Request $request): Response
+    {
+        return $this->forwardToLegacy(base_path('../api/admin_list_agency_users.php'), $request->method(), $request->query->all(), (string) $request->getContent());
+    }
+
     public function settings(Request $request): Response
     {
         return $this->forwardToLegacy(base_path('../api/admin_settings.php'), $request->method(), $request->query->all(), (string) $request->getContent());

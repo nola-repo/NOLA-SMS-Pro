@@ -34,4 +34,27 @@ class AdminBridgeTest extends TestCase
         $response->assertStatus(200)
             ->assertJson(['status' => 'success']);
     }
+
+    public function test_admin_list_agency_users_forwards_to_legacy_script(): void
+    {
+        $this->mock(LegacyPhpBridgeService::class, function (Mockery\MockInterface $mock) {
+            $mock->shouldReceive('call')
+                ->withArgs(function ($actualScript, $actualMethod, $actualQuery, $actualRawBody) {
+                    return str_ends_with($actualScript, 'api/admin_list_agency_users.php')
+                        && $actualMethod === 'GET'
+                        && $actualQuery === []
+                        && $actualRawBody === '[]';
+                })
+                ->once()
+                ->andReturn([
+                    'status' => 200,
+                    'body' => json_encode(['status' => 'success', 'data' => [], 'total' => 0]),
+                ]);
+        });
+
+        $response = $this->getJson('/api/v2/admin_list_agency_users');
+
+        $response->assertStatus(200)
+            ->assertJson(['status' => 'success', 'data' => [], 'total' => 0]);
+    }
 }
