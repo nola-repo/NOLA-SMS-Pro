@@ -120,12 +120,30 @@ class CreditManager
 
     public function get_agency_balance($agency_id)
     {
+        $agency_id = trim((string)$agency_id);
+        if ($agency_id === '') {
+            return 0;
+        }
+
         $docRef = $this->get_agency_ref($agency_id);
         $snapshot = $docRef->snapshot();
+        $balance = 0;
         if ($snapshot->exists()) {
-            return (int)($snapshot->data()['balance'] ?? 0);
+            $balance = (int)($snapshot->data()['balance'] ?? 0);
         }
-        return 0;
+
+        $legacySnapshot = $this->db->collection('agency_wallet')->document($agency_id)->snapshot();
+        if ($legacySnapshot->exists()) {
+            $legacyData = [];
+            foreach ($legacySnapshot->data() as $key => $value) {
+                $legacyData[trim((string)$key)] = $value;
+            }
+            if (isset($legacyData['balance']) && is_numeric($legacyData['balance'])) {
+                $balance = max($balance, (int)$legacyData['balance']);
+            }
+        }
+
+        return $balance;
     }
 
     /**

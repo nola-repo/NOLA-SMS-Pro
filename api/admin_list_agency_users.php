@@ -13,6 +13,7 @@ require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/webhook/firestore_client.php';
 require_once __DIR__ . '/admin_auth_helper.php';
 require_once __DIR__ . '/cache_helper.php';
+require_once __DIR__ . '/services/CreditManager.php';
 
 function admin_list_agency_users_format_ts($ts): ?string {
     if ($ts === null) return null;
@@ -61,13 +62,17 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
 }
 
 $cacheKey = 'admin_agency_users_list';
-$cachedData = NolaCache::get($cacheKey);
-if ($cachedData !== null) {
-    echo json_encode($cachedData);
-    exit;
+$bypassCache = isset($_GET['refresh']) || isset($_GET['bypass_cache']);
+if (!$bypassCache) {
+    $cachedData = NolaCache::get($cacheKey);
+    if ($cachedData !== null) {
+        echo json_encode($cachedData);
+        exit;
+    }
 }
 
 $db = get_firestore();
+$creditManager = new CreditManager();
 
 try {
     $agencyNames = [];
@@ -108,6 +113,10 @@ try {
             $companyName = $agencyNames[$companyId];
         }
 
+        $displayBalance = $companyId !== ''
+            ? $creditManager->get_agency_balance($companyId)
+            : (int)($d['balance'] ?? $d['credit_balance'] ?? 0);
+
         $agencyUsers[] = [
             'id' => $doc->id(),
             'name' => admin_list_agency_users_name($d, $email),
@@ -121,7 +130,7 @@ try {
             'agency_id' => $companyId !== '' ? $companyId : null,
             'company_name' => $companyName !== '' ? $companyName : null,
             'agency_name' => $companyName !== '' ? $companyName : null,
-            'balance' => (int)($d['balance'] ?? $d['credit_balance'] ?? 0),
+            'balance' => $displayBalance,
             'max_active_subaccounts' => (int)($d['max_active_subaccounts'] ?? 3),
             'source' => $d['source'] ?? null,
             'created_at' => admin_list_agency_users_format_ts($d['created_at'] ?? $d['createdAt'] ?? null),

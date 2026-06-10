@@ -16,6 +16,8 @@ $configuredOrigins = array_filter(array_map('trim', explode(',', (string) (geten
 $trustedProductOrigins = [
     'https://smspro.nolacrm.io',
     'https://app.nolacrm.io',
+    'https://app.nolasmspro.com',
+    'https://agency.nolasmspro.com',
     'https://app.gohighlevel.com',
     'https://app.highlevel.com',
 ];
