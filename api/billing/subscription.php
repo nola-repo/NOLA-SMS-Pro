@@ -5,9 +5,6 @@ header('Content-Type: application/json');
 require_once __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/../auth_helpers.php';
 
-// Authentication - accepts X-Webhook-Secret header (frontend billing requests)
-validate_api_request();
-
 $db = get_firestore();
 
 function billing_subscription_format_timestamp($value): ?string
@@ -76,6 +73,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         echo json_encode(['success' => false, 'error' => 'agency_id is required.']);
         exit;
     }
+
+    auth_assert_agency_billing_allowed($db, $agencyId);
 
     [$agencyDocId, $agencyData] = billing_subscription_find_agency($db, $agencyId);
 

@@ -6,9 +6,6 @@ require_once __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/../auth_helpers.php';
 require_once __DIR__ . '/../services/CreditManager.php';
 
-// Authentication — accepts X-Webhook-Secret header (frontend billing requests)
-validate_api_request();
-
 $db = get_firestore();
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
@@ -20,6 +17,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         echo json_encode(['error' => 'agency_id required']);
         exit;
     }
+
+    auth_assert_agency_billing_allowed($db, (string)$agency_id);
 
     $query = $db->collection('credit_requests')->where('agency_id', '==', $agency_id);
     if ($status && $status !== 'all') {
@@ -71,6 +70,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     $requestData = $requestSnap->data();
+    auth_assert_agency_billing_allowed($db, (string)($requestData['agency_id'] ?? ''));
+
     if (($requestData['status'] ?? 'pending') !== 'pending') {
         error_log('[credit_requests] Ignore duplicate attempt to resolve ' . $request_id);
         echo json_encode(['success' => false, 'error' => 'Request already processed']);

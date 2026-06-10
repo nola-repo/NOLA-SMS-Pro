@@ -5,9 +5,6 @@ header('Content-Type: application/json');
 require_once __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/../auth_helpers.php';
 
-// Authentication — accepts X-Webhook-Secret header (frontend billing requests)
-validate_api_request();
-
 $db = get_firestore();
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
@@ -17,6 +14,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $month       = $_GET['month']       ?? null;          // YYYY-MM
     $page        = max(1, (int)($_GET['page'] ?? 1));
     $limit       = 50;
+
+    if ($scope === 'agency') {
+        auth_assert_agency_billing_allowed($db, (string)$agency_id);
+    } else {
+        validate_api_request();
+    }
 
     $query = $db->collection('credit_transactions')->where('wallet_scope', '==', $scope);
 

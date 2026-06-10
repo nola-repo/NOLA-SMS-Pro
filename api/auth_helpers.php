@@ -353,6 +353,50 @@ function auth_get_optional_jwt_context($db): ?array
 }
 
 /**
+ * Authorizes agency billing routes.
+ *
+ * Browser callers should use an agency JWT whose company_id matches the
+ * requested agency. Legacy server/internal callers can still use WEBHOOK_SECRET.
+ */
+function auth_assert_agency_billing_allowed($db, string $agencyId): void
+{
+    $agencyId = trim($agencyId);
+    if ($agencyId === '') {
+        header('Content-Type: application/json');
+        http_response_code(400);
+        echo json_encode(['error' => 'agency_id is required.']);
+        exit;
+    }
+
+    $jwtCtx = auth_get_optional_jwt_context($db);
+    if ($jwtCtx === null) {
+        validate_api_request();
+        return;
+    }
+
+    if (($jwtCtx['firestore_collection'] ?? '') !== 'agency_users') {
+        header('Content-Type: application/json');
+        http_response_code(403);
+        echo json_encode(['error' => 'Agency billing access requires an agency account.']);
+        exit;
+    }
+
+    $profile = $jwtCtx['profile'] ?? [];
+    $allowedAgencyIds = array_filter(array_map('strval', [
+        $profile['company_id'] ?? null,
+        $profile['agency_id'] ?? null,
+        $jwtCtx['uid'] ?? null,
+    ]));
+
+    if (!in_array($agencyId, $allowedAgencyIds, true)) {
+        header('Content-Type: application/json');
+        http_response_code(403);
+        echo json_encode(['error' => 'Not allowed to access this agency billing account.']);
+        exit;
+    }
+}
+
+/**
  * Enforces GHL multi-tenant access when JWT context is present.
  *
  * @param array{payload: array, profile: array, firestore_collection: string, uid: string}|null $jwtCtx

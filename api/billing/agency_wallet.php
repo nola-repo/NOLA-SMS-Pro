@@ -6,9 +6,6 @@ require_once __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/../auth_helpers.php';
 require_once __DIR__ . '/../services/CreditManager.php';
 
-// Authentication — accepts X-Webhook-Secret header (frontend billing requests)
-validate_api_request();
-
 $db = get_firestore();
 
 // Resolve agency_id from request params
@@ -26,6 +23,8 @@ if (!$agency_id) {
     echo json_encode(['error' => 'agency_id is required.']);
     exit;
 }
+
+auth_assert_agency_billing_allowed($db, (string)$agency_id);
 
 $creditManager = new CreditManager();
 $agencyWalletRef = $creditManager->resolveAgencyBalanceDocument($agency_id);
