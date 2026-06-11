@@ -434,6 +434,156 @@ function install_extract_company_name(array $data): string
 }
 
 /**
+ * Fetch agency/company display name from the GHL Companies API.
+ */
+function install_fetch_company_name_from_ghl(string $companyId, string $accessToken): string
+{
+    $companyId = trim($companyId);
+    $accessToken = trim($accessToken);
+    if ($companyId === '' || $accessToken === '') {
+        return '';
+    }
+
+    try {
+        $url = 'https://services.leadconnectorhq.com/companies/' . rawurlencode($companyId);
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT => 10,
+            CURLOPT_HTTPHEADER => [
+                'Authorization: Bearer ' . $accessToken,
+                'Accept: application/json',
+                'Version: 2021-07-28',
+            ],
+        ]);
+        $response = curl_exec($ch);
+        $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($httpCode !== 200 || $response === false) {
+            return '';
+        }
+
+        $body = json_decode((string)$response, true);
+        return trim((string)($body['company']['name'] ?? ''));
+    } catch (\Throwable $e) {
+        error_log('[install_fetch_company_name_from_ghl] failed for ' . $companyId . ': ' . $e->getMessage());
+        return '';
+    }
+}
+
+/**
+ * Resolve agency/company name from token payload, with optional GHL API fallback.
+ */
+function install_resolve_company_name(array $data, ?string $companyId = null, ?string $accessToken = null): string
+{
+    $name = install_extract_company_name($data);
+    if ($name !== '') {
+        return $name;
+    }
+
+    $companyId = trim((string)($companyId ?? ($data['companyId'] ?? $data['company_id'] ?? '')));
+    if ($companyId === '') {
+        return '';
+    }
+
+    foreach (install_company_name_token_candidates($data, $accessToken) as $candidateToken) {
+        $fetched = install_fetch_company_name_from_ghl($companyId, $candidateToken);
+        if ($fetched !== '') {
+            return $fetched;
+        }
+    }
+
+    return '';
+}
+
+/**
+ * Candidate bearer tokens for company-name lookup, preferring scopes that include companies.readonly.
+ *
+ * @return array<int,string>
+ */
+function install_company_name_token_candidates(array $agencyData, ?string $preferredToken = null): array
+{
+    $candidates = [];
+    $push = static function (?string $token) use (&$candidates): void {
+        $token = trim((string)$token);
+        if ($token !== '' && !in_array($token, $candidates, true)) {
+            $candidates[] = $token;
+        }
+    };
+
+    $rawRefresh = $agencyData['raw_refresh'] ?? null;
+    if (is_array($rawRefresh)) {
+        $push($rawRefresh['access_token'] ?? null);
+    }
+
+    $push($preferredToken ?? null);
+    $push($agencyData['access_token'] ?? null);
+
+    $raw = $agencyData['raw'] ?? null;
+    if (is_array($raw)) {
+        $push($raw['access_token'] ?? null);
+    }
+
+    $refreshToken = trim((string)($rawRefresh['refresh_token'] ?? $agencyData['refresh_token'] ?? ''));
+    if ($refreshToken !== '') {
+        $agencyClientId = trim((string)(getenv('GHL_AGENCY_CLIENT_ID') ?: ''));
+        $agencySecret = trim((string)(getenv('GHL_AGENCY_CLIENT_SECRET') ?: ''));
+        if ($agencyClientId !== '' && $agencySecret !== '') {
+            try {
+                $ch = curl_init('https://services.leadconnectorhq.com/oauth/token');
+                curl_setopt_array($ch, [
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_POST => true,
+                    CURLOPT_CONNECTTIMEOUT => 5,
+                    CURLOPT_TIMEOUT => 10,
+                    CURLOPT_POSTFIELDS => http_build_query([
+                        'client_id' => $agencyClientId,
+                        'client_secret' => $agencySecret,
+                        'grant_type' => 'refresh_token',
+                        'refresh_token' => $refreshToken,
+                        'user_type' => 'Company',
+                    ]),
+                    CURLOPT_HTTPHEADER => ['Accept: application/json', 'Version: 2021-07-28'],
+                ]);
+                $response = curl_exec($ch);
+                $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                curl_close($ch);
+
+                if ($httpCode === 200 && is_string($response)) {
+                    $body = json_decode($response, true);
+                    $push(is_array($body) ? ($body['access_token'] ?? null) : null);
+                }
+            } catch (\Throwable $e) {
+                error_log('[install_company_name_token_candidates] refresh failed: ' . $e->getMessage());
+            }
+        }
+    }
+
+    return $candidates;
+}
+
+/**
+ * Resolve agency display name from a ghl_tokens/{companyId} document.
+ */
+function install_resolve_agency_name_from_token_doc(array $agencyData, string $companyId): string
+{
+    $existing = trim((string)(
+        $agencyData['agency_name']
+        ?? $agencyData['company_name']
+        ?? $agencyData['companyName']
+        ?? $agencyData['location_name']
+        ?? ''
+    ));
+    if ($existing !== '') {
+        return $existing;
+    }
+
+    return install_resolve_company_name($agencyData, $companyId);
+}
+
+/**
  * Merge OAuth token `locations` with a single nested `location` object when present.
  *
  * @return array<int, mixed>

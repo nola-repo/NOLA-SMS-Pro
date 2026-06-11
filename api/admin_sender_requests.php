@@ -585,10 +585,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
             if ($tokenDoc->exists()) {
                 $tData = $tokenDoc->data();
                 $appType = $tData['appType'] ?? '';
-                $isAgencyToken = $tokenCollection === 'ghl_agency_tokens' || $appType === 'agency';
+                $comp = trim((string)($tData['companyId'] ?? $tData['company_id'] ?? $tokenDoc->id()));
+                $isCompanyRootDoc = $comp !== '' && $tokenDoc->id() === $comp;
+                $isAgencyToken = $tokenCollection === 'ghl_agency_tokens'
+                    || $appType === 'agency'
+                    || $isCompanyRootDoc;
 
                 if ($isAgencyToken) {
-                    $comp = trim((string)($tData['companyId'] ?? $tData['company_id'] ?? $tokenDoc->id()));
                     $agencyName = $tData['company_name']
                         ?? $tData['companyName']
                         ?? $tData['agency_name']

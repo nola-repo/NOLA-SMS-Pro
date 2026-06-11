@@ -13,6 +13,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 }
 
 require __DIR__ . '/../webhook/firestore_client.php';
+require_once __DIR__ . '/../install_helpers.php';
 
 $raw = file_get_contents('php://input');
 $payload = json_decode($raw, true);
@@ -76,7 +77,10 @@ if ($http_status == 200 && is_array($result) && isset($result['access_token'])) 
 
     // Save token in ghl_tokens as agency
     try {
-        $agencyName = $result['companyName'] ?? $result['company_name'] ?? 'Unknown Agency';
+        $agencyName = install_resolve_company_name($result, $companyId, (string)$result['access_token']);
+        if ($agencyName === '') {
+            $agencyName = 'Unknown Agency';
+        }
         $agencyEmail = $result['userEmail'] ?? $result['email'] ?? '';
 
         $db->collection('ghl_tokens')
@@ -89,6 +93,8 @@ if ($http_status == 200 && is_array($result) && isset($result['access_token'])) 
                 'access_token' => $result['access_token'],
                 'refresh_token' => $result['refresh_token'],
                 'expires_at' => time() + (int)($result['expires_in'] ?? 86399),
+                'agency_name' => $agencyName,
+                'company_name' => $agencyName,
                 'location_name' => $agencyName,
                 'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
             ]);

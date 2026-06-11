@@ -1,0 +1,97 @@
+Module,Test ID,Input / Action,Output,Result,Notes
+Authentication & Onboarding,US-AUTH-001,"Buksan ang /login gamit ang valid user email at password, i-click Sign In","Redirect sa Home (/). JWT naka-save. User profile (name, email, location) visible.","",Gumamit ng active subaccount user (role=user). Test sa app.nolasmspro.com o production URL.
+Authentication & Onboarding,US-AUTH-002,"Buksan ang /login, ilagay ang maling password, i-click Sign In","Error message: Invalid email or password. Hindi mag-redirect sa dashboard.","",Hindi dapat ma-reveal kung email o password ang mali.
+Authentication & Onboarding,US-AUTH-003,"Buksan ang /login, iwanang blank ang email o password, i-click Sign In","Validation error. Hindi mag-submit ang form.","",
+Authentication & Onboarding,US-AUTH-004,"Mag-login gamit ang deactivated user account","Error: account deactivated (403). Hindi makapasok sa app.","",Kailangan deactivated test account mula sa admin.
+Authentication & Onboarding,US-AUTH-005,"Buksan ang /register-from-install na may valid install_token mula sa GHL Marketplace install","Registration form lumabas. Pagkatapos mag-register: auto-login at redirect sa dashboard.","",Sundin ang GHL install flow o gamitin ang test install link.
+Authentication & Onboarding,US-AUTH-006,"Buksan ang /register-from-install na walang install_token","Error: Install token is required. Hindi makapag-register.","",
+Authentication & Onboarding,US-AUTH-007,"Buksan ang /register-from-install na may expired/invalid install_token","Error: token invalid or expired. Prompt na mag-reinstall mula sa GHL Marketplace.","",
+Authentication & Onboarding,US-AUTH-008,"Mag-login mula sa install-login.php (GHL install welcome flow)","Successful login → redirect sa auth-handoff.html → React app na may valid session.","",Test pagkatapos ng fresh GHL app install.
+Authentication & Onboarding,US-AUTH-009,"Buksan ang /forgot-password, ilagay ang registered email, i-submit","OTP na-send sa email. Lumabas ang OTP verification step.","",Sundin ang 3-step OTP reset flow.
+Authentication & Onboarding,US-AUTH-010,"Sa forgot-password: ilagay ang tamang OTP, mag-set ng bagong password","Password successfully updated. Pwede mag-login gamit ang bagong password.","",
+Authentication & Onboarding,US-AUTH-011,"Sa forgot-password: ilagay ang maling OTP","Error message. Hindi makapag-proceed sa password reset step.","",
+Authentication & Onboarding,US-AUTH-012,"Buksan ang protected route (/) nang walang login session","Redirect sa /login.","",Clear localStorage / incognito mode.
+Authentication & Onboarding,US-AUTH-013,"Mag-logout mula sa user dashboard","Redirect sa /login. Session cleared. Hindi ma-access ang protected routes.","",
+Authentication & Onboarding,US-AUTH-014,"Buksan ang app na may ?token= sa URL (GHL iframe handoff)","Token na-save sa session. URL na-clean (walang token sa address bar). User authenticated.","",Simulate GHL SSO / auth handoff.
+Navigation & General UI,US-NAV-001,"Mag-login at i-verify ang sidebar/menu navigation","Lahat ng menu items visible: Home, Compose, Contacts, Templates, Tickets, Settings.","",
+Navigation & General UI,US-NAV-002,"I-click ang bawat menu item","Tamang page/route ang na-load: /, /compose, /contacts, /templates, /tickets, /settings.","",
+Navigation & General UI,US-NAV-003,"I-toggle ang Dark Mode (top-right button, desktop)","UI lumipat sa dark theme. Preference na-save (refresh → same theme).","",
+Navigation & General UI,US-NAV-004,"I-toggle ang Dark Mode sa mobile view","Dark mode gumagana sa mobile. Mobile menu bukas/sarado nang tama.","",Test sa phone o responsive mode.
+Navigation & General UI,US-NAV-005,"I-refresh ang page habang naka-login","User nananatiling logged in. Same page/view ang na-restore.","",
+Navigation & General UI,US-NAV-006,"Buksan ang unknown route (hal. /xyz)","Redirect sa Home (/).","",
+Home Dashboard,US-HOME-001,"Mag-login at buksan ang Home (/),","Dashboard stats/cards naglo-load. Credit balance at recent activity visible.","",Kung may loading state, dapat may skeleton/spinner.
+Home Dashboard,US-HOME-002,"Magpadala ng SMS mula sa Compose, bumalik sa Home","Home stats na-update (sent today, credits used).","",
+Home Dashboard,US-HOME-003,"Buksan ang Home na may zero credits","Low balance warning o indicator visible.","",Gamitin ang account na walang credits.
+Compose / Send SMS,US-COMP-001,"Pumunta sa /compose, magpadala ng single SMS sa valid PH number (09XXXXXXXXX)","Message sent successfully. Status: Sending → Sent. 1 credit deducted.","",Test number: valid PH mobile format.
+Compose / Send SMS,US-COMP-002,"Magpadala ng SMS sa invalid number format (hal. 123, +1-555)","Validation error. Hindi ma-send ang message.","",
+Compose / Send SMS,US-COMP-003,"Magpadala ng SMS na walang message body","Validation error. Hindi ma-send.","",
+Compose / Send SMS,US-COMP-004,"Magpadala ng SMS na 160+ characters (long message)","Message sent. Multiple credits deducted kung multi-segment. Character/segment count visible.","",
+Compose / Send SMS,US-COMP-005,"Magpadala ng bulk SMS sa multiple recipients","Bulk campaign created. Per-recipient status visible. Tamang credit deduction.","",
+Compose / Send SMS,US-COMP-006,"Magpadala ng SMS gamit ang system default sender (NOLASMSPro)","Message sent gamit ang default sender ID. Free tier counter nag-increment (kung applicable).","",Check Settings → Sender IDs free usage count.
+Compose / Send SMS,US-COMP-007,"Magpadala ng SMS gamit ang approved custom sender ID","Message sent gamit ang approved sender. Tamang sender name sa outbound message.","",Kailangan approved sender ID sa account.
+Compose / Send SMS,US-COMP-008,"Subukan magpadala gamit ang pending/rejected sender ID","Sender ID hindi available sa dropdown o blocked sa send.","",
+Compose / Send SMS,US-COMP-009,"Magpadala ng SMS kapag zero credits at wala nang free trial","Error: insufficient credits. Hindi ma-send.","",
+Compose / Send SMS,US-COMP-010,"Mag-insert ng SMS template sa Compose","Template content na-fill sa message field.","",Kailangan may existing template.
+Compose / Send SMS,US-COMP-011,"Magpadala ng SMS na may special characters (hal. <3, em dash, smart quotes)","Message body preserved correctly. Hindi na-truncate ang content.","",
+Compose / Send SMS,US-COMP-012,"Magpadala ng SMS mula sa GHL embedded iframe (subaccount view)","SMS sent successfully. Location ID auto-detected mula sa GHL context.","",Test inside GHL subaccount iframe.
+Conversations / Inbox,US-CONV-001,"Buksan ang conversation list sa Home o Compose","List ng conversations naglo-load. Sorted by latest message.","",
+Conversations / Inbox,US-CONV-002,"I-click ang isang conversation","Message thread naglo-load. Outbound at inbound messages visible.","",
+Conversations / Inbox,US-CONV-003,"I-rename ang conversation","New name na-save at visible sa list.","",
+Conversations / Inbox,US-CONV-004,"I-delete ang conversation","Conversation removed from list. Messages deleted.","",
+Conversations / Inbox,US-CONV-005,"Tingnan ang message delivery status","Status map tama: Sending / Sent / Failed.","",Hintayin ang status sync (hanggang 5 min).
+Conversations / Inbox,US-CONV-006,"Buksan ang bulk campaign conversation","Per-recipient messages at statuses visible. Hindi nag-mix ang ibang contacts.","",
+Conversations / Inbox,US-CONV-007,"Mag-reply sa inbound SMS (kung supported sa UI)","Reply sent. Lumabas sa same conversation thread.","",
+Contacts,US-CONT-001,"Pumunta sa /contacts","Contact list naglo-load para sa current location.","",
+Contacts,US-CONT-002,"Mag-add ng bagong contact (name, phone, email)","Contact na-save at lumabas sa list.","",Phone required field.
+Contacts,US-CONT-003,"Mag-add ng contact na walang phone number","Validation error. Hindi ma-save.","",
+Contacts,US-CONT-004,"Mag-add ng contact na duplicate phone number","Appropriate handling (error o update prompt).","",
+Contacts,US-CONT-005,"I-search/filter ang contacts","Tamang contacts ang lumalabas base sa search.","",
+Contacts,US-CONT-006,"Pumili ng contact at gamitin sa Compose","Contact phone auto-filled sa recipient field.","",
+Contacts,US-CONT-007,"I-verify na contacts scoped per location","Contacts ng Location A hindi visible sa Location B.","",Kailangan 2 test locations.
+Templates,US-TEMP-001,"Pumunta sa /templates","Template list naglo-load.","",
+Templates,US-TEMP-002,"Gumawa ng bagong template (name + content + category)","Template na-save at lumabas sa list.","",Categories: Appointments / Marketing / Transactional / General.
+Templates,US-TEMP-003,"Gumawa ng template na walang name o content","Validation error. Hindi ma-save.","",
+Templates,US-TEMP-004,"I-edit ang existing template","Changes na-save. Updated timestamp refreshed.","",
+Templates,US-TEMP-005,"I-delete ang template","Template removed from list. Hindi na available sa Compose.","",
+Templates,US-TEMP-006,"Gumamit ng template sa Compose page","Template content na-apply sa message field.","",
+Tickets,US-TICK-001,"Pumunta sa /tickets","Support tickets page naglo-load.","",Verify kung may existing ticket UI/feature.
+Tickets,US-TICK-002,"Gumawa ng bagong support ticket (kung available)","Ticket na-submit. Confirmation message visible.","",
+Tickets,US-TICK-003,"Tingnan ang ticket status/history","Submitted tickets at statuses visible.","",
+Settings - Account,US-SET-ACC-001,"Pumunta sa Settings → Account tab","Profile info visible: Full Name, Email, Phone, Location Name, GHL Location ID.","",
+Settings - Account,US-SET-ACC-002,"I-verify ang workspace status banner","Status badge tama: Approved / Pending / Rejected.","",
+Settings - Account,US-SET-ACC-003,"Sa standalone app (hindi GHL iframe): i-paste ang valid GHL Location ID, i-click Save","Location name auto-fetched. Profile fields na-update.","",
+Settings - Account,US-SET-ACC-004,"Sa standalone app: i-paste ang invalid Location ID, i-click Save","Location Not Found o error state. Hindi ma-corrupt ang existing data.","",
+Settings - Account,US-SET-ACC-005,"I-click ang Reset To Default (standalone)","Location ID na-reset sa URL/context default. Profile re-fetched.","",
+Settings - Account,US-SET-ACC-006,"Sa GHL iframe: i-verify ang auto-detected Location ID","Location ID read-only. Auto-synced mula sa GHL context.","",Test inside GHL subaccount.
+Settings - Account,US-SET-ACC-007,"I-click ang Connect GHL button (standalone, outside iframe)","Redirect sa GHL OAuth location chooser.","",
+Settings - Sender IDs,US-SET-SND-001,"Pumunta sa Settings → Sender IDs tab","System default sender (NOLASMSPro) visible. Approved/pending requests listed.","",
+Settings - Sender IDs,US-SET-SND-002,"I-click Request New → fill Sender Name (max 11 chars), Purpose, Sample Message → Submit","Request submitted. Status: Pending. Lumabas sa list.","",Sender name: alphanumeric only, 3-11 chars.
+Settings - Sender IDs,US-SET-SND-003,"Mag-request ng sender ID na may invalid format (spaces, >11 chars, special chars)","Validation error. Hindi ma-submit.","",
+Settings - Sender IDs,US-SET-SND-004,"I-hover at i-click Set as Default sa approved sender","Sender marked as Default Sender. Ginagamit sa susunod na Compose send.","",
+Settings - Sender IDs,US-SET-SND-005,"I-verify ang free tier counter sa system default sender","Shows X/10 Free usage count. Counter nag-increment pag nag-send gamit default.","",
+Settings - Sender IDs,US-SET-SND-006,"Buksan ang Sender IDs mula sa Compose (auto-open modal)","Request New modal auto-opens.","",Trigger mula sa Compose kapag walang approved sender.
+Settings - Notifications,US-SET-NOT-001,"Pumunta sa Settings → Notifications tab","3 toggles visible: SMS Delivery Reports, Low Balance Alert, Marketing & Updates.","",
+Settings - Notifications,US-SET-NOT-002,"I-toggle ON ang Low Balance Alert, i-adjust ang threshold slider, i-click Save Changes","Settings saved. Saved! confirmation. Threshold value persisted after refresh.","",
+Settings - Notifications,US-SET-NOT-003,"I-toggle OFF ang lahat ng notifications, i-save","All toggles OFF after refresh.","",
+Settings - Notifications,US-SET-NOT-004,"I-toggle ON ang SMS Delivery Reports, magpadala ng SMS na mag-fail","Delivery failure notification received (kung naka-configure ang GHL alert bridge).","",Depends on notification backend setup.
+Settings - Credits & Billing,US-SET-CRD-001,"Pumunta sa Settings → Credits tab","Credit balance card naglo-load. Stats: Sent Today, Credits Used Today, This Month.","",
+Settings - Credits & Billing,US-SET-CRD-002,"I-click ang Refresh button sa balance card","Balance at stats na-reload. Hindi mag-reset to 0 kapag failed ang request.","",Important: failed refresh dapat hindi mag-overwrite ng last good balance.
+Settings - Credits & Billing,US-SET-CRD-003,"I-enable ang Auto Recharge, piliin ang amount at threshold, i-click Save","Auto-recharge settings saved. Saved! confirmation.","",
+Settings - Credits & Billing,US-SET-CRD-004,"I-click Request Credits → piliin ang amount (hal. 100) + optional note → Send Request","Request Sent! confirmation. Agency receives credit request.","",
+Settings - Credits & Billing,US-SET-CRD-005,"I-click Buy Credits (Top Up) → piliin ang package → i-submit","Checkout popup window opens. Pre-filled name/email/phone/location_id.","",Allow popups sa browser.
+Settings - Credits & Billing,US-SET-CRD-006,"Kumpletuhin ang checkout payment sa popup","Payment success message. Credit balance auto-refreshes. Transaction lumabas sa ledger.","",Test payment sandbox kung available.
+Settings - Credits & Billing,US-SET-CRD-007,"I-block ang popup at subukan mag-Top Up","Alert: popup blocked. Option to retry/refresh visible.","",
+Settings - Credits & Billing,US-SET-CRD-008,"I-filter ang transactions by month","Tamang transactions para sa selected month.","",
+Settings - Credits & Billing,US-SET-CRD-009,"I-click Download Report sa transaction ledger","PDF/monthly report na-generate at na-download.","",
+Settings - Credits & Billing,US-SET-CRD-010,"Magpadala ng SMS → tingnan ang transaction ledger","Debit entry lumabas: −1 credit (o tamang amount). Balance_after tama.","",
+Settings - Credits & Billing,US-SET-CRD-011,"I-verify ang free trial progress bar (kung active trial)","Trial bar shows used/total. Badge shows remaining free credits.","",
+GHL Integration,US-GHL-001,"Buksan ang app mula sa GHL subaccount (embedded iframe)","App loads inside iframe. Location ID auto-detected. No manual Location ID input needed.","",
+GHL Integration,US-GHL-002,"Buksan ang app sa standalone browser (app.nolasmspro.com)","Manual Location ID input available sa Settings. Connect GHL button visible.","",
+GHL Integration,US-GHL-003,"Kumpletuhin ang GHL OAuth callback (/oauth/callback)","OAuth completes. User redirected to dashboard with valid session.","",
+GHL Integration,US-GHL-004,"Magpadala ng SMS via GHL Workflow action","SMS delivered. Message synced back to GHL Conversations.","",Test via GHL workflow trigger.
+GHL Integration,US-GHL-005,"Tanggapin ang inbound SMS sa registered number","Inbound message appears sa NOLA inbox/conversation.","",
+Security & Edge Cases,US-SEC-001,"Subukan i-access ang ibang location's data gamit ang tamang user token","403 Permission denied. Hindi ma-access ang ibang location data.","",Tamper X-GHL-Location-ID header kung manual API test.
+Security & Edge Cases,US-SEC-002,"Subukan i-access ang API endpoints nang walang auth token","401 Unauthorized. Hindi ma-load ang data.","",
+Security & Edge Cases,US-SEC-003,"Buksan ang app habang naka-maintenance mode (admin enabled)","503 error o maintenance message. Hindi makapag-send ng SMS.","",Kailangan i-enable ang maintenance mode sa admin.
+Security & Edge Cases,US-SEC-004,"Mag-login → i-expire ang JWT (simulate) → i-refresh ang page","Redirect sa login. Hindi ma-access ang protected data.","",
+Security & Edge Cases,US-SEC-005,"Test sa whitelabel/custom domain (kung applicable)","App loads. API calls successful (CORS allowed). Billing/credits data loads.","",Domain dapat nasa CORS_ALLOWED_ORIGINS.

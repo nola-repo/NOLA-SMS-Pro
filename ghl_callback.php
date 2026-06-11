@@ -1134,7 +1134,7 @@ if (($data['userType'] ?? '') === 'Company') {
     $companyRefresh     = $data['refresh_token'] ?? null;
     $expiresIn          = (int)($data['expires_in'] ?? 86400);
     $companyExpiresAt   = time() + $expiresIn;
-    $companyNameFromToken = install_extract_company_name($data);
+    $companyNameFromToken = install_resolve_company_name($data, (string)$companyId, $companyToken);
 
     if (!$companyId) {
         render_error('Company-scoped install received no companyId in token response.', $data);

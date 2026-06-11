@@ -155,6 +155,7 @@ if ($http_status == 200 && is_array($result) && isset($result['access_token'])) 
                 'scope' => $result['scope'] ?? '',
                 'company_id' => $companyId,
                 'company_name' => $companyName,
+                'agency_name' => $companyName,
                 'appType' => $usedAppType,
                 'appId' => $ghlApps[$usedAppType]['clientId'],
                 'userType' => $ghlApps[$usedAppType]['userType'],
