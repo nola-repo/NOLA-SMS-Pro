@@ -49,12 +49,14 @@ if ($cachedResponse) {
 try {
     $db = get_firestore();
 
-    // 1. Get Agency metadata from ghl_tokens (name only — no API call needed)
+    // 1. Get Agency metadata from ghl_tokens/{agencyId} using the robust resolver.
+    //    Falls back to checking aliased fields (company_name, companyName, location_name)
+    //    and can call the GHL Companies API when a token is available.
     $agencyDoc = $db->collection('ghl_tokens')->document($agencyId)->snapshot();
-    $agencyName = 'Unnamed Agency';
+    $agencyName = '';
     if ($agencyDoc->exists()) {
         $agencyData = $agencyDoc->data();
-        $agencyName = $agencyData['agency_name'] ?? $agencyData['location_name'] ?? 'Unnamed Agency';
+        $agencyName = install_resolve_agency_name_from_token_doc($agencyData, $agencyId);
     }
 
     // 2. Get all installed subaccount tokens from Firestore (same logic as check_installs.php)
@@ -89,6 +91,23 @@ try {
             $locId = $data['location_id'] ?? $doc->id();
             $dbConfigs[$locId] = $data;
         }
+    }
+
+    // Fallback: if ghl_tokens had no resolvable name, check agency_subaccounts records —
+    // they are written during OAuth and reliably contain agency_name from GHL.
+    if ($agencyName === '') {
+        foreach ($dbConfigs as $cfg) {
+            $candidate = trim((string)($cfg['agency_name'] ?? $cfg['company_name'] ?? ''));
+            if ($candidate !== '') {
+                $agencyName = $candidate;
+                break;
+            }
+        }
+    }
+
+    // Final fallback label (never "Unknown Agency" in the DB — keep generic)
+    if ($agencyName === '') {
+        $agencyName = 'Unnamed Agency';
     }
 
     $creditManager = new CreditManager();

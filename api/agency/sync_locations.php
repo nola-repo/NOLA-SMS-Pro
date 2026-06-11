@@ -58,6 +58,9 @@ try {
         exit;
     }
 
+    // Resolve the agency display name from the token document (multi-alias aware)
+    $agencyName = install_resolve_agency_name_from_token_doc($tokenData, $agency_id);
+
     // 2. Initialize GHL Client
     // We use the ID of the token document (which should have the tokens)
     $ghlClient = new GhlClient($db, $tokenData['id']);
@@ -102,16 +105,24 @@ try {
         $docRef = $db->collection('agency_subaccounts')->document($locId);
         $snapshot = $docRef->snapshot();
 
+        $locName = $loc['name'] ?? 'Unnamed Location';
+
         $updateData = [
-            'agency_id' => $agency_id,
-            'name' => $loc['name'] ?? 'Unnamed Location',
-            'email' => $loc['email'] ?? '',
-            'phone' => $loc['phone'] ?? '',
-            'address' => $loc['address'] ?? '',
-            'city' => $loc['city'] ?? '',
-            'country' => $loc['country'] ?? '',
-            'updated_at' => $now
+            'agency_id'     => $agency_id,
+            'location_name' => $locName,   // canonical field read by get_subaccounts
+            'name'          => $locName,   // legacy alias — keep for compatibility
+            'email'         => $loc['email'] ?? '',
+            'phone'         => $loc['phone'] ?? '',
+            'address'       => $loc['address'] ?? '',
+            'city'          => $loc['city'] ?? '',
+            'country'       => $loc['country'] ?? '',
+            'updated_at'    => $now,
         ];
+
+        // Only write agency_name when we actually have one — never overwrite a good value with empty.
+        if ($agencyName !== '') {
+            $updateData['agency_name'] = $agencyName;
+        }
 
         if (!$snapshot->exists()) {
             // New sub-account: set defaults
