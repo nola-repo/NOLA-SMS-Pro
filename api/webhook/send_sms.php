@@ -92,6 +92,33 @@ function clean_numbers($numberString): array
     return array_keys($valid);
 }
 
+function normalize_payload_section($value): array
+{
+    if (is_array($value)) {
+        return $value;
+    }
+    if (is_string($value) && trim($value) !== '') {
+        $decoded = json_decode($value, true);
+        return is_array($decoded) ? $decoded : [];
+    }
+    return [];
+}
+
+function first_non_empty_payload_value(array ...$sections)
+{
+    $keys = array_pop($sections);
+    foreach ($keys as $key) {
+        foreach ($sections as $section) {
+            if (!is_array($section)) continue;
+            $value = $section[$key] ?? null;
+            if ($value !== null && (is_scalar($value) || (is_object($value) && method_exists($value, '__toString'))) && trim((string)$value) !== '') {
+                return $value;
+            }
+        }
+    }
+    return null;
+}
+
 /* |-------------------------------------------------------------------------- | CREDIT CALCULATION |-------------------------------------------------------------------------- */
 /** @deprecated Use CreditManager::calculateRequiredCredits() */
 function calculate_credits($message, $num_recipients)
@@ -136,8 +163,9 @@ if (install_is_marketplace_lifecycle_payload($payload)) {
 log_full_payload($raw, $payload);
 
 /* |-------------------------------------------------------------------------- | EXTRACT MESSAGE + SENDER |-------------------------------------------------------------------------- */
-$customData = $payload['customData'] ?? [];
-$data = $payload['data'] ?? [];
+$customData = normalize_payload_section($payload['customData'] ?? []);
+$data = normalize_payload_section($payload['data'] ?? []);
+$contactData = normalize_payload_section($payload['contact'] ?? $data['contact'] ?? $customData['contact'] ?? []);
 
 $batch_id = $customData['batch_id'] ?? $data['batch_id'] ?? $payload['batch_id'] ?? $_POST['batch_id'] ?? null;
 $recipient_key = $customData['recipient_key'] ?? $data['recipient_key'] ?? $payload['recipient_key'] ?? $_POST['recipient_key'] ?? null;
@@ -148,7 +176,15 @@ $contactId = $customData['contactId'] ?? $customData['contact_id']
     ?? $data['contactId'] ?? $data['contact_id']
     ?? $payload['contactId'] ?? $payload['contact_id'] ?? null;
 
-$message = $customData['message'] ?? $payload['message'] ?? $data['message'] ?? '';
+$message = first_non_empty_payload_value($customData, $payload, $data, [
+    'message',
+    'Message',
+    'text',
+    'body',
+    'sms_message',
+    'messageText',
+    'message_text'
+]) ?? '';
 
 if ($message) {
     // NOTE: Do NOT use strip_tags() here — it removes anything resembling an HTML tag,
@@ -170,7 +206,17 @@ if ($message) {
 log_sms("MESSAGE_CLEANED", $message);
 
 // Extract Numbers — GHL Marketplace may send as 'number' or 'phone' depending on field reference
-$numberRaw = $customData['number'] ?? $customData['phone'] ?? $payload['number'] ?? $data['number'] ?? $payload['phone'] ?? $data['phone'] ?? null;
+$numberRaw = first_non_empty_payload_value($customData, $payload, $data, $contactData, [
+    'number',
+    'phone',
+    'Phone',
+    'phone_number',
+    'phoneNumber',
+    'mobile',
+    'mobile_phone',
+    'recipient',
+    'to'
+]);
 $validNumbers = clean_numbers($numberRaw);
 $num_recipients = count($validNumbers);
 

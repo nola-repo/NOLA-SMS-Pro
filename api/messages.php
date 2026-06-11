@@ -148,6 +148,7 @@ try {
             \Nola\Services\StatusSync::checkAndSyncSingleMessage($db, $d, $doc->id(), $apiKey, $apiKeyCache);
             $out['data'][] = [
                 'id' => $doc->id(),
+                'message_id' => $d['message_id'] ?? null,
                 'conversation_id' => $d['conversation_id'] ?? null,
                 'location_id' => $d['location_id'] ?? null,
                 'number' => $d['number'] ?? null,
@@ -190,7 +191,7 @@ try {
                 if (strlen($digits) === 12 && str_starts_with($digits, '639')) $digits = '0' . substr($digits, 2);
                 $conv = $prefix . 'conv_' . $digits;
             } else {
-                $conv = 'group_' . $rk;
+                $conv = $prefix . 'group_' . $rk;
             }
         }
  
@@ -209,6 +210,7 @@ try {
             \Nola\Services\StatusSync::checkAndSyncSingleMessage($db, $d, $doc->id(), $apiKey, $apiKeyCache);
             $out['data'][] = [
                 'id' => $doc->id(),
+                'message_id' => $d['message_id'] ?? null,
                 'conversation_id' => $d['conversation_id'] ?? null,
                 'location_id' => $d['location_id'] ?? null,
                 'number' => $d['number'] ?? null,
@@ -243,6 +245,7 @@ try {
             \Nola\Services\StatusSync::checkAndSyncSingleMessage($db, $d, $doc->id(), $apiKey, $apiKeyCache);
             $out['data'][] = [
                 'id' => $doc->id(),
+                'message_id' => $d['message_id'] ?? null,
                 'conversation_id' => $d['conversation_id'] ?? null,
                 'location_id' => $d['location_id'] ?? null,
                 'number' => $d['number'] ?? null,

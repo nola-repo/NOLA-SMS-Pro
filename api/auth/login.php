@@ -22,6 +22,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 $input    = json_decode(file_get_contents('php://input'), true);
 $email    = strtolower(trim($input['email']    ?? ''));
 $password = $input['password'] ?? '';
+$rememberMe = !empty($input['remember_me']) || !empty($input['rememberMe']);
 
 if (!$email || !$password) {
     http_response_code(400);
@@ -159,6 +160,7 @@ try {
         }
     }
     // ── Sign JWT ─────────────────────────────────────────────────────────────
+    $tokenTtl = $rememberMe ? 60 * 60 * 24 * 30 : 28800;
     $token = jwt_sign([
         'sub'        => $userId,
         'email'      => $email,
@@ -166,7 +168,7 @@ try {
         'company_id' => $companyId,
         'location_id' => $locationId,
         'auth_collection' => $authCollection,
-    ], $jwtSecret, 28800); // 8 hours
+    ], $jwtSecret, $tokenTtl);
 
     echo json_encode([
         'token'                => $token,
@@ -174,6 +176,8 @@ try {
         'company_id'           => $companyId,
         'location_id'          => $locationId,
         'user'                 => auth_user_payload_for_api($userData, $email),
+        'expires_in'           => $tokenTtl,
+        'remembered'           => $rememberMe,
     ]);
 
 } catch (Exception $e) {

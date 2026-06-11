@@ -561,7 +561,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             CURLOPT_POSTFIELDS     => json_encode([
                 'email' => $email,
                 'password' => $password,
-                'location_id' => $locationIdRaw
+                'location_id' => $locationIdRaw,
+                'remember_me' => true
             ]),
             CURLOPT_TIMEOUT        => 15,
         ]);

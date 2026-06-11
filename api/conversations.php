@@ -54,7 +54,7 @@ try {
         if ($conversationId) {
             // Enforce prefixing for lookup if needed
             $prefix = $locId . '_';
-            if (str_starts_with($conversationId, 'conv_') && !str_starts_with($conversationId, $prefix)) {
+            if ((str_starts_with($conversationId, 'conv_') || str_starts_with($conversationId, 'group_')) && !str_starts_with($conversationId, $prefix)) {
                 $conversationId = $prefix . $conversationId;
             }
             $q = $q->where('id', '==', $conversationId);
@@ -117,8 +117,8 @@ try {
             exit;
         }
 
-        // AUTO-SCOPE: Ensure ID is location-prefixed if it's a direct conv
-        if (str_starts_with($id, 'conv_')) {
+        // AUTO-SCOPE: Ensure direct and group conversation IDs are location-prefixed.
+        if (str_starts_with($id, 'conv_') || str_starts_with($id, 'group_')) {
             $prefix = $locId . '_';
             if (!str_starts_with($id, $prefix)) {
                 $id = $prefix . $id;

@@ -19,6 +19,7 @@ class AuthV2Controller extends Controller
     {
         $email = strtolower(trim((string) $request->input('email', '')));
         $password = (string) $request->input('password', '');
+        $rememberMe = $request->boolean('remember_me') || $request->boolean('rememberMe');
 
         if ($email === '' || $password === '') {
             return response()->json(['error' => 'Email and password are required.'], 400);
@@ -50,6 +51,7 @@ class AuthV2Controller extends Controller
             $companyId = $userData['company_id'] ?? null;
             $locationId = $userData['active_location_id'] ?? null;
 
+            $tokenTtl = $rememberMe ? 60 * 60 * 24 * 30 : 28800;
             $token = LegacyJwt::sign([
                 'sub' => $userId,
                 'email' => $email,
@@ -57,13 +59,15 @@ class AuthV2Controller extends Controller
                 'company_id' => $companyId,
                 'location_id' => $locationId,
                 'auth_collection' => $authCollection,
-            ], $jwtSecret, 28800);
+            ], $jwtSecret, $tokenTtl);
 
             return response()->json([
                 'token' => $token,
                 'role' => $role,
                 'company_id' => $companyId,
                 'location_id' => $locationId,
+                'expires_in' => $tokenTtl,
+                'remembered' => $rememberMe,
                 'user' => LegacyAuthProfile::payloadForApi($userData, $email),
             ]);
         } catch (Throwable $e) {
