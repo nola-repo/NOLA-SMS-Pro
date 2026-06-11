@@ -138,8 +138,7 @@ try {
 
     try {
         require_once __DIR__ . '/../cache_helper.php';
-        NolaCache::delete('subaccounts_' . $agency_id);
-        NolaCache::delete('agency_locations_' . $agency_id);
+        NolaCache::invalidateAgencyDashboard($agency_id);
     } catch (\Throwable $e) {
         error_log('[sync_locations] Cache invalidation failed: ' . $e->getMessage());
     }

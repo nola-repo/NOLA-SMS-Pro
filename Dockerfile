@@ -15,6 +15,11 @@ RUN docker-php-ext-install zip bcmath fileinfo
 # Enable mod_rewrite and mod_headers for .htaccess and CORS
 RUN a2enmod rewrite headers
 
+# Terminal-only HTTP request logging. This observes Apache requests without
+# touching PHP/Laravel request handling, headers, bodies, or responses.
+COPY docker/apache-request-logging.conf /etc/apache2/conf-available/nola-request-logging.conf
+RUN a2enconf nola-request-logging
+
 # Apache: listen on 8080 (Cloud Run default PORT)
 RUN sed -i 's/Listen 80/Listen 8080/' /etc/apache2/ports.conf \
     && sed -i 's/<VirtualHost \*:80>/<VirtualHost *:8080>/' /etc/apache2/sites-available/000-default.conf \

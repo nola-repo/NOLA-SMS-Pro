@@ -23,10 +23,15 @@ if ($companyId === '') {
 }
 
 $cacheKey = "agency_locations_" . $companyId;
-$cachedData = NolaCache::get($cacheKey);
-if ($cachedData !== null) {
-    echo json_encode($cachedData);
-    exit;
+$cacheTtl = 300;
+$bypassCache = isset($_GET['refresh']) || isset($_GET['bypass_cache']);
+if (!$bypassCache) {
+    $cachedData = NolaCache::get($cacheKey);
+    if ($cachedData !== null) {
+        NolaCache::sendApiCacheHeaders($cacheTtl, true);
+        echo json_encode($cachedData);
+        exit;
+    }
 }
 
 try {
@@ -64,7 +69,8 @@ try {
     });
 
     $responsePayload = ['locations' => $locations];
-    NolaCache::set($cacheKey, $responsePayload, 600); // 10 minutes cache
+    NolaCache::set($cacheKey, $responsePayload, $cacheTtl);
+    NolaCache::sendApiCacheHeaders($cacheTtl, false);
 
     echo json_encode($responsePayload);
 } catch (Exception $e) {

@@ -4,6 +4,7 @@ header('Content-Type: application/json');
 
 require_once __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/../auth_helpers.php';
+require_once __DIR__ . '/../cache_helper.php';
 
 $db = get_firestore();
 
@@ -19,6 +20,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         auth_assert_agency_billing_allowed($db, (string)$agency_id);
     } else {
         validate_api_request();
+    }
+
+    $cacheIdentity = $scope === 'agency' ? (string)$agency_id : (string)$location_id;
+    $cacheKey = 'billing_transactions_' . md5(json_encode([
+        'scope' => $scope,
+        'agency_id' => $agency_id,
+        'location_id' => $location_id,
+        'month' => $month,
+        'page' => $page,
+    ]));
+    $cacheTtl = 60;
+    $bypassCache = isset($_GET['refresh']) || isset($_GET['bypass_cache']);
+    if (!$bypassCache && $cacheIdentity !== '') {
+        $cachedData = NolaCache::get($cacheKey);
+        if ($cachedData !== null) {
+            NolaCache::sendApiCacheHeaders($cacheTtl, true);
+            echo json_encode($cachedData);
+            exit;
+        }
     }
 
     $query = $db->collection('credit_transactions')->where('wallet_scope', '==', $scope);
@@ -98,12 +118,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $offset    = ($page - 1) * $limit;
     $paginated = array_slice($transactions, $offset, $limit);
 
-    echo json_encode([
+    $responsePayload = [
         'transactions' => $paginated,
         'total'        => $total,
         'page'         => $page,
         'limit'        => $limit,
-    ]);
+    ];
+
+    if ($cacheIdentity !== '') {
+        $registryKey = $scope === 'agency'
+            ? 'agency_transactions_registry_' . $cacheIdentity
+            : 'credits_registry_' . preg_replace('/^ghl_/', '', $cacheIdentity);
+        NolaCache::setWithRegistry($registryKey, $cacheKey, $responsePayload, $cacheTtl);
+    }
+
+    NolaCache::sendApiCacheHeaders($cacheTtl, false);
+    echo json_encode($responsePayload);
     exit;
 }
 

@@ -34,6 +34,7 @@ if (!$agencyId) {
 
 require_once __DIR__ . '/../cache_helper.php';
 $cacheKey = 'subaccounts_' . $agencyId;
+$cacheTtl = 300;
 
 $bypassCache = isset($_GET['refresh']) || isset($_GET['bypass_cache']);
 $cachedResponse = null;
@@ -41,7 +42,8 @@ if (!$bypassCache) {
     $cachedResponse = NolaCache::get($cacheKey);
 }
 
-if ($cachedResponse) {
+if ($cachedResponse !== null) {
+    NolaCache::sendApiCacheHeaders($cacheTtl, true);
     echo json_encode($cachedResponse);
     exit;
 }
@@ -146,7 +148,8 @@ try {
         'subaccounts' => $subaccounts
     ];
 
-    NolaCache::set($cacheKey, $response, 600);
+    NolaCache::set($cacheKey, $response, $cacheTtl);
+    NolaCache::sendApiCacheHeaders($cacheTtl, false);
 
     echo json_encode($response);
 

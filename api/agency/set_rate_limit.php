@@ -46,8 +46,7 @@ $docRef->set(['rate_limit' => $rate_limit], ['merge' => true]);
 // Invalidate agency subaccounts cache
 try {
     require_once __DIR__ . '/../cache_helper.php';
-    NolaCache::delete('subaccounts_' . $agency_id);
-    NolaCache::delete('agency_locations_' . $agency_id);
+    NolaCache::invalidateAgencyDashboard($agency_id);
 } catch (\Throwable $e) {
     error_log('[set_rate_limit] Cache invalidation failed: ' . $e->getMessage());
 }

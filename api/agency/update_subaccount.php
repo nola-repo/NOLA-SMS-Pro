@@ -80,8 +80,7 @@ try {
 
     try {
         require_once __DIR__ . '/../cache_helper.php';
-        NolaCache::delete('subaccounts_' . $agencyId);
-        NolaCache::delete('agency_locations_' . $agencyId);
+        NolaCache::invalidateAgencyDashboard($agencyId);
     } catch (\Throwable $e) {
         error_log('[update_subaccount] Cache invalidation failed: ' . $e->getMessage());
     }
