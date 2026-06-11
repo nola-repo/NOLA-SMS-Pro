@@ -136,6 +136,35 @@ try {
         }
     }
 
+    $agencyNameMap = [];
+    foreach (['agency_users', 'agencies'] as $agencyCollection) {
+        try {
+            $agencySnap = $db->collection($agencyCollection)->documents();
+            foreach ($agencySnap as $agencyDoc) {
+                if (!$agencyDoc->exists()) continue;
+
+                $agencyData = $agencyDoc->data();
+                $companyId = trim((string)($agencyData['company_id'] ?? $agencyData['companyId'] ?? $agencyDoc->id()));
+                $nameParts = trim((string)($agencyData['firstName'] ?? $agencyData['first_name'] ?? '') . ' ' . (string)($agencyData['lastName'] ?? $agencyData['last_name'] ?? ''));
+                $agencyName = trim((string)(
+                    $agencyData['company_name']
+                    ?? $agencyData['agency_name']
+                    ?? $agencyData['name']
+                    ?? $agencyData['full_name']
+                    ?? $nameParts
+                    ?? $agencyData['email']
+                    ?? ''
+                ));
+
+                if ($companyId !== '' && $agencyName !== '') {
+                    $agencyNameMap[$companyId] = $agencyName;
+                }
+            }
+        } catch (Exception $e) {
+            error_log('[admin_list_users] Agency prefetch failed for ' . $agencyCollection . ': ' . $e->getMessage());
+        }
+    }
+
     // Fetch all users
     $usersSnap = $db->collection('users')->documents();
     $usersList = [];
@@ -179,6 +208,12 @@ try {
             $lastName  = count($parts) > 1 ? implode(' ', array_slice($parts, 1)) : '';
         }
 
+        $companyId = $d['company_id'] ?? $d['companyId'] ?? null;
+        $agencyName = trim((string)($d['agency_name'] ?? $d['company_name'] ?? ''));
+        if ($agencyName === '' && $companyId !== null) {
+            $agencyName = $agencyNameMap[(string)$companyId] ?? '';
+        }
+
         $usersList[] = [
             'id'                 => $doc->id(),
             'name'               => $fullName,
@@ -190,7 +225,9 @@ try {
             'active'             => !array_key_exists('active', $d) || !empty($d['active']),
             'location_id'        => !empty($locId) ? $locId : null,
             'location_name'      => $locationName,
-            'company_id'         => $d['company_id'] ?? null,
+            'company_id'         => $companyId,
+            'company_name'       => $agencyName !== '' ? $agencyName : null,
+            'agency_name'        => $agencyName !== '' ? $agencyName : null,
             'credit_balance'     => (int)($d['credit_balance'] ?? 0),
             'free_usage_count'   => $freeUsageCount,
             'free_credits_total' => $freeCreditsTotal,

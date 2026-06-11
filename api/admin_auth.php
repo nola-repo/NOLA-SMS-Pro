@@ -15,6 +15,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 $input = json_decode(file_get_contents('php://input'), true) ?? [];
 $email = strtolower(trim($input['email'] ?? $input['username'] ?? ''));
 $password = $input['password'] ?? '';
+$rememberMe = !empty($input['remember_me']) || !empty($input['rememberMe']);
 
 if (empty($email) || empty($password)) {
     http_response_code(400);
@@ -66,17 +67,20 @@ try {
             echo json_encode(['status' => 'error', 'message' => 'Server misconfiguration: JWT secret missing.']);
             exit;
         }
+        $tokenTtl = $rememberMe ? 60 * 60 * 24 * 30 : 28800;
         $token = jwt_sign([
             'email' => $email,
             'username' => $email,
             'role' => $adminData['role'] ?? 'admin'
-        ], $secret);
+        ], $secret, $tokenTtl);
 
         // Successful login
         echo json_encode([
             'status' => 'success',
             'message' => 'Login successful',
             'token' => $token,
+            'expires_in' => $tokenTtl,
+            'remembered' => $rememberMe,
             'user' => [
                 'email' => $email,
                 'username' => $email,
