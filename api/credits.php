@@ -158,9 +158,10 @@ try {
     require_once __DIR__ . '/cache_helper.php';
     $cacheKey = "credits_data_{$locId}";
     $registryKey = "credits_registry_{$locId}";
+    $forceFresh = isset($_GET['fresh']) || isset($_GET['no_cache']);
 
     $cachedData = NolaCache::get($cacheKey);
-    if ($cachedData !== null) {
+    if (!$forceFresh && $cachedData !== null) {
         $cachedData['cached'] = true;
         echo json_encode($cachedData, JSON_PRETTY_PRINT);
         exit;
@@ -308,7 +309,7 @@ try {
         'stats' => $stats
     ];
 
-    NolaCache::setWithRegistry($registryKey, $cacheKey, $responsePayload, 300); // Cache for 5 minutes
+    NolaCache::setWithRegistry($registryKey, $cacheKey, $responsePayload, 30); // Short cache; UI can request fresh values.
 
     $responsePayload['cached'] = false;
     echo json_encode($responsePayload, JSON_PRETTY_PRINT);

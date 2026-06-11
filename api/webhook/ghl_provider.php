@@ -652,6 +652,13 @@ $db->collection('conversations')->document($convId)->set([
     'ghl_contact_id'  => $contactId,
 ], ['merge' => true]);
 
+try {
+    require_once __DIR__ . '/../cache_helper.php';
+    NolaCache::deleteRegistry("conversations_registry_{$locationId}");
+} catch (\Throwable $cacheEx) {
+    error_log("[ghl_provider] Cache invalidation failed: " . $cacheEx->getMessage());
+}
+
 // ── Sync 'delivered' status back to GHL (background, after SMS confirmed sent) ────
 try {
     require_once __DIR__ . '/../services/GhlSyncService.php';

@@ -72,6 +72,10 @@ if (empty($matchingConvs)) {
     exit(json_encode(["status" => "ignored", "reason" => "unmapped_sender"]));
 }
 
+// Route replies to one canonical scoped conversation only. If the same phone is
+// present under multiple accounts, the most recently active conversation wins.
+$matchingConvs = array_slice($matchingConvs, 0, 1);
+
 $processed = [];
 $now = new \Google\Cloud\Core\Timestamp(new \DateTime());
 

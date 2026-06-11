@@ -793,6 +793,13 @@ if (!empty($message_results)) {
             ], ['merge' => true]);
     }
 
+    try {
+        require_once __DIR__ . '/../cache_helper.php';
+        NolaCache::deleteRegistry("conversations_registry_{$locId}");
+    } catch (\Throwable $cacheEx) {
+        error_log("[send_sms] Cache invalidation failed: " . $cacheEx->getMessage());
+    }
+
     // ── GHL Bidirectional Sync (Best-Effort) ─────────────────────────────────
     // GHL bidirectional sync: run for every individual-number send (including bulk
     // recipients), since each message should appear in its GHL contact's conversation.

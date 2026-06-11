@@ -237,6 +237,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         NolaCache::invalidateAdminDashboard();
         if ($locId) {
             NolaCache::delete("account_profile_" . $locId);
+            NolaCache::deleteRegistry("credits_registry_" . $locId);
         }
 
         echo json_encode(['status' => 'success', 'message' => 'Account configuration updated successfully.']);
