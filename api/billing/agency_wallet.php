@@ -5,6 +5,7 @@ header('Content-Type: application/json');
 require_once __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/../auth_helpers.php';
 require_once __DIR__ . '/../services/CreditManager.php';
+require_once __DIR__ . '/../cache_helper.php';
 
 $db = get_firestore();
 
@@ -32,6 +33,18 @@ $agencyWalletLegacyRef = $db->collection('agency_wallet')->document($agency_id);
 
 // GET: ?action=balance is accepted per spec — GET always returns the full wallet state
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+    $cacheKey = 'agency_wallet_' . $agency_id;
+    $cacheTtl = 60;
+    $bypassCache = isset($_GET['refresh']) || isset($_GET['bypass_cache']);
+    if (!$bypassCache) {
+        $cachedData = NolaCache::get($cacheKey);
+        if ($cachedData !== null) {
+            NolaCache::sendApiCacheHeaders($cacheTtl, true);
+            echo json_encode($cachedData);
+            exit;
+        }
+    }
+
     $balance = $creditManager->get_agency_balance($agency_id);
 
     $snapshot = $agencyWalletLegacyRef->snapshot();
@@ -48,14 +61,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         $balance = max($balance, (int)$data['balance']);
     }
 
-    echo json_encode([
+    $responsePayload = [
         'balance'                     => $balance,
         'auto_recharge_enabled'       => $data['auto_recharge_enabled'] ?? false,
         'auto_recharge_amount'        => $data['auto_recharge_amount'] ?? 500,
         'auto_recharge_threshold'     => $data['auto_recharge_threshold'] ?? 100,
         'enforce_master_balance_lock' => $data['enforce_master_balance_lock'] ?? false,
         'updated_at'                  => isset($data['updated_at']) ? $data['updated_at']->get()->format('Y-m-d\TH:i:s\Z') : null,
-    ]);
+    ];
+
+    NolaCache::set($cacheKey, $responsePayload, $cacheTtl);
+    NolaCache::sendApiCacheHeaders($cacheTtl, false);
+    echo json_encode($responsePayload);
     exit;
 }
 
@@ -72,6 +89,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
         ], ['merge' => true]);
 
+        NolaCache::invalidateAgencyDashboard($agency_id);
         echo json_encode(['success' => true]);
         exit;
     }
@@ -84,6 +102,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
         ], ['merge' => true]);
 
+        NolaCache::invalidateAgencyDashboard($agency_id);
         echo json_encode(['success' => true]);
         exit;
     }
@@ -173,6 +192,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!$result['success']) {
                 http_response_code(400);
             } else {
+                NolaCache::invalidateAgencyDashboard($agency_id);
+                NolaCache::deleteRegistry("credits_registry_{$location_id}");
                 try {
                     require_once __DIR__ . '/../services/NotificationService.php';
                     NotificationService::notifyTopUpSuccess($db, $location_id, $amount, (int)$result['subaccount_balance']);

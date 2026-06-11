@@ -33,6 +33,19 @@ if ($agencyId !== $companyId) {
     exit;
 }
 
+require_once __DIR__ . '/../cache_helper.php';
+$cacheKey = 'agency_check_installs_' . $companyId;
+$cacheTtl = 300;
+$bypassCache = isset($_GET['refresh']) || isset($_GET['bypass_cache']);
+if (!$bypassCache) {
+    $cachedData = NolaCache::get($cacheKey);
+    if ($cachedData !== null) {
+        NolaCache::sendApiCacheHeaders($cacheTtl, true);
+        echo json_encode($cachedData);
+        exit;
+    }
+}
+
 try {
     $db = get_firestore();
     
@@ -56,10 +69,14 @@ try {
         }
     }
     
-    echo json_encode([
+    $responsePayload = [
         'status' => 'success',
         'installed_locations' => array_values($installedLocations)
-    ]);
+    ];
+
+    NolaCache::set($cacheKey, $responsePayload, $cacheTtl);
+    NolaCache::sendApiCacheHeaders($cacheTtl, false);
+    echo json_encode($responsePayload);
 
 } catch (Exception $e) {
     http_response_code(500);

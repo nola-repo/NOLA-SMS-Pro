@@ -5,6 +5,7 @@ header('Content-Type: application/json');
 require_once __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/../auth_helpers.php';
 require_once __DIR__ . '/../services/CreditManager.php';
+require_once __DIR__ . '/../cache_helper.php';
 
 $db = get_firestore();
 
@@ -19,6 +20,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     }
 
     auth_assert_agency_billing_allowed($db, (string)$agency_id);
+
+    $cacheKey = 'credit_requests_' . md5((string)$agency_id . '|' . (string)$status);
+    $cacheTtl = 60;
+    $bypassCache = isset($_GET['refresh']) || isset($_GET['bypass_cache']);
+    if (!$bypassCache) {
+        $cachedData = NolaCache::get($cacheKey);
+        if ($cachedData !== null) {
+            NolaCache::sendApiCacheHeaders($cacheTtl, true);
+            echo json_encode($cachedData);
+            exit;
+        }
+    }
 
     $query = $db->collection('credit_requests')->where('agency_id', '==', $agency_id);
     if ($status && $status !== 'all') {
@@ -46,7 +59,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         return strcmp($b['created_at'], $a['created_at']);
     });
 
-    echo json_encode(['requests' => $requests]);
+    $responsePayload = ['requests' => $requests];
+    NolaCache::setWithRegistry('credit_requests_registry_' . $agency_id, $cacheKey, $responsePayload, $cacheTtl);
+    NolaCache::sendApiCacheHeaders($cacheTtl, false);
+    echo json_encode($responsePayload);
     exit;
 }
 
@@ -90,6 +106,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'resolved_by' => $userId
         ], ['merge' => true]);
 
+        NolaCache::deleteRegistry('credit_requests_registry_' . $agency_id);
         echo json_encode(['success' => true]);
         exit;
     }
@@ -178,6 +195,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!$result['success']) {
                 http_response_code(400);
             } else {
+                NolaCache::invalidateAgencyDashboard($agency_id);
+                NolaCache::deleteRegistry('credit_requests_registry_' . $agency_id);
+                NolaCache::deleteRegistry("credits_registry_{$location_id}");
                 try {
                     require_once __DIR__ . '/../services/NotificationService.php';
                     NotificationService::notifyTopUpSuccess($db, $location_id, $amount, (int)$result['subaccount_balance']);

@@ -642,6 +642,13 @@ class CreditManager
 
         if ($wallet_scope !== 'agency') {
             $this->invalidateSubaccountCache($account_id);
+        } else {
+            try {
+                require_once __DIR__ . '/../cache_helper.php';
+                NolaCache::invalidateAgencyDashboard((string)$account_id);
+            } catch (\Throwable $e) {
+                error_log("[CreditManager] Agency cache invalidation failed: " . $e->getMessage());
+            }
         }
 
         return $result;
@@ -917,6 +924,14 @@ class CreditManager
             if ($rawLocId !== '' && $rawLocId !== 'default') {
                 require_once __DIR__ . '/../cache_helper.php';
                 NolaCache::deleteRegistry("credits_registry_" . $rawLocId);
+
+                $agencySnap = $this->db->collection('agency_subaccounts')->document($rawLocId)->snapshot();
+                if ($agencySnap->exists()) {
+                    $agencyId = trim((string)($agencySnap->data()['agency_id'] ?? ''));
+                    if ($agencyId !== '') {
+                        NolaCache::invalidateAgencyDashboard($agencyId);
+                    }
+                }
             }
         } catch (\Throwable $e) {
             error_log("[CreditManager] Cache invalidation failed: " . $e->getMessage());

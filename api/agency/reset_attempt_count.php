@@ -45,8 +45,7 @@ $docRef->set(['attempt_count' => 0], ['merge' => true]);
 // Invalidate agency subaccounts cache
 try {
     require_once __DIR__ . '/../cache_helper.php';
-    NolaCache::delete('subaccounts_' . $agency_id);
-    NolaCache::delete('agency_locations_' . $agency_id);
+    NolaCache::invalidateAgencyDashboard($agency_id);
 } catch (\Throwable $e) {
     error_log('[reset_attempt_count] Cache invalidation failed: ' . $e->getMessage());
 }

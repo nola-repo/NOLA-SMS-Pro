@@ -93,6 +93,19 @@ class NolaCache
     }
 
     /**
+     * Send conservative HTTP cache headers for API responses backed by NolaCache.
+     */
+    public static function sendApiCacheHeaders(int $ttl, bool $hit = false): void
+    {
+        if (headers_sent()) {
+            return;
+        }
+
+        header('Cache-Control: private, max-age=' . max(0, $ttl) . ', stale-while-revalidate=30');
+        header('X-Nola-Cache: ' . ($hit ? 'HIT' : 'MISS'));
+    }
+
+    /**
      * Set a cached value by key.
      */
     public static function set(string $key, mixed $value, int $ttl = 300): bool
@@ -200,6 +213,25 @@ class NolaCache
         self::delete('admin_agency_users_list');
         self::delete('admin_admins_list');
         self::delete('admin_settings');
+    }
+
+    /**
+     * Flush cached agency-dashboard payloads for a single agency/company.
+     */
+    public static function invalidateAgencyDashboard(string $agencyId): void
+    {
+        $agencyId = trim($agencyId);
+        if ($agencyId === '') {
+            return;
+        }
+
+        self::delete('subaccounts_' . $agencyId);
+        self::delete('agency_locations_' . $agencyId);
+        self::delete('agency_check_installs_' . $agencyId);
+        self::delete('agency_wallet_' . $agencyId);
+        self::delete('agency_all_active_subaccounts');
+        self::deleteRegistry('agency_transactions_registry_' . $agencyId);
+        self::deleteRegistry('credit_requests_registry_' . $agencyId);
     }
 }
 

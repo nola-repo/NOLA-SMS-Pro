@@ -4,6 +4,7 @@ header('Content-Type: application/json');
 
 require_once __DIR__ . '/../auth_helpers.php';
 require_once __DIR__ . '/../webhook/firestore_client.php';
+require_once __DIR__ . '/../cache_helper.php';
 
 validate_api_request();
 
@@ -297,6 +298,8 @@ try {
         'single_location' => count($provisionedLocations) === 1 ? $provisionedLocations[0] : null,
         'updated_at' => new \Google\Cloud\Core\Timestamp(new DateTimeImmutable()),
     ], ['merge' => true]);
+
+    NolaCache::invalidateAgencyDashboard($companyId);
 
     echo json_encode([
         'ok' => true,

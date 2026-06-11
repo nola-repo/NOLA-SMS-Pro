@@ -5,6 +5,7 @@ header('Content-Type: application/json');
 require_once __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/../jwt_helper.php';
 require_once __DIR__ . '/../services/CreditManager.php';
+require_once __DIR__ . '/../cache_helper.php';
 
 // Try standard JWT check first
 $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
@@ -54,17 +55,38 @@ $docId = (strpos($location_id, 'ghl_') === 0) ? $location_id : 'ghl_' . preg_rep
 $subaccountRef = $db->collection('integrations')->document($docId);
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+    $cacheKey = 'subaccount_wallet_' . preg_replace('/^ghl_/', '', trim((string)$location_id));
+    $cacheTtl = 60;
+    $bypassCache = isset($_GET['refresh']) || isset($_GET['bypass_cache']);
+    if (!$bypassCache) {
+        $cachedData = NolaCache::get($cacheKey);
+        if ($cachedData !== null) {
+            NolaCache::sendApiCacheHeaders($cacheTtl, true);
+            echo json_encode($cachedData);
+            exit;
+        }
+    }
+
     $balance = $creditManager->get_balance($location_id);
     $snapshot = $subaccountRef->snapshot();
     $data = $snapshot->exists() ? $snapshot->data() : [];
     
-    echo json_encode([
+    $responsePayload = [
         'balance' => $balance,
         'auto_recharge_enabled' => $data['auto_recharge_enabled'] ?? false,
         'auto_recharge_amount' => $data['auto_recharge_amount'] ?? 250,
         'auto_recharge_threshold' => $data['auto_recharge_threshold'] ?? 25,
         'updated_at' => isset($data['updated_at']) ? $data['updated_at']->get()->format('Y-m-d\TH:i:s\Z') : null
-    ]);
+    ];
+
+    NolaCache::setWithRegistry(
+        'credits_registry_' . preg_replace('/^ghl_/', '', trim((string)$location_id)),
+        $cacheKey,
+        $responsePayload,
+        $cacheTtl
+    );
+    NolaCache::sendApiCacheHeaders($cacheTtl, false);
+    echo json_encode($responsePayload);
     exit;
 }
 
@@ -81,6 +103,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
         ], ['merge' => true]);
 
+        NolaCache::deleteRegistry('credits_registry_' . preg_replace('/^ghl_/', '', trim((string)$location_id)));
         echo json_encode(['success' => true]);
         exit;
     }
@@ -122,6 +145,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'resolved_by' => null
         ]);
 
+        NolaCache::deleteRegistry('credit_requests_registry_' . $agency_id);
         echo json_encode(['success' => true, 'request_id' => $requestRef->id()]);
         exit;
     }
