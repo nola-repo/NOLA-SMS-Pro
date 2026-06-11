@@ -128,6 +128,7 @@
     RewriteRule ^api/account/?$ /api/account.php [NC,L,QSA]
     RewriteRule ^api/account-sender/?$ /api/account-sender.php [NC,L,QSA]
     RewriteRule ^api/sender-requests/?$ /api/sender-requests.php [NC,L,QSA]
+    RewriteRule ^api/notifications/?$ /api/notifications.php [NC,L,QSA]
     RewriteRule ^api/credits/?$ /api/credits.php [NC,L,QSA]
     RewriteRule ^api/get_credit_transactions/?$ /api/get_credit_transactions.php [NC,L,QSA]
     RewriteRule ^api/conversations/?$ /api/conversations.php [NC,L,QSA]

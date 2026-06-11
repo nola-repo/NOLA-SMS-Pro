@@ -114,24 +114,36 @@ $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 if ($method === 'GET') {
     try {
         $notificationsRef = $db->collection('admin_notifications');
-        $query = $notificationsRef->orderBy('created_at', 'DESC');
+        $locationId = trim((string)($_GET['location_id'] ?? $_GET['locationId'] ?? ''));
         
         $unreadOnly = $_GET['unread_only'] ?? $_GET['unreadOnly'] ?? null;
-        if ($unreadOnly === 'true' || $unreadOnly === true || $unreadOnly === '1') {
-            $query = $query->where('read', '=', false);
-        }
+        $filterUnread = ($unreadOnly === 'true' || $unreadOnly === true || $unreadOnly === '1');
         
         $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 20;
         if ($limit <= 0) $limit = 20;
         if ($limit > 100) $limit = 100;
-        
-        $query = $query->limit($limit);
-        $docs = $query->documents();
+
+        if ($locationId !== '') {
+            // Filter by location first, then sort in PHP to avoid requiring a
+            // new Firestore composite index for location_id + created_at.
+            $docs = $notificationsRef
+                ->where('location_id', '=', $locationId)
+                ->documents();
+        } else {
+            $query = $notificationsRef->orderBy('created_at', 'DESC');
+            if ($filterUnread) {
+                $query = $query->where('read', '=', false);
+            }
+            $docs = $query->limit($limit)->documents();
+        }
         
         $data = [];
         foreach ($docs as $doc) {
             if ($doc->exists()) {
                 $d = $doc->data();
+                if ($filterUnread && (bool)($d['read'] ?? false)) {
+                    continue;
+                }
                 $data[] = [
                     'id'            => $doc->id(),
                     'type'          => $d['type'] ?? '',
@@ -147,6 +159,13 @@ if ($method === 'GET') {
                                           : new \stdClass(), // serialises to {} not null
                 ];
             }
+        }
+
+        if ($locationId !== '') {
+            usort($data, static function (array $a, array $b): int {
+                return strcmp((string)($b['created_at'] ?? ''), (string)($a['created_at'] ?? ''));
+            });
+            $data = array_slice($data, 0, $limit);
         }
         
         echo json_encode([

@@ -23,6 +23,7 @@ RUN a2enconf nola-request-logging
 # Apache: listen on 8080 (Cloud Run default PORT)
 RUN sed -i 's/Listen 80/Listen 8080/' /etc/apache2/ports.conf \
     && sed -i 's/<VirtualHost \*:80>/<VirtualHost *:8080>/' /etc/apache2/sites-available/000-default.conf \
+    && sed -i 's#CustomLog ${APACHE_LOG_DIR}/access.log combined#CustomLog /proc/self/fd/1 nola_request#' /etc/apache2/sites-available/000-default.conf \
     && sed -i 's/AllowOverride None/AllowOverride All/g' /etc/apache2/apache2.conf /etc/apache2/sites-available/*.conf
 
 # Install Composer
