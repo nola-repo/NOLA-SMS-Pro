@@ -1784,7 +1784,6 @@ if ($locationName === '') {
 
 $displayName     = $locationName;
 $displayNameSafe = $locationName ? htmlspecialchars($locationName, ENT_QUOTES, 'UTF-8') : 'Your Sub-Account';
-$dashboardUrl    = 'https://app.nolacrm.io/v2/location/' . $locationIdSafe . '/custom-page-link/69a642aae76974824fd39bb6';
 
 // ─── Save Tokens & Metadata to Firestore ──────────────────────────────────────
 $db = get_firestore();
@@ -1872,9 +1871,6 @@ if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
     error_log('[GHL_CALLBACK] JWT_SECRET missing; cannot generate install token.');
     render_error('Server configuration error: JWT secret missing.');
 }
-$reactAppUrl     = 'https://app.nolacrm.io';
-$locationNameEnc = urlencode($locationName ?: 'Your Sub-Account');
-
     $companyName = $companyNameDirect;
     $companyId = (string)($data['companyId'] ?? '');
     if ($companyId !== '') {
