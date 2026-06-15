@@ -290,6 +290,8 @@ $creditManager = new CreditManager();
 $usingOwnApiKey = false;
 $sender         = $SENDER_IDS[0] ?? 'NOLASMSPro';
 $activeApiKey   = $SEMAPHORE_API_KEY;
+$billingAgencyId = '';
+$billingMasterLock = false;
 
 $sysKey  = trim((string)$SEMAPHORE_API_KEY);
 $userKey = trim((string)($customApiKey ?? ''));
@@ -308,8 +310,8 @@ if ($userKey !== '' && $userKey !== $sysKey) {
     // If Admin has approved a custom sender for this subaccount, TRUST IT.
     // Otherwise, check our master whitelist.
     
-    if (!empty($approvedSenderId)) {
-        // Safe because it was approved by Admin in the dashboard
+    if (!empty($approvedSenderId) && in_array($approvedSenderId, $MASTER_APPROVED_SENDERS, true)) {
+        // Safe only when the sender is available on the master provider account.
         $sender = $approvedSenderId;
     } elseif (!empty($desiredSender) && in_array($desiredSender, $MASTER_APPROVED_SENDERS)) {
         // Check manually requested sender against whitelist
@@ -317,6 +319,9 @@ if ($userKey !== '' && $userKey !== $sysKey) {
     } else {
         // Fallback to system default
         $sender = $SENDER_IDS[0] ?? 'NOLASMSPro';
+        if (!empty($approvedSenderId) && !in_array($approvedSenderId, $MASTER_APPROVED_SENDERS, true)) {
+            error_log("[ghl_provider] approved_sender_id '{$approvedSenderId}' is not in master sender whitelist. Falling back to '{$sender}'.");
+        }
         if (!empty($desiredSender) && $desiredSender !== $sender) {
             error_log("[ghl_provider] Requested sender '{$desiredSender}' not approved and no subaccount sender exists. Falling back to '{$sender}'.");
         }
@@ -449,6 +454,8 @@ if ($usingFreeCredits) {
                 error_log("[ghl_provider] agency_id resolved from ghl_tokens.companyId={$agency_id} for loc={$locationId}");
             }
         }
+        $billingAgencyId = $agency_id;
+        $billingMasterLock = $agency_id !== '' && $creditManager->get_agency_master_lock($agency_id);
         $activeProvider = in_array($providerPreference, ['unisms', 'unisms_custom'], true)
             ? 'unisms'
             : $gateway->getProviderName();
@@ -478,7 +485,7 @@ if ($usingFreeCredits) {
         // ghl_provider was previously always calling deduct_agency_and_subaccount() whenever
         // agency_id existed, which required the agency wallet to also have balance. This caused
         // 402 errors even when the subaccount had sufficient credits.
-        if ($agency_id && $creditManager->get_agency_master_lock($agency_id)) {
+        if ($billingMasterLock) {
             $creditManager->deduct_agency_and_subaccount(
                 $account_id,
                 $agency_id,
@@ -564,7 +571,28 @@ if (!$gatewayAccepted) {
     // status API with 'failed' so GHL updates the message badge correctly.
     error_log('[ghl_provider][SEMAPHORE_FAILED_POST_FLUSH] Semaphore rejected msg for loc=' . $locationId . ' msgId=' . $messageId . ' status=' . $smsStatus);
 
-    if (!$usingFreeCredits) {
+    if ($usingFreeCredits) {
+        try {
+            $intRef->set([
+                'free_usage_count' => \Google\Cloud\Firestore\FieldValue::increment(-$required_credits),
+                'updated_at'       => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+            ], ['merge' => true]);
+
+            if (!empty($messageId)) {
+                $trialTxDocs = $db->collection('credit_transactions')
+                    ->where('account_id', '=', CreditManager::integration_doc_id_for_location($locationId))
+                    ->where('reference_id', '=', $messageId)
+                    ->documents();
+                foreach ($trialTxDocs as $trialTxDoc) {
+                    if ($trialTxDoc->exists()) {
+                        $trialTxDoc->reference()->delete();
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log('[ghl_provider] Trial rollback failed: ' . $e->getMessage());
+        }
+    } else {
         try {
             $creditManager->add_credits(
                 $account_id,
@@ -573,6 +601,16 @@ if (!$gatewayAccepted) {
                 'Refund — SMS failed to send (' . ucfirst($chosenProvider) . ' rejected)',
                 'refund'
             );
+            if ($billingMasterLock && $billingAgencyId !== '') {
+                $creditManager->add_credits(
+                    $billingAgencyId,
+                    $required_credits,
+                    ($messageId ?? 'refund_ghl_prov') . '_agency',
+                    'Agency refund - SMS failed to send (' . ucfirst($chosenProvider) . ' rejected)',
+                    'refund',
+                    'agency'
+                );
+            }
         } catch (\Throwable $e) {
             error_log('[ghl_provider] Credit refund failed: ' . $e->getMessage());
         }
