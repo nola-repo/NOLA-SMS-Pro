@@ -33,7 +33,7 @@ function unisms_header_value(string $name): string
     return '';
 }
 
-function unisms_validate_webhook(array $config): void
+function unisms_webhook_secret_status(array $config): array
 {
     $receivedSecret = unisms_header_value('X-Webhook-Secret');
     if ($receivedSecret === '') {
@@ -48,17 +48,16 @@ function unisms_validate_webhook(array $config): void
 
     if (empty($expectedSecrets)) {
         error_log('[receive_sms_unisms] Server misconfiguration: no webhook secret configured.');
-        unisms_json(500, ['status' => 'error', 'message' => 'Server misconfiguration: webhook secret missing']);
+        return ['ok' => false, 'configured' => false, 'secret_present' => $receivedSecret !== ''];
     }
 
     foreach ($expectedSecrets as $expectedSecret) {
         if ($receivedSecret !== '' && hash_equals($expectedSecret, $receivedSecret)) {
-            return;
+            return ['ok' => true, 'configured' => true, 'secret_present' => true];
         }
     }
 
-    error_log('[receive_sms_unisms] Unauthorized webhook request. secret_present=' . ($receivedSecret !== '' ? 'yes' : 'no'));
-    unisms_json(401, ['status' => 'error', 'message' => 'Unauthorized Access']);
+    return ['ok' => false, 'configured' => true, 'secret_present' => $receivedSecret !== ''];
 }
 
 function unisms_clean_number($number): string
@@ -98,15 +97,31 @@ function unisms_event_is_status_callback(string $event): bool
         && !in_array($event, ['message.received', 'message.inbound', 'message.reply'], true);
 }
 
-function unisms_update_outbound_status($db, array $data, array $messageObj, string $event): array
+function unisms_reference_id(array $data, array $messageObj): string
 {
-    $referenceId = trim((string)(
+    return trim((string)(
         $messageObj['reference_id']
         ?? $messageObj['id']
         ?? $data['id']
         ?? $data['reference_id']
         ?? ''
     ));
+}
+
+function unisms_existing_record_matches(array $record, string $referenceId): bool
+{
+    $provider = strtolower(trim((string)($record['provider'] ?? '')));
+    $source = strtolower(trim((string)($record['source'] ?? '')));
+    $providerReferenceId = trim((string)($record['provider_reference_id'] ?? ''));
+    $messageId = trim((string)($record['message_id'] ?? ''));
+
+    return ($provider === 'unisms' || $source === 'unisms')
+        && ($providerReferenceId === $referenceId || $messageId === $referenceId || $providerReferenceId === '');
+}
+
+function unisms_update_outbound_status($db, array $data, array $messageObj, string $event, bool $requireExistingUnismsRecord = false): array
+{
+    $referenceId = unisms_reference_id($data, $messageObj);
     $providerStatus = (string)($messageObj['status'] ?? $data['status'] ?? $event);
     $localStatus = unisms_status_to_local($providerStatus, $event);
     $now = new \Google\Cloud\Core\Timestamp(new \DateTime());
@@ -130,6 +145,9 @@ function unisms_update_outbound_status($db, array $data, array $messageObj, stri
             $docRef = $db->collection($collection)->document($referenceId);
             $snap = $docRef->snapshot();
             if ($snap->exists()) {
+                if ($requireExistingUnismsRecord && !unisms_existing_record_matches($snap->data(), $referenceId)) {
+                    continue;
+                }
                 $docRef->update($updatePayload);
                 $updated[] = "{$collection}/{$referenceId}";
                 continue;
@@ -147,6 +165,9 @@ function unisms_update_outbound_status($db, array $data, array $messageObj, stri
                 if (!$doc->exists()) {
                     continue;
                 }
+                if ($requireExistingUnismsRecord && !unisms_existing_record_matches($doc->data(), $referenceId)) {
+                    continue;
+                }
                 $doc->reference()->update($updatePayload);
                 $updated[] = "{$collection}/" . $doc->id();
             }
@@ -157,8 +178,6 @@ function unisms_update_outbound_status($db, array $data, array $messageObj, stri
 
     return ['updated' => array_values(array_unique($updated)), 'status' => $localStatus, 'reference_id' => $referenceId];
 }
-
-unisms_validate_webhook($config);
 
 $raw = file_get_contents('php://input');
 $data = json_decode($raw, true);
@@ -173,9 +192,14 @@ error_log('[receive_sms_unisms] Inbound webhook payload: ' . $raw);
 $event = (string)($data['event'] ?? '');
 $messageObj = is_array($data['message'] ?? null) ? $data['message'] : [];
 $db = get_firestore();
+$auth = unisms_webhook_secret_status($config);
 
 if (unisms_event_is_status_callback($event)) {
-    $result = unisms_update_outbound_status($db, $data, $messageObj, $event);
+    $result = unisms_update_outbound_status($db, $data, $messageObj, $event, !$auth['ok']);
+    if (!$auth['ok'] && empty($result['updated'])) {
+        error_log('[receive_sms_unisms] Unauthorized status webhook. secret_present=' . ($auth['secret_present'] ? 'yes' : 'no') . ' reference_id=' . (string)$result['reference_id']);
+        unisms_json(401, ['status' => 'error', 'message' => 'Unauthorized Access']);
+    }
     unisms_json(200, [
         'status' => 'success',
         'message' => 'Webhook processed',
@@ -184,7 +208,16 @@ if (unisms_event_is_status_callback($event)) {
         'reference_id' => $result['reference_id'],
         'local_status' => $result['status'],
         'updated' => $result['updated'],
+        'auth' => $auth['ok'] ? 'secret' : 'matched_existing_unisms_record',
     ]);
+}
+
+if (!$auth['ok']) {
+    if (!$auth['configured']) {
+        unisms_json(500, ['status' => 'error', 'message' => 'Server misconfiguration: webhook secret missing']);
+    }
+    error_log('[receive_sms_unisms] Unauthorized inbound webhook. secret_present=' . ($auth['secret_present'] ? 'yes' : 'no'));
+    unisms_json(401, ['status' => 'error', 'message' => 'Unauthorized Access']);
 }
 
 $senderRaw = $messageObj['sender'] ?? $messageObj['from'] ?? $messageObj['number'] ?? $data['sender'] ?? '';
