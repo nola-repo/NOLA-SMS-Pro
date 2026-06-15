@@ -44,19 +44,32 @@ function log_sms($label, $data)
 function log_full_payload($raw, $payload)
 {
     $headers = function_exists('getallheaders') ? getallheaders() : [];
+    $redactedHeaders = [];
+    foreach ($headers as $key => $value) {
+        $keyString = (string)$key;
+        if (preg_match('/^(authorization|x-webhook-secret|x-api-key|cookie)$/i', $keyString)) {
+            $redactedHeaders[$keyString] = '[REDACTED]';
+            continue;
+        }
+        $redactedHeaders[$keyString] = $value;
+    }
+
     $debug = [
         "timestamp" => date('Y-m-d H:i:s'),
         "method" => $_SERVER['REQUEST_METHOD'] ?? null,
         "uri" => $_SERVER['REQUEST_URI'] ?? null,
-        "headers" => $headers,
+        "headers" => $redactedHeaders,
         "raw_body" => $raw,
         "json_decoded_payload" => $payload,
         "post_data" => $_POST,
         "get_data" => $_GET
     ];
     error_log("[FULL_PAYLOAD] " . json_encode($debug));
-    $payloadFile = sys_get_temp_dir() . '/last_payload_debug.json';
-    file_put_contents($payloadFile, json_encode($debug, JSON_PRETTY_PRINT));
+
+    if (getenv('SMS_PAYLOAD_DEBUG') === '1') {
+        $payloadFile = sys_get_temp_dir() . '/last_payload_debug.json';
+        file_put_contents($payloadFile, json_encode($debug, JSON_PRETTY_PRINT));
+    }
 }
 
 /* |-------------------------------------------------------------------------- | CLEAN PH NUMBERS |-------------------------------------------------------------------------- */
@@ -164,13 +177,11 @@ function calculate_credits($message, $num_recipients)
 
 /* |-------------------------------------------------------------------------- | DEBUG VIEW |-------------------------------------------------------------------------- */
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-    $file = sys_get_temp_dir() . '/last_payload_debug.json';
-    if (file_exists($file)) {
-        echo file_get_contents($file);
-    }
-    else {
-        echo json_encode(["status" => "empty"]);
-    }
+    http_response_code(405);
+    echo json_encode([
+        "status" => "error",
+        "message" => "SMS endpoint requires POST"
+    ]);
     exit;
 }
 
@@ -962,6 +973,7 @@ if (!empty($message_results)) {
             'provider' => $chosenProvider,
             'provider_status' => $msg['status'] ?? null,
             'provider_response' => $msg['provider_response'] ?? null,
+            'provider_error' => $msg['error'] ?? null,
             'idempotency_key' => $idempotencyKey ?? null,
             'is_system' => $isSystemNotification
         ];
@@ -987,6 +999,8 @@ if (!empty($message_results)) {
             'conversation_id' => $conversation_id,
             'provider_reference_id' => $msg['provider_reference_id'] ?? $messageId,
             'provider_status' => $msg['status'] ?? null,
+            'provider_error' => $msg['error'] ?? null,
+            'provider_response' => $msg['provider_response'] ?? null,
             'idempotency_key' => $idempotencyKey ?? null,
             'is_system' => $isSystemNotification
         ];

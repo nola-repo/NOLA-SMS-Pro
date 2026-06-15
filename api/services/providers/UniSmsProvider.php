@@ -103,6 +103,9 @@ class UniSmsProvider implements SmsProviderInterface
 
         if ($res['code'] < 200 || $res['code'] >= 300) {
             $msg = $res['body']['message'] ?? $res['body']['error'] ?? 'UniSMS HTTP ' . $res['code'];
+            if ($msg === 'UniSMS HTTP ' . $res['code'] && trim((string)$res['raw']) !== '') {
+                $msg .= ': ' . substr((string)$res['raw'], 0, 300);
+            }
             throw new \Exception("UniSMS send failed: " . $msg);
         }
 
@@ -136,7 +139,11 @@ class UniSmsProvider implements SmsProviderInterface
                     'message_id' => 'failed_' . bin2hex(random_bytes(4)),
                     'status' => 'failed',
                     'recipient' => $number,
-                    'error' => $e->getMessage()
+                    'error' => $e->getMessage(),
+                    'provider_response' => [
+                        'status' => 'failed',
+                        'error' => $e->getMessage(),
+                    ],
                 ];
             }
         }
