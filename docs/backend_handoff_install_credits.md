@@ -49,15 +49,15 @@ When a new location installs NOLA SMS Pro, they receive 10 free credits automati
 
 ---
 
-## 4. Free Credit Tracking (Shared Sender)
+## 4. Free Credit Tracking
 
-In `send_sms.php`, when using the shared `NOLASMSPro` sender:
+In `send_sms.php`, before paid wallet deduction:
 1. Validate that `free_usage_count < free_credits_total`.
-2. Block send if limit is reached.
+2. Fall back to paid wallet deduction if the trial limit is reached.
 3. Increment `free_usage_count` upon successful send.
 
 > [!NOTE]
-> This tracking is bypassed if an `approved_sender_id` is used, as those sends rely on the account's standard `credit_balance`.
+> The install trial is consumed before paid platform credits regardless of provider path. Custom/approved sender sends still route through their configured provider, but paid NOLA credits are required only after the trial is exhausted.
 
 ---
 

@@ -281,7 +281,7 @@ $creditManager = new CreditManager();
 //
 // PATH A — Subaccount has its own (external) API key:
 //   → Route through their key. They own their sender registrations.
-//   → NOLA credits still deducted (no bypass), but free trial is skipped.
+//   → Trial credits apply first; paid NOLA platform credits apply after trial.
 //
 // PATH B — Using the NOLA master billing gateway:
 //   → Sender MUST be in MASTER_APPROVED_SENDERS or fall back to NOLASMSPro.
@@ -324,9 +324,8 @@ if ($userKey !== '' && $userKey !== $sysKey) {
 }
 
 // ── Charging Logic ───────────────────────────────────────────────────────────
-// Own-API-key users skip free trial but still consume NOLA credits.
-// Free trial only applies on the master gateway (PATH B).
-$usingFreeCredits = !$usingOwnApiKey && ($freeUsageCount + $required_credits <= $freeCreditsTotal);
+// Trial credits apply before paid wallet deduction, regardless of provider path.
+$usingFreeCredits = ($freeUsageCount + $required_credits <= $freeCreditsTotal);
 
 // ── Debug: Log the billing decision path ────────────────────────────────────
 error_log("[ghl_provider] BILLING DECISION for loc={$locationId}: " . json_encode([

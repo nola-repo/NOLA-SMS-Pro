@@ -177,6 +177,20 @@ try {
     $data = $snapshot->exists() ? $snapshot->data() : [];
 
     if ($snapshot->exists()) {
+        $trialBackfill = [];
+        if (!array_key_exists('free_credits_total', $data)) {
+            $trialBackfill['free_credits_total'] = 10;
+            $data['free_credits_total'] = 10;
+        }
+        if (!array_key_exists('free_usage_count', $data)) {
+            $trialBackfill['free_usage_count'] = 0;
+            $data['free_usage_count'] = 0;
+        }
+        if (!empty($trialBackfill)) {
+            $trialBackfill['updated_at'] = new \Google\Cloud\Core\Timestamp(new \DateTimeImmutable());
+            $docRef->set($trialBackfill, ['merge' => true]);
+        }
+
         $currency = $data['currency'] ?? 'PHP';
 
         // One-time migration: check if credits are orphaned in 'accounts' collection
@@ -215,11 +229,16 @@ try {
         $currency = 'PHP';
         $docRef->set([
             'credit_balance' => 0,
+            'free_credits_total' => 10,
+            'free_usage_count' => 0,
             'currency' => $currency,
             'created_at' => new \Google\Cloud\Core\Timestamp($now),
             'updated_at' => new \Google\Cloud\Core\Timestamp($now),
         ]);
-        $data = [];
+        $data = [
+            'free_credits_total' => 10,
+            'free_usage_count' => 0,
+        ];
         $createdAt = $now->format('Y-m-d H:i:s');
         $updatedAt = $createdAt;
     }
@@ -302,7 +321,7 @@ try {
         'account_id' => $locId,
         'credit_balance' => $creditBalance,
         'free_usage_count' => (int)($data['free_usage_count'] ?? 0),
-        'free_credits_total' => (int)($data['free_credits_total'] ?? 0),
+        'free_credits_total' => (int)($data['free_credits_total'] ?? 10),
         'currency' => $currency,
         'created_at' => $createdAt,
         'updated_at' => $updatedAt,

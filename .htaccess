@@ -98,8 +98,8 @@
     RewriteRule ^api/auth/login/?$    /api/auth/login.php    [NC,L,QSA]
     RewriteRule ^api/auth/me/?$       /api/auth/me.php       [NC,L,QSA]
     RewriteRule ^api/agency/ghl_autologin/?$ /api/agency/ghl_autologin.php [NC,L,QSA]
-    # Legacy/wrong path used by some frontend builds — alias to agency autologin
-    RewriteRule ^api/auth/ghl_autologin/?$ /api/agency/ghl_autologin.php [NC,L,QSA]
+    # Legacy user-app path: location-level autologin.
+    RewriteRule ^api/auth/ghl_autologin/?$ /api/auth/ghl_autologin.php [NC,L,QSA]
     RewriteRule ^api/agency/ghl_sso_decrypt/?$ /api/agency/ghl_sso_decrypt.php [NC,L,QSA]
     RewriteRule ^api/agency/link_company/?$ /api/agency/link_company.php [NC,L,QSA]
     RewriteRule ^api/agency/get_subaccounts/?$ /api/agency/get_subaccounts.php [NC,L,QSA]

@@ -37,7 +37,8 @@ if ($allowOrigin !== '') {
 }
 header('Vary: Origin');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE, PATCH');
-header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Webhook-Secret, X-GHL-Location-ID, X-GHL-LocationID, X-Agency-ID');
+header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Authorization, X-Auth-Token, X-Webhook-Secret, X-GHL-Location-ID, X-GHL-LocationID, X-Agency-ID, X-Request-ID, X-Correlation-ID, Idempotency-Key');
+header('Access-Control-Expose-Headers: X-Request-ID, X-Correlation-ID');
 header('Access-Control-Allow-Credentials: true');
 header('Access-Control-Max-Age: 86400');
 

@@ -633,12 +633,12 @@ if ($userKey !== '' && $userKey !== $sysKey) {
 // ── Charging Logic (Quota vs Paid) ───────────────────────────────────────────
 // Rules per handoff design:
 // - Subaccounts using the NOLA master gateway: free trial applies first, then paid.
-// - Subaccounts using their OWN API key (PATH A): skip free trial, go straight to paid.
-//   (They route their own SMS costs, but NOLA credits are ALWAYS deducted — no bypass.)
+// - Subaccounts using their OWN API key (PATH A): trial applies before paid credits.
+//   (They route their own SMS costs, but paid NOLA platform credits apply after trial.)
 // IMPORTANT: credit count uses $required_credits (actual SMS segments), NOT $num_recipients.
 
-// Free trial only applies on the master gateway (PATH B). Own-API-key senders skip it.
-$usingFreeCredits = !$usingCustomSender && ($freeUsageCount + $required_credits <= $freeCreditsTotal);
+// Free trial applies before paid wallet deduction, regardless of provider path.
+$usingFreeCredits = ($freeUsageCount + $required_credits <= $freeCreditsTotal);
 
 $creditManager = new CreditManager();
 require_once __DIR__ . '/../services/SmsGatewayService.php';
@@ -699,7 +699,7 @@ if ($bypassBilling) {
 
 } else {
     // Paid deduction — applies to ALL sends (both PATH A and non-trial PATH B).
-    // Own-API-key users consume NOLA credits for platform usage; free trial is simply skipped.
+    // Own-API-key users consume paid NOLA platform credits only after trial is exhausted.
 
     // Resolve agency_id for logging and lock check.
     // Primary: agency_subaccounts/{locId}.agency_id
