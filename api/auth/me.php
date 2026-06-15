@@ -168,7 +168,7 @@ try {
 
     $fallbackNames = ['No Agency', 'Unnamed Agency', 'Unknown Agency', 'Unknown'];
     $existingCompanyName = trim((string)($d['company_name'] ?? ''));
-    $needsResolution = $isAgency && (
+    $needsResolution = (
         empty($existingCompanyName) ||
         in_array($existingCompanyName, $fallbackNames, true)
     );

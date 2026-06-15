@@ -10,9 +10,94 @@ header('Content-Type: application/json');
 require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
 
-validate_api_request();
-
 $db = get_firestore();
+
+// Authentication: Support Webhook-Secret, Admin JWT, or Agency JWT
+$authenticated = false;
+
+// 1. Try Webhook Secret
+$receivedSecret = $_SERVER['HTTP_X_WEBHOOK_SECRET'] ?? '';
+if (!$receivedSecret) {
+    $headers = function_exists('getallheaders') ? getallheaders() : [];
+    foreach ($headers as $key => $value) {
+        if (strcasecmp($key, 'X-Webhook-Secret') === 0) {
+            $receivedSecret = $value;
+            break;
+        }
+    }
+}
+if (!$receivedSecret) {
+    $receivedSecret = $_GET['secret'] ?? $_GET['token'] ?? '';
+}
+$expectedSecret = getenv('WEBHOOK_SECRET');
+if ($expectedSecret !== false && trim((string)$expectedSecret) !== '' && $receivedSecret !== '' && hash_equals($expectedSecret, (string)$receivedSecret)) {
+    $authenticated = true;
+}
+
+// 2. Try Admin JWT or Agency JWT
+if (!$authenticated) {
+    $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
+    if (!$authHeader) {
+        $headers = function_exists('getallheaders') ? getallheaders() : [];
+        foreach ($headers as $key => $value) {
+            if (strcasecmp($key, 'Authorization') === 0) {
+                $authHeader = $value;
+                break;
+            }
+        }
+    }
+
+    if ($authHeader && preg_match('/^Bearer\s+(.+)$/i', trim((string)$authHeader), $matches)) {
+        $token = $matches[1];
+        $secret = getenv('JWT_SECRET');
+        if ($secret !== false && trim((string)$secret) !== '') {
+            require_once __DIR__ . '/jwt_helper.php';
+            $claims = jwt_verify($token, (string)$secret);
+            if ($claims) {
+                $role = (string)($claims['role'] ?? '');
+                if (in_array($role, ['super_admin', 'support', 'viewer'], true)) {
+                    $email = strtolower(trim((string)($claims['email'] ?? $claims['username'] ?? '')));
+                    if ($email !== '') {
+                        $adminRef = $db->collection('admins')->document($email);
+                        $snap = $adminRef->snapshot();
+                        if ($snap->exists() && !empty($snap->data()['active'])) {
+                            $authenticated = true;
+                        } else {
+                            $matchesDocs = $db->collection('admins')->where('email', '=', $email)->limit(1)->documents();
+                            foreach ($matchesDocs as $doc) {
+                                if ($doc->exists() && !empty($doc->data()['active'])) {
+                                    $authenticated = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    $jwtCtx = auth_get_optional_jwt_context($db);
+                    if ($jwtCtx !== null) {
+                        $locId = get_ghl_location_id();
+                        if ($locId) {
+                            auth_assert_ghl_api_location_allowed($db, $jwtCtx, $locId);
+                            $authenticated = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+if (!$authenticated) {
+    http_response_code(401);
+    echo json_encode([
+        'success' => false,
+        'status'  => 'error',
+        'error'   => 'Unauthorized Access',
+        'message' => 'Unauthorized Access',
+    ], JSON_PRETTY_PRINT);
+    exit;
+}
+
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 try {
@@ -84,8 +169,10 @@ try {
 
     $responsePayload = [
         'success'      => true,
+        'status'       => 'success',
         'account_id'   => $accountId,
         'count'        => count($transactions),
+        'data'         => $transactions,
         'transactions' => $transactions,
     ];
 
