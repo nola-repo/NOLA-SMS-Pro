@@ -119,6 +119,42 @@ function first_non_empty_payload_value(array ...$sections)
     return null;
 }
 
+function sanitize_firestore_doc_id(string $value): string
+{
+    $clean = preg_replace('/[^a-zA-Z0-9_.:-]/', '_', $value);
+    return substr($clean ?: hash('sha256', $value), 0, 400);
+}
+
+function request_header_value(string $name): ?string
+{
+    $serverKey = 'HTTP_' . strtoupper(str_replace('-', '_', $name));
+    if (!empty($_SERVER[$serverKey])) {
+        return trim((string)$_SERVER[$serverKey]);
+    }
+    if (function_exists('getallheaders')) {
+        foreach (getallheaders() as $key => $value) {
+            if (strcasecmp((string)$key, $name) === 0) {
+                return trim((string)$value);
+            }
+        }
+    }
+    return null;
+}
+
+function canonical_json($value): string
+{
+    if (is_array($value)) {
+        $isList = array_keys($value) === range(0, count($value) - 1);
+        if (!$isList) {
+            ksort($value);
+        }
+        foreach ($value as $k => $v) {
+            $value[$k] = is_array($v) ? json_decode(canonical_json($v), true) : $v;
+        }
+    }
+    return json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+}
+
 /* |-------------------------------------------------------------------------- | CREDIT CALCULATION |-------------------------------------------------------------------------- */
 /** @deprecated Use CreditManager::calculateRequiredCredits() */
 function calculate_credits($message, $num_recipients)
@@ -262,6 +298,124 @@ $jwtCtx = auth_get_optional_jwt_context($db);
 auth_assert_ghl_api_location_allowed($db, $jwtCtx, (string) $locId);
 $ghlTokenRegistryId = auth_resolve_ghl_token_registry_id($db, $jwtCtx, (string) $locId);
 
+// Idempotency guard: prevents duplicate sends and duplicate credit deductions.
+// The frontend may pass Idempotency-Key; otherwise derive a stable short-window key
+// from the normalized send payload.
+$providedIdempotencyKey = request_header_value('Idempotency-Key')
+    ?: ($payload['idempotency_key'] ?? $customData['idempotency_key'] ?? null);
+$requestedSenderForIdempotency = $customData['sendername'] ?? $payload['sendername'] ?? $data['sendername'] ??
+    $customData['sender_name'] ?? $payload['sender_name'] ?? $data['sender_name'] ?? null;
+$idempotencyMaterial = [
+    'location_id' => (string)$locId,
+    'numbers' => array_values($validNumbers),
+    'message' => $message,
+    'sender' => $requestedSenderForIdempotency,
+    'batch_id' => $batch_id,
+    'recipient_key' => $recipient_key,
+];
+$idempotencyKey = $providedIdempotencyKey
+    ? sanitize_firestore_doc_id((string)$providedIdempotencyKey)
+    : ('auto_' . hash('sha256', canonical_json($idempotencyMaterial)));
+$requestHash = hash('sha256', canonical_json($idempotencyMaterial));
+$idempotencyRef = $db->collection('idempotency_keys')->document($idempotencyKey);
+$idempotencyCreated = false;
+try {
+    $existingIdem = $idempotencyRef->snapshot();
+    if ($existingIdem->exists()) {
+        $idemData = $existingIdem->data();
+        $sameRequest = ($idemData['request_hash'] ?? '') === $requestHash;
+        if ($sameRequest && ($idemData['status'] ?? '') === 'completed') {
+            $responseBody = $idemData['response_body'] ?? null;
+            http_response_code((int)($idemData['http_status'] ?? 200));
+            echo json_encode(is_array($responseBody) ? $responseBody : [
+                'status' => 'success',
+                'message' => 'Duplicate request replayed',
+                'output' => [
+                    'success' => true,
+                    'message_ids' => $idemData['message_ids'] ?? [],
+                    'location_id' => $locId,
+                ],
+            ]);
+            exit;
+        }
+        if ($sameRequest && ($idemData['status'] ?? '') === 'processing') {
+            http_response_code(409);
+            echo json_encode([
+                'status' => 'error',
+                'error' => 'duplicate_request',
+                'message' => 'This SMS request is already being processed.',
+                'idempotency_key' => $idempotencyKey,
+            ]);
+            exit;
+        }
+        if ($sameRequest && ($idemData['status'] ?? '') === 'failed') {
+            $idempotencyRef->set([
+                'status' => 'processing',
+                'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+            ], ['merge' => true]);
+            $idempotencyCreated = true;
+        }
+        if (!$sameRequest) {
+            http_response_code(409);
+            echo json_encode([
+                'status' => 'error',
+                'error' => 'idempotency_key_conflict',
+                'message' => 'Idempotency-Key was already used for a different SMS request.',
+            ]);
+            exit;
+        }
+    }
+
+    if (!$idempotencyCreated) {
+        $idempotencyRef->create([
+            'idempotency_key' => $idempotencyKey,
+            'request_hash' => $requestHash,
+            'location_id' => (string)$locId,
+            'status' => 'processing',
+            'created_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+            'expires_at' => new \Google\Cloud\Core\Timestamp((new \DateTime())->modify('+24 hours')),
+        ]);
+        $idempotencyCreated = true;
+    }
+} catch (\Google\Cloud\Core\Exception\ConflictException $e) {
+    http_response_code(409);
+    echo json_encode([
+        'status' => 'error',
+        'error' => 'duplicate_request',
+        'message' => 'This SMS request is already being processed.',
+        'idempotency_key' => $idempotencyKey,
+    ]);
+    exit;
+} catch (\Throwable $e) {
+    Logger::error('Idempotency guard failed open', [
+        'location_id' => $locId,
+        'idempotency_key' => $idempotencyKey,
+        'error' => $e->getMessage(),
+    ]);
+}
+
+$markIdempotencyFailed = function (string $error, string $message, int $httpStatus = 400) use (&$idempotencyRef, &$idempotencyKey) {
+    if (!isset($idempotencyRef)) {
+        return;
+    }
+    try {
+        $idempotencyRef->set([
+            'status' => 'failed',
+            'http_status' => $httpStatus,
+            'error' => $error,
+            'response_body' => [
+                'status' => 'error',
+                'error' => $error,
+                'message' => $message,
+                'idempotency_key' => $idempotencyKey ?? null,
+            ],
+            'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+        ], ['merge' => true]);
+    } catch (\Throwable $e) {
+        error_log('[send_sms] Failed to mark idempotency failure: ' . $e->getMessage());
+    }
+};
+
 // ── System Notification Detection ────────────────────────────────────────────
 // Identifies webhooks originating from the central NOLA admin location that are
 // authorized to send free system notifications (welcome, low-balance, top-up, etc.).
@@ -337,6 +491,7 @@ $lastReset = $tokenData['last_reset_date'] ?? '';
 if (!$toggleEnabled) {
     Logger::error('SMS toggle disabled for location', ['location_id' => $locId]);
     Logger::response(403, ['status' => 'error', 'message' => 'SMS sending is currently disabled.']);
+    $markIdempotencyFailed('sms_disabled', 'SMS sending is currently disabled for this account. Please contact your agency.', 403);
     http_response_code(403);
     echo json_encode([
         'status' => 'error',
@@ -347,6 +502,7 @@ if (!$toggleEnabled) {
 
 $installGate = install_location_sms_gate($db, (string)$locId);
 if (empty($installGate['allowed'])) {
+    $markIdempotencyFailed((string)($installGate['code'] ?? 'install_blocked'), (string)($installGate['reason'] ?? 'NOLA SMS Pro is not installed for this sub-account.'), 403);
     http_response_code(403);
     echo json_encode([
         'status' => 'error',
@@ -370,6 +526,7 @@ if ($lastReset !== $today) {
 if ($rateLimit > 0 && $attemptCount >= $rateLimit) {
     Logger::error('Rate limit reached', ['location_id' => $locId, 'rate_limit' => $rateLimit, 'attempt_count' => $attemptCount]);
     Logger::response(403, ['status' => 'error', 'error' => 'rate_limit_reached']);
+    $markIdempotencyFailed('rate_limit_reached', "Agency subaccount credit limit exceeded ($rateLimit).", 403);
     http_response_code(403);
     echo json_encode([
         "status" => "error", 
@@ -387,8 +544,14 @@ if ($rateLimit > 0 || isset($tokenData['rate_limit'])) {
 }
 
 $approvedSenderId = $intData['approved_sender_id'] ?? null;
-// Support legacy semaphore_api_key but prefer the new nola_pro_api_key
+$providerPreference = $intData['provider_preference'] ?? 'system';
+$unismsApiKey = $intData['unisms_api_key'] ?? null;
+$unismsSenderId = $intData['unisms_sender_id'] ?? null;
+// Support legacy semaphore_api_key but prefer the new nola_pro_api_key.
 $customApiKey = $intData['nola_pro_api_key'] ?? ($intData['semaphore_api_key'] ?? null);
+if (in_array($providerPreference, ['unisms', 'unisms_custom'], true) && !empty($unismsApiKey)) {
+    $customApiKey = $unismsApiKey;
+}
 $freeUsageCount = $intData['free_usage_count'] ?? 0;
 $freeCreditsTotal = $intData['free_credits_total'] ?? 10;
 
@@ -431,6 +594,8 @@ if ($userKey !== '' && $userKey !== $sysKey) {
         $activeApiKey = $SEMAPHORE_API_KEY;
         $sender = 'NOLASMSPro';
         error_log("[send_sms] Result: Explicit NOLASMSPro sender request on external API path. Routing via master gateway instead of approved_sender_id.");
+    } elseif (!empty($unismsSenderId) && in_array($providerPreference, ['unisms', 'unisms_custom'], true)) {
+        $sender = $unismsSenderId;
     } elseif (!empty($approvedSenderId)) {
         $sender = $approvedSenderId;
     } elseif (!empty($requestedSender)) {
@@ -504,7 +669,8 @@ error_log("[send_sms] BILLING DECISION for loc={$locId}: " . json_encode([
     'required_credits'     => $required_credits,
     'num_recipients'       => $num_recipients,
     'account_id'           => $account_id,
-    'customApiKey_present' => !empty($customApiKey),
+        'customApiKey_present' => !empty($customApiKey),
+        'provider_preference'  => $providerPreference,
 ]));
 
 // ── Credit Deduction & Trial ──────────────────────────────────────────────────
@@ -552,6 +718,7 @@ if ($bypassBilling) {
     if ($subBalance <= 0) {
         Logger::error('Insufficient credits — subaccount balance zero', ['location_id' => $locId, 'balance' => $subBalance]);
         Logger::response(402, ['status' => 'error', 'error' => 'insufficient_credits']);
+        $markIdempotencyFailed('insufficient_credits', 'Your account has no credits. Please top up or request credits from your agency.', 402);
         http_response_code(402);
         echo json_encode([
             'status'             => 'error',
@@ -566,6 +733,7 @@ if ($bypassBilling) {
     if ($agency_id && $creditManager->get_agency_master_lock($agency_id)) {
         $agencyBalance = $creditManager->get_agency_balance($agency_id);
         if ($agencyBalance <= 0) {
+            $markIdempotencyFailed('agency_master_lock', 'Sending is temporarily paused by your agency. Please contact your administrator.', 402);
             http_response_code(402);
             echo json_encode([
                 'status'         => 'error',
@@ -582,8 +750,10 @@ if ($bypassBilling) {
         $desc  = "SMS to " . ($num_recipients === 1 ? $validNumbers[0] : "$num_recipients recipient(s)");
         $refId = $batch_id ?? ('sms_' . bin2hex(random_bytes(4)));
 
-        // Tag own-API-key sends so the transaction log shows the correct provider
-        $activeProvider = $gateway->getProviderName();
+        // Tag own-API-key sends so the transaction log shows the correct provider.
+        $activeProvider = in_array($providerPreference, ['unisms', 'unisms_custom'], true)
+            ? 'unisms'
+            : ($gateway->getProviderName() === 'unisms' ? 'unisms' : 'semaphore');
         $baseProvider = ($activeProvider === 'unisms') ? 'unisms' : 'semaphore';
         $provider = $usingCustomSender ? ($baseProvider . '_custom') : $baseProvider;
 
@@ -636,6 +806,7 @@ if ($bypassBilling) {
     } catch (\Exception $e) {
         $errData = json_decode($e->getMessage(), true) ?: null;
         if ($errData && ($errData['error'] ?? '') === 'insufficient_credits') {
+            $markIdempotencyFailed('insufficient_credits', 'Your account has no credits. Please top up or request credits from your agency.', 402);
             http_response_code(402);
             echo json_encode([
                 'status'             => 'error',
@@ -644,6 +815,7 @@ if ($bypassBilling) {
                 'subaccount_balance' => $errData['subaccount_balance'] ?? null,
             ]);
         } else {
+            $markIdempotencyFailed('credit_deduction_failed', 'Credit deduction failed.', 500);
             http_response_code(500);
             echo json_encode(['status' => 'error', 'message' => 'Credit deduction failed: ' . $e->getMessage()]);
         }
@@ -666,7 +838,13 @@ $total_status = 200;
 $chosenProvider = 'semaphore';
 
 try {
-    $gatewayResults = $gateway->send($validNumbers, $message, $sender, $usingCustomSender ? $activeApiKey : null);
+    $gatewayResults = $gateway->send(
+        $validNumbers,
+        $message,
+        $sender,
+        $usingCustomSender ? $activeApiKey : null,
+        $providerPreference
+    );
     $chosenProvider = $gatewayResults['provider'];
     $all_results = $gatewayResults['results'];
 
@@ -770,8 +948,12 @@ if (!empty($message_results)) {
             'date_created' => $ts,
             'name' => $recipientName,
             'message_id' => $messageId,
+            'provider_reference_id' => $msg['provider_reference_id'] ?? $messageId,
             'segments' => $credits_per_message,
             'provider' => $chosenProvider,
+            'provider_status' => $msg['status'] ?? null,
+            'provider_response' => $msg['provider_response'] ?? null,
+            'idempotency_key' => $idempotencyKey ?? null,
             'is_system' => $isSystemNotification
         ];
 
@@ -794,6 +976,9 @@ if (!empty($message_results)) {
             'recipient_key' => $recipient_key ?? $recipient,
             'credits_used' => $credits_per_message,
             'conversation_id' => $conversation_id,
+            'provider_reference_id' => $msg['provider_reference_id'] ?? $messageId,
+            'provider_status' => $msg['status'] ?? null,
+            'idempotency_key' => $idempotencyKey ?? null,
             'is_system' => $isSystemNotification
         ];
 
@@ -939,7 +1124,7 @@ Logger::response(
     ]
 );
 
-echo json_encode([
+$responsePayload = [
     "status"               => $ghlStatus,
     "message"              => $sender,
     "execution_log"        => "Workflow SMS sent via $sender to $summary. Credits: {$reportedCredits}.",
@@ -970,4 +1155,21 @@ echo json_encode([
         "used_credits"          => $reportedCredits,
         "gateway_errors"        => $gateway_errors
     ]
-]);
+];
+
+if (isset($idempotencyRef)) {
+    try {
+        $idempotencyRef->set([
+            'status' => $gatewayAccepted ? 'completed' : 'failed',
+            'http_status' => $gatewayAccepted ? 200 : ($total_status >= 400 ? $total_status : 502),
+            'message_ids' => $saved_message_ids ?? [],
+            'response_body' => $responsePayload,
+            'provider' => $chosenProvider,
+            'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+        ], ['merge' => true]);
+    } catch (\Throwable $e) {
+        error_log('[send_sms] Failed to update idempotency record: ' . $e->getMessage());
+    }
+}
+
+echo json_encode($responsePayload);

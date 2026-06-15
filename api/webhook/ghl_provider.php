@@ -256,7 +256,13 @@ $intSnap = $intRef->snapshot();
 $intData = $intSnap->exists() ? $intSnap->data() : [];
 
 $approvedSenderId = $intData['approved_sender_id'] ?? null;
+$providerPreference = $intData['provider_preference'] ?? 'system';
+$unismsApiKey = $intData['unisms_api_key'] ?? null;
+$unismsSenderId = $intData['unisms_sender_id'] ?? null;
 $customApiKey = $intData['nola_pro_api_key'] ?? ($intData['semaphore_api_key'] ?? null);
+if (in_array($providerPreference, ['unisms', 'unisms_custom'], true) && !empty($unismsApiKey)) {
+    $customApiKey = $unismsApiKey;
+}
 $freeUsageCount = $intData['free_usage_count'] ?? 0;
 $freeCreditsTotal = $intData['free_credits_total'] ?? 10;
 
@@ -293,7 +299,9 @@ if ($userKey !== '' && $userKey !== $sysKey) {
     $usingOwnApiKey = true;
     $activeApiKey   = $customApiKey;
     // Use their approved sender freely — they own their Semaphore account
-    $sender = !empty($approvedSenderId) ? $approvedSenderId : ($SENDER_IDS[0] ?? 'NOLASMSPro');
+    $sender = (!empty($unismsSenderId) && in_array($providerPreference, ['unisms', 'unisms_custom'], true))
+        ? $unismsSenderId
+        : (!empty($approvedSenderId) ? $approvedSenderId : ($SENDER_IDS[0] ?? 'NOLASMSPro'));
 
 } else {
     // ── PATH B: Master billing gateway ───────────────────────────────────────
@@ -330,6 +338,7 @@ error_log("[ghl_provider] BILLING DECISION for loc={$locationId}: " . json_encod
     'account_id'           => $account_id,
     'sender'               => $sender,
     'customApiKey_present' => !empty($customApiKey),
+    'provider_preference'  => $providerPreference,
     'intDocId'             => $intDocId,
     'intSnap_exists'       => $intSnap->exists(),
 ]));
@@ -441,7 +450,9 @@ if ($usingFreeCredits) {
                 error_log("[ghl_provider] agency_id resolved from ghl_tokens.companyId={$agency_id} for loc={$locationId}");
             }
         }
-        $activeProvider = $gateway->getProviderName();
+        $activeProvider = in_array($providerPreference, ['unisms', 'unisms_custom'], true)
+            ? 'unisms'
+            : $gateway->getProviderName();
         $baseProvider = ($activeProvider === 'unisms') ? 'unisms' : 'semaphore';
         $provider  = $usingOwnApiKey ? ($baseProvider . '_custom') : $baseProvider;
 
@@ -520,7 +531,7 @@ $smsStatus = 502;
 $gateway_error = 'Unknown gateway error';
 
 try {
-    $res = $gateway->send([$normalizedPhone], $message, $sender, $usingOwnApiKey ? $activeApiKey : null);
+    $res = $gateway->send([$normalizedPhone], $message, $sender, $usingOwnApiKey ? $activeApiKey : null, $providerPreference);
     $chosenProvider = $res['provider'];
     $gatewayResults = $res['results'];
 
@@ -618,6 +629,9 @@ $msgData = [
     'segments'        => $required_credits,
     'source'          => 'ghl_provider',
     'provider'        => $chosenProvider,
+    'provider_reference_id' => $firstRes['provider_reference_id'] ?? $storedMsgId,
+    'provider_status' => $firstRes['status'] ?? null,
+    'provider_response' => $firstRes['provider_response'] ?? null,
     'name'            => $displayName,
 ];
 
@@ -634,6 +648,8 @@ $logData = [
     'date_created'    => $ts,
     'source'          => $chosenProvider,
     'provider'        => $chosenProvider,
+    'provider_reference_id' => $firstRes['provider_reference_id'] ?? $storedMsgId,
+    'provider_status' => $firstRes['status'] ?? null,
     'credits_used'    => $required_credits,
     'conversation_id' => $convId,
 ];

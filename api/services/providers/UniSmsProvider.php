@@ -7,17 +7,23 @@ class UniSmsProvider implements SmsProviderInterface
     private $defaultApiKey;
     private $defaultSenderId;
     private $endpoint;
+    private $timeoutSeconds;
 
     public function __construct(array $config = [])
     {
         $this->defaultApiKey = $config['UNISMS_API_KEY'] ?? '';
         $this->defaultSenderId = $config['UNISMS_SENDER_ID'] ?? '';
         $this->endpoint = $config['UNISMS_ENDPOINT'] ?? 'https://unismsapi.com/api';
+        $this->timeoutSeconds = (int)($config['UNISMS_TIMEOUT_SECONDS'] ?? 15);
     }
 
     private function getApiKey(?string $apiKey): string
     {
-        return !empty($apiKey) ? $apiKey : $this->defaultApiKey;
+        $resolved = !empty($apiKey) ? $apiKey : $this->defaultApiKey;
+        if (trim((string)$resolved) === '') {
+            throw new \Exception('UniSMS API key is not configured');
+        }
+        return $resolved;
     }
 
     private function formatNumber(string $number): string
@@ -46,7 +52,7 @@ class UniSmsProvider implements SmsProviderInterface
         ];
 
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+        curl_setopt($ch, CURLOPT_TIMEOUT, max(3, $this->timeoutSeconds));
         curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
         curl_setopt($ch, CURLOPT_USERPWD, $apiKey . ":");
 
@@ -69,8 +75,17 @@ class UniSmsProvider implements SmsProviderInterface
         $decoded = json_decode($response, true);
         return [
             'code' => $httpCode,
-            'body' => is_array($decoded) ? $decoded : []
+            'body' => is_array($decoded) ? $decoded : [],
+            'raw' => (string)$response,
         ];
+    }
+
+    private function messageBody(array $body): array
+    {
+        if (isset($body['message']) && is_array($body['message'])) {
+            return $body['message'];
+        }
+        return $body;
     }
 
     public function sendSingle(string $number, string $message, string $senderId, ?string $apiKey = null): array
@@ -91,7 +106,7 @@ class UniSmsProvider implements SmsProviderInterface
             throw new \Exception("UniSMS send failed: " . $msg);
         }
 
-        $body = $res['body'];
+        $body = $this->messageBody($res['body']);
         $refId = $body['reference_id'] ?? $body['id'] ?? null;
         if (!$refId) {
             throw new \Exception("UniSMS response missing reference_id");
@@ -99,8 +114,10 @@ class UniSmsProvider implements SmsProviderInterface
 
         return [
             'message_id' => (string)$refId,
+            'provider_reference_id' => (string)$refId,
             'status' => $this->normalizeStatus($body['status'] ?? 'pending'),
-            'recipient' => $number
+            'recipient' => $number,
+            'provider_response' => $body,
         ];
     }
 
@@ -138,8 +155,7 @@ class UniSmsProvider implements SmsProviderInterface
                 return ['status' => 'error'];
             }
 
-            $body = $res['body'];
-            // Handle array or direct object response structure
+            $body = $this->messageBody($res['body']);
             $statusStr = '';
             if (isset($body[0]['status'])) {
                 $statusStr = $body[0]['status'];
@@ -172,7 +188,9 @@ class UniSmsProvider implements SmsProviderInterface
 
             return [
                 'status' => $status,
-                'credits' => (int)$credits
+                'credits' => (int)$credits,
+                'email' => $body['email'] ?? null,
+                'sid_tokens' => isset($body['sid_tokens']) ? (int)$body['sid_tokens'] : null,
             ];
         } catch (\Exception $e) {
             return ['status' => 'inactive', 'credits' => 0];

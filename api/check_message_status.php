@@ -42,6 +42,8 @@ $db = get_firestore();
 // Resolve the API key for this location
 $systemApiKey = $config['SEMAPHORE_API_KEY'];
 $customKey = null;
+$customProviderPreference = 'system';
+$customUniSmsKey = null;
 if ($locId) {
     try {
         $intDoc = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
@@ -49,6 +51,8 @@ if ($locId) {
         if ($snap->exists()) {
             $idat = $snap->data();
             $customKey = $idat['nola_pro_api_key'] ?? ($idat['semaphore_api_key'] ?? null);
+            $customUniSmsKey = $idat['unisms_api_key'] ?? null;
+            $customProviderPreference = $idat['provider_preference'] ?? 'system';
         }
     } catch (\Exception $e) {
         // Fall back to system key
@@ -101,7 +105,17 @@ foreach ($messageIds as $messageId) {
 
     // 2. Resolve provider and check status
     $providerInstance = $gateway->getProviderInstance($providerName);
-    $activeApiKey = ($customKey && !$isSystem) ? $customKey : $systemApiKey;
+    $activeApiKey = null;
+    if (!$isSystem) {
+        if ($providerName === 'unisms' && !empty($customUniSmsKey) && in_array($customProviderPreference, ['unisms', 'unisms_custom'], true)) {
+            $activeApiKey = $customUniSmsKey;
+        } elseif ($providerName === 'semaphore' && !empty($customKey)) {
+            $activeApiKey = $customKey;
+        }
+    }
+    if ($activeApiKey === null && $providerName === 'semaphore') {
+        $activeApiKey = $systemApiKey;
+    }
 
     $status = 'Sending';
     try {

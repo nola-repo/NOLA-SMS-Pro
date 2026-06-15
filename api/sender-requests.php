@@ -9,6 +9,7 @@ header('Content-Type: application/json');
 
 require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
+require_once __DIR__ . '/cache_helper.php';
 
 // 1. Authentication
 validate_api_request();
@@ -24,6 +25,18 @@ if (!$locId) {
 
 $db = get_firestore();
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+
+function normalize_sender_provider($value): string
+{
+    $provider = strtolower(trim((string)($value ?? 'system')));
+    if (in_array($provider, ['unisms', 'unisms_custom'], true)) {
+        return 'unisms';
+    }
+    if (in_array($provider, ['semaphore', 'semaphore_custom'], true)) {
+        return 'semaphore';
+    }
+    return 'system';
+}
 
 try {
     if ($method === 'GET') {
@@ -41,6 +54,9 @@ try {
                     'location_id' => $d['location_id'] ?? $locId,
                     'requested_id' => $d['requested_id'] ?? '',
                     'status' => $d['status'] ?? 'pending',
+                    'provider' => normalize_sender_provider($d['provider'] ?? $d['sms_provider'] ?? $d['provider_preference'] ?? 'system'),
+                    'provider_preference' => $d['provider_preference'] ?? null,
+                    'unisms_sender_id' => $d['unisms_sender_id'] ?? null,
                     'purpose' => $d['purpose'] ?? '',
                     'sample_message' => $d['sample_message'] ?? '',
                     'created_at' => (isset($d['created_at']) && $d['created_at'] instanceof \Google\Cloud\Core\Timestamp) 
@@ -68,6 +84,7 @@ try {
         if (!is_array($payload)) $payload = $_POST;
 
         $requestedId = $payload['requested_id'] ?? null;
+        $provider = normalize_sender_provider($payload['provider'] ?? $payload['sms_provider'] ?? $payload['provider_preference'] ?? 'system');
         $purpose = $payload['purpose'] ?? '';
         $sampleMessage = $payload['sample_message'] ?? '';
 
@@ -105,12 +122,16 @@ try {
             'location_id' => $locId,
             'requested_id' => $requestedId,
             'requested_id_lower' => $requestedIdLower,
+            'provider' => $provider,
+            'provider_preference' => $provider === 'unisms' ? 'unisms' : ($provider === 'semaphore' ? 'semaphore' : 'system'),
+            'unisms_sender_id' => $provider === 'unisms' ? $requestedId : null,
             'purpose' => $purpose,
             'sample_message' => $sampleMessage,
             'status' => 'pending',
             'created_at' => $now,
             'updated_at' => $now
         ]);
+        NolaCache::invalidateAdminDashboard();
 
         // 3. Dispatch pending email notification
         try {
@@ -129,7 +150,7 @@ try {
                 'location_id'   => $locId,
                 'location_name' => $locationName,
                 'email'         => $accountDetails['email'] ?? '',
-                'metadata'      => ['sender_id' => $requestedId],
+                'metadata'      => ['sender_id' => $requestedId, 'provider' => $provider],
             ]);
         } catch (\Throwable $e) {
             error_log("[sender-requests.php] Failed to log admin notification: " . $e->getMessage());
@@ -173,6 +194,7 @@ try {
         }
 
         $requestRef->delete();
+        NolaCache::invalidateAdminDashboard();
         echo json_encode(['status' => 'success', 'message' => 'Sender request cancelled']);
         exit;
     }

@@ -37,6 +37,7 @@ class SmsGatewayService
             'UNISMS_API_KEY' => $systemConfig['UNISMS_API_KEY'] ?? '',
             'UNISMS_SENDER_ID' => $systemConfig['UNISMS_SENDER_ID'] ?? '',
             'UNISMS_ENDPOINT' => $systemConfig['UNISMS_ENDPOINT'] ?? 'https://unismsapi.com/api',
+            'UNISMS_TIMEOUT_SECONDS' => (int)($systemConfig['UNISMS_TIMEOUT_SECONDS'] ?? 15),
             'active_provider' => 'semaphore',
             'failover_timeout_seconds' => 8,
             'failover_log_enabled' => true
@@ -56,6 +57,9 @@ class SmsGatewayService
                 }
                 if (!empty($data['unisms_endpoint'])) {
                     $resolvedConfig['UNISMS_ENDPOINT'] = $data['unisms_endpoint'];
+                }
+                if (!empty($data['unisms_timeout_seconds'])) {
+                    $resolvedConfig['UNISMS_TIMEOUT_SECONDS'] = (int)$data['unisms_timeout_seconds'];
                 }
                 $resolvedConfig['failover_timeout_seconds'] = (int)($data['failover_timeout_seconds'] ?? 8);
                 $resolvedConfig['failover_log_enabled'] = (bool)($data['failover_log_enabled'] ?? true);
@@ -90,15 +94,24 @@ class SmsGatewayService
     {
         // 1. Resolve preferred/forced provider
         $providerName = $providerPreference ?: $this->activeProviderName;
+        if ($providerName === 'system') {
+            $providerName = $this->activeProviderName;
+        }
 
         // 2. Dynamic Routing Override
         if ($customApiKey !== null) {
             // Path A: Subaccount custom API key determines provider
-            $providerName = str_starts_with(trim($customApiKey), 'sk_') ? 'unisms' : 'semaphore';
+            if (in_array($providerName, ['unisms', 'unisms_custom'], true)) {
+                $providerName = 'unisms';
+            } elseif (in_array($providerName, ['semaphore', 'semaphore_custom'], true)) {
+                $providerName = 'semaphore';
+            } else {
+                $providerName = str_starts_with(trim($customApiKey), 'sk_') ? 'unisms' : 'semaphore';
+            }
         } else {
             // Path B: Master gateway sender ID determines provider
             $unismsSender = trim($this->config['UNISMS_SENDER_ID'] ?? '');
-            if ($unismsSender !== '' && strcasecmp(trim($senderId), $unismsSender) === 0) {
+            if ($providerName === 'unisms' || ($unismsSender !== '' && strcasecmp(trim($senderId), $unismsSender) === 0)) {
                 $providerName = 'unisms';
             } else {
                 // If the selected sender is not the dedicated UniSMS sender, assume Semaphore

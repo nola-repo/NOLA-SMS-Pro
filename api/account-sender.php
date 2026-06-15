@@ -26,6 +26,17 @@ $db = get_firestore();
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 $docId = (string) $locId;
 
+function nola_mask_secret(?string $secret): ?string
+{
+    $secret = trim((string)($secret ?? ''));
+    if ($secret === '') {
+        return null;
+    }
+    $last = substr($secret, -4);
+    $prefix = substr($secret, 0, 3);
+    return $prefix . '...' . $last;
+}
+
 try {
     if ($method === 'GET') {
         // 3. Database Query (Source: integrations collection)
@@ -64,8 +75,12 @@ try {
                 'sender_id' => $approvedSenderId,
                 'verified' => !empty($approvedSenderId),
                 'approved_sender_id' => $approvedSenderId,
-                'nola_pro_api_key' => $data['nola_pro_api_key'] ?? ($data['semaphore_api_key'] ?? null),
-                'unisms_api_key' => $data['unisms_api_key'] ?? null,
+                'nola_pro_api_key' => null,
+                'nola_pro_api_key_masked' => nola_mask_secret($data['nola_pro_api_key'] ?? ($data['semaphore_api_key'] ?? null)),
+                'nola_pro_api_key_configured' => !empty($data['nola_pro_api_key'] ?? ($data['semaphore_api_key'] ?? null)),
+                'unisms_api_key' => null,
+                'unisms_api_key_masked' => nola_mask_secret($data['unisms_api_key'] ?? null),
+                'unisms_api_key_configured' => !empty($data['unisms_api_key'] ?? null),
                 'unisms_sender_id' => $data['unisms_sender_id'] ?? null,
                 'provider_preference' => $data['provider_preference'] ?? 'system',
                 'free_usage_count' => $data['free_usage_count'] ?? 0,
@@ -91,6 +106,12 @@ try {
         $unismsApiKey = $payload['unisms_api_key'] ?? null;
         $providerPreference = $payload['provider_preference'] ?? null;
         $unismsSenderId = $payload['unisms_sender_id'] ?? null;
+
+        if ($providerPreference !== null && !in_array($providerPreference, ['system', 'semaphore', 'semaphore_custom', 'unisms', 'unisms_custom'], true)) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'Invalid provider preference.']);
+            exit;
+        }
 
         if (!empty($apiKey)) {
             $ch = curl_init('https://api.semaphore.co/api/v4/account?apikey=' . urlencode($apiKey));
@@ -125,9 +146,11 @@ try {
         ];
         if ($apiKey !== null) {
             $updateData['nola_pro_api_key'] = $apiKey;
+            $updateData['nola_pro_api_key_last4'] = $apiKey === '' ? null : substr((string)$apiKey, -4);
         }
         if ($unismsApiKey !== null) {
             $updateData['unisms_api_key'] = $unismsApiKey;
+            $updateData['unisms_api_key_last4'] = $unismsApiKey === '' ? null : substr((string)$unismsApiKey, -4);
         }
         if ($providerPreference !== null) {
             $updateData['provider_preference'] = $providerPreference;

@@ -13,6 +13,59 @@ validate_api_request();
 
 $db = get_firestore();
 
+function nola_admin_mask_secret(?string $secret): ?string
+{
+    $secret = trim((string)($secret ?? ''));
+    if ($secret === '') {
+        return null;
+    }
+    return substr($secret, 0, 3) . '...' . substr($secret, -4);
+}
+
+function nola_normalize_sms_provider($value): string
+{
+    $provider = strtolower(trim((string)($value ?? 'system')));
+    if (in_array($provider, ['unisms', 'unisms_custom'], true)) {
+        return 'unisms';
+    }
+    if (in_array($provider, ['semaphore', 'semaphore_custom'], true)) {
+        return 'semaphore';
+    }
+    return 'system';
+}
+
+function nola_validate_provider_key(string $provider, string $apiKey): bool
+{
+    if ($provider === 'unisms') {
+        require_once __DIR__ . '/services/providers/UniSmsProvider.php';
+        $uniSms = new UniSmsProvider(['UNISMS_API_KEY' => $apiKey]);
+        $accCheck = $uniSms->checkAccount();
+        return ($accCheck['status'] ?? '') === 'active';
+    }
+
+    $ch = curl_init('https://api.semaphore.co/api/v4/account?apikey=' . urlencode($apiKey));
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    return $httpCode === 200;
+}
+
+function nola_provider_from_payload_or_key(array $payload, array $requestData = [], ?string $apiKey = null): string
+{
+    $explicit = $payload['provider'] ?? $payload['sms_provider'] ?? $payload['provider_preference']
+        ?? $requestData['provider'] ?? $requestData['sms_provider'] ?? $requestData['provider_preference'] ?? null;
+    $provider = nola_normalize_sms_provider($explicit);
+    if ($provider !== 'system') {
+        return $provider;
+    }
+    if ($apiKey !== null && $apiKey !== '') {
+        return str_starts_with($apiKey, 'sk_') ? 'unisms' : 'semaphore';
+    }
+    return 'system';
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'logs') {
     $cacheKey = "admin_dashboard_logs";
     $cachedData = NolaCache::get($cacheKey);
@@ -158,39 +211,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (isset($payload['sender_id'])) {
             $updateData['approved_sender_id'] = $payload['sender_id'];
         }
+        $explicitProvider = nola_provider_from_payload_or_key($payload, [], $payload['api_key'] ?? null);
         if (isset($payload['api_key']) && !empty($payload['api_key'])) {
             $apiKeyToValidate = $payload['api_key'];
-            $isUniSmsKey = (str_starts_with($apiKeyToValidate, 'sk_'));
-            
-            if ($isUniSmsKey) {
-                require_once __DIR__ . '/services/providers/UniSmsProvider.php';
-                $uniSms = new UniSmsProvider(['UNISMS_API_KEY' => $apiKeyToValidate]);
-                $accCheck = $uniSms->checkAccount();
-                $isValidKey = ($accCheck['status'] === 'active');
-            } else {
-                $ch = curl_init('https://api.semaphore.co/api/v4/account?apikey=' . urlencode($apiKeyToValidate));
-                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-                curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-                curl_exec($ch);
-                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-                curl_close($ch);
-                $isValidKey = ($httpCode === 200);
-            }
+            $providerForKey = $explicitProvider === 'system'
+                ? nola_provider_from_payload_or_key([], [], $apiKeyToValidate)
+                : $explicitProvider;
+            $isValidKey = nola_validate_provider_key($providerForKey, $apiKeyToValidate);
 
             if (!$isValidKey) {
                 http_response_code(400);
-                echo json_encode(['status' => 'error', 'message' => 'Invalid API Key. Verification failed.']);
+                echo json_encode(['status' => 'error', 'message' => 'Invalid ' . ucfirst($providerForKey) . ' API Key. Verification failed.']);
                 exit;
             }
 
-            if ($isUniSmsKey) {
+            if ($providerForKey === 'unisms') {
                 $updateData['unisms_api_key'] = $payload['api_key'];
+                $updateData['unisms_api_key_last4'] = substr((string)$payload['api_key'], -4);
                 $updateData['provider_preference'] = 'unisms_custom';
+                if (isset($payload['sender_id'])) {
+                    $updateData['unisms_sender_id'] = $payload['sender_id'];
+                }
             } else {
                 $updateData['nola_pro_api_key']   = $payload['api_key'];
                 $updateData['semaphore_api_key']  = $payload['api_key'];
+                $updateData['nola_pro_api_key_last4'] = substr((string)$payload['api_key'], -4);
                 $updateData['provider_preference'] = 'semaphore_custom';
             }
+        } elseif ($explicitProvider === 'unisms') {
+            $updateData['provider_preference'] = 'unisms';
+            if (isset($payload['sender_id'])) {
+                $updateData['unisms_sender_id'] = $payload['sender_id'];
+            }
+        } elseif ($explicitProvider === 'semaphore') {
+            $updateData['provider_preference'] = 'semaphore';
         }
         if (isset($payload['free_credits_total'])) {
             $updateData['free_credits_total'] = (int)$payload['free_credits_total'];
@@ -333,32 +387,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $reqData = $reqSnapshot->data();
     $locId = $reqData['location_id'];
+    $providerForApproval = nola_provider_from_payload_or_key($payload, $reqData, $apiKey);
 
     if ($status === 'approved' && !empty($apiKey)) {
-        $isUniSmsKey = (str_starts_with($apiKey, 'sk_'));
-        if ($isUniSmsKey) {
-            require_once __DIR__ . '/services/providers/UniSmsProvider.php';
-            $uniSms = new UniSmsProvider(['UNISMS_API_KEY' => $apiKey]);
-            $accCheck = $uniSms->checkAccount();
-            $isValidKey = ($accCheck['status'] === 'active');
-        } else {
-            $ch = curl_init('https://api.semaphore.co/api/v4/account?apikey=' . urlencode($apiKey));
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-            curl_exec($ch);
-            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            curl_close($ch);
-            $isValidKey = ($httpCode === 200);
-        }
+        $providerForKey = $providerForApproval === 'system'
+            ? nola_provider_from_payload_or_key([], [], $apiKey)
+            : $providerForApproval;
+        $isValidKey = nola_validate_provider_key($providerForKey, $apiKey);
 
         if (!$isValidKey) {
             http_response_code(400);
-            echo json_encode(['status' => 'error', 'message' => 'Invalid API Key. Verification failed.']);
+            echo json_encode(['status' => 'error', 'message' => 'Invalid ' . ucfirst($providerForKey) . ' API Key. Verification failed.']);
             exit;
         }
+        $providerForApproval = $providerForKey;
     }
 
     $updateData = ['status' => $status];
+    if ($providerForApproval !== 'system') {
+        $updateData['provider'] = $providerForApproval;
+        $updateData['provider_preference'] = $providerForApproval;
+    }
     if ($status === 'rejected' && $note) {
         $updateData['admin_notes'] = $note;
     }
@@ -384,13 +433,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'approved_sender_id' => $reqData['requested_id'],
             'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
         ];
-        if (str_starts_with($apiKey, 'sk_')) {
-            $updateFields['unisms_api_key'] = $apiKey;
-            $updateFields['provider_preference'] = 'unisms_custom';
-        } else {
-            $updateFields['nola_pro_api_key'] = $apiKey;
-            $updateFields['semaphore_api_key'] = $apiKey;
-            $updateFields['provider_preference'] = 'semaphore_custom';
+        if ($providerForApproval === 'unisms') {
+            $updateFields['unisms_sender_id'] = $reqData['requested_id'];
+            if (!empty($apiKey)) {
+                $updateFields['unisms_api_key'] = $apiKey;
+                $updateFields['unisms_api_key_last4'] = substr((string)$apiKey, -4);
+                $updateFields['provider_preference'] = 'unisms_custom';
+            } else {
+                $updateFields['provider_preference'] = 'unisms';
+            }
+        } elseif ($providerForApproval === 'semaphore') {
+            if (!empty($apiKey)) {
+                $updateFields['nola_pro_api_key'] = $apiKey;
+                $updateFields['semaphore_api_key'] = $apiKey;
+                $updateFields['nola_pro_api_key_last4'] = substr((string)$apiKey, -4);
+                $updateFields['provider_preference'] = 'semaphore_custom';
+            } else {
+                $updateFields['provider_preference'] = 'semaphore';
+            }
         }
         $accountRef->set($updateFields, ['merge' => true]);
 
@@ -437,6 +497,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'approved_sender_id' => null,
                 'nola_pro_api_key'   => null,
                 'semaphore_api_key'  => null,
+                'unisms_api_key'     => null,
+                'unisms_sender_id'   => null,
+                'provider_preference'=> 'system',
                 'updated_at'         => new \Google\Cloud\Core\Timestamp(new \DateTime())
             ], ['merge' => true]);
         }
@@ -461,6 +524,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'approved_sender_id' => null,
                 'nola_pro_api_key'   => null,
                 'semaphore_api_key'  => null,
+                'unisms_api_key'     => null,
+                'unisms_sender_id'   => null,
+                'provider_preference'=> 'system',
                 'updated_at'         => new \Google\Cloud\Core\Timestamp(new \DateTime())
             ], ['merge' => true]);
         }
@@ -736,9 +802,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
                 'company_id' => $companyId,
                 'agency_name' => $agencyName,
                 'approved_sender_id' => $intData['approved_sender_id'] ?? null,
-                'nola_pro_api_key'   => $intData['nola_pro_api_key'] ?? null,
-                'api_key'            => $intData['api_key'] ?? null,
-                'semaphore_api_key'  => $intData['semaphore_api_key'] ?? null,
+                'nola_pro_api_key'   => null,
+                'api_key'            => null,
+                'semaphore_api_key'  => null,
+                'nola_pro_api_key_masked' => nola_admin_mask_secret($intData['nola_pro_api_key'] ?? ($intData['semaphore_api_key'] ?? null)),
+                'nola_pro_api_key_configured' => !empty($intData['nola_pro_api_key'] ?? ($intData['semaphore_api_key'] ?? null)),
+                'unisms_api_key'     => null,
+                'unisms_api_key_masked' => nola_admin_mask_secret($intData['unisms_api_key'] ?? null),
+                'unisms_api_key_configured' => !empty($intData['unisms_api_key'] ?? null),
+                'unisms_sender_id'   => $intData['unisms_sender_id'] ?? null,
+                'provider_preference'=> $intData['provider_preference'] ?? 'system',
                 'credit_balance'     => $creditBalance,
                 'free_usage_count'   => (int)($intData['free_usage_count'] ?? 0),
                 'free_credits_total' => (int)($intData['free_credits_total'] ?? 10),
