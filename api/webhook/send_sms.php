@@ -573,6 +573,9 @@ $requestedSender = $customData['sendername'] ?? $payload['sendername'] ?? $data[
 $usingCustomSender = false;
 $activeApiKey      = $SEMAPHORE_API_KEY;       // Default: master gateway
 $sender            = $SENDER_IDS[0] ?? 'NOLASMSPro'; // Default: system sender
+$billingAgencyId   = '';
+$billingMasterLock = false;
+$billingReferenceId = null;
 
 $sysKey  = trim((string)$SEMAPHORE_API_KEY);
 $userKey = trim((string)($customApiKey ?? ''));
@@ -612,8 +615,8 @@ if ($userKey !== '' && $userKey !== $sysKey) {
         // and low-balance warnings, ignoring any custom caller overrides.
         $sender = 'NOLASMSPro';
         error_log("[send_sms] Result: System notification override. Forcing sender to '{$sender}'.");
-    } elseif (!empty($approvedSenderId)) {
-        // Safe because it was approved by an Admin in the dashboard
+    } elseif (!empty($approvedSenderId) && in_array($approvedSenderId, $MASTER_APPROVED_SENDERS, true)) {
+        // Safe only when the sender is available on the master provider account.
         $sender = $approvedSenderId;
         error_log("[send_sms] Result: Using approved_sender_id '{$sender}' from Firestore.");
     } elseif (!empty($requestedSender) && in_array($requestedSender, $MASTER_APPROVED_SENDERS)) {
@@ -624,6 +627,9 @@ if ($userKey !== '' && $userKey !== $sysKey) {
         // Fallback to system default
         $sender = $SENDER_IDS[0] ?? 'NOLASMSPro';
         error_log("[send_sms] Result: Fallback to '{$sender}' (approvedSenderId was empty, req='{$requestedSender}').");
+        if (!empty($approvedSenderId) && !in_array($approvedSenderId, $MASTER_APPROVED_SENDERS, true)) {
+            error_log("[send_sms] Notice: approved_sender_id '{$approvedSenderId}' is not in master sender whitelist. Falling back to '{$sender}'.");
+        }
         if (!empty($requestedSender) && $requestedSender !== $sender) {
             error_log("[send_sms] Notice: Requested sender '{$requestedSender}' not approved and no subaccount sender exists.");
         }
@@ -687,10 +693,11 @@ if ($bypassBilling) {
 
     try {
         $desc = "SMS (Trial) to " . ($num_recipients === 1 ? $validNumbers[0] : "$num_recipients recipient(s)");
+        $billingReferenceId = $batch_id ?? ('trial_' . bin2hex(random_bytes(4)));
         $creditManager->record_trial_usage(
             $account_id,
             $required_credits,
-            $batch_id ?? ('trial_' . bin2hex(random_bytes(4))),
+            $billingReferenceId,
             $desc
         );
     } catch (\Exception $e) {
@@ -705,11 +712,11 @@ if ($bypassBilling) {
     // Primary: agency_subaccounts/{locId}.agency_id
     // Fallback: companyId from the location's ghl_tokens doc (set during OAuth install)
     $agencyDoc = $db->collection('agency_subaccounts')->document($locId)->snapshot();
-    $agency_id = $agencyDoc->exists() ? ($agencyDoc->data()['agency_id'] ?? '') : '';
-    if (!$agency_id) {
-        $agency_id = (string)($tokenData['companyId'] ?? $tokenData['company_id'] ?? '');
-        if ($agency_id) {
-            error_log("[send_sms] agency_id resolved from ghl_tokens.companyId={$agency_id} for loc={$locId}");
+    $billingAgencyId = $agencyDoc->exists() ? ($agencyDoc->data()['agency_id'] ?? '') : '';
+    if (!$billingAgencyId) {
+        $billingAgencyId = (string)($tokenData['companyId'] ?? $tokenData['company_id'] ?? '');
+        if ($billingAgencyId) {
+            error_log("[send_sms] agency_id resolved from ghl_tokens.companyId={$billingAgencyId} for loc={$locId}");
         }
     }
 
@@ -730,8 +737,9 @@ if ($bypassBilling) {
     }
 
     // ── 2. Optional master balance lock check ────────────────────────────────
-    if ($agency_id && $creditManager->get_agency_master_lock($agency_id)) {
-        $agencyBalance = $creditManager->get_agency_balance($agency_id);
+    $billingMasterLock = $billingAgencyId !== '' && $creditManager->get_agency_master_lock($billingAgencyId);
+    if ($billingMasterLock) {
+        $agencyBalance = $creditManager->get_agency_balance($billingAgencyId);
         if ($agencyBalance <= 0) {
             $markIdempotencyFailed('agency_master_lock', 'Sending is temporarily paused by your agency. Please contact your administrator.', 402);
             http_response_code(402);
@@ -749,6 +757,7 @@ if ($bypassBilling) {
     try {
         $desc  = "SMS to " . ($num_recipients === 1 ? $validNumbers[0] : "$num_recipients recipient(s)");
         $refId = $batch_id ?? ('sms_' . bin2hex(random_bytes(4)));
+        $billingReferenceId = $refId;
 
         // Tag own-API-key sends so the transaction log shows the correct provider.
         $activeProvider = in_array($providerPreference, ['unisms', 'unisms_custom'], true)
@@ -764,8 +773,8 @@ if ($bypassBilling) {
             'subaccount_name' => $intData['location_name'] ?? 'Unknown Subaccount',
             'agency_name'     => 'Unknown Agency'
         ];
-        if ($agency_id) {
-            $agSnap = $db->collection('ghl_tokens')->document($agency_id)->snapshot();
+        if ($billingAgencyId) {
+            $agSnap = $db->collection('ghl_tokens')->document($billingAgencyId)->snapshot();
             if ($agSnap->exists() && !empty($agSnap->data()['agency_name'])) {
                 $txMetadata['agency_name'] = $agSnap->data()['agency_name'];
             } elseif ($agSnap->exists() && !empty($agSnap->data()['company_name'])) {
@@ -773,12 +782,12 @@ if ($bypassBilling) {
             }
         }
 
-        if ($agency_id && $creditManager->get_agency_master_lock($agency_id)) {
+        if ($billingMasterLock) {
             // Master balance lock is ON — deduct from BOTH agency and subaccount wallets.
             // Agency balance must cover the send; if empty, the send is blocked.
             $creditManager->deduct_agency_and_subaccount(
                 $account_id,
-                $agency_id,
+                $billingAgencyId,
                 $required_credits, // Subaccount retail credits
                 $required_credits, // Agency wholesale/cost credits
                 $refId,
@@ -793,7 +802,7 @@ if ($bypassBilling) {
             // agency_id is passed for transaction logging/reporting only; no agency balance required.
             $creditManager->deduct_subaccount_only(
                 $account_id,
-                $agency_id ?: '',
+                $billingAgencyId ?: '',
                 $required_credits,
                 $refId,
                 $desc,
@@ -1095,6 +1104,55 @@ $gatewayAccepted = (
     empty($gateway_errors) &&
     !$allSavedMessagesFailed
 );
+
+if (!$gatewayAccepted && !$bypassBilling) {
+    if ($usingFreeCredits) {
+        try {
+            $intRef->set([
+                'free_usage_count' => \Google\Cloud\Firestore\FieldValue::increment(-$required_credits),
+                'updated_at'       => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+            ], ['merge' => true]);
+
+            if ($billingReferenceId !== null) {
+                $trialTxDocs = $db->collection('credit_transactions')
+                    ->where('account_id', '=', CreditManager::integration_doc_id_for_location($account_id))
+                    ->where('reference_id', '=', $billingReferenceId)
+                    ->documents();
+                foreach ($trialTxDocs as $trialTxDoc) {
+                    if ($trialTxDoc->exists()) {
+                        $trialTxDoc->reference()->delete();
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log('[send_sms] Trial rollback failed after gateway rejection: ' . $e->getMessage());
+        }
+    } else {
+        try {
+            $refundRef = 'refund_' . ($billingReferenceId ?? bin2hex(random_bytes(4)));
+            $creditManager->add_credits(
+                $account_id,
+                $required_credits,
+                $refundRef,
+                'Refund - SMS failed to send (' . ucfirst($chosenProvider) . ' rejected)',
+                'refund'
+            );
+
+            if ($billingMasterLock && $billingAgencyId !== '') {
+                $creditManager->add_credits(
+                    $billingAgencyId,
+                    $required_credits,
+                    $refundRef . '_agency',
+                    'Agency refund - SMS failed to send (' . ucfirst($chosenProvider) . ' rejected)',
+                    'refund',
+                    'agency'
+                );
+            }
+        } catch (\Throwable $e) {
+            error_log('[send_sms] Credit refund failed after gateway rejection: ' . $e->getMessage());
+        }
+    }
+}
 
 if (!$gatewayAccepted) {
     http_response_code($total_status >= 400 ? $total_status : 502);
