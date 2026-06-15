@@ -4,31 +4,66 @@ require_once __DIR__ . '/../cors.php';
 $config = require __DIR__ . '/config.php';
 require __DIR__ . '/firestore_client.php';
 require_once __DIR__ . '/../services/GhlSyncService.php';
-require_once __DIR__ . '/../auth_helpers.php';
+require_once __DIR__ . '/../services/CreditManager.php';
 
-// Requires ?secret= to be appended to the webhook URL
-validate_api_request();
+header('Content-Type: application/json');
 
-$raw = file_get_contents('php://input');
-$data = json_decode($raw, true);
-
-if (!$data) {
+function unisms_json(int $statusCode, array $payload): void
+{
+    http_response_code($statusCode);
+    echo json_encode($payload);
     exit;
 }
 
-error_log("[receive_sms_unisms] Inbound webhook payload: " . $raw);
-
-// Parse UniSMS webhook format
-// Inbound messages typically have message details inside a nested object
-$messageObj = $data['message'] ?? [];
-$senderRaw = $messageObj['recipient'] ?? $messageObj['sender'] ?? $messageObj['number'] ?? $data['sender'] ?? '';
-$message = $messageObj['content'] ?? $messageObj['message'] ?? $data['message'] ?? '';
-$message_id = $data['id'] ?? $messageObj['reference_id'] ?? $messageObj['id'] ?? uniqid('unisms_in_');
-
-// Clean Sender Number
-function clean_inbound_number($number): string
+function unisms_header_value(string $name): string
 {
-    $digits = preg_replace('/\D/', '', $number);
+    $serverKey = 'HTTP_' . strtoupper(str_replace('-', '_', $name));
+    $value = $_SERVER[$serverKey] ?? '';
+    if ($value !== '') {
+        return (string)$value;
+    }
+
+    $headers = function_exists('getallheaders') ? getallheaders() : [];
+    foreach ($headers as $key => $headerValue) {
+        if (strcasecmp((string)$key, $name) === 0) {
+            return (string)$headerValue;
+        }
+    }
+
+    return '';
+}
+
+function unisms_validate_webhook(array $config): void
+{
+    $receivedSecret = unisms_header_value('X-Webhook-Secret');
+    if ($receivedSecret === '') {
+        $receivedSecret = (string)($_GET['secret'] ?? $_GET['token'] ?? '');
+    }
+
+    $expectedSecrets = array_values(array_filter(array_unique([
+        trim((string)($config['UNISMS_WEBHOOK_SECRET'] ?? '')),
+        trim((string)(getenv('UNISMS_WEBHOOK_SECRET') ?: '')),
+        trim((string)(getenv('WEBHOOK_SECRET') ?: '')),
+    ])));
+
+    if (empty($expectedSecrets)) {
+        error_log('[receive_sms_unisms] Server misconfiguration: no webhook secret configured.');
+        unisms_json(500, ['status' => 'error', 'message' => 'Server misconfiguration: webhook secret missing']);
+    }
+
+    foreach ($expectedSecrets as $expectedSecret) {
+        if ($receivedSecret !== '' && hash_equals($expectedSecret, $receivedSecret)) {
+            return;
+        }
+    }
+
+    error_log('[receive_sms_unisms] Unauthorized webhook request. secret_present=' . ($receivedSecret !== '' ? 'yes' : 'no'));
+    unisms_json(401, ['status' => 'error', 'message' => 'Unauthorized Access']);
+}
+
+function unisms_clean_number($number): string
+{
+    $digits = preg_replace('/\D/', '', (string)$number);
     if (str_starts_with($digits, '639') && strlen($digits) === 12) {
         return '0' . substr($digits, 2);
     }
@@ -41,16 +76,132 @@ function clean_inbound_number($number): string
     return $digits;
 }
 
-$senderNumber = clean_inbound_number($senderRaw);
-
-if (empty($senderNumber) || empty($message)) {
-    error_log("[receive_sms_unisms] Skipped: missing senderNumber ({$senderNumber}) or message ({$message})");
-    exit(json_encode(["status" => "error", "reason" => "missing_data"]));
+function unisms_status_to_local(?string $status, ?string $event): string
+{
+    $raw = strtolower(trim((string)($status ?: $event)));
+    if (str_contains($raw, 'delivered')) {
+        return 'Delivered';
+    }
+    if (str_contains($raw, 'sent') || str_contains($raw, 'queued') || str_contains($raw, 'pending')) {
+        return 'Sent';
+    }
+    if (str_contains($raw, 'fail') || str_contains($raw, 'reject') || str_contains($raw, 'undelivered') || str_contains($raw, 'expired')) {
+        return 'Failed';
+    }
+    return 'Sent';
 }
 
+function unisms_event_is_status_callback(string $event): bool
+{
+    $event = strtolower(trim($event));
+    return str_starts_with($event, 'message.')
+        && !in_array($event, ['message.received', 'message.inbound', 'message.reply'], true);
+}
+
+function unisms_update_outbound_status($db, array $data, array $messageObj, string $event): array
+{
+    $referenceId = trim((string)(
+        $messageObj['reference_id']
+        ?? $messageObj['id']
+        ?? $data['id']
+        ?? $data['reference_id']
+        ?? ''
+    ));
+    $providerStatus = (string)($messageObj['status'] ?? $data['status'] ?? $event);
+    $localStatus = unisms_status_to_local($providerStatus, $event);
+    $now = new \Google\Cloud\Core\Timestamp(new \DateTime());
+    $updated = [];
+
+    if ($referenceId === '') {
+        return ['updated' => [], 'status' => $localStatus, 'reference_id' => null];
+    }
+
+    $updatePayload = [
+        ['path' => 'status', 'value' => $localStatus],
+        ['path' => 'provider_status', 'value' => $providerStatus],
+        ['path' => 'provider', 'value' => 'unisms'],
+        ['path' => 'provider_reference_id', 'value' => $referenceId],
+        ['path' => 'provider_response', 'value' => $data],
+        ['path' => 'updated_at', 'value' => $now],
+    ];
+
+    foreach (['sms_logs', 'messages'] as $collection) {
+        try {
+            $docRef = $db->collection($collection)->document($referenceId);
+            $snap = $docRef->snapshot();
+            if ($snap->exists()) {
+                $docRef->update($updatePayload);
+                $updated[] = "{$collection}/{$referenceId}";
+                continue;
+            }
+        } catch (\Throwable $e) {
+            error_log("[receive_sms_unisms] {$collection} direct update failed for {$referenceId}: " . $e->getMessage());
+        }
+
+        try {
+            $query = $db->collection($collection)
+                ->where('provider_reference_id', '=', $referenceId)
+                ->limit(5)
+                ->documents();
+            foreach ($query as $doc) {
+                if (!$doc->exists()) {
+                    continue;
+                }
+                $doc->reference()->update($updatePayload);
+                $updated[] = "{$collection}/" . $doc->id();
+            }
+        } catch (\Throwable $e) {
+            error_log("[receive_sms_unisms] {$collection} provider_reference_id update failed for {$referenceId}: " . $e->getMessage());
+        }
+    }
+
+    return ['updated' => array_values(array_unique($updated)), 'status' => $localStatus, 'reference_id' => $referenceId];
+}
+
+unisms_validate_webhook($config);
+
+$raw = file_get_contents('php://input');
+$data = json_decode($raw, true);
+
+if (!is_array($data)) {
+    error_log('[receive_sms_unisms] Invalid JSON payload: ' . substr((string)$raw, 0, 500));
+    unisms_json(400, ['status' => 'error', 'message' => 'Invalid JSON payload']);
+}
+
+error_log('[receive_sms_unisms] Inbound webhook payload: ' . $raw);
+
+$event = (string)($data['event'] ?? '');
+$messageObj = is_array($data['message'] ?? null) ? $data['message'] : [];
 $db = get_firestore();
 
-// ── Multi-Tenancy: Search for matching conversations ────────────────────────
+if (unisms_event_is_status_callback($event)) {
+    $result = unisms_update_outbound_status($db, $data, $messageObj, $event);
+    unisms_json(200, [
+        'status' => 'success',
+        'message' => 'Webhook processed',
+        'event' => $event,
+        'provider' => 'unisms',
+        'reference_id' => $result['reference_id'],
+        'local_status' => $result['status'],
+        'updated' => $result['updated'],
+    ]);
+}
+
+$senderRaw = $messageObj['sender'] ?? $messageObj['from'] ?? $messageObj['number'] ?? $data['sender'] ?? '';
+$message = $messageObj['content'] ?? $messageObj['message'] ?? $data['message'] ?? '';
+$messageId = $data['id'] ?? $messageObj['reference_id'] ?? $messageObj['id'] ?? uniqid('unisms_in_');
+$senderNumber = unisms_clean_number($senderRaw);
+
+if ($senderNumber === '' || trim((string)$message) === '') {
+    error_log("[receive_sms_unisms] Ignored: missing senderNumber ({$senderNumber}) or message ({$message})");
+    unisms_json(200, [
+        'status' => 'success',
+        'message' => 'Webhook ignored',
+        'reason' => 'missing_inbound_data',
+        'event' => $event,
+    ]);
+}
+
 $convQuery = $db->collection('conversations')
     ->where('members', 'array-contains', $senderNumber)
     ->orderBy('last_message_at', 'DESC')
@@ -68,14 +219,16 @@ foreach ($convQuery as $doc) {
 }
 
 if (empty($matchingConvs)) {
-    error_log("[receive_sms_unisms] FAILED: No recent conversation found for {$senderNumber}. Ignored to prevent cross-account bleeding.");
-    exit(json_encode(["status" => "ignored", "reason" => "unmapped_sender"]));
+    error_log("[receive_sms_unisms] No recent conversation found for {$senderNumber}. Ignored to prevent cross-account bleeding.");
+    unisms_json(200, [
+        'status' => 'success',
+        'message' => 'Webhook ignored',
+        'reason' => 'unmapped_sender',
+        'event' => $event,
+    ]);
 }
 
-// Route replies to one canonical scoped conversation only. If the same phone is
-// present under multiple accounts, the most recently active conversation wins.
 $matchingConvs = array_slice($matchingConvs, 0, 1);
-
 $processed = [];
 $now = new \Google\Cloud\Core\Timestamp(new \DateTime());
 
@@ -90,19 +243,18 @@ foreach ($matchingConvs as $matching) {
     $saveData = [
         'conversation_id' => $convId,
         'location_id' => $locId,
-        'message_id' => $message_id . '_' . $locId, // Unique per location
+        'message_id' => $messageId . '_' . $locId,
         'from' => $senderNumber,
         'message' => $message,
         'direction' => 'inbound',
         'status' => 'Received',
         'date_received' => $now,
-        'provider' => 'unisms'
+        'provider' => 'unisms',
+        'provider_response' => $data,
     ];
 
-    // 1. Store message in Firestore
     $db->collection('messages')->document($saveData['message_id'])->set($saveData, ['merge' => true]);
 
-    // 2. Update Sidebar conversation record
     $db->collection('conversations')->document($convId)->set([
         'id' => $convId,
         'location_id' => $locId,
@@ -113,7 +265,6 @@ foreach ($matchingConvs as $matching) {
         'members' => [$senderNumber]
     ], ['merge' => true]);
 
-    // 3. Invalidate UI conversations list cache
     try {
         require_once __DIR__ . '/../cache_helper.php';
         NolaCache::deleteRegistry("conversations_registry_{$locId}");
@@ -124,24 +275,28 @@ foreach ($matchingConvs as $matching) {
     $processed[] = [
         'locId' => $locId,
         'senderNumber' => $senderNumber,
-        'message' => $message
+        'message' => $message,
     ];
 }
 
-// ── Decouple connection for instant client updates ─────────────────────────
+$response = [
+    'status' => 'success',
+    'message' => 'Webhook processed',
+    'event' => $event,
+    'provider' => 'unisms',
+    'locations_processed' => array_column($processed, 'locId'),
+];
+
 if (!headers_sent()) {
     ignore_user_abort(true);
     set_time_limit(300);
 
     ob_start();
-    echo json_encode([
-        "status" => "received",
-        "locations_processed" => array_column($processed, 'locId')
-    ]);
+    echo json_encode($response);
 
     $size = ob_get_length();
     header("Content-Length: $size");
-    header("Connection: close");
+    header('Connection: close');
     ob_end_flush();
     ob_flush();
     flush();
@@ -151,7 +306,6 @@ if (!headers_sent()) {
     }
 }
 
-// ── Background Execution: Sync to GHL ──────────────────────────────────────
 foreach ($processed as $proc) {
     try {
         $ghlSync = new \Nola\Services\GhlSyncService($db, $proc['locId']);

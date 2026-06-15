@@ -9,6 +9,7 @@ return [
     'UNISMS_SENDER_ID' => getenv('UNISMS_SENDER_ID') ?: '',
     'UNISMS_ENDPOINT' => getenv('UNISMS_ENDPOINT') ?: 'https://unismsapi.com/api',
     'UNISMS_TIMEOUT_SECONDS' => getenv('UNISMS_TIMEOUT_SECONDS') ?: 15,
+    'UNISMS_WEBHOOK_SECRET' => getenv('UNISMS_WEBHOOK_SECRET') ?: '',
 
     'GHL_CLIENT_ID'     => getenv('GHL_CLIENT_ID') ?: '',
 
