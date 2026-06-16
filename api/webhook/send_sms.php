@@ -891,7 +891,12 @@ try {
     foreach ($all_results as $row) {
         if (isset($row['status']) && $row['status'] === 'failed') {
             $gateway_errors[] = $row['error'] ?? 'Provider send failed';
-            $total_status = 502;
+            $errorMsg = $row['error'] ?? '';
+            $matchedCode = 500;
+            if (preg_match('/HTTP\s+(\d{3})/i', $errorMsg, $m)) {
+                $matchedCode = (int)$m[1];
+            }
+            $total_status = ($matchedCode === 502) ? 500 : $matchedCode;
         }
     }
 
@@ -911,7 +916,12 @@ try {
         'exception'   => $e->getMessage(),
     ]);
     $gateway_errors[] = $e->getMessage();
-    $total_status = 502;
+    $errorMsg = $e->getMessage();
+    $matchedCode = 500;
+    if (preg_match('/HTTP\s+(\d{3})/i', $errorMsg, $m)) {
+        $matchedCode = (int)$m[1];
+    }
+    $total_status = ($matchedCode === 502) ? 500 : $matchedCode;
     
     // Create dummy failed results so Firestore logging still executes and the UI shows 'Failed' instead of disappearing
     $all_results = array_map(function($num) use ($e) {
@@ -1118,7 +1128,8 @@ if (!empty($message_results)) {
     // ── GHL Bidirectional Sync (Best-Effort) ─────────────────────────────────
     // GHL bidirectional sync: run for every individual-number send (including bulk
     // recipients), since each message should appear in its GHL contact's conversation.
-    if (count($validNumbers) === 1 && $locId && !empty($messageId)) {
+    // Sync is skipped if the message failed to send, to avoid false sync and timeouts.
+    if (count($validNumbers) === 1 && $locId && !empty($messageId) && $initialStatus !== 'Failed') {
         try {
             $ghlSync = new \Nola\Services\GhlSyncService($db, $locId, $ghlTokenRegistryId);
             $syncRes = $ghlSync->syncOutboundMessage($validNumbers[0], $message, $contactId);
@@ -1230,7 +1241,7 @@ if (!$gatewayAccepted && !$bypassBilling) {
 }
 
 if (!$gatewayAccepted) {
-    http_response_code($total_status >= 400 ? $total_status : 502);
+    http_response_code($total_status >= 400 ? $total_status : 500);
 }
 
 $ghlStatus = $gatewayAccepted ? "success" : "error";
@@ -1243,7 +1254,7 @@ if (count($validNumbers) > 3) {
 $reportedCredits = $bypassBilling ? 0 : $required_credits;
 
 Logger::response(
-    $gatewayAccepted ? 200 : ($total_status >= 400 ? $total_status : 502),
+    $gatewayAccepted ? 200 : ($total_status >= 400 ? $total_status : 500),
     [
         'success'        => $gatewayAccepted,
         'status'         => $ghlStatus,
@@ -1294,7 +1305,7 @@ if (isset($idempotencyRef)) {
     try {
         $idempotencyRef->set([
             'status' => $gatewayAccepted ? 'completed' : 'failed',
-            'http_status' => $gatewayAccepted ? 200 : ($total_status >= 400 ? $total_status : 502),
+            'http_status' => $gatewayAccepted ? 200 : ($total_status >= 400 ? $total_status : 500),
             'message_ids' => $saved_message_ids ?? [],
             'response_body' => $responsePayload,
             'provider' => $chosenProvider,
