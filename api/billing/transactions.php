@@ -14,10 +14,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $location_id = $_GET['location_id'] ?? null;
     $month       = $_GET['month']       ?? null;          // YYYY-MM
     $page        = max(1, (int)($_GET['page'] ?? 1));
-    $limit       = 50;
+    $limit       = min(5000, max(1, (int)($_GET['limit'] ?? 50)));
 
     if ($scope === 'agency') {
-        auth_assert_agency_billing_allowed($db, (string)$agency_id);
+        auth_assert_agency_billing_read_allowed($db, (string)$agency_id);
     } else {
         validate_api_request();
     }
@@ -29,6 +29,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         'location_id' => $location_id,
         'month' => $month,
         'page' => $page,
+        'limit' => $limit,
     ]));
     $cacheTtl = 60;
     $bypassCache = isset($_GET['refresh']) || isset($_GET['bypass_cache']);

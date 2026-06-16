@@ -74,7 +74,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         exit;
     }
 
-    auth_assert_agency_billing_allowed($db, $agencyId);
+    auth_assert_agency_billing_read_allowed($db, $agencyId);
 
     [$agencyDocId, $agencyData] = billing_subscription_find_agency($db, $agencyId);
 

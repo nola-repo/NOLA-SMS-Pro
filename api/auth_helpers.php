@@ -397,6 +397,51 @@ function auth_assert_agency_billing_allowed($db, string $agencyId): void
 }
 
 /**
+ * Authorizes read-only agency billing/report routes.
+ *
+ * Agency users can read only their own agency billing data. Admin users with
+ * normal admin dashboard roles can read any agency billing data for reporting,
+ * while legacy internal callers can still use WEBHOOK_SECRET.
+ */
+function auth_assert_agency_billing_read_allowed($db, string $agencyId): void
+{
+    $jwt = auth_extract_bearer_token_optional();
+    if ($jwt !== null && $jwt !== '') {
+        require_once __DIR__ . '/jwt_helper.php';
+
+        $secret = getenv('JWT_SECRET');
+        if ($secret === false || trim((string)$secret) === '') {
+            header('Content-Type: application/json');
+            http_response_code(500);
+            echo json_encode(['error' => 'Server misconfiguration: JWT secret missing.']);
+            exit;
+        }
+
+        $payload = jwt_verify($jwt, $secret);
+        if (!$payload) {
+            Logger::auth(false, 'billing-read-jwt', ['reason' => 'invalid-or-expired-token']);
+            header('Content-Type: application/json');
+            http_response_code(401);
+            echo json_encode(['error' => 'Invalid or expired token.']);
+            exit;
+        }
+
+        $role = (string)($payload['role'] ?? '');
+        if (in_array($role, ['super_admin', 'support', 'viewer'], true)) {
+            require_once __DIR__ . '/admin_auth_helper.php';
+            require_secure_admin_auth(['super_admin', 'support', 'viewer']);
+            Logger::auth(true, 'billing-read-admin', [
+                'role' => $role,
+                'agency_id' => $agencyId,
+            ]);
+            return;
+        }
+    }
+
+    auth_assert_agency_billing_allowed($db, $agencyId);
+}
+
+/**
  * Enforces GHL multi-tenant access when JWT context is present.
  *
  * @param array{payload: array, profile: array, firestore_collection: string, uid: string}|null $jwtCtx
