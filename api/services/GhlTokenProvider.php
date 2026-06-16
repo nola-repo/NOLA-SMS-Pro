@@ -77,9 +77,9 @@ final class GhlOAuthRefreshException extends \RuntimeException
 final class GhlTokenRefreshLock
 {
     private const COLLECTION = 'ghl_oauth_refresh_locks';
-    private const TTL_SEC = 75;
+    private const TTL_SEC = 30;
     private const WAIT_SLICE_US = 250000;
-    private const MAX_WAIT_SEC = 45;
+    private const MAX_WAIT_SEC = 5;
 
     /**
      * Try to acquire the lock in a transaction. Returns false if another holder has a fresh lock.
