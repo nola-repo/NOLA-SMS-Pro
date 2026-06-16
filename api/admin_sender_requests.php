@@ -229,6 +229,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $updateData['unisms_api_key'] = $payload['api_key'];
                 $updateData['unisms_api_key_last4'] = substr((string)$payload['api_key'], -4);
                 $updateData['provider_preference'] = 'unisms_custom';
+                $updateData['provider'] = 'unisms';
+                $updateData['approved_provider'] = 'unisms';
                 if (isset($payload['sender_id'])) {
                     $updateData['unisms_sender_id'] = $payload['sender_id'];
                 }
@@ -237,14 +239,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $updateData['semaphore_api_key']  = $payload['api_key'];
                 $updateData['nola_pro_api_key_last4'] = substr((string)$payload['api_key'], -4);
                 $updateData['provider_preference'] = 'semaphore_custom';
+                $updateData['provider'] = 'semaphore';
+                $updateData['approved_provider'] = 'semaphore';
             }
         } elseif ($explicitProvider === 'unisms') {
             $updateData['provider_preference'] = 'unisms';
+            $updateData['provider'] = 'unisms';
+            $updateData['approved_provider'] = 'unisms';
             if (isset($payload['sender_id'])) {
                 $updateData['unisms_sender_id'] = $payload['sender_id'];
             }
         } elseif ($explicitProvider === 'semaphore') {
             $updateData['provider_preference'] = 'semaphore';
+            $updateData['provider'] = 'semaphore';
+            $updateData['approved_provider'] = 'semaphore';
         }
         if (isset($payload['free_credits_total'])) {
             $updateData['free_credits_total'] = (int)$payload['free_credits_total'];
@@ -434,6 +442,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
         ];
         if ($providerForApproval === 'unisms') {
+            $updateFields['provider'] = 'unisms';
+            $updateFields['approved_provider'] = 'unisms';
             $updateFields['unisms_sender_id'] = $reqData['requested_id'];
             if (!empty($apiKey)) {
                 $updateFields['unisms_api_key'] = $apiKey;
@@ -443,6 +453,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $updateFields['provider_preference'] = 'unisms';
             }
         } elseif ($providerForApproval === 'semaphore') {
+            $updateFields['provider'] = 'semaphore';
+            $updateFields['approved_provider'] = 'semaphore';
             if (!empty($apiKey)) {
                 $updateFields['nola_pro_api_key'] = $apiKey;
                 $updateFields['semaphore_api_key'] = $apiKey;
@@ -453,6 +465,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
         $accountRef->set($updateFields, ['merge' => true]);
+
+        error_log('[admin_sender_requests][APPROVAL] ' . json_encode([
+            'location_id' => $locId,
+            'sender_name' => $reqData['requested_id'] ?? null,
+            'approved_provider' => $providerForApproval,
+            'api_key_source' => !empty($apiKey) ? 'admin_approval_payload' : 'provider_default',
+            'request_id' => $requestId,
+            'sender_request_approval_source' => 'admin_sender_requests.php',
+        ]));
 
         // ── Auto-add sender to dynamic master whitelist ─────────────────────────
         // So send_sms.php and ghl_provider.php recognize it without config edits

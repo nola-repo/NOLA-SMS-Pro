@@ -19,6 +19,7 @@ header('Content-Type: application/json');
 require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
 require __DIR__ . '/webhook/config.php';
+require_once __DIR__ . '/services/SenderResolver.php';
 
 validate_api_request();
 
@@ -39,25 +40,7 @@ if (empty($messageIds)) {
 $config = require __DIR__ . '/webhook/config.php';
 $db = get_firestore();
 
-// Resolve the API key for this location
 $systemApiKey = $config['SEMAPHORE_API_KEY'];
-$customKey = null;
-$customProviderPreference = 'system';
-$customUniSmsKey = null;
-if ($locId) {
-    try {
-        $intDoc = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
-        $snap = $db->collection('integrations')->document($intDoc)->snapshot();
-        if ($snap->exists()) {
-            $idat = $snap->data();
-            $customKey = $idat['nola_pro_api_key'] ?? ($idat['semaphore_api_key'] ?? null);
-            $customUniSmsKey = $idat['unisms_api_key'] ?? null;
-            $customProviderPreference = $idat['provider_preference'] ?? 'system';
-        }
-    } catch (\Exception $e) {
-        // Fall back to system key
-    }
-}
 
 $mapStatus = function ($s) {
     if (!$s) return 'Sending';
@@ -81,6 +64,7 @@ foreach ($messageIds as $messageId) {
     // 1. First check Firestore — if already resolved, return immediately
     $providerName = 'semaphore';
     $isSystem = false;
+    $data = [];
     try {
         $doc = $db->collection('messages')->document($messageId)->snapshot();
         if ($doc->exists()) {
@@ -105,21 +89,16 @@ foreach ($messageIds as $messageId) {
 
     // 2. Resolve provider and check status
     $providerInstance = $gateway->getProviderInstance($providerName);
-    $activeApiKey = null;
-    if (!$isSystem) {
-        if ($providerName === 'unisms' && !empty($customUniSmsKey) && in_array($customProviderPreference, ['unisms', 'unisms_custom'], true)) {
-            $activeApiKey = $customUniSmsKey;
-        } elseif ($providerName === 'semaphore' && !empty($customKey)) {
-            $activeApiKey = $customKey;
-        }
-    }
-    if ($activeApiKey === null && $providerName === 'semaphore') {
-        $activeApiKey = $systemApiKey;
-    }
+    $resolvedKey = $locId
+        ? SenderResolver::resolveStatusApiKey($db, (string)$locId, (string)$providerName, $systemApiKey, $isSystem)
+        : ['api_key' => $providerName === 'semaphore' ? $systemApiKey : null, 'source' => $providerName === 'semaphore' ? 'config.SEMAPHORE_API_KEY' : 'admin_config.unisms_api_key'];
+    $activeApiKey = $resolvedKey['api_key'];
+    $apiKeySource = $resolvedKey['source'];
+    $providerMessageId = (string)($data['provider_message_id'] ?? ($data['provider_reference_id'] ?? $messageId));
 
     $status = 'Sending';
     try {
-        $statusRes = $providerInstance->checkStatus($messageId, $activeApiKey);
+        $statusRes = $providerInstance->checkStatus($providerMessageId, $activeApiKey);
         $rawStatus = $statusRes['status'] ?? 'sending';
 
         if (in_array($rawStatus, ['sent', 'success', 'delivered'])) {
@@ -133,6 +112,7 @@ foreach ($messageIds as $messageId) {
             $ts = new \Google\Cloud\Core\Timestamp(new \DateTime());
             $updateFields = [
                 ['path' => 'status',     'value' => $status],
+                ['path' => 'provider_status', 'value' => $rawStatus],
                 ['path' => 'updated_at', 'value' => $ts],
             ];
             try {
@@ -149,6 +129,16 @@ foreach ($messageIds as $messageId) {
         'status'     => $status,
         'source'     => $providerName,
     ];
+
+    error_log('[check_message_status] ' . json_encode([
+        'location_id' => $locId,
+        'message_id' => $messageId,
+        'provider_message_id' => $providerMessageId,
+        'provider' => $providerName,
+        'provider_status' => $rawStatus ?? null,
+        'normalized_status' => $status,
+        'api_key_source' => $apiKeySource,
+    ]));
 }
 
 echo json_encode(['success' => true, 'results' => $results]);

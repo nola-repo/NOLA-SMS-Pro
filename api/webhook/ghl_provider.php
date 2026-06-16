@@ -49,6 +49,7 @@ require __DIR__ . '/firestore_client.php';
 require __DIR__ . '/../auth_helpers.php';
 require __DIR__ . '/../install_helpers.php';
 require __DIR__ . '/../services/CreditManager.php';
+require_once __DIR__ . '/../services/SenderResolver.php';
 require_once __DIR__ . '/../services/SmsGatewayService.php';
 $gateway = new SmsGatewayService();
 
@@ -287,16 +288,29 @@ $creditManager = new CreditManager();
 //   → Sender MUST be in MASTER_APPROVED_SENDERS or fall back to NOLASMSPro.
 //   → Free trial applies first, then paid deduction.
 
-$usingOwnApiKey = false;
-$sender         = $SENDER_IDS[0] ?? 'NOLASMSPro';
-$activeApiKey   = $SEMAPHORE_API_KEY;
+$senderResolution = SenderResolver::resolve(
+    $db,
+    (string)$locationId,
+    $config,
+    $intData,
+    null,
+    false,
+    'ghl_provider'
+);
+
+$usingOwnApiKey = (bool)$senderResolution['using_custom_key'];
+$sender         = $senderResolution['sender'];
+$activeApiKey   = $senderResolution['active_api_key'];
+$providerPreference = $senderResolution['provider_preference'];
+$approvedProvider = $senderResolution['approved_provider'];
+$apiKeySource = $senderResolution['api_key_source'];
 $billingAgencyId = '';
 $billingMasterLock = false;
 
 $sysKey  = trim((string)$SEMAPHORE_API_KEY);
 $userKey = trim((string)($customApiKey ?? ''));
 
-if ($userKey !== '' && $userKey !== $sysKey) {
+if (false && $userKey !== '' && $userKey !== $sysKey) {
     // ── PATH A: External API key ─────────────────────────────────────────────
     $usingOwnApiKey = true;
     $activeApiKey   = $customApiKey;
@@ -305,7 +319,7 @@ if ($userKey !== '' && $userKey !== $sysKey) {
         ? $unismsSenderId
         : (!empty($approvedSenderId) ? $approvedSenderId : ($SENDER_IDS[0] ?? 'NOLASMSPro'));
 
-} else {
+} elseif (false) {
     // ── PATH B: Master billing gateway ───────────────────────────────────────
     // If Admin has approved a custom sender for this subaccount, TRUST IT.
     // Otherwise, check our master whitelist.
@@ -341,6 +355,9 @@ error_log("[ghl_provider] BILLING DECISION for loc={$locationId}: " . json_encod
     'required_credits'     => $required_credits,
     'account_id'           => $account_id,
     'sender'               => $sender,
+    'selected_provider'    => $providerPreference,
+    'approved_provider'    => $approvedProvider,
+    'api_key_source'       => $apiKeySource,
     'customApiKey_present' => !empty($customApiKey),
     'provider_preference'  => $providerPreference,
     'intDocId'             => $intDocId,
@@ -563,13 +580,15 @@ error_log('[ghl_provider][GATEWAY_RESULT] ' . json_encode([
     'normalizedPhone' => $normalizedPhone,
     'locationId'      => $locationId,
     'sender'          => $sender,
+    'selected_provider' => $chosenProvider,
+    'api_key_source' => $apiKeySource,
 ]));
 
 if (!$gatewayAccepted) {
     // Semaphore rejected the message. We already sent 200 to GHL, so we can't
     // return an error HTTP code. Instead, refund the credits and call the GHL
     // status API with 'failed' so GHL updates the message badge correctly.
-    error_log('[ghl_provider][SEMAPHORE_FAILED_POST_FLUSH] Semaphore rejected msg for loc=' . $locationId . ' msgId=' . $messageId . ' status=' . $smsStatus);
+    error_log('[ghl_provider][PROVIDER_FAILED_POST_FLUSH] ' . ucfirst($chosenProvider) . ' rejected msg for loc=' . $locationId . ' msgId=' . $messageId . ' status=' . $smsStatus);
 
     if ($usingFreeCredits) {
         try {
@@ -658,6 +677,7 @@ $msgData = [
     'message'         => $message,
     'direction'       => 'outbound',
     'sender_id'       => $sender,
+    'sender_name'     => $sender,
     'status'          => $initialStatus,
     'batch_id'        => null,
     'ghl_message_id'  => $messageId,
@@ -667,8 +687,10 @@ $msgData = [
     'source'          => 'ghl_provider',
     'provider'        => $chosenProvider,
     'provider_reference_id' => $firstRes['provider_reference_id'] ?? $storedMsgId,
+    'provider_message_id' => $firstRes['provider_message_id'] ?? ($firstRes['provider_reference_id'] ?? $storedMsgId),
     'provider_status' => $firstRes['status'] ?? null,
     'provider_response' => $firstRes['provider_response'] ?? null,
+    'provider_error'  => $firstRes['error'] ?? null,
     'name'            => $displayName,
 ];
 
@@ -680,13 +702,17 @@ $logData = [
     'numbers'         => [$normalizedPhone],
     'message'         => $message,
     'sender_id'       => $sender,
+    'sender_name'     => $sender,
     'status'          => $initialStatus,
     'ghl_message_id'  => $messageId,
     'date_created'    => $ts,
     'source'          => $chosenProvider,
     'provider'        => $chosenProvider,
     'provider_reference_id' => $firstRes['provider_reference_id'] ?? $storedMsgId,
+    'provider_message_id' => $firstRes['provider_message_id'] ?? ($firstRes['provider_reference_id'] ?? $storedMsgId),
     'provider_status' => $firstRes['status'] ?? null,
+    'provider_response' => $firstRes['provider_response'] ?? null,
+    'provider_error'  => $firstRes['error'] ?? null,
     'credits_used'    => $required_credits,
     'conversation_id' => $convId,
 ];

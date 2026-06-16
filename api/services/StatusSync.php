@@ -24,6 +24,7 @@ class StatusSync
         // Instantiate gateway once for the whole sync session (avoids one Firestore
         // config read per message inside the loop).
         require_once __DIR__ . '/SmsGatewayService.php';
+        require_once __DIR__ . '/SenderResolver.php';
         $gateway = new \SmsGatewayService();
         $startTime = time();
         $maxExecutionTime = 240; // 4 minutes safety limit
@@ -64,7 +65,7 @@ class StatusSync
                 // Messages from send_sms.php may ALSO have a ghl_message_id (stored
                 // separately) but their message_id IS a real Semaphore ID — poll normally.
                 $isGhlProviderSource = ($data['source'] ?? '') === 'ghl_provider';
-                if ($isGhlProviderSource) {
+                if ($isGhlProviderSource && empty($data['provider_reference_id']) && empty($data['provider_message_id'])) {
                     $dateCreated = self::parseTs($data['date_created'] ?? $data['created_at'] ?? null);
                     if ($dateCreated && (time() - $dateCreated > 300)) {
                         self::finalize($db, $doc, $messageId, 'Sent', null);
@@ -80,23 +81,22 @@ class StatusSync
                     $updatedCount++;
                     continue;
                 }
+                $providerName = $data['provider'] ?? 'semaphore';
+                $providerMessageId = self::providerMessageId($data, $messageId);
                 $activeApiKey = $systemApiKey;
                 $isSystem = !empty($data['is_system']);
                 if ($locId && !$isSystem) {
-                    if (!isset($apiKeyCache[$locId])) {
-                        try {
-                            $intDoc = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
-                            $snap = $db->collection('integrations')->document($intDoc)->snapshot();
-                            if ($snap->exists()) {
-                                $idat = $snap->data();
-                                $activeApiKey = $idat['nola_pro_api_key'] ?? ($idat['semaphore_api_key'] ?? $systemApiKey);
-                            }
-                        } catch (\Exception $e) {
-                            error_log("[StatusSync] Error fetching key for $locId: " . $e->getMessage());
-                        }
-                        $apiKeyCache[$locId] = $activeApiKey;
+                    $cacheKey = $locId . ':' . $providerName;
+                    if (!isset($apiKeyCache[$cacheKey])) {
+                        $resolved = \SenderResolver::resolveStatusApiKey($db, (string)$locId, (string)$providerName, $systemApiKey, $isSystem);
+                        $apiKeyCache[$cacheKey] = $resolved;
                     }
-                    $activeApiKey = $apiKeyCache[$locId];
+                    $activeApiKey = $apiKeyCache[$cacheKey]['api_key'];
+                    $apiKeySource = $apiKeyCache[$cacheKey]['source'];
+                } else {
+                    $resolved = \SenderResolver::resolveStatusApiKey($db, (string)$locId, (string)$providerName, $systemApiKey, $isSystem);
+                    $activeApiKey = $resolved['api_key'];
+                    $apiKeySource = $resolved['source'];
                 }
 
                 // ── Expiration Filter (3 Days) ─────────────────────────────
@@ -111,17 +111,16 @@ class StatusSync
 
 
                 // ── Dynamic Provider API Call ────────────────────────────────
-                $providerName = $data['provider'] ?? 'semaphore';
                 $providerInstance = $gateway->getProviderInstance($providerName);
 
                 try {
-                    $statusRes = $providerInstance->checkStatus($messageId, $activeApiKey);
+                    $statusRes = $providerInstance->checkStatus($providerMessageId, $activeApiKey);
                     $rawStatus = $statusRes['status'] ?? 'sending';
 
                     if ($rawStatus === 'not_found') {
                         $retries = ($data['sync_retries'] ?? 0) + 1;
                         if ($retries >= 3) {
-                            self::finalize($db, $doc, $messageId, 'Failed', 'Message not found on provider after retries');
+                            self::finalize($db, $doc, $messageId, 'Failed', 'Message not found on provider after retries', $rawStatus);
                             $updatedCount++;
                         } else {
                             $doc->reference()->update([
@@ -142,9 +141,18 @@ class StatusSync
                         }
 
                         if (self::isUpgrade($currentStatus, $newStatus)) {
-                            self::finalize($db, $doc, $messageId, $newStatus);
+                            self::finalize($db, $doc, $messageId, $newStatus, null, $rawStatus);
                             $updatedCount++;
-                            error_log("[StatusSync] $messageId ($providerName): $currentStatus -> $newStatus (raw: $rawStatus)");
+                            error_log("[StatusSync] " . json_encode([
+                                'message_id' => $messageId,
+                                'provider_message_id' => $providerMessageId,
+                                'provider' => $providerName,
+                                'location_id' => $locId,
+                                'api_key_source' => $apiKeySource ?? null,
+                                'provider_status' => $rawStatus,
+                                'normalized_status' => $newStatus,
+                                'previous_status' => $currentStatus,
+                            ]));
                         } else {
                             $doc->reference()->update([
                                 ['path' => 'updated_at', 'value' => new \Google\Cloud\Core\Timestamp(new \DateTime())]
@@ -191,7 +199,7 @@ class StatusSync
         // message ID as the Semaphore ID (they don't have a Semaphore ID at all).
         // Messages from send_sms.php with a separate ghl_message_id are fine to
         // poll — their message_id IS a real Semaphore ID.
-        if (($data['source'] ?? '') === 'ghl_provider') {
+        if (($data['source'] ?? '') === 'ghl_provider' && empty($data['provider_reference_id']) && empty($data['provider_message_id'])) {
             return;
         }
 
@@ -224,23 +232,18 @@ class StatusSync
 
         // 5. Select the correct API key
         $locId = $data['location_id'] ?? '';
+        $providerName = $data['provider'] ?? 'semaphore';
+        $providerMessageId = self::providerMessageId($data, (string)$messageId);
         $activeApiKey = $systemApiKey;
         $isSystem = !empty($data['is_system']);
-        if ($locId && !$isSystem) {
-            if (!isset($apiKeyCache[$locId])) {
-                try {
-                    $intDoc = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
-                    $snap = $db->collection('integrations')->document($intDoc)->snapshot();
-                    if ($snap->exists()) {
-                        $idat = $snap->data();
-                        $activeApiKey = $idat['nola_pro_api_key'] ?? ($idat['semaphore_api_key'] ?? $systemApiKey);
-                    }
-                } catch (\Exception $e) {
-                    error_log("[StatusSync] Inline key fetch error for $locId: " . $e->getMessage());
-                }
-                $apiKeyCache[$locId] = $activeApiKey;
+        require_once __DIR__ . '/SenderResolver.php';
+        if ($locId) {
+            $cacheKey = $locId . ':' . $providerName;
+            if (!isset($apiKeyCache[$cacheKey])) {
+                $apiKeyCache[$cacheKey] = \SenderResolver::resolveStatusApiKey($db, (string)$locId, (string)$providerName, $systemApiKey, $isSystem);
             }
-            $activeApiKey = $apiKeyCache[$locId];
+            $activeApiKey = $apiKeyCache[$cacheKey]['api_key'];
+            $apiKeySource = $apiKeyCache[$cacheKey]['source'];
         }
 
         // 6. Make the Live API Call to Gateway
@@ -252,10 +255,9 @@ class StatusSync
                 require_once __DIR__ . '/SmsGatewayService.php';
                 $gatewayInstance = new \SmsGatewayService();
             }
-            $providerName = $data['provider'] ?? 'semaphore';
             $providerInstance = $gatewayInstance->getProviderInstance($providerName);
 
-            $statusRes = $providerInstance->checkStatus($messageId, $activeApiKey);
+            $statusRes = $providerInstance->checkStatus($providerMessageId, $activeApiKey);
             $rawStatus = $statusRes['status'] ?? 'sending';
 
             $ts = new \Google\Cloud\Core\Timestamp(new \DateTime());
@@ -279,10 +281,19 @@ class StatusSync
                 }
 
                 if (self::isUpgrade($status, $newStatus)) {
-                    self::finalize($db, null, $messageId, $newStatus);
+                    self::finalize($db, null, $messageId, $newStatus, null, $rawStatus);
                     $data['status'] = $newStatus;
                     $data['updated_at'] = $ts;
-                    error_log("[StatusSync] Inline upgrade for $messageId ($providerName): $status -> $newStatus (raw: $rawStatus)");
+                    error_log("[StatusSync] Inline upgrade " . json_encode([
+                        'message_id' => $messageId,
+                        'provider_message_id' => $providerMessageId,
+                        'provider' => $providerName,
+                        'location_id' => $locId,
+                        'api_key_source' => $apiKeySource ?? null,
+                        'provider_status' => $rawStatus,
+                        'normalized_status' => $newStatus,
+                        'previous_status' => $status,
+                    ]));
                 } else {
                     $updates = [['path' => 'updated_at', 'value' => $ts]];
                     try {
@@ -297,10 +308,16 @@ class StatusSync
         }
     }
 
-    private static function finalize($db, $doc, $messageId, $status, $reason = null) {
+    private static function providerMessageId(array $data, string $messageId): string
+    {
+        return (string)($data['provider_message_id'] ?? ($data['provider_reference_id'] ?? $messageId));
+    }
+
+    private static function finalize($db, $doc, $messageId, $status, $reason = null, $providerStatus = null) {
         $ts = new \Google\Cloud\Core\Timestamp(new \DateTime());
         $updates = [['path' => 'status', 'value' => $status], ['path' => 'updated_at', 'value' => $ts]];
         if ($reason) $updates[] = ['path' => 'error_reason', 'value' => $reason];
+        if ($providerStatus !== null) $updates[] = ['path' => 'provider_status', 'value' => $providerStatus];
         
         $data = null;
         if ($doc instanceof \Google\Cloud\Firestore\DocumentSnapshot) {
@@ -340,7 +357,15 @@ class StatusSync
                             
                             $ghlMessageId = $data['ghl_message_id'] ?? null;
                             if ($ghlMessageId) {
-                                self::$ghlSyncServices[$locId]->syncMessageStatus($ghlMessageId, $status);
+                                $ghlResult = self::$ghlSyncServices[$locId]->syncMessageStatus($ghlMessageId, $status);
+                                error_log("[StatusSync] GHL status sync result " . json_encode([
+                                    'message_id' => $messageId,
+                                    'ghl_message_id' => $ghlMessageId,
+                                    'location_id' => $locId,
+                                    'normalized_status' => $status,
+                                    'ghl_status' => $ghlResult['ghl_response']['status'] ?? null,
+                                    'skipped' => $ghlResult['skipped'] ?? false,
+                                ]));
                             }
                         } catch (\Exception $e) {
                             error_log("[StatusSync] GHL Status Sync failed: " . $e->getMessage());

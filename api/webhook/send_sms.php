@@ -12,6 +12,7 @@ require __DIR__ . '/firestore_client.php';
 require __DIR__ . '/../auth_helpers.php';
 require __DIR__ . '/../install_helpers.php';
 require __DIR__ . '/../services/CreditManager.php';
+require_once __DIR__ . '/../services/SenderResolver.php';
 require __DIR__ . '/../services/GhlClient.php';
 require_once __DIR__ . '/../services/GhlSyncService.php';
 
@@ -581,9 +582,22 @@ $requestedSender = $customData['sendername'] ?? $payload['sendername'] ?? $data[
 //   → If the subaccount's approved sender is not on the master account,
 //     fall back to the default (NOLASMSPro) to guarantee delivery.
 
-$usingCustomSender = false;
-$activeApiKey      = $SEMAPHORE_API_KEY;       // Default: master gateway
-$sender            = $SENDER_IDS[0] ?? 'NOLASMSPro'; // Default: system sender
+$senderResolution = SenderResolver::resolve(
+    $db,
+    (string)$locId,
+    $config,
+    $intData,
+    $requestedSender ? (string)$requestedSender : null,
+    $isSystemNotification,
+    'send_sms'
+);
+
+$usingCustomSender = (bool)$senderResolution['using_custom_key'];
+$activeApiKey      = $senderResolution['active_api_key'];
+$sender            = $senderResolution['sender'];
+$providerPreference = $senderResolution['provider_preference'];
+$approvedProvider  = $senderResolution['approved_provider'];
+$apiKeySource      = $senderResolution['api_key_source'];
 $billingAgencyId   = '';
 $billingMasterLock = false;
 $billingReferenceId = null;
@@ -591,7 +605,7 @@ $billingReferenceId = null;
 $sysKey  = trim((string)$SEMAPHORE_API_KEY);
 $userKey = trim((string)($customApiKey ?? ''));
 
-if ($userKey !== '' && $userKey !== $sysKey) {
+if (false && $userKey !== '' && $userKey !== $sysKey) {
     // ── PATH A: External API key ─────────────────────────────────────────────
     $usingCustomSender = true;
     $activeApiKey      = $customApiKey;
@@ -617,7 +631,7 @@ if ($userKey !== '' && $userKey !== $sysKey) {
     }
     // else: $sender stays as the system default 'NOLASMSPro'
 
-} else {
+} elseif (false) {
     // ── PATH B: Master billing gateway ──────────────────────────────────────
     error_log("[send_sms] Resolving Sender ID for Loc: {$locId} (requested: '{$requestedSender}')");
 
@@ -674,7 +688,10 @@ Logger::info('SMS billing decision', [
     'using_free_credits'   => $usingFreeCredits,
     'bypass_billing'       => $bypassBilling,
     'is_system_notif'      => $isSystemNotification,
-    'sender'               => $sender,
+        'sender'               => $sender,
+        'selected_provider'    => $providerPreference,
+        'approved_provider'    => $approvedProvider,
+        'api_key_source'       => $apiKeySource,
 ]);
 error_log("[send_sms] BILLING DECISION for loc={$locId}: " . json_encode([
     'usingOwnApiKey'       => $usingCustomSender,
@@ -688,6 +705,8 @@ error_log("[send_sms] BILLING DECISION for loc={$locId}: " . json_encode([
     'account_id'           => $account_id,
         'customApiKey_present' => !empty($customApiKey),
         'provider_preference'  => $providerPreference,
+        'approved_provider'    => $approvedProvider,
+        'api_key_source'       => $apiKeySource,
 ]));
 
 // ── Credit Deduction & Trial ──────────────────────────────────────────────────
@@ -878,6 +897,8 @@ try {
     Logger::info('Gateway send completed', [
         'provider'       => $chosenProvider,
         'location_id'    => $locId,
+        'sender_name'    => $sender,
+        'api_key_source' => $apiKeySource,
         'num_recipients' => $num_recipients,
         'total_status'   => $total_status,
         'failed_count'   => count($gateway_errors),
@@ -961,6 +982,7 @@ if (!empty($message_results)) {
             'message' => $message,
             'direction' => 'outbound',
             'sender_id' => $sender_id,
+            'sender_name' => $sender_id,
             'status' => $initialStatus,
             'batch_id' => $batch_id,
             'recipient_key' => $recipientKey,
@@ -969,6 +991,7 @@ if (!empty($message_results)) {
             'name' => $recipientName,
             'message_id' => $messageId,
             'provider_reference_id' => $msg['provider_reference_id'] ?? $messageId,
+            'provider_message_id' => $msg['provider_message_id'] ?? ($msg['provider_reference_id'] ?? $messageId),
             'segments' => $credits_per_message,
             'provider' => $chosenProvider,
             'provider_status' => $msg['status'] ?? null,
@@ -989,6 +1012,7 @@ if (!empty($message_results)) {
             'numbers' => [$recipient],
             'message' => $message,
             'sender_id' => $sender,
+            'sender_name' => $sender,
             'status' => $initialStatus,
             'date_created' => $ts,
             'source' => $chosenProvider,
@@ -998,6 +1022,7 @@ if (!empty($message_results)) {
             'credits_used' => $credits_per_message,
             'conversation_id' => $conversation_id,
             'provider_reference_id' => $msg['provider_reference_id'] ?? $messageId,
+            'provider_message_id' => $msg['provider_message_id'] ?? ($msg['provider_reference_id'] ?? $messageId),
             'provider_status' => $msg['status'] ?? null,
             'provider_error' => $msg['error'] ?? null,
             'provider_response' => $msg['provider_response'] ?? null,

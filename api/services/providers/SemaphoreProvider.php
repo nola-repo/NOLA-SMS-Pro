@@ -63,16 +63,22 @@ class SemaphoreProvider implements SmsProviderInterface
                 if (is_array($row) && isset($row['message_id'])) {
                     $results[] = [
                         'message_id' => (string)$row['message_id'],
+                        'provider_reference_id' => (string)$row['message_id'],
+                        'provider_message_id' => (string)$row['message_id'],
                         'status' => $this->normalizeStatus($row['status'] ?? 'queued'),
-                        'recipient' => $row['number'] ?? ''
+                        'recipient' => $row['number'] ?? '',
+                        'provider_response' => $row,
                     ];
                 }
             }
         } elseif (isset($decoded['message_id'])) {
             $results[] = [
                 'message_id' => (string)$decoded['message_id'],
+                'provider_reference_id' => (string)$decoded['message_id'],
+                'provider_message_id' => (string)$decoded['message_id'],
                 'status' => $this->normalizeStatus($decoded['status'] ?? 'queued'),
-                'recipient' => $decoded['number'] ?? ''
+                'recipient' => $decoded['number'] ?? '',
+                'provider_response' => $decoded,
             ];
         }
 

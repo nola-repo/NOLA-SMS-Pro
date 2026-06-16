@@ -118,6 +118,7 @@ class UniSmsProvider implements SmsProviderInterface
         return [
             'message_id' => (string)$refId,
             'provider_reference_id' => (string)$refId,
+            'provider_message_id' => (string)$refId,
             'status' => $this->normalizeStatus($body['status'] ?? 'pending'),
             'recipient' => $number,
             'provider_response' => $body,
@@ -137,6 +138,8 @@ class UniSmsProvider implements SmsProviderInterface
                 // Return failed status for this number so it logs correctly
                 $results[] = [
                     'message_id' => 'failed_' . bin2hex(random_bytes(4)),
+                    'provider_reference_id' => null,
+                    'provider_message_id' => null,
                     'status' => 'failed',
                     'recipient' => $number,
                     'error' => $e->getMessage(),

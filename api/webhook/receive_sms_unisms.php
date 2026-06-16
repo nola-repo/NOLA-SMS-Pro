@@ -78,16 +78,13 @@ function unisms_clean_number($number): string
 function unisms_status_to_local(?string $status, ?string $event): string
 {
     $raw = strtolower(trim((string)($status ?: $event)));
-    if (str_contains($raw, 'delivered')) {
-        return 'Delivered';
-    }
-    if (str_contains($raw, 'sent') || str_contains($raw, 'queued') || str_contains($raw, 'pending')) {
+    if (str_contains($raw, 'delivered') || str_contains($raw, 'sent') || str_contains($raw, 'success')) {
         return 'Sent';
     }
     if (str_contains($raw, 'fail') || str_contains($raw, 'reject') || str_contains($raw, 'undelivered') || str_contains($raw, 'expired')) {
         return 'Failed';
     }
-    return 'Sent';
+    return 'Sending';
 }
 
 function unisms_event_is_status_callback(string $event): bool
@@ -126,6 +123,7 @@ function unisms_update_outbound_status($db, array $data, array $messageObj, stri
     $localStatus = unisms_status_to_local($providerStatus, $event);
     $now = new \Google\Cloud\Core\Timestamp(new \DateTime());
     $updated = [];
+    $ghlSyncTargets = [];
 
     if ($referenceId === '') {
         return ['updated' => [], 'status' => $localStatus, 'reference_id' => null];
@@ -136,6 +134,7 @@ function unisms_update_outbound_status($db, array $data, array $messageObj, stri
         ['path' => 'provider_status', 'value' => $providerStatus],
         ['path' => 'provider', 'value' => 'unisms'],
         ['path' => 'provider_reference_id', 'value' => $referenceId],
+        ['path' => 'provider_message_id', 'value' => $referenceId],
         ['path' => 'provider_response', 'value' => $data],
         ['path' => 'updated_at', 'value' => $now],
     ];
@@ -148,8 +147,15 @@ function unisms_update_outbound_status($db, array $data, array $messageObj, stri
                 if ($requireExistingUnismsRecord && !unisms_existing_record_matches($snap->data(), $referenceId)) {
                     continue;
                 }
+                $existingData = $snap->data();
                 $docRef->update($updatePayload);
                 $updated[] = "{$collection}/{$referenceId}";
+                if (in_array($localStatus, ['Sent', 'Failed'], true) && !empty($existingData['location_id']) && !empty($existingData['ghl_message_id'])) {
+                    $ghlSyncTargets[$existingData['location_id'] . ':' . $existingData['ghl_message_id']] = [
+                        'location_id' => $existingData['location_id'],
+                        'ghl_message_id' => $existingData['ghl_message_id'],
+                    ];
+                }
                 continue;
             }
         } catch (\Throwable $e) {
@@ -168,15 +174,53 @@ function unisms_update_outbound_status($db, array $data, array $messageObj, stri
                 if ($requireExistingUnismsRecord && !unisms_existing_record_matches($doc->data(), $referenceId)) {
                     continue;
                 }
+                $existingData = $doc->data();
                 $doc->reference()->update($updatePayload);
                 $updated[] = "{$collection}/" . $doc->id();
+                if (in_array($localStatus, ['Sent', 'Failed'], true) && !empty($existingData['location_id']) && !empty($existingData['ghl_message_id'])) {
+                    $ghlSyncTargets[$existingData['location_id'] . ':' . $existingData['ghl_message_id']] = [
+                        'location_id' => $existingData['location_id'],
+                        'ghl_message_id' => $existingData['ghl_message_id'],
+                    ];
+                }
             }
         } catch (\Throwable $e) {
             error_log("[receive_sms_unisms] {$collection} provider_reference_id update failed for {$referenceId}: " . $e->getMessage());
         }
     }
 
-    return ['updated' => array_values(array_unique($updated)), 'status' => $localStatus, 'reference_id' => $referenceId];
+    $ghlResults = [];
+    foreach ($ghlSyncTargets as $target) {
+        try {
+            $ghlSync = new \Nola\Services\GhlSyncService($db, $target['location_id']);
+            $syncResult = $ghlSync->syncMessageStatus($target['ghl_message_id'], $localStatus);
+            $ghlResults[] = [
+                'location_id' => $target['location_id'],
+                'ghl_message_id' => $target['ghl_message_id'],
+                'status' => $localStatus,
+                'ghl_status' => $syncResult['ghl_response']['status'] ?? null,
+                'skipped' => $syncResult['skipped'] ?? false,
+            ];
+        } catch (\Throwable $e) {
+            error_log('[receive_sms_unisms] GHL status sync failed: ' . json_encode([
+                'reference_id' => $referenceId,
+                'location_id' => $target['location_id'],
+                'ghl_message_id' => $target['ghl_message_id'],
+                'normalized_status' => $localStatus,
+                'error' => $e->getMessage(),
+            ]));
+        }
+    }
+
+    error_log('[receive_sms_unisms] status callback processed: ' . json_encode([
+        'reference_id' => $referenceId,
+        'provider_status' => $providerStatus,
+        'normalized_status' => $localStatus,
+        'updated' => $updated,
+        'ghl_sync_results' => $ghlResults,
+    ]));
+
+    return ['updated' => array_values(array_unique($updated)), 'status' => $localStatus, 'reference_id' => $referenceId, 'ghl_sync_results' => $ghlResults];
 }
 
 $raw = file_get_contents('php://input');
@@ -208,6 +252,7 @@ if (unisms_event_is_status_callback($event)) {
         'reference_id' => $result['reference_id'],
         'local_status' => $result['status'],
         'updated' => $result['updated'],
+        'ghl_sync_results' => $result['ghl_sync_results'] ?? [],
         'auth' => $auth['ok'] ? 'secret' : 'matched_existing_unisms_record',
     ]);
 }
@@ -283,6 +328,9 @@ foreach ($matchingConvs as $matching) {
         'status' => 'Received',
         'date_received' => $now,
         'provider' => 'unisms',
+        'provider_reference_id' => (string)$messageId,
+        'provider_message_id' => (string)$messageId,
+        'provider_status' => $messageObj['status'] ?? $data['status'] ?? $event,
         'provider_response' => $data,
     ];
 
