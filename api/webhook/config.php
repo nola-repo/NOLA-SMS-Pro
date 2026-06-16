@@ -18,6 +18,7 @@ return [
 
     'GHL_AGENCY_CLIENT_ID'     => getenv('GHL_AGENCY_CLIENT_ID') ?: '',
     'GHL_AGENCY_CLIENT_SECRET' => getenv('GHL_AGENCY_CLIENT_SECRET') ?: '',
+    'GHL_WEBHOOK_SIGNING_SECRET' => getenv('GHL_WEBHOOK_SIGNING_SECRET') ?: '',
     // Default system sender ID (first entry is the fallback)
     'SENDER_IDS' => [
         'NOLASMSPro',
