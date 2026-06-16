@@ -5,6 +5,7 @@ $config = require __DIR__ . '/config.php';
 require __DIR__ . '/firestore_client.php';
 require_once __DIR__ . '/../services/GhlSyncService.php';
 require_once __DIR__ . '/../services/CreditManager.php';
+require_once __DIR__ . '/../services/MessageSyncService.php';
 
 header('Content-Type: application/json');
 
@@ -334,6 +335,28 @@ foreach ($matchingConvs as $matching) {
         'provider_response' => $data,
     ];
 
+    MessageSyncService::recordMessageEvent($db, [
+        'origin' => 'provider_inbound_unisms',
+        'conversation_id' => $convId,
+        'conversation_type' => 'direct',
+        'conversation_members' => [$senderNumber],
+        'location_id' => $locId,
+        'message_id' => $saveData['message_id'],
+        'from' => $senderNumber,
+        'message' => $message,
+        'direction' => 'inbound',
+        'status' => 'Received',
+        'date_received' => $now,
+        'timestamp' => $now,
+        'provider' => 'unisms',
+        'provider_reference_id' => (string)$messageId,
+        'provider_message_id' => (string)$messageId,
+        'provider_status' => $messageObj['status'] ?? $data['status'] ?? $event,
+        'provider_response' => $data,
+        'write_inbound_compat' => true,
+    ]);
+
+    if (false) {
     $db->collection('messages')->document($saveData['message_id'])->set($saveData, ['merge' => true]);
 
     $db->collection('conversations')->document($convId)->set([
@@ -351,6 +374,7 @@ foreach ($matchingConvs as $matching) {
         NolaCache::deleteRegistry("conversations_registry_{$locId}");
     } catch (\Throwable $cacheEx) {
         error_log("[receive_sms_unisms] Cache invalidation failed: " . $cacheEx->getMessage());
+    }
     }
 
     $processed[] = [

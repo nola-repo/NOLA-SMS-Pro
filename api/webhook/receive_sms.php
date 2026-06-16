@@ -4,6 +4,7 @@ require_once __DIR__ . '/../cors.php';
 $config = require __DIR__ . '/config.php';
 require __DIR__ . '/firestore_client.php';
 require_once __DIR__ . '/../services/GhlSyncService.php';
+require_once __DIR__ . '/../services/MessageSyncService.php';
 
 require_once __DIR__ . '/../auth_helpers.php';
 // Requires ?secret= to be appended to the webhook URL in Semaphore
@@ -70,7 +71,24 @@ foreach ($matchingConvs as $matching) {
         'date_received' => $now,
     ];
 
+    MessageSyncService::recordMessageEvent($db, [
+        'origin' => 'provider_inbound_semaphore',
+        'conversation_id' => $convId,
+        'conversation_type' => 'direct',
+        'conversation_members' => [$senderNumber],
+        'location_id' => $locId,
+        'message_id' => $saveData['message_id'],
+        'from' => $senderNumber,
+        'message' => $message,
+        'direction' => 'inbound',
+        'status' => 'Received',
+        'date_received' => $now,
+        'timestamp' => $now,
+        'write_inbound_compat' => true,
+    ]);
+
     // 1. Store in messages (unified thread)
+    if (false) {
     $db->collection('messages')->document($saveData['message_id'])->set($saveData, ['merge' => true]);
 
     // 2. Update Sidebar (conversations)
@@ -90,6 +108,7 @@ foreach ($matchingConvs as $matching) {
         NolaCache::deleteRegistry("conversations_registry_{$locId}");
     } catch (\Throwable $cacheEx) {
         error_log("[receive_sms] Cache invalidation failed: " . $cacheEx->getMessage());
+    }
     }
 
     $processed[] = [
@@ -132,4 +151,4 @@ foreach ($processed as $proc) {
     } catch (\Throwable $e) {
         error_log("[receive_sms] GHL Sync failed for location {$proc['locId']}: " . $e->getMessage());
     }
-}
+}

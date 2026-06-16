@@ -50,6 +50,7 @@ require __DIR__ . '/../auth_helpers.php';
 require __DIR__ . '/../install_helpers.php';
 require __DIR__ . '/../services/CreditManager.php';
 require_once __DIR__ . '/../services/SenderResolver.php';
+require_once __DIR__ . '/../services/MessageSyncService.php';
 require_once __DIR__ . '/../services/SmsGatewayService.php';
 $gateway = new SmsGatewayService();
 
@@ -670,6 +671,38 @@ if (in_array($rawMsgStatus, ['sent', 'success', 'delivered'])) {
 // Derive a display name — GHL provider doesn't always send contact name
 $displayName = $payload['contactName'] ?? $payload['name'] ?? $normalizedPhone;
 
+MessageSyncService::recordMessageEvent($db, [
+    'origin' => 'ghl_provider',
+    'conversation_id' => $convId,
+    'conversation_type' => 'direct',
+    'conversation_members' => [$normalizedPhone],
+    'location_id' => $locationId,
+    'number' => $normalizedPhone,
+    'message' => $message,
+    'direction' => 'outbound',
+    'sender_id' => $sender,
+    'sender_name' => $sender,
+    'status' => $initialStatus,
+    'ghl_message_id' => $messageId,
+    'ghl_contact_id' => $contactId,
+    'created_at' => $ts,
+    'date_created' => $ts,
+    'timestamp' => $ts,
+    'segments' => $required_credits,
+    'credits_used' => $required_credits,
+    'source' => 'ghl_provider',
+    'provider' => $chosenProvider,
+    'provider_reference_id' => $firstRes['provider_reference_id'] ?? $storedMsgId,
+    'provider_message_id' => $firstRes['provider_message_id'] ?? ($firstRes['provider_reference_id'] ?? $storedMsgId),
+    'provider_status' => $firstRes['status'] ?? null,
+    'provider_response' => $firstRes['provider_response'] ?? null,
+    'provider_error' => $firstRes['error'] ?? null,
+    'name' => $displayName,
+    'conversation_name' => $displayName,
+    'message_id' => $storedMsgId,
+]);
+
+if (false) {
 $msgData = [
     'conversation_id' => $convId,
     'location_id'     => $locationId,
@@ -736,6 +769,7 @@ try {
     NolaCache::deleteRegistry("conversations_registry_{$locationId}");
 } catch (\Throwable $cacheEx) {
     error_log("[ghl_provider] Cache invalidation failed: " . $cacheEx->getMessage());
+}
 }
 
 // ── Sync 'delivered' status back to GHL (background, after SMS confirmed sent) ────

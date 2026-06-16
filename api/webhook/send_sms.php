@@ -13,6 +13,7 @@ require __DIR__ . '/../auth_helpers.php';
 require __DIR__ . '/../install_helpers.php';
 require __DIR__ . '/../services/CreditManager.php';
 require_once __DIR__ . '/../services/SenderResolver.php';
+require_once __DIR__ . '/../services/MessageSyncService.php';
 require __DIR__ . '/../services/GhlClient.php';
 require_once __DIR__ . '/../services/GhlSyncService.php';
 
@@ -975,6 +976,40 @@ if (!empty($message_results)) {
         // 'queued' and 'pending' intentionally stay as 'Sending' — they will be
         // polled by check_message_status.php and resolved quickly.
 
+        MessageSyncService::recordMessageEvent($db, [
+            'origin' => 'send_sms',
+            'conversation_id' => $conversation_id,
+            'conversation_type' => $isBulk ? 'group' : 'direct',
+            'conversation_members' => [$recipient],
+            'append_members' => $isBulk,
+            'location_id' => $locId,
+            'number' => $recipient,
+            'message' => $message,
+            'direction' => 'outbound',
+            'sender_id' => $sender_id,
+            'sender_name' => $sender_id,
+            'status' => $initialStatus,
+            'batch_id' => $batch_id,
+            'recipient_key' => $recipientKey,
+            'created_at' => $ts,
+            'date_created' => $ts,
+            'timestamp' => $ts,
+            'name' => $recipientName,
+            'conversation_name' => !$isBulk ? ($recipientName ?: $recipient) : null,
+            'message_id' => $messageId,
+            'provider_reference_id' => $msg['provider_reference_id'] ?? $messageId,
+            'provider_message_id' => $msg['provider_message_id'] ?? ($msg['provider_reference_id'] ?? $messageId),
+            'segments' => $credits_per_message,
+            'credits_used' => $credits_per_message,
+            'provider' => $chosenProvider,
+            'provider_status' => $msg['status'] ?? null,
+            'provider_response' => $msg['provider_response'] ?? null,
+            'provider_error' => $msg['error'] ?? null,
+            'idempotency_key' => $idempotencyKey ?? null,
+            'is_system' => $isSystemNotification,
+        ]);
+
+        if (false) {
         $saveData = [
             'conversation_id' => $conversation_id,
             'location_id' => $locId,
@@ -1037,6 +1072,7 @@ if (!empty($message_results)) {
         $db->collection('sms_logs')
             ->document($messageId)
             ->set($logData, ['merge' => true]);
+        }
     }
 
     // For bulk sends the frontend calls this endpoint once per recipient (sequential),
@@ -1044,7 +1080,7 @@ if (!empty($message_results)) {
     // atomically appends its recipient to the members list — works whether the doc
     // already exists or is being created for the very first time.
     // For direct (single) sends, we simply set the members array normally.
-    if ($isBulk) {
+    if (false && $isBulk) {
         $db->collection('conversations')
             ->document($conversation_id)
             ->set([
@@ -1057,7 +1093,7 @@ if (!empty($message_results)) {
                 // arrayUnion creates the field if missing, appends if it exists — never duplicates
                 'members'         => \Google\Cloud\Firestore\FieldValue::arrayUnion($validNumbers),
             ], ['merge' => true]);
-    } else {
+    } elseif (false) {
         $db->collection('conversations')
             ->document($conversation_id)
             ->set([
@@ -1072,7 +1108,7 @@ if (!empty($message_results)) {
             ], ['merge' => true]);
     }
 
-    try {
+    if (false) try {
         require_once __DIR__ . '/../cache_helper.php';
         NolaCache::deleteRegistry("conversations_registry_{$locId}");
     } catch (\Throwable $cacheEx) {
