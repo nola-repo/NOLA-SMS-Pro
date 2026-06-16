@@ -173,6 +173,169 @@ final class GhlTokenRefreshLock
 final class GhlTokenProvider
 {
     /**
+     * Exchange a company-scoped token into a location-scoped token.
+     *
+     * GHL has accepted different /oauth/locationToken payload formats in
+     * different runtimes, so keep refresh paths aligned with install/callback.
+     *
+     * @return array{ok:bool, code:int, data:array, raw:string, format:string, failures:array}
+     */
+    public static function exchangeLocationToken(
+        string $companyAccessToken,
+        string $companyId,
+        string $locationId,
+        int $timeoutSeconds = 6
+    ): array {
+        $timeoutSeconds = max(3, min(12, $timeoutSeconds));
+        $attempts = [
+            [
+                'format' => 'form',
+                'url' => 'https://services.leadconnectorhq.com/oauth/locationToken',
+                'body' => http_build_query(['companyId' => $companyId, 'locationId' => $locationId]),
+                'headers' => [
+                    'Authorization: Bearer ' . $companyAccessToken,
+                    'Content-Type: application/x-www-form-urlencoded',
+                    'Accept: application/json',
+                    'Version: 2021-07-28',
+                ],
+            ],
+            [
+                'format' => 'json',
+                'url' => 'https://services.leadconnectorhq.com/oauth/locationToken',
+                'body' => json_encode(['companyId' => $companyId, 'locationId' => $locationId]),
+                'headers' => [
+                    'Authorization: Bearer ' . $companyAccessToken,
+                    'Content-Type: application/json',
+                    'Accept: application/json',
+                    'Version: 2021-07-28',
+                ],
+            ],
+            [
+                'format' => 'query',
+                'url' => 'https://services.leadconnectorhq.com/oauth/locationToken?companyId='
+                    . urlencode($companyId) . '&locationId=' . urlencode($locationId),
+                'body' => '',
+                'headers' => [
+                    'Authorization: Bearer ' . $companyAccessToken,
+                    'Accept: application/json',
+                    'Version: 2021-07-28',
+                ],
+            ],
+        ];
+
+        $failures = [];
+        foreach ($attempts as $attempt) {
+            $ch = curl_init($attempt['url']);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_POST => true,
+                CURLOPT_POSTFIELDS => $attempt['body'],
+                CURLOPT_HTTPHEADER => $attempt['headers'],
+                CURLOPT_CONNECTTIMEOUT => 3,
+                CURLOPT_TIMEOUT => $timeoutSeconds,
+            ]);
+            $raw = curl_exec($ch);
+            $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curlErrno = curl_errno($ch);
+            $curlError = curl_error($ch);
+            curl_close($ch);
+
+            $data = self::decodeGhlJsonWithTokenRecovery(is_string($raw) ? $raw : '');
+            if (($code === 200 || $code === 201) && !empty($data['access_token'])) {
+                return [
+                    'ok' => true,
+                    'code' => $code,
+                    'data' => $data,
+                    'raw' => is_string($raw) ? $raw : '',
+                    'format' => $attempt['format'],
+                    'failures' => $failures,
+                ];
+            }
+
+            $failures[] = [
+                'format' => $attempt['format'],
+                'code' => $code,
+                'curl_errno' => $curlErrno,
+                'curl_error' => $curlError,
+                'has_access_token_field' => is_string($raw) && strpos($raw, '"access_token"') !== false,
+                'raw' => substr(self::redactGhlSecrets((string) $raw), 0, 400),
+            ];
+            error_log(
+                '[GhlTokenProvider] locationToken '
+                . $attempt['format']
+                . ' failed for '
+                . $locationId
+                . ' HTTP '
+                . $code
+                . ': '
+                . self::redactGhlSecrets((string) $raw)
+            );
+
+            // 4xx errors (auth rejected, bad request) are not format-dependent —
+            // retrying other formats will not help. Break immediately.
+            if ($code >= 400 && $code < 500) {
+                break;
+            }
+        }
+
+        return [
+            'ok' => false,
+            'code' => (int) ($failures[count($failures) - 1]['code'] ?? 0),
+            'data' => [],
+            'raw' => '',
+            'format' => 'none',
+            'failures' => $failures,
+        ];
+    }
+
+    /** @return array<string,mixed> */
+    private static function decodeGhlJsonWithTokenRecovery(string $raw): array
+    {
+        $data = json_decode($raw, true);
+        if (!is_array($data)) {
+            $data = [];
+        }
+
+        if (empty($data['access_token']) && $raw !== '') {
+            if (preg_match('/"access_token"\s*:\s*"([^"]+)"/', $raw, $m)) {
+                $data['access_token'] = stripcslashes($m[1]);
+            }
+            if (preg_match('/"refresh_token"\s*:\s*"([^"]+)"/', $raw, $m)) {
+                $data['refresh_token'] = stripcslashes($m[1]);
+            }
+            if (preg_match('/"expires_in"\s*:\s*(\d+)/', $raw, $m)) {
+                $data['expires_in'] = (int) $m[1];
+            }
+        }
+
+        return $data;
+    }
+
+    private static function redactGhlSecrets(string $raw): string
+    {
+        $trim = trim($raw);
+        if ($trim === '') {
+            return '';
+        }
+        $decoded = json_decode($trim, true);
+        if (is_array($decoded)) {
+            foreach (['access_token', 'refresh_token', 'id_token', 'client_secret'] as $key) {
+                if (isset($decoded[$key])) {
+                    $decoded[$key] = '[REDACTED]';
+                }
+            }
+            return json_encode($decoded);
+        }
+        $redacted = preg_replace(
+            '/eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/',
+            '[REDACTED_JWT]',
+            $trim
+        );
+
+        return $redacted !== null ? $redacted : $trim;
+    }
+
+    /**
      * True if ghl_tokens/{registryKey} exists (canonical path before legacy merge).
      */
     public static function canonicalDocumentExists($db, string $registryKey): bool
@@ -257,27 +420,10 @@ final class GhlTokenProvider
                 $companyAccessToken = $companyData['access_token'] ?? null;
 
                 if ($companyAccessToken) {
-                    $ltCh = curl_init('https://services.leadconnectorhq.com/oauth/locationToken');
-                    curl_setopt_array($ltCh, [
-                        CURLOPT_RETURNTRANSFER => true,
-                        CURLOPT_POST           => true,
-                        CURLOPT_POSTFIELDS     => http_build_query([
-                            'companyId'  => $companyId,
-                            'locationId' => $registryKey,
-                        ]),
-                        CURLOPT_HTTPHEADER => [
-                            'Authorization: Bearer ' . $companyAccessToken,
-                            'Content-Type: application/x-www-form-urlencoded',
-                            'Accept: application/json',
-                            'Version: 2021-07-28',
-                        ],
-                    ]);
-                    $ltResp = curl_exec($ltCh);
-                    $ltCode = curl_getinfo($ltCh, CURLINFO_HTTP_CODE);
-                    curl_close($ltCh);
-
-                    $ltData = json_decode($ltResp, true);
-                    $ltOk = $ltCode >= 200 && $ltCode < 300;
+                    $ltResult = self::exchangeLocationToken($companyAccessToken, (string) $companyId, $registryKey);
+                    $ltData = $ltResult['data'];
+                    $ltCode = $ltResult['code'];
+                    $ltOk = !empty($ltResult['ok']);
 
                     if ($ltOk && !empty($ltData['access_token'])) {
                         $now = new \DateTimeImmutable();
@@ -305,7 +451,13 @@ final class GhlTokenProvider
                         $locationPayload['firestore_doc_id'] = $registryKey;
                         $data = $locationPayload;
                     } else {
-                        error_log('[GhlTokenProvider] locationToken exchange failed for ' . $registryKey . ' (HTTP ' . $ltCode . '). Using company token fallback.');
+                        error_log(
+                            '[GhlTokenProvider] locationToken exchange failed for '
+                            . $registryKey
+                            . ' (HTTP '
+                            . $ltCode
+                            . '). Using company token fallback.'
+                        );
                         $companyData['firestore_doc_id'] = $companyId;
                         $companyData['location_id'] = $registryKey;
                         $data = $companyData;

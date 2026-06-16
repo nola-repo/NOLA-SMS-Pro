@@ -81,6 +81,8 @@ class GhlClient
             $options = [
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_HTTPHEADER     => $headers,
+                CURLOPT_CONNECTTIMEOUT => 3,
+                CURLOPT_TIMEOUT        => 12,
             ];
 
             if ($method === 'POST') {
@@ -99,7 +101,30 @@ class GhlClient
             curl_setopt_array($ch, $options);
             $responseBody = curl_exec($ch);
             $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curlErrno = curl_errno($ch);
+            $curlError = curl_error($ch);
             curl_close($ch);
+
+            if ($responseBody === false || $status === 0) {
+                error_log(
+                    '[GhlClient] request transport failure '
+                    . $method
+                    . ' '
+                    . $path
+                    . ' curl_errno='
+                    . $curlErrno
+                    . ' curl_error='
+                    . $curlError
+                );
+
+                return [
+                    'status' => 503,
+                    'body' => json_encode([
+                        'error' => 'GHL API temporarily unavailable',
+                        'requires_reconnect' => false,
+                    ]),
+                ];
+            }
 
             // Retry once on 401 after refreshing the token
             if ($status === 401 && $attempt === 1) {
@@ -583,6 +608,8 @@ class GhlClient
                         'Content-Type: application/x-www-form-urlencoded',
                         'Version: 2021-07-28',
                     ],
+                    CURLOPT_CONNECTTIMEOUT => 3,
+                    CURLOPT_TIMEOUT        => 12,
                 ]);
 
                 $response = curl_exec($ch);
@@ -640,29 +667,20 @@ class GhlClient
             // exchange it now to avoid "authClass type is not allowed to access this scope" 401s.
             $desired = (string) ($this->integration['userType'] ?? 'Location');
             if ($successUserType === 'Company' && $desired === 'Location' && $companyId) {
-                $ltCh = curl_init('https://services.leadconnectorhq.com/oauth/locationToken');
-                curl_setopt_array($ltCh, [
-                    CURLOPT_RETURNTRANSFER => true,
-                    CURLOPT_POST           => true,
-                    CURLOPT_POSTFIELDS     => http_build_query(['companyId' => $companyId, 'locationId' => $this->locationId]),
-                    CURLOPT_HTTPHEADER     => [
-                        'Authorization: Bearer ' . ($data['access_token'] ?? ''),
-                        'Content-Type: application/x-www-form-urlencoded',
-                        'Accept: application/json',
-                        'Version: 2021-07-28',
-                    ],
-                ]);
-                $ltResp = curl_exec($ltCh);
-                $ltCode = curl_getinfo($ltCh, CURLINFO_HTTP_CODE);
-                curl_close($ltCh);
-                $ltData = json_decode($ltResp, true);
-                $ltOk = $ltCode >= 200 && $ltCode < 300;
+                $ltResult = GhlTokenProvider::exchangeLocationToken(
+                    (string) ($data['access_token'] ?? ''),
+                    (string) $companyId,
+                    $this->locationId
+                );
+                $ltData = $ltResult['data'];
+                $ltCode = $ltResult['code'];
+                $ltOk = !empty($ltResult['ok']);
 
                 if (!$ltOk || empty($ltData['access_token'])) {
                     error_log(
                         '[GhlClient] locationToken after company-refresh failed HTTP '
                         . $ltCode . ': '
-                        . self::redactGhlResponseForLog((string) $ltResp)
+                        . json_encode($ltResult['failures'] ?? [])
                     );
                     $ltReason = ($ltCode >= 500 || $ltCode === 0 || $ltCode === 429)
                         ? GhlOAuthRefreshException::REASON_TRANSIENT
@@ -700,29 +718,20 @@ class GhlClient
                 'raw_refresh'   => $data,
             ], ['merge' => true]);
 
-            $ltCh = curl_init('https://services.leadconnectorhq.com/oauth/locationToken');
-            curl_setopt_array($ltCh, [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_POST           => true,
-                CURLOPT_POSTFIELDS     => http_build_query(['companyId' => $companyId, 'locationId' => $this->locationId]),
-                CURLOPT_HTTPHEADER     => [
-                    'Authorization: Bearer ' . $data['access_token'],
-                    'Content-Type: application/x-www-form-urlencoded',
-                    'Accept: application/json',
-                    'Version: 2021-07-28',
-                ],
-            ]);
-            $ltResp = curl_exec($ltCh);
-            $ltCode = curl_getinfo($ltCh, CURLINFO_HTTP_CODE);
-            curl_close($ltCh);
-            $ltData = json_decode($ltResp, true);
-            $ltOk = $ltCode >= 200 && $ltCode < 300;
+            $ltResult = GhlTokenProvider::exchangeLocationToken(
+                (string) $data['access_token'],
+                (string) $companyId,
+                $this->locationId
+            );
+            $ltData = $ltResult['data'];
+            $ltCode = $ltResult['code'];
+            $ltOk = !empty($ltResult['ok']);
 
             if (!$ltOk || empty($ltData['access_token'])) {
                 error_log(
                     '[GhlClient] locationToken after refresh failed HTTP '
                     . $ltCode . ': '
-                    . self::redactGhlResponseForLog((string) $ltResp)
+                    . json_encode($ltResult['failures'] ?? [])
                 );
                 $ltReason = ($ltCode >= 500 || $ltCode === 0)
                     ? GhlOAuthRefreshException::REASON_TRANSIENT
