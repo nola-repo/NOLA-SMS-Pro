@@ -5,6 +5,7 @@
  *
  * Suggested scheduler URL:
  *   /webhook/ghl_reconcile_conversations?secret=WEBHOOK_SECRET&since_minutes=15&limit=50
+ *   /webhook/ghl_reconcile_conversations?secret=WEBHOOK_SECRET&location_id=LOC&backfill_days=30
  */
 
 ini_set('display_errors', 0);
@@ -38,7 +39,12 @@ $locationId = $_GET['location_id']
     ?? $payload['locationId']
     ?? null;
 $limit = (int)($_GET['limit'] ?? $payload['limit'] ?? 25);
+$backfillDays = (int)($_GET['backfill_days'] ?? $payload['backfill_days'] ?? 0);
 $sinceMinutes = (int)($_GET['since_minutes'] ?? $payload['since_minutes'] ?? 15);
+if ($backfillDays > 0) {
+    $sinceMinutes = $backfillDays * 1440;
+}
+$forceLookback = $backfillDays > 0 || filter_var($_GET['force_lookback'] ?? $payload['force_lookback'] ?? false, FILTER_VALIDATE_BOOLEAN);
 
 try {
     $db = get_firestore();
@@ -46,7 +52,8 @@ try {
         $db,
         $locationId ? (string)$locationId : null,
         $limit,
-        $sinceMinutes
+        $sinceMinutes,
+        $forceLookback
     );
 
     http_response_code(!empty($result['success']) ? 200 : 207);

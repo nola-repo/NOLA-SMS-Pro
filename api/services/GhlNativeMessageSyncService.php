@@ -36,6 +36,21 @@ class GhlNativeMessageSyncService
     public static function recordConversationMessagePayload($db, array $payload, string $origin = 'ghl_native_webhook'): array
     {
         $event = self::mapPayloadToMessageEvent($payload, $origin);
+        if (($event['direction'] ?? '') !== 'outbound') {
+            $skipped = [
+                'success' => true,
+                'skipped' => true,
+                'reason' => 'non_outbound_message_ignored',
+                'direction' => $event['direction'] ?? null,
+                'message_id' => $event['message_id'] ?? null,
+                'conversation_id' => $event['conversation_id'] ?? null,
+                'ghl_message_id' => $event['ghl_message_id'] ?? null,
+                'ghl_conversation_id' => $event['ghl_conversation_id'] ?? null,
+            ];
+            error_log('[GhlNativeMessageSyncService] skipped ' . json_encode($skipped));
+            return $skipped;
+        }
+
         $result = MessageSyncService::recordMessageEvent($db, $event);
 
         error_log('[GhlNativeMessageSyncService] recorded ' . json_encode([
@@ -55,26 +70,28 @@ class GhlNativeMessageSyncService
         ];
     }
 
-    public static function reconcile($db, ?string $locationId = null, int $limit = 25, int $sinceMinutes = 15): array
+    public static function reconcile($db, ?string $locationId = null, int $limit = 25, int $sinceMinutes = 15, bool $forceLookback = false): array
     {
         $limit = max(1, min($limit, 100));
-        $sinceMinutes = max(1, min($sinceMinutes, 1440));
+        $sinceMinutes = max(1, min($sinceMinutes, 43200));
         $locations = $locationId ? [$locationId] : self::discoverLocations($db, 50);
         $summary = [
             'success' => true,
             'locations_checked' => count($locations),
             'locations' => [],
             'messages_recorded' => 0,
+            'messages_skipped' => 0,
             'errors' => [],
         ];
 
         foreach ($locations as $locId) {
-            $cursor = self::loadCursor($db, $locId, $sinceMinutes);
+            $cursor = self::loadCursor($db, $locId, $sinceMinutes, $forceLookback);
             $locationResult = [
                 'location_id' => $locId,
                 'cursor_after' => $cursor->format(DATE_ATOM),
                 'conversations_checked' => 0,
                 'messages_recorded' => 0,
+                'messages_skipped' => 0,
                 'errors' => [],
             ];
 
@@ -111,9 +128,14 @@ class GhlNativeMessageSyncService
                         $payload['contact'] = $payload['contact'] ?? ($conversation['contact'] ?? null);
                         $payload['conversation'] = $payload['conversation'] ?? $conversation;
 
-                        self::recordConversationMessagePayload($db, $payload, 'ghl_native_reconcile');
-                        $locationResult['messages_recorded']++;
-                        $summary['messages_recorded']++;
+                        $recordResult = self::recordConversationMessagePayload($db, $payload, 'ghl_native_reconcile');
+                        if (!empty($recordResult['skipped'])) {
+                            $locationResult['messages_skipped']++;
+                            $summary['messages_skipped']++;
+                        } else {
+                            $locationResult['messages_recorded']++;
+                            $summary['messages_recorded']++;
+                        }
 
                         if ($messageAt && $messageAt > $latestSeen) {
                             $latestSeen = $messageAt;
@@ -388,9 +410,13 @@ class GhlNativeMessageSyncService
         return array_keys($locations);
     }
 
-    private static function loadCursor($db, string $locationId, int $sinceMinutes): \DateTimeImmutable
+    private static function loadCursor($db, string $locationId, int $sinceMinutes, bool $forceLookback = false): \DateTimeImmutable
     {
         $fallback = new \DateTimeImmutable("-{$sinceMinutes} minutes");
+        if ($forceLookback) {
+            return $fallback;
+        }
+
         $snap = $db->collection('sync_cursors')->document(self::cursorDocId($locationId))->snapshot();
         if (!$snap->exists()) {
             return $fallback;
