@@ -213,6 +213,14 @@ function gateway_failure_message(array $gatewayErrors, string $provider): string
     return provider_display_name($provider) . ' rejected the SMS request.';
 }
 
+function public_gateway_failure_status(?int $providerHttpStatus): int
+{
+    if (in_array($providerHttpStatus, [408, 504], true)) {
+        return 504;
+    }
+    return 502;
+}
+
 /* |-------------------------------------------------------------------------- | CREDIT CALCULATION |-------------------------------------------------------------------------- */
 /** @deprecated Use CreditManager::calculateRequiredCredits() */
 function calculate_credits($message, $num_recipients)
@@ -918,6 +926,7 @@ if ($bypassBilling) {
 $all_results = [];
 $gateway_errors = [];
 $total_status = 200;
+$provider_http_status = null;
 $chosenProvider = 'semaphore';
 
 try {
@@ -935,11 +944,10 @@ try {
         if (isset($row['status']) && $row['status'] === 'failed') {
             $gateway_errors[] = $row['error'] ?? 'Provider send failed';
             $errorMsg = $row['error'] ?? '';
-            $matchedCode = 500;
             if (preg_match('/HTTP\s+(\d{3})/i', $errorMsg, $m)) {
-                $matchedCode = (int)$m[1];
+                $provider_http_status = (int)$m[1];
             }
-            $total_status = ($matchedCode === 502) ? 500 : $matchedCode;
+            $total_status = public_gateway_failure_status($provider_http_status);
         }
     }
 
@@ -960,11 +968,10 @@ try {
     ]);
     $gateway_errors[] = $e->getMessage();
     $errorMsg = $e->getMessage();
-    $matchedCode = 500;
     if (preg_match('/HTTP\s+(\d{3})/i', $errorMsg, $m)) {
-        $matchedCode = (int)$m[1];
+        $provider_http_status = (int)$m[1];
     }
-    $total_status = ($matchedCode === 502) ? 500 : $matchedCode;
+    $total_status = public_gateway_failure_status($provider_http_status);
     
     // Create dummy failed results so Firestore logging still executes and the UI shows 'Failed' instead of disappearing
     $all_results = array_map(function($num) use ($e) {
@@ -1369,6 +1376,7 @@ $responsePayload = [
         "billing_rollback_status" => $billingRollbackStatus,
         "billing_rollback_error"  => $billingRollbackError,
         "provider"              => $chosenProvider,
+        "provider_http_status"  => $provider_http_status,
         "gateway_errors"        => $gateway_errors
     ]
 ];
@@ -1381,6 +1389,7 @@ if (isset($idempotencyRef)) {
             'message_ids' => $saved_message_ids ?? [],
             'response_body' => $responsePayload,
             'provider' => $chosenProvider,
+            'provider_http_status' => $provider_http_status,
             'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
         ], ['merge' => true]);
     } catch (\Throwable $e) {
