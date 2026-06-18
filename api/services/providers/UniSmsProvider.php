@@ -102,14 +102,11 @@ class UniSmsProvider implements SmsProviderInterface
         $res = $this->executeRequest('sms', 'POST', $payload, $resolvedKey);
 
         if ($res['code'] < 200 || $res['code'] >= 300) {
-            $msg = $res['body']['message'] ?? $res['body']['error'] ?? 'Provider returned an invalid response';
-            if (is_array($msg)) {
-                $msg = json_encode($msg);
-            }
-            if ($msg === 'Provider returned an invalid response' && trim((string)$res['raw']) !== '') {
+            $msg = $res['body']['message'] ?? $res['body']['error'] ?? 'UniSMS HTTP ' . $res['code'];
+            if ($msg === 'UniSMS HTTP ' . $res['code'] && trim((string)$res['raw']) !== '') {
                 $msg .= ': ' . substr((string)$res['raw'], 0, 300);
             }
-            throw new \Exception("UniSMS send failed (HTTP {$res['code']}): " . $msg);
+            throw new \Exception("UniSMS send failed: " . $msg);
         }
 
         $body = $this->messageBody($res['body']);
