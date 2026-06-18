@@ -9,6 +9,40 @@ require_once __DIR__ . '/../cache_helper.php';
 
 $db = get_firestore();
 
+function nola_resolve_credit_request_location_name($db, string $locationId, ?string $fallback = ''): string
+{
+    $fallback = trim((string)$fallback);
+    if ($fallback !== '' && strtolower($fallback) !== 'unnamed location') {
+        return $fallback;
+    }
+
+    $candidates = array_values(array_unique(array_filter([
+        $locationId,
+        CreditManager::integration_doc_id_for_location($locationId),
+        strpos($locationId, 'ghl_') === 0 ? substr($locationId, 4) : 'ghl_' . $locationId,
+    ])));
+
+    foreach ($candidates as $docId) {
+        foreach (['integrations', 'ghl_tokens', 'agency_subaccounts'] as $collectionName) {
+            try {
+                $snap = $db->collection($collectionName)->document($docId)->snapshot();
+                if (!$snap->exists()) {
+                    continue;
+                }
+                $data = $snap->data();
+                $name = trim((string)($data['location_name'] ?? $data['locationName'] ?? $data['name'] ?? $data['business_name'] ?? ''));
+                if ($name !== '' && strtolower($name) !== 'unnamed location') {
+                    return $name;
+                }
+            } catch (\Throwable $e) {
+                error_log("[credit_requests] Location name lookup failed for {$collectionName}/{$docId}: " . $e->getMessage());
+            }
+        }
+    }
+
+    return $fallback !== '' ? $fallback : $locationId;
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $agency_id = $_GET['agency_id'] ?? null;
     $status = $_GET['status'] ?? null;
@@ -43,10 +77,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $requests = [];
     foreach ($docs as $doc) {
         $data = $doc->data();
+        $locationId = (string)($data['location_id'] ?? '');
         $requests[] = [
             'request_id' => $data['request_id'] ?? $doc->id(),
-            'location_id' => $data['location_id'] ?? '',
-            'location_name' => $data['location_name'] ?? '',
+            'location_id' => $locationId,
+            'location_name' => nola_resolve_credit_request_location_name($db, $locationId, $data['location_name'] ?? ''),
             'amount' => $data['amount'] ?? 0,
             'note' => $data['note'] ?? '',
             'status' => $data['status'] ?? '',

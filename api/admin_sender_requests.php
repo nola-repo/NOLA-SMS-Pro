@@ -66,6 +66,46 @@ function nola_provider_from_payload_or_key(array $payload, array $requestData = 
     return 'system';
 }
 
+function nola_sender_has_other_approved_request($db, string $senderId, ?string $excludeRequestId = null): bool
+{
+    $senderLower = strtolower(trim($senderId));
+    if ($senderLower === '') {
+        return false;
+    }
+
+    $requests = $db->collection('sender_id_requests')->documents();
+
+    foreach ($requests as $request) {
+        if (!$request->exists() || ($excludeRequestId !== null && $request->id() === $excludeRequestId)) {
+            continue;
+        }
+        $data = $request->data() ?: [];
+        $storedLower = strtolower(trim((string)($data['requested_id_lower'] ?? ($data['requested_id'] ?? ''))));
+        if ($storedLower !== $senderLower) {
+            continue;
+        }
+
+        if (($data['status'] ?? '') === 'approved') {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function nola_remove_master_sender_if_unused($db, string $senderId, ?string $excludeRequestId = null): void
+{
+    $sender = trim($senderId);
+    if ($sender === '' || nola_sender_has_other_approved_request($db, $sender, $excludeRequestId)) {
+        return;
+    }
+
+    $db->collection('admin_config')->document('master_senders')->set([
+        'approved_senders' => \Google\Cloud\Firestore\FieldValue::arrayRemove([$sender]),
+        'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+    ], ['merge' => true]);
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'logs') {
     $cacheKey = "admin_dashboard_logs";
     $cachedData = NolaCache::get($cacheKey);
@@ -306,42 +346,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
-    // 2. Action: manage_agency (Set credit_balance on a users doc by Firestore doc ID)
+    // 2. Action: manage_agency (Set agency wallet balance by company/agency ID)
     if (isset($payload['action']) && $payload['action'] === 'manage_agency') {
-        $userId    = $payload['user_id']        ?? null;  // Firestore document ID in `users`
-        $companyId = $payload['company_id']     ?? null;  // GHL company_id (optional)
+        $userId    = $payload['user_id']        ?? null;
+        $companyId = $payload['company_id']     ?? ($payload['agency_id'] ?? null);
+        $agencyKey = trim((string)($companyId ?: $userId ?: ''));
         $newBalance = isset($payload['credit_balance']) ? (int)$payload['credit_balance'] : null;
 
-        if (!$userId) {
+        if ($agencyKey === '') {
             http_response_code(400);
-            echo json_encode(['status' => 'error', 'message' => 'Missing user_id']);
+            echo json_encode(['status' => 'error', 'message' => 'Missing agency_id']);
             exit;
         }
 
-        $userRef  = $db->collection('users')->document($userId);
-        $userSnap = $userRef->snapshot();
-
-        if (!$userSnap->exists()) {
-            http_response_code(404);
-            echo json_encode(['status' => 'error', 'message' => 'Agency user not found']);
-            exit;
-        }
-
-        $userData   = $userSnap->data();
-        $oldBalance = (int)($userData['credit_balance'] ?? 0);
+        $creditManager = new CreditManager();
+        $agencyRef  = $creditManager->resolveAgencyBalanceDocument($agencyKey);
+        $agencySnap = $agencyRef->snapshot();
+        $agencyData = $agencySnap->exists() ? $agencySnap->data() : [];
+        $oldBalance = (int)($agencyData['balance'] ?? ($agencyData['credit_balance'] ?? 0));
 
         $updateFields = [
             'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
         ];
 
         if ($newBalance !== null) {
+            $updateFields['balance'] = $newBalance;
             $updateFields['credit_balance'] = $newBalance;
         }
         if ($companyId) {
             $updateFields['company_id'] = $companyId;
         }
 
-        $userRef->set($updateFields, ['merge' => true]);
+        $agencyRef->set($updateFields, ['merge' => true]);
 
         // Log credit delta to credit_transactions
         if ($newBalance !== null) {
@@ -350,8 +386,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $logId = 'agency_adj_' . uniqid();
                 $db->collection('credit_transactions')->document($logId)->set([
                     'id'            => $logId,
-                    'account_id'    => $userId,
-                    'company_id'    => $companyId ?? ($userData['company_id'] ?? null),
+                    'account_id'    => $agencyKey,
+                    'company_id'    => $companyId ?: ($agencyData['company_id'] ?? $agencyKey),
                     'wallet_scope'  => 'agency',
                     'amount'        => $delta,
                     'balance_after' => $newBalance,
@@ -363,10 +399,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         NolaCache::invalidateAdminDashboard();
-        if ($userId) {
-            NolaCache::delete("admin_user_profile_" . $userId);
-            NolaCache::delete("agency_profile_" . $userId);
-        }
+        NolaCache::invalidateAgencyDashboard($agencyKey);
+        NolaCache::delete("admin_user_profile_" . $agencyKey);
+        NolaCache::delete("agency_profile_" . $agencyKey);
 
         echo json_encode(['status' => 'success', 'message' => 'Agency account updated successfully.']);
         exit;
@@ -497,10 +532,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
                 ], ['merge' => true]);
                 if (!empty($sameData['requested_id'])) {
-                    $db->collection('admin_config')->document('master_senders')->set([
-                        'approved_senders' => \Google\Cloud\Firestore\FieldValue::arrayRemove([$sameData['requested_id']]),
-                        'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
-                    ], ['merge' => true]);
+                    nola_remove_master_sender_if_unused($db, (string)$sameData['requested_id'], $sameRequest->id());
                 }
             }
         }
@@ -527,10 +559,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // ── Remove sender from dynamic master whitelist ─────────────────────────
         if (!empty($reqData['requested_id'])) {
-            $db->collection('admin_config')->document('master_senders')->set([
-                'approved_senders' => \Google\Cloud\Firestore\FieldValue::arrayRemove([$reqData['requested_id']]),
-                'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
-            ], ['merge' => true]);
+            nola_remove_master_sender_if_unused($db, (string)$reqData['requested_id'], $requestId);
         }
 
     } elseif ($status === 'deleted') {
@@ -553,10 +582,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if (!empty($reqData['requested_id'])) {
-            $db->collection('admin_config')->document('master_senders')->set([
-                'approved_senders' => \Google\Cloud\Firestore\FieldValue::arrayRemove([$reqData['requested_id']]),
-                'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
-            ], ['merge' => true]);
+            nola_remove_master_sender_if_unused($db, (string)$reqData['requested_id'], $requestId);
         }
 
         // Physical deletion of the request document

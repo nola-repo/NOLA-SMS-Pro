@@ -71,6 +71,115 @@ try {
 // ── 3. Handle CRUD Requests ───────────────────────────────────────────────
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
+function nola_normalize_contact_phone(?string $phone): string
+{
+    $digits = preg_replace('/\D/', '', (string)($phone ?? ''));
+    if (preg_match('/^09\d{9}$/', $digits)) {
+        return $digits;
+    }
+    if (preg_match('/^9\d{9}$/', $digits)) {
+        return '0' . $digits;
+    }
+    if (preg_match('/^639\d{9}$/', $digits)) {
+        return '0' . substr($digits, 2);
+    }
+    return $digits;
+}
+
+function nola_sync_contact_conversation($db, string $locationId, string $contactId, string $displayName, string $newPhone, ?string $oldPhone): void
+{
+    $newNormalized = nola_normalize_contact_phone($newPhone);
+    $oldNormalized = nola_normalize_contact_phone($oldPhone);
+    if ($newNormalized === '' && $oldNormalized === '') {
+        return;
+    }
+
+    $newDocId = $newNormalized !== '' ? "{$locationId}_conv_{$newNormalized}" : null;
+    $oldDocId = $oldNormalized !== '' ? "{$locationId}_conv_{$oldNormalized}" : null;
+    $now = new \Google\Cloud\Core\Timestamp(new \DateTimeImmutable());
+    $seenDocIds = [];
+
+    $syncDoc = function ($docRef, array $existingData = []) use ($db, $locationId, $contactId, $displayName, $newNormalized, $newDocId, $now, &$seenDocIds) {
+        if ($newDocId === null) {
+            return;
+        }
+
+        $sourceDocId = $docRef->id();
+        if (isset($seenDocIds[$sourceDocId])) {
+            return;
+        }
+        $seenDocIds[$sourceDocId] = true;
+
+        $payload = array_merge($existingData, [
+            'id' => $newDocId,
+            'location_id' => $locationId,
+            'type' => 'direct',
+            'name' => $displayName,
+            'conversation_name' => $displayName,
+            'ghl_contact_id' => $contactId,
+            'members' => [$newNormalized],
+            'updated_at' => $now,
+        ]);
+
+        if ($sourceDocId !== $newDocId) {
+            $db->collection('conversations')->document($newDocId)->set($payload, ['merge' => true]);
+            $docRef->delete();
+
+            foreach (['messages', 'sms_logs'] as $collectionName) {
+                $rows = $db->collection($collectionName)
+                    ->where('conversation_id', '==', $sourceDocId)
+                    ->documents();
+                foreach ($rows as $row) {
+                    if ($row->exists()) {
+                        $row->reference()->set([
+                            'conversation_id' => $newDocId,
+                            'conversation_name' => $displayName,
+                            'updated_at' => $now,
+                        ], ['merge' => true]);
+                    }
+                }
+            }
+        } else {
+            $docRef->set($payload, ['merge' => true]);
+        }
+    };
+
+    if ($contactId !== '') {
+        $conversationDocs = $db->collection('conversations')
+            ->where('ghl_contact_id', '==', $contactId)
+            ->documents();
+        foreach ($conversationDocs as $doc) {
+            if ($doc->exists()) {
+                $data = $doc->data();
+                if (($data['location_id'] ?? '') === $locationId) {
+                    $syncDoc($doc->reference(), $data);
+                }
+            }
+        }
+    }
+
+    if ($oldDocId !== null) {
+        $oldSnap = $db->collection('conversations')->document($oldDocId)->snapshot();
+        if ($oldSnap->exists()) {
+            $syncDoc($oldSnap->reference(), $oldSnap->data());
+        }
+    }
+
+    if ($newDocId !== null) {
+        $newSnap = $db->collection('conversations')->document($newDocId)->snapshot();
+        if ($newSnap->exists()) {
+            $syncDoc($newSnap->reference(), $newSnap->data());
+        }
+    }
+
+    try {
+        require_once __DIR__ . '/cache_helper.php';
+        NolaCache::deleteRegistry("conversations_registry_{$locationId}");
+    } catch (\Throwable $cacheEx) {
+        error_log("[ghl_contacts] Conversation cache invalidation failed: " . $cacheEx->getMessage());
+    }
+}
+
 // ── GET: fetch contacts (with pagination) ─────────────────────────────────
 if ($method === 'GET') {
     require_once __DIR__ . '/cache_helper.php';
@@ -214,11 +323,26 @@ if ($method === 'PUT') {
 
     $data    = json_decode($resp['body'], true);
     $contact = $data['contact'] ?? $data;
+    $updatedName = trim(($contact['firstName'] ?? '') . ' ' . ($contact['lastName'] ?? '')) ?: ($body['name'] ?? '');
+    $updatedPhone = $contact['phone'] ?? ($body['phone'] ?? '');
+
+    try {
+        nola_sync_contact_conversation(
+            $db,
+            (string)$locationId,
+            (string)$contactId,
+            (string)$updatedName,
+            (string)$updatedPhone,
+            $body['previous_phone'] ?? null
+        );
+    } catch (\Throwable $syncEx) {
+        error_log("[ghl_contacts] Conversation sync failed for contact {$contactId}: " . $syncEx->getMessage());
+    }
 
     echo json_encode([
         'id'    => $contact['id'] ?? $contactId,
-        'name'  => trim(($contact['firstName'] ?? '') . ' ' . ($contact['lastName'] ?? '')),
-        'phone' => $contact['phone'] ?? '',
+        'name'  => $updatedName,
+        'phone' => $updatedPhone,
         'email' => $contact['email'] ?? '',
     ]);
     exit;

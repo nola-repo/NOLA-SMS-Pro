@@ -101,17 +101,25 @@ try {
             exit;
         }
 
-        // 1. Check for duplicates (case-insensitive)
+        // 1. Check for duplicates only inside the same subaccount.
+        // The same Sender ID may be requested or approved in multiple subaccounts.
         $requestedIdLower = strtolower($requestedId);
-        $duplicateQuery = $db->collection('sender_id_requests')
-                             ->where('requested_id_lower', '==', $requestedIdLower)
-                             ->limit(1);
-        
-        $duplicates = $duplicateQuery->documents();
-        if (!$duplicates->isEmpty()) {
-            http_response_code(409); // Conflict
-            echo json_encode(['status' => 'error', 'message' => 'This Sender Name has already been requested or is already in use.']);
-            exit;
+        $sameLocationRequests = $db->collection('sender_id_requests')
+            ->where('location_id', '==', $locId)
+            ->documents();
+
+        foreach ($sameLocationRequests as $requestDoc) {
+            if (!$requestDoc->exists()) {
+                continue;
+            }
+            $requestData = $requestDoc->data();
+            $sameSender = strtolower((string)($requestData['requested_id_lower'] ?? $requestData['requested_id'] ?? '')) === $requestedIdLower;
+            $activeStatus = in_array($requestData['status'] ?? 'pending', ['pending', 'approved'], true);
+            if ($sameSender && $activeStatus) {
+                http_response_code(409); // Conflict
+                echo json_encode(['status' => 'error', 'message' => 'This Sender Name already has an active request in this subaccount.']);
+                exit;
+            }
         }
 
         $requestId = 'req_' . bin2hex(random_bytes(8));
