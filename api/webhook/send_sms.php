@@ -170,6 +170,49 @@ function canonical_json($value): string
     return json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 }
 
+function compact_gateway_error(?string $error): ?string
+{
+    $error = trim((string)($error ?? ''));
+    if ($error === '') {
+        return null;
+    }
+
+    $error = preg_replace('/\s+/', ' ', $error);
+    return substr($error, 0, 500);
+}
+
+function first_gateway_error(array $gatewayErrors): ?string
+{
+    foreach ($gatewayErrors as $error) {
+        $clean = compact_gateway_error(is_scalar($error) ? (string)$error : json_encode($error));
+        if ($clean !== null) {
+            return $clean;
+        }
+    }
+    return null;
+}
+
+function provider_display_name(string $provider): string
+{
+    $provider = strtolower(trim($provider));
+    if ($provider === 'unisms') {
+        return 'UniSMS';
+    }
+    if ($provider === 'semaphore') {
+        return 'Semaphore';
+    }
+    return $provider !== '' ? ucfirst($provider) : 'SMS provider';
+}
+
+function gateway_failure_message(array $gatewayErrors, string $provider): string
+{
+    $firstError = first_gateway_error($gatewayErrors);
+    if ($firstError !== null) {
+        return $firstError;
+    }
+    return provider_display_name($provider) . ' rejected the SMS request.';
+}
+
 /* |-------------------------------------------------------------------------- | CREDIT CALCULATION |-------------------------------------------------------------------------- */
 /** @deprecated Use CreditManager::calculateRequiredCredits() */
 function calculate_credits($message, $num_recipients)
@@ -1191,7 +1234,12 @@ $gatewayAccepted = (
     !$allSavedMessagesFailed
 );
 
+$creditsRefunded = false;
+$billingRollbackStatus = $bypassBilling ? 'skipped_billing_bypassed' : 'not_needed';
+$billingRollbackError = null;
+
 if (!$gatewayAccepted && !$bypassBilling) {
+    $billingRollbackStatus = 'pending';
     if ($usingFreeCredits) {
         try {
             $intRef->set([
@@ -1210,8 +1258,12 @@ if (!$gatewayAccepted && !$bypassBilling) {
                     }
                 }
             }
+            $creditsRefunded = true;
+            $billingRollbackStatus = 'refunded';
         } catch (\Throwable $e) {
             error_log('[send_sms] Trial rollback failed after gateway rejection: ' . $e->getMessage());
+            $billingRollbackStatus = 'failed';
+            $billingRollbackError = $e->getMessage();
         }
     } else {
         try {
@@ -1234,8 +1286,12 @@ if (!$gatewayAccepted && !$bypassBilling) {
                     'agency'
                 );
             }
+            $creditsRefunded = true;
+            $billingRollbackStatus = 'refunded';
         } catch (\Throwable $e) {
             error_log('[send_sms] Credit refund failed after gateway rejection: ' . $e->getMessage());
+            $billingRollbackStatus = 'failed';
+            $billingRollbackError = $e->getMessage();
         }
     }
 }
@@ -1245,13 +1301,23 @@ if (!$gatewayAccepted) {
 }
 
 $ghlStatus = $gatewayAccepted ? "success" : "error";
-$summary = "Sent to " . implode(', ', $validNumbers);
+$recipientSummary = implode(', ', $validNumbers);
 if (count($validNumbers) > 3) {
-    $summary = "Sent to " . count($validNumbers) . " recipients";
+    $recipientSummary = count($validNumbers) . " recipients";
 }
+$summaryPrefix = $gatewayAccepted ? 'Sent to ' : 'Failed to send to ';
+$summary = $summaryPrefix . $recipientSummary;
+$failureReason = $gatewayAccepted ? null : gateway_failure_message($gateway_errors, $chosenProvider);
+$responseMessage = $gatewayAccepted ? $sender : $failureReason;
 
 // GHL Legacy/Success response structure
 $reportedCredits = $bypassBilling ? 0 : $required_credits;
+if (!$gatewayAccepted && $creditsRefunded) {
+    $reportedCredits = 0;
+}
+$executionLog = $gatewayAccepted
+    ? "Workflow SMS sent via $sender to {$recipientSummary}. Credits: {$reportedCredits}."
+    : "Workflow SMS failed via $sender to {$recipientSummary}. Reason: {$failureReason}. Credits charged: {$reportedCredits}.";
 
 Logger::response(
     $gatewayAccepted ? 200 : ($total_status >= 400 ? $total_status : 500),
@@ -1270,8 +1336,8 @@ Logger::response(
 
 $responsePayload = [
     "status"               => $ghlStatus,
-    "message"              => $sender,
-    "execution_log"        => "Workflow SMS sent via $sender to $summary. Credits: {$reportedCredits}.",
+    "message"              => $responseMessage,
+    "execution_log"        => $executionLog,
     "action_executed_from" => "Nola Web",
     "event_details"        => [
         "Status"       => $gatewayAccepted ? "Success" : "Failed",
@@ -1286,6 +1352,8 @@ $responsePayload = [
         "success"      => $gatewayAccepted,
         "summary"      => $summary,
         "credits"      => $reportedCredits,
+        "credits_attempted" => $bypassBilling ? 0 : $required_credits,
+        "error"        => $failureReason,
         "location_id"  => $locId,
         "message_ids"  => $saved_message_ids ?? []
     ],
@@ -1297,6 +1365,10 @@ $responsePayload = [
         "is_system_notification"=> $isSystemNotification,
         "bypass_billing"        => $bypassBilling,
         "used_credits"          => $reportedCredits,
+        "attempted_credits"     => $bypassBilling ? 0 : $required_credits,
+        "billing_rollback_status" => $billingRollbackStatus,
+        "billing_rollback_error"  => $billingRollbackError,
+        "provider"              => $chosenProvider,
         "gateway_errors"        => $gateway_errors
     ]
 ];

@@ -51,8 +51,11 @@ class SemaphoreProvider implements SmsProviderInterface
 
         $decoded = json_decode($response, true);
         if ($httpCode < 200 || $httpCode >= 300 || !is_array($decoded)) {
-            $msg = $decoded['message'] ?? $decoded['error'] ?? 'Semaphore HTTP ' . $httpCode;
-            throw new \Exception("Semaphore send failed: " . $msg);
+            $msg = $decoded['message'] ?? $decoded['error'] ?? 'Provider returned an invalid response';
+            if (is_array($msg)) {
+                $msg = json_encode($msg);
+            }
+            throw new \Exception("Semaphore send failed (HTTP {$httpCode}): " . $msg);
         }
 
         // Return standardized list
