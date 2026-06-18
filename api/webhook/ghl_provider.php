@@ -100,6 +100,26 @@ error_log('[ghl_provider][INGRESS] ' . json_encode([
     'has_message' => !empty($payload['message']) || !empty($payload['body']),
 ]));
 
+function sanitize_local_sms_doc_id(string $value): string
+{
+    $clean = preg_replace('/[^a-zA-Z0-9_.:-]/', '_', $value);
+    return substr($clean ?: hash('sha256', $value), 0, 400);
+}
+
+function build_local_sms_doc_id(string $locationId, string $provider, string $providerMessageId, string $recipient, ?string $ghlMessageId = null): string
+{
+    $parts = array_filter([
+        'sms',
+        $locationId,
+        $provider ?: 'provider',
+        $recipient ?: 'recipient',
+        $ghlMessageId ?: null,
+        $providerMessageId,
+    ], static fn($value) => trim((string)$value) !== '');
+
+    return sanitize_local_sms_doc_id(implode('_', $parts));
+}
+
 $locationId = $payload['locationId'] ?? $payload['location_id'] ?? null;
 if ($locationId) $locationId = trim((string)$locationId);
 
@@ -657,9 +677,11 @@ if (!$gatewayAccepted) {
 $now        = new \DateTime();
 $ts         = new \Google\Cloud\Core\Timestamp($now);
 $convId     = $locationId . '_conv_' . $normalizedPhone;
-$storedMsgId = isset($storedMsgId) ? $storedMsgId : (string)($messageId ?? uniqid('ghl_'));
-
 $firstRes = $gatewayResults[0] ?? [];
+$providerRawMessageId = isset($storedMsgId) ? (string)$storedMsgId : (string)($messageId ?? uniqid('ghl_'));
+$providerReferenceId = $firstRes['provider_reference_id'] ?? $providerRawMessageId;
+$providerMessageId = $firstRes['provider_message_id'] ?? $providerReferenceId;
+$storedMsgId = build_local_sms_doc_id((string)$locationId, (string)$chosenProvider, (string)$providerRawMessageId, (string)$normalizedPhone, $messageId ? (string)$messageId : null);
 $rawMsgStatus = strtolower($firstRes['status'] ?? 'queued');
 $initialStatus = 'Sending';
 if (in_array($rawMsgStatus, ['sent', 'success', 'delivered'])) {
@@ -692,8 +714,8 @@ MessageSyncService::recordMessageEvent($db, [
     'credits_used' => $required_credits,
     'source' => 'ghl_provider',
     'provider' => $chosenProvider,
-    'provider_reference_id' => $firstRes['provider_reference_id'] ?? $storedMsgId,
-    'provider_message_id' => $firstRes['provider_message_id'] ?? ($firstRes['provider_reference_id'] ?? $storedMsgId),
+    'provider_reference_id' => $providerReferenceId,
+    'provider_message_id' => $providerMessageId,
     'provider_status' => $firstRes['status'] ?? null,
     'provider_response' => $firstRes['provider_response'] ?? null,
     'provider_error' => $firstRes['error'] ?? null,

@@ -140,6 +140,20 @@ function sanitize_firestore_doc_id(string $value): string
     return substr($clean ?: hash('sha256', $value), 0, 400);
 }
 
+function build_local_sms_log_id(string $locationId, string $provider, string $providerMessageId, string $recipient, ?string $batchId = null): string
+{
+    $parts = array_filter([
+        'sms',
+        $locationId,
+        $provider ?: 'provider',
+        $recipient ?: 'recipient',
+        $batchId ?: null,
+        $providerMessageId,
+    ], static fn($value) => trim((string)$value) !== '');
+
+    return sanitize_firestore_doc_id(implode('_', $parts));
+}
+
 function request_header_value(string $name): ?string
 {
     $serverKey = 'HTTP_' . strtoupper(str_replace('-', '_', $name));
@@ -961,12 +975,14 @@ if (!empty($message_results)) {
     $credits_per_message = $bypassBilling ? 0 : CreditManager::calculateRequiredCredits($message, 1);
 
     foreach ($message_results as $msg) {
-        $messageId = (string)$msg['message_id'];
-        $saved_message_ids[] = $messageId;
-
         $recipientRaw = $msg['number'] ?? $msg['recipient'] ?? $msg['to'] ?? null;
         $recipientArr = $recipientRaw ? clean_numbers($recipientRaw) : [];
         $recipient = $recipientArr[0] ?? $validNumbers[0];
+        $providerMessageId = (string)$msg['message_id'];
+        $providerReferenceId = $msg['provider_reference_id'] ?? $providerMessageId;
+        $normalizedProviderMessageId = $msg['provider_message_id'] ?? $providerReferenceId;
+        $messageId = build_local_sms_log_id((string)$locId, (string)$chosenProvider, $providerMessageId, (string)$recipient, $batch_id ? (string)$batch_id : null);
+        $saved_message_ids[] = $messageId;
 
         $sender_id = $sender;
         $recipientKey = $recipient_key ?? $recipient;
@@ -1008,8 +1024,8 @@ if (!empty($message_results)) {
             'conversation_name' => !$isBulk ? ($recipientName ?: $recipient) : null,
             'ghl_contact_id' => $contactId,
             'message_id' => $messageId,
-            'provider_reference_id' => $msg['provider_reference_id'] ?? $messageId,
-            'provider_message_id' => $msg['provider_message_id'] ?? ($msg['provider_reference_id'] ?? $messageId),
+            'provider_reference_id' => $providerReferenceId,
+            'provider_message_id' => $normalizedProviderMessageId,
             'segments' => $credits_per_message,
             'credits_used' => $credits_per_message,
             'provider' => $chosenProvider,
