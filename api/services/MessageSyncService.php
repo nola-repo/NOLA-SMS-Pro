@@ -87,6 +87,7 @@ class MessageSyncService
                 'provider_error' => $event['provider_error'] ?? null,
                 'provider_response' => $event['provider_response'] ?? null,
                 'ghl_message_id' => $event['ghl_message_id'] ?? null,
+                'ghl_contact_id' => $event['ghl_contact_id'] ?? null,
                 'idempotency_key' => $event['idempotency_key'] ?? null,
                 'is_system' => $event['is_system'] ?? null,
             ], static fn($v) => $v !== null);

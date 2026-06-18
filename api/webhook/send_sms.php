@@ -1006,6 +1006,7 @@ if (!empty($message_results)) {
             'timestamp' => $ts,
             'name' => $recipientName,
             'conversation_name' => !$isBulk ? ($recipientName ?: $recipient) : null,
+            'ghl_contact_id' => $contactId,
             'message_id' => $messageId,
             'provider_reference_id' => $msg['provider_reference_id'] ?? $messageId,
             'provider_message_id' => $msg['provider_message_id'] ?? ($msg['provider_reference_id'] ?? $messageId),
