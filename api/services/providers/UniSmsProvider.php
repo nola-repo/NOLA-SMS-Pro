@@ -103,10 +103,13 @@ class UniSmsProvider implements SmsProviderInterface
 
         if ($res['code'] < 200 || $res['code'] >= 300) {
             $msg = $res['body']['message'] ?? $res['body']['error'] ?? 'UniSMS HTTP ' . $res['code'];
+            if (is_array($msg)) {
+                $msg = json_encode($msg);
+            }
             if ($msg === 'UniSMS HTTP ' . $res['code'] && trim((string)$res['raw']) !== '') {
                 $msg .= ': ' . substr((string)$res['raw'], 0, 300);
             }
-            throw new \Exception("UniSMS send failed: " . $msg);
+            throw new \Exception("UniSMS send failed (HTTP {$res['code']}): " . $msg);
         }
 
         $body = $this->messageBody($res['body']);
@@ -135,11 +138,16 @@ class UniSmsProvider implements SmsProviderInterface
                 $res = $this->sendSingle($number, $message, $senderId, $apiKey);
                 $results[] = $res;
             } catch (\Exception $e) {
+                $providerHttpStatus = null;
+                if (preg_match('/HTTP\s+(\d{3})/i', $e->getMessage(), $m)) {
+                    $providerHttpStatus = (int)$m[1];
+                }
                 // Return failed status for this number so it logs correctly
                 $results[] = [
                     'message_id' => 'failed_' . bin2hex(random_bytes(4)),
                     'provider_reference_id' => null,
                     'provider_message_id' => null,
+                    'provider_http_status' => $providerHttpStatus,
                     'status' => 'failed',
                     'recipient' => $number,
                     'error' => $e->getMessage(),

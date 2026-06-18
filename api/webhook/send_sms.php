@@ -184,6 +184,57 @@ function canonical_json($value): string
     return json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 }
 
+function compact_gateway_error(?string $error): ?string
+{
+    $error = trim((string)($error ?? ''));
+    if ($error === '') {
+        return null;
+    }
+
+    $error = preg_replace('/\s+/', ' ', $error);
+    return substr($error, 0, 500);
+}
+
+function first_gateway_error(array $gatewayErrors): ?string
+{
+    foreach ($gatewayErrors as $error) {
+        $clean = compact_gateway_error(is_scalar($error) ? (string)$error : json_encode($error));
+        if ($clean !== null) {
+            return $clean;
+        }
+    }
+    return null;
+}
+
+function provider_display_name(string $provider): string
+{
+    $provider = strtolower(trim($provider));
+    if ($provider === 'unisms') {
+        return 'UniSMS';
+    }
+    if ($provider === 'semaphore') {
+        return 'Semaphore';
+    }
+    return $provider !== '' ? ucfirst($provider) : 'SMS provider';
+}
+
+function gateway_failure_message(array $gatewayErrors, string $provider): string
+{
+    $firstError = first_gateway_error($gatewayErrors);
+    if ($firstError !== null) {
+        return $firstError;
+    }
+    return provider_display_name($provider) . ' rejected the SMS request.';
+}
+
+function public_gateway_failure_status(?int $providerHttpStatus): int
+{
+    if (in_array($providerHttpStatus, [408, 504], true)) {
+        return 504;
+    }
+    return 502;
+}
+
 /* |-------------------------------------------------------------------------- | CREDIT CALCULATION |-------------------------------------------------------------------------- */
 /** @deprecated Use CreditManager::calculateRequiredCredits() */
 function calculate_credits($message, $num_recipients)
@@ -889,6 +940,7 @@ if ($bypassBilling) {
 $all_results = [];
 $gateway_errors = [];
 $total_status = 200;
+$provider_http_status = null;
 $chosenProvider = 'semaphore';
 
 try {
@@ -906,11 +958,13 @@ try {
         if (isset($row['status']) && $row['status'] === 'failed') {
             $gateway_errors[] = $row['error'] ?? 'Provider send failed';
             $errorMsg = $row['error'] ?? '';
-            $matchedCode = 500;
-            if (preg_match('/HTTP\s+(\d{3})/i', $errorMsg, $m)) {
-                $matchedCode = (int)$m[1];
+            if (isset($row['provider_http_status']) && is_numeric($row['provider_http_status'])) {
+                $provider_http_status = (int)$row['provider_http_status'];
             }
-            $total_status = ($matchedCode === 502) ? 500 : $matchedCode;
+            if (preg_match('/HTTP\s+(\d{3})/i', $errorMsg, $m)) {
+                $provider_http_status = (int)$m[1];
+            }
+            $total_status = public_gateway_failure_status($provider_http_status);
         }
     }
 
@@ -931,11 +985,10 @@ try {
     ]);
     $gateway_errors[] = $e->getMessage();
     $errorMsg = $e->getMessage();
-    $matchedCode = 500;
     if (preg_match('/HTTP\s+(\d{3})/i', $errorMsg, $m)) {
-        $matchedCode = (int)$m[1];
+        $provider_http_status = (int)$m[1];
     }
-    $total_status = ($matchedCode === 502) ? 500 : $matchedCode;
+    $total_status = public_gateway_failure_status($provider_http_status);
     
     // Create dummy failed results so Firestore logging still executes and the UI shows 'Failed' instead of disappearing
     $all_results = array_map(function($num) use ($e) {
@@ -1208,7 +1261,12 @@ $gatewayAccepted = (
     !$allSavedMessagesFailed
 );
 
+$creditsRefunded = false;
+$billingRollbackStatus = $bypassBilling ? 'skipped_billing_bypassed' : 'not_needed';
+$billingRollbackError = null;
+
 if (!$gatewayAccepted && !$bypassBilling) {
+    $billingRollbackStatus = 'pending';
     if ($usingFreeCredits) {
         try {
             $intRef->set([
@@ -1227,8 +1285,12 @@ if (!$gatewayAccepted && !$bypassBilling) {
                     }
                 }
             }
+            $creditsRefunded = true;
+            $billingRollbackStatus = 'refunded';
         } catch (\Throwable $e) {
             error_log('[send_sms] Trial rollback failed after gateway rejection: ' . $e->getMessage());
+            $billingRollbackStatus = 'failed';
+            $billingRollbackError = $e->getMessage();
         }
     } else {
         try {
@@ -1251,8 +1313,12 @@ if (!$gatewayAccepted && !$bypassBilling) {
                     'agency'
                 );
             }
+            $creditsRefunded = true;
+            $billingRollbackStatus = 'refunded';
         } catch (\Throwable $e) {
             error_log('[send_sms] Credit refund failed after gateway rejection: ' . $e->getMessage());
+            $billingRollbackStatus = 'failed';
+            $billingRollbackError = $e->getMessage();
         }
     }
 }
@@ -1262,13 +1328,22 @@ if (!$gatewayAccepted) {
 }
 
 $ghlStatus = $gatewayAccepted ? "success" : "error";
-$summary = "Sent to " . implode(', ', $validNumbers);
+$recipientSummary = implode(', ', $validNumbers);
 if (count($validNumbers) > 3) {
-    $summary = "Sent to " . count($validNumbers) . " recipients";
+    $recipientSummary = count($validNumbers) . " recipients";
 }
+$summary = ($gatewayAccepted ? "Sent to " : "Failed to send to ") . $recipientSummary;
+$failureReason = $gatewayAccepted ? null : gateway_failure_message($gateway_errors, $chosenProvider);
+$responseMessage = $gatewayAccepted ? $sender : $failureReason;
 
 // GHL Legacy/Success response structure
 $reportedCredits = $bypassBilling ? 0 : $required_credits;
+if (!$gatewayAccepted && $creditsRefunded) {
+    $reportedCredits = 0;
+}
+$executionLog = $gatewayAccepted
+    ? "Workflow SMS sent via $sender to {$recipientSummary}. Credits: {$reportedCredits}."
+    : "Workflow SMS failed via $sender to {$recipientSummary}. Reason: {$failureReason}. Credits charged: {$reportedCredits}.";
 
 Logger::response(
     $gatewayAccepted ? 200 : ($total_status >= 400 ? $total_status : 500),
@@ -1287,8 +1362,8 @@ Logger::response(
 
 $responsePayload = [
     "status"               => $ghlStatus,
-    "message"              => $sender,
-    "execution_log"        => "Workflow SMS sent via $sender to $summary. Credits: {$reportedCredits}.",
+    "message"              => $responseMessage,
+    "execution_log"        => $executionLog,
     "action_executed_from" => "Nola Web",
     "event_details"        => [
         "Status"       => $gatewayAccepted ? "Success" : "Failed",
@@ -1303,6 +1378,8 @@ $responsePayload = [
         "success"      => $gatewayAccepted,
         "summary"      => $summary,
         "credits"      => $reportedCredits,
+        "credits_attempted" => $bypassBilling ? 0 : $required_credits,
+        "error"        => $failureReason,
         "location_id"  => $locId,
         "message_ids"  => $saved_message_ids ?? []
     ],
@@ -1314,6 +1391,11 @@ $responsePayload = [
         "is_system_notification"=> $isSystemNotification,
         "bypass_billing"        => $bypassBilling,
         "used_credits"          => $reportedCredits,
+        "attempted_credits"     => $bypassBilling ? 0 : $required_credits,
+        "billing_rollback_status" => $billingRollbackStatus,
+        "billing_rollback_error"  => $billingRollbackError,
+        "provider"              => $chosenProvider,
+        "provider_http_status"  => $provider_http_status,
         "gateway_errors"        => $gateway_errors
     ]
 ];
@@ -1326,6 +1408,7 @@ if (isset($idempotencyRef)) {
             'message_ids' => $saved_message_ids ?? [],
             'response_body' => $responsePayload,
             'provider' => $chosenProvider,
+            'provider_http_status' => $provider_http_status,
             'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
         ], ['merge' => true]);
     } catch (\Throwable $e) {
