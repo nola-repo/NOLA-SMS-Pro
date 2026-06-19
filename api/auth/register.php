@@ -104,8 +104,12 @@ try {
         $data['company_id'] = $companyId;
         // Map to agency_id for backwards compatibility with existing logic
         $data['agency_id'] = $companyId;
-        // Provide the default sub-accounts limit immediately on registration
-        $data['max_active_subaccounts'] = 3;
+        // Keep role and subscription tier separate. New agencies start on Starter.
+        $data['subscription_plan'] = 'starter';
+        $data['subscription_status'] = 'active';
+        $data['plan_subaccount_limit'] = 1;
+        $data['max_active_subaccounts'] = 1;
+        $data['balance'] = 0;
     }
     elseif ($role === 'user') {
         $data['credit_balance'] = 0;

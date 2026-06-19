@@ -116,6 +116,9 @@ try {
         $displayBalance = $companyId !== ''
             ? $creditManager->get_agency_balance($companyId)
             : (int)($d['balance'] ?? $d['credit_balance'] ?? 0);
+        $subscriptionPlan = (string)($d['subscription_plan'] ?? $d['subscription']['plan'] ?? 'starter');
+        $subscriptionStatus = (string)($d['subscription_status'] ?? $d['subscription']['status'] ?? 'active');
+        $planSubaccountLimit = (int)($d['plan_subaccount_limit'] ?? $d['subaccount_limit'] ?? $d['subscription']['subaccount_limit'] ?? $d['subscription']['max_active_subaccounts'] ?? $d['max_active_subaccounts'] ?? 1);
 
         $agencyUsers[] = [
             'id' => $doc->id(),
@@ -131,7 +134,11 @@ try {
             'company_name' => $companyName !== '' ? $companyName : null,
             'agency_name' => $companyName !== '' ? $companyName : null,
             'balance' => $displayBalance,
-            'max_active_subaccounts' => (int)($d['max_active_subaccounts'] ?? 3),
+            'subscription_plan' => $subscriptionPlan,
+            'subscription_status' => $subscriptionStatus,
+            'plan_subaccount_limit' => $planSubaccountLimit,
+            'subaccount_limit' => $planSubaccountLimit,
+            'max_active_subaccounts' => $planSubaccountLimit,
             'source' => $d['source'] ?? null,
             'created_at' => admin_list_agency_users_format_ts($d['created_at'] ?? $d['createdAt'] ?? null),
             'updated_at' => admin_list_agency_users_format_ts($d['updated_at'] ?? $d['updatedAt'] ?? null),

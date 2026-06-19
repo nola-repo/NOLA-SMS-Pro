@@ -8,6 +8,85 @@
 require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 require __DIR__ . '/../webhook/firestore_client.php';
+
+function agency_update_plan_limit(string $plan): int
+{
+    $plan = strtolower(trim($plan));
+    $limits = [
+        'starter' => 1,
+        'free' => 1,
+        'basic' => 1,
+        'growth' => 5,
+        'pro' => 5,
+        'agency' => 25,
+        'professional' => 25,
+        'enterprise' => -1,
+        'unlimited' => -1,
+    ];
+    return $limits[$plan] ?? 1;
+}
+
+function agency_update_subscription_state($db, string $agencyId): array
+{
+    $data = [];
+    try {
+        $snap = $db->collection('agency_users')->document($agencyId)->snapshot();
+        if ($snap->exists()) {
+            $data = $snap->data();
+        }
+    } catch (\Throwable $ignored) {
+    }
+
+    if (!$data) {
+        foreach (['company_id', 'agency_id'] as $field) {
+            try {
+                $docs = $db->collection('agency_users')->where($field, '=', $agencyId)->limit(1)->documents();
+                foreach ($docs as $doc) {
+                    if ($doc->exists()) {
+                        $data = $doc->data();
+                        break 2;
+                    }
+                }
+            } catch (\Throwable $ignored) {
+            }
+        }
+    }
+
+    $subscription = is_array($data['subscription'] ?? null) ? $data['subscription'] : [];
+    $plan = strtolower(trim((string)($subscription['plan'] ?? $data['subscription_plan'] ?? $data['plan'] ?? 'starter')));
+    $status = strtolower(trim((string)($subscription['status'] ?? $data['subscription_status'] ?? $data['status'] ?? 'active')));
+    $limit = $subscription['subaccount_limit']
+        ?? $subscription['plan_subaccount_limit']
+        ?? $data['plan_subaccount_limit']
+        ?? $data['subaccount_limit']
+        ?? null;
+    if ($limit === null || !is_numeric($limit)) {
+        $limit = agency_update_plan_limit($plan);
+    }
+
+    return [
+        'plan' => $plan,
+        'status' => $status,
+        'limit' => (int)$limit,
+    ];
+}
+
+function agency_update_active_subaccount_count($db, string $agencyId, string $excludeLocationId): int
+{
+    $active = 0;
+    $docs = $db->collection('agency_subaccounts')->where('agency_id', '=', $agencyId)->documents();
+    foreach ($docs as $doc) {
+        if (!$doc->exists() || $doc->id() === $excludeLocationId) {
+            continue;
+        }
+        $data = $doc->data();
+        if (!array_key_exists('toggle_enabled', $data) || (bool)$data['toggle_enabled']) {
+            $active++;
+        }
+    }
+    return $active;
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
     echo json_encode(['error' => 'Method not allowed']);
@@ -54,6 +133,33 @@ try {
     
     // Enforce 3 max activations for "toggle_enabled"
     if ($toggleEnabled && !($tokenData['toggle_enabled'] ?? false)) {
+        $subscriptionState = agency_update_subscription_state($db, trim((string)$agencyId));
+        if (in_array($subscriptionState['status'], ['past_due', 'expired', 'inactive'], true)) {
+            http_response_code(403);
+            echo json_encode([
+                'error' => 'Subscription inactive',
+                'status' => 'limit_reached',
+                'reason' => 'subscription_inactive',
+                'subscription_status' => $subscriptionState['status'],
+            ]);
+            exit;
+        }
+
+        $planLimit = (int)$subscriptionState['limit'];
+        $activeCount = agency_update_active_subaccount_count($db, trim((string)$agencyId), $locationId);
+        if ($planLimit !== -1 && $activeCount >= $planLimit) {
+            http_response_code(403);
+            echo json_encode([
+                'error' => 'Subaccount limit reached',
+                'status' => 'limit_reached',
+                'reason' => 'subscription_limit',
+                'plan' => $subscriptionState['plan'],
+                'limit' => $planLimit,
+                'active_subaccounts' => $activeCount,
+            ]);
+            exit;
+        }
+
         if ($activations >= 3) {
             http_response_code(403);
             echo json_encode(['error' => 'Activation Limit Reached', 'status' => 'limit_reached']);

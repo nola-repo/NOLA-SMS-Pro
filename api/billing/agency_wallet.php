@@ -57,10 +57,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         $data[trim($k)] = $v;
     }
 
-    if (isset($data['balance']) && is_numeric($data['balance'])) {
-        $balance = max($balance, (int)$data['balance']);
-    }
-
     $responsePayload = [
         'balance'                     => $balance,
         'auto_recharge_enabled'       => $data['auto_recharge_enabled'] ?? false,
