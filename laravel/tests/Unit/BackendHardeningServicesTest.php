@@ -7,6 +7,7 @@ use PHPUnit\Framework\TestCase;
 require_once __DIR__ . '/../../../api/services/FirestoreId.php';
 require_once __DIR__ . '/../../../api/services/PhoneNormalizer.php';
 require_once __DIR__ . '/../../../api/services/ProviderResultService.php';
+require_once __DIR__ . '/../../../api/services/GhlTokenProvider.php';
 
 class BackendHardeningServicesTest extends TestCase
 {
@@ -70,5 +71,18 @@ class BackendHardeningServicesTest extends TestCase
         );
 
         $this->assertTrue($accepted);
+    }
+
+    public function test_ghl_oauth_refresh_401_requires_reconnect(): void
+    {
+        $this->assertSame(
+            \GhlOAuthRefreshException::REASON_INVALID_GRANT,
+            \GhlTokenProvider::classifyOAuthRefreshFailure(401, ['error' => 'unauthorized'])
+        );
+
+        $this->assertSame(
+            \GhlOAuthRefreshException::REASON_TRANSIENT,
+            \GhlTokenProvider::classifyOAuthRefreshFailure(503, ['error' => 'temporarily_unavailable'])
+        );
     }
 }

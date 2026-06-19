@@ -537,6 +537,9 @@ final class GhlTokenProvider
         if ($err === 'temporarily_unavailable' || str_contains($desc, 'temporarily')) {
             return GhlOAuthRefreshException::REASON_TRANSIENT;
         }
+        if (in_array($httpCode, [400, 401, 403], true)) {
+            return GhlOAuthRefreshException::REASON_INVALID_GRANT;
+        }
 
         return GhlOAuthRefreshException::REASON_OTHER;
     }
