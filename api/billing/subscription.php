@@ -219,7 +219,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     );
 
     $maxActiveSubaccounts = billing_subscription_resolve_limit($subscription, $agencyData, $plan);
-    [$subaccountsUsed, $activeSubaccounts] = billing_subscription_count_subaccounts($db, $agencyId);
+    [$totalSubaccounts, $activeSubaccounts] = billing_subscription_count_subaccounts($db, $agencyId);
     $expiresAt = billing_subscription_format_timestamp(
         $subscription['expires_at']
         ?? $subscription['subscription_expires_at']
@@ -240,8 +240,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         'subaccount_limit' => $maxActiveSubaccounts,
         'plan_subaccount_limit' => $maxActiveSubaccounts,
         'max_active_subaccounts' => $maxActiveSubaccounts,
-        'subaccounts_used' => $subaccountsUsed,
+        'subaccounts_used' => $activeSubaccounts,
         'active_subaccounts' => $activeSubaccounts,
+        'total_subaccounts' => $totalSubaccounts,
         'expires_at' => $expiresAt,
         'current_period_start' => billing_subscription_format_timestamp(
             $subscription['current_period_start'] ?? $agencyData['current_period_start'] ?? null
@@ -262,8 +263,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             'subaccount_limit' => $maxActiveSubaccounts,
             'plan_subaccount_limit' => $maxActiveSubaccounts,
             'max_active_subaccounts' => $maxActiveSubaccounts,
-            'subaccounts_used' => $subaccountsUsed,
+            'subaccounts_used' => $activeSubaccounts,
             'active_subaccounts' => $activeSubaccounts,
+            'total_subaccounts' => $totalSubaccounts,
             'expires_at' => $expiresAt,
             'current_period_start' => billing_subscription_format_timestamp(
                 $subscription['current_period_start'] ?? $agencyData['current_period_start'] ?? null
