@@ -52,6 +52,8 @@ require __DIR__ . '/../services/CreditManager.php';
 require_once __DIR__ . '/../services/SenderResolver.php';
 require_once __DIR__ . '/../services/MessageSyncService.php';
 require_once __DIR__ . '/../services/SmsGatewayService.php';
+require_once __DIR__ . '/../services/FirestoreId.php';
+require_once __DIR__ . '/../services/ProviderResultService.php';
 $gateway = new SmsGatewayService();
 
 $SEMAPHORE_API_KEY      = $config['SEMAPHORE_API_KEY'];
@@ -102,22 +104,12 @@ error_log('[ghl_provider][INGRESS] ' . json_encode([
 
 function sanitize_local_sms_doc_id(string $value): string
 {
-    $clean = preg_replace('/[^a-zA-Z0-9_.:-]/', '_', $value);
-    return substr($clean ?: hash('sha256', $value), 0, 400);
+    return FirestoreId::sanitize($value);
 }
 
 function build_local_sms_doc_id(string $locationId, string $provider, string $providerMessageId, string $recipient, ?string $ghlMessageId = null): string
 {
-    $parts = array_filter([
-        'sms',
-        $locationId,
-        $provider ?: 'provider',
-        $recipient ?: 'recipient',
-        $ghlMessageId ?: null,
-        $providerMessageId,
-    ], static fn($value) => trim((string)$value) !== '');
-
-    return sanitize_local_sms_doc_id(implode('_', $parts));
+    return FirestoreId::smsLogId($locationId, $provider, $providerMessageId, $recipient, $ghlMessageId);
 }
 
 $locationId = $payload['locationId'] ?? $payload['location_id'] ?? null;
@@ -327,6 +319,22 @@ $approvedProvider = $senderResolution['approved_provider'];
 $apiKeySource = $senderResolution['api_key_source'];
 $billingAgencyId = '';
 $billingMasterLock = false;
+
+if ($providerValidation = ProviderResultService::providerMessageValidation($providerPreference, (string)$message)) {
+    $validationMessage = $providerValidation['message'];
+    error_log('[ghl_provider][REJECT] ' . json_encode([
+        'req_id' => $providerReqId,
+        'reason' => $providerValidation['error'],
+        'locationId' => $locationId,
+        'chars' => $providerValidation['characters'],
+    ]));
+    http_response_code(422);
+    echo json_encode([
+        'success' => false,
+        'status' => 'error',
+    ] + $providerValidation);
+    exit;
+}
 
 $sysKey  = trim((string)$SEMAPHORE_API_KEY);
 $userKey = trim((string)($customApiKey ?? ''));
@@ -579,15 +587,19 @@ try {
     $chosenProvider = $res['provider'];
     $gatewayResults = $res['results'];
 
+    $gatewaySummary = ProviderResultService::summarizeGatewayResults($gatewayResults);
     $firstRes = $gatewayResults[0] ?? [];
-    if (!empty($firstRes['message_id']) && $firstRes['status'] !== 'failed') {
+    if (!empty($firstRes['message_id']) && !ProviderResultService::isFailedStatus($firstRes['status'] ?? null)) {
         $gatewayAccepted = true;
         $smsStatus = 200;
         $storedMsgId = $firstRes['message_id'];
     } else {
-        $gateway_error = $firstRes['error'] ?? 'Provider rejected message';
+        $gateway_error = $firstRes['error'] ?? ProviderResultService::failureMessage($gatewaySummary['errors'], $chosenProvider);
+        $smsStatus = $gatewaySummary['http_status'];
     }
 } catch (\Throwable $e) {
+    $gatewaySummary = ProviderResultService::summarizeGatewayException($e);
+    $smsStatus = $gatewaySummary['http_status'];
     $gateway_error = $e->getMessage();
     error_log("[ghl_provider] Gateway send failed: " . $gateway_error);
 }

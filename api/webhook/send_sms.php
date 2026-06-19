@@ -16,6 +16,9 @@ require_once __DIR__ . '/../services/SenderResolver.php';
 require_once __DIR__ . '/../services/MessageSyncService.php';
 require __DIR__ . '/../services/GhlClient.php';
 require_once __DIR__ . '/../services/GhlSyncService.php';
+require_once __DIR__ . '/../services/FirestoreId.php';
+require_once __DIR__ . '/../services/PhoneNormalizer.php';
+require_once __DIR__ . '/../services/ProviderResultService.php';
 
 
 $SEMAPHORE_API_KEY = $config['SEMAPHORE_API_KEY'];
@@ -77,34 +80,7 @@ function log_full_payload($raw, $payload)
 /* |-------------------------------------------------------------------------- | CLEAN PH NUMBERS |-------------------------------------------------------------------------- */
 function clean_numbers($numberString): array
 {
-    if (!$numberString)
-        return [];
-    $numbers = is_array($numberString) ? $numberString : preg_split('/[,;]/', $numberString);
-    $valid = [];
-    foreach ($numbers as $num) {
-        $num = trim($num);
-        $num = preg_replace('/[^0-9+]/', '', $num);
-        $digits = ltrim($num, '+');
-        if (preg_match('/^09\d{9}$/', $digits)) {
-            $normalized = $digits;
-        }
-        elseif (preg_match('/^9\d{9}$/', $digits)) {
-            $normalized = '0' . $digits;
-        }
-        elseif (preg_match('/^639\d{9}$/', $digits)) {
-            $normalized = '0' . substr($digits, 2);
-        }
-        elseif (preg_match('/^63(9\d{9})$/', $digits, $m)) {
-            $normalized = '0' . $m[1];
-        }
-        else {
-            $normalized = null;
-        }
-        if ($normalized) {
-            $valid[$normalized] = true;
-        }
-    }
-    return array_keys($valid);
+    return PhoneNormalizer::philippineMobiles($numberString);
 }
 
 function normalize_payload_section($value): array
@@ -136,22 +112,12 @@ function first_non_empty_payload_value(array ...$sections)
 
 function sanitize_firestore_doc_id(string $value): string
 {
-    $clean = preg_replace('/[^a-zA-Z0-9_.:-]/', '_', $value);
-    return substr($clean ?: hash('sha256', $value), 0, 400);
+    return FirestoreId::sanitize($value);
 }
 
 function build_local_sms_log_id(string $locationId, string $provider, string $providerMessageId, string $recipient, ?string $batchId = null): string
 {
-    $parts = array_filter([
-        'sms',
-        $locationId,
-        $provider ?: 'provider',
-        $recipient ?: 'recipient',
-        $batchId ?: null,
-        $providerMessageId,
-    ], static fn($value) => trim((string)$value) !== '');
-
-    return sanitize_firestore_doc_id(implode('_', $parts));
+    return FirestoreId::smsLogId($locationId, $provider, $providerMessageId, $recipient, $batchId);
 }
 
 function request_header_value(string $name): ?string
@@ -186,24 +152,12 @@ function canonical_json($value): string
 
 function compact_gateway_error(?string $error): ?string
 {
-    $error = trim((string)($error ?? ''));
-    if ($error === '') {
-        return null;
-    }
-
-    $error = preg_replace('/\s+/', ' ', $error);
-    return substr($error, 0, 500);
+    return ProviderResultService::compactGatewayError($error);
 }
 
 function first_gateway_error(array $gatewayErrors): ?string
 {
-    foreach ($gatewayErrors as $error) {
-        $clean = compact_gateway_error(is_scalar($error) ? (string)$error : json_encode($error));
-        if ($clean !== null) {
-            return $clean;
-        }
-    }
-    return null;
+    return ProviderResultService::firstGatewayError($gatewayErrors);
 }
 
 function provider_display_name(string $provider): string
@@ -220,19 +174,12 @@ function provider_display_name(string $provider): string
 
 function gateway_failure_message(array $gatewayErrors, string $provider): string
 {
-    $firstError = first_gateway_error($gatewayErrors);
-    if ($firstError !== null) {
-        return $firstError;
-    }
-    return provider_display_name($provider) . ' rejected the SMS request.';
+    return ProviderResultService::failureMessage($gatewayErrors, $provider);
 }
 
 function public_gateway_failure_status(?int $providerHttpStatus): int
 {
-    if (in_array($providerHttpStatus, [408, 504], true)) {
-        return 504;
-    }
-    return 502;
+    return ProviderResultService::publicFailureStatus($providerHttpStatus);
 }
 
 /* |-------------------------------------------------------------------------- | CREDIT CALCULATION |-------------------------------------------------------------------------- */
@@ -668,6 +615,22 @@ $billingAgencyId   = '';
 $billingMasterLock = false;
 $billingReferenceId = null;
 
+if ($providerValidation = ProviderResultService::providerMessageValidation($providerPreference, $message)) {
+    $validationMessage = $providerValidation['message'];
+    Logger::error('UniSMS message content below provider minimum', [
+        'location_id' => $locId,
+        'chars' => $providerValidation['characters'],
+        'provider' => $providerValidation['provider'],
+    ]);
+    Logger::response(422, ['status' => 'error', 'message' => $validationMessage]);
+    $markIdempotencyFailed($providerValidation['error'], $validationMessage, 422);
+    http_response_code(422);
+    echo json_encode([
+        'status' => 'error',
+    ] + $providerValidation);
+    exit;
+}
+
 $sysKey  = trim((string)$SEMAPHORE_API_KEY);
 $userKey = trim((string)($customApiKey ?? ''));
 
@@ -954,19 +917,10 @@ try {
     $chosenProvider = $gatewayResults['provider'];
     $all_results = $gatewayResults['results'];
 
-    foreach ($all_results as $row) {
-        if (isset($row['status']) && $row['status'] === 'failed') {
-            $gateway_errors[] = $row['error'] ?? 'Provider send failed';
-            $errorMsg = $row['error'] ?? '';
-            if (isset($row['provider_http_status']) && is_numeric($row['provider_http_status'])) {
-                $provider_http_status = (int)$row['provider_http_status'];
-            }
-            if (preg_match('/HTTP\s+(\d{3})/i', $errorMsg, $m)) {
-                $provider_http_status = (int)$m[1];
-            }
-            $total_status = public_gateway_failure_status($provider_http_status);
-        }
-    }
+    $gatewaySummary = ProviderResultService::summarizeGatewayResults($all_results);
+    $gateway_errors = $gatewaySummary['errors'];
+    $provider_http_status = $gatewaySummary['provider_http_status'];
+    $total_status = $gatewaySummary['http_status'];
 
     Logger::info('Gateway send completed', [
         'provider'       => $chosenProvider,
@@ -975,7 +929,7 @@ try {
         'api_key_source' => $apiKeySource,
         'num_recipients' => $num_recipients,
         'total_status'   => $total_status,
-        'failed_count'   => count($gateway_errors),
+        'failed_count'   => $gatewaySummary['failed_count'],
     ]);
 } catch (\Throwable $e) {
     Logger::error('Gateway send threw exception', [
@@ -983,12 +937,10 @@ try {
         'location_id' => $locId,
         'exception'   => $e->getMessage(),
     ]);
-    $gateway_errors[] = $e->getMessage();
-    $errorMsg = $e->getMessage();
-    if (preg_match('/HTTP\s+(\d{3})/i', $errorMsg, $m)) {
-        $provider_http_status = (int)$m[1];
-    }
-    $total_status = public_gateway_failure_status($provider_http_status);
+    $gatewaySummary = ProviderResultService::summarizeGatewayException($e);
+    $gateway_errors = $gatewaySummary['errors'];
+    $provider_http_status = $gatewaySummary['provider_http_status'];
+    $total_status = $gatewaySummary['http_status'];
     
     // Create dummy failed results so Firestore logging still executes and the UI shows 'Failed' instead of disappearing
     $all_results = array_map(function($num) use ($e) {
@@ -1243,22 +1195,11 @@ if (!empty($message_results)) {
 }
 
 // GHL-friendly log structure
-$failedResultCount = 0;
-foreach (($message_results ?? []) as $msg) {
-    $rawStatus = strtolower((string)($msg['status'] ?? ''));
-    if (in_array($rawStatus, ['failed', 'expired', 'rejected', 'undelivered'], true)) {
-        $failedResultCount++;
-    }
-}
-
-$hasSavedMessages = !empty($saved_message_ids);
-$allSavedMessagesFailed = $hasSavedMessages && $failedResultCount >= count($saved_message_ids);
-$gatewayAccepted = (
-    $total_status >= 200 &&
-    $total_status < 300 &&
-    $hasSavedMessages &&
-    empty($gateway_errors) &&
-    !$allSavedMessagesFailed
+$gatewayAccepted = ProviderResultService::accepted(
+    $message_results ?? [],
+    $saved_message_ids ?? [],
+    (int)$total_status,
+    $gateway_errors
 );
 
 $creditsRefunded = false;

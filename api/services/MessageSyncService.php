@@ -1,6 +1,9 @@
 <?php
 
 require_once __DIR__ . '/../cache_helper.php';
+require_once __DIR__ . '/FirestoreId.php';
+require_once __DIR__ . '/PhoneNormalizer.php';
+require_once __DIR__ . '/ProviderResultService.php';
 
 class MessageSyncService
 {
@@ -174,7 +177,7 @@ class MessageSyncService
         if (in_array($raw, ['sent', 'success', 'delivered'])) {
             return 'Sent';
         }
-        if (in_array($raw, ['failed', 'expired', 'rejected', 'undelivered'])) {
+        if (ProviderResultService::isFailedStatus($raw)) {
             return 'Failed';
         }
         return 'Sending';
@@ -225,20 +228,12 @@ class MessageSyncService
 
     private static function cleanPhone(string $number): string
     {
-        $digits = preg_replace('/\D/', '', $number);
-        if (str_starts_with($digits, '639') && strlen($digits) === 12) {
-            return '0' . substr($digits, 2);
-        }
-        if (str_starts_with($digits, '9') && strlen($digits) === 10) {
-            return '0' . $digits;
-        }
-        return $digits;
+        return PhoneNormalizer::philippineMobile($number) ?? preg_replace('/\D/', '', $number);
     }
 
     private static function docId(string $value): string
     {
-        $clean = preg_replace('/[^a-zA-Z0-9_.:-]/', '_', $value);
-        return substr($clean ?: hash('sha256', $value), 0, 400);
+        return FirestoreId::sanitize($value);
     }
 
     private static function firstNonEmpty(array $values): ?string
