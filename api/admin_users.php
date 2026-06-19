@@ -7,7 +7,7 @@
  *
  * Endpoints:
  *   GET    /api/admin_users.php            - List all admins
- *   POST   /api/admin_users.php            - Create / Reset password / Toggle status
+ *   POST   /api/admin_users.php            - Create / Update / Reset password / Toggle status
  *   DELETE /api/admin_users.php            - Delete admin (guards last super_admin)
  */
 
@@ -115,6 +115,10 @@ if ($method === 'GET') {
                 'email'      => $adminEmail,
                 'username'   => $doc->id(),
                 'role'       => $d['role']       ?? 'viewer',
+                'name'       => $d['name']       ?? $d['full_name'] ?? '',
+                'full_name'  => $d['full_name']  ?? $d['name'] ?? '',
+                'phone'      => $d['phone']      ?? $d['phone_number'] ?? '',
+                'phone_number' => $d['phone_number'] ?? $d['phone'] ?? '',
                 'active'     => (bool)($d['active'] ?? false),
                 'created_at' => format_ts($d['created_at'] ?? null),
                 'last_login' => format_ts($d['last_login']  ?? null),
@@ -144,6 +148,8 @@ if ($method === 'POST') {
         $email    = admin_email_from_input($input);
         $password = $input['password']      ?? '';
         $role     = $input['role']          ?? 'viewer';
+        $name     = trim((string)($input['name'] ?? $input['full_name'] ?? ''));
+        $phone    = trim((string)($input['phone'] ?? $input['phone_number'] ?? ''));
 
         if (empty($email) || empty($password)) {
             http_response_code(400);
@@ -170,6 +176,10 @@ if ($method === 'POST') {
             $docRef->set([
                 'email'           => $email,
                 'role'            => $role,
+                'name'            => $name,
+                'full_name'       => $name,
+                'phone'           => $phone,
+                'phone_number'    => $phone,
                 'active'          => true,
                 'hashed_password' => password_hash($password, PASSWORD_BCRYPT),
                 'created_at'      => new \Google\Cloud\Core\Timestamp(new \DateTime()),
@@ -187,6 +197,101 @@ if ($method === 'POST') {
     }
 
     // ── Reset Password ────────────────────────────────────────────────────────
+    if ($action === 'update') {
+        $email    = admin_email_from_input($input);
+        $newEmail = strtolower(trim((string)($input['new_email'] ?? $input['username'] ?? $email)));
+        $name     = trim((string)($input['name'] ?? $input['full_name'] ?? ''));
+        $phone    = trim((string)($input['phone'] ?? $input['phone_number'] ?? ''));
+        $role     = $input['role'] ?? 'viewer';
+
+        if (empty($email) || empty($newEmail) || empty($name)) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'email, new_email, and name are required']);
+            exit;
+        }
+
+        if (!filter_var($newEmail, FILTER_VALIDATE_EMAIL)) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'Invalid email address']);
+            exit;
+        }
+
+        $allowed_roles = ['super_admin', 'support', 'viewer'];
+        if (!in_array($role, $allowed_roles, true)) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'Invalid role. Must be: ' . implode(', ', $allowed_roles)]);
+            exit;
+        }
+
+        try {
+            [$docRef, $snap] = admin_doc_for_email($db, $email);
+
+            if (!$snap->exists()) {
+                http_response_code(404);
+                echo json_encode(['status' => 'error', 'message' => "Admin '{$email}' not found"]);
+                exit;
+            }
+
+            $existing = $snap->data();
+            $currentRole = $existing['role'] ?? '';
+            if ($currentRole === 'super_admin' && $role !== 'super_admin') {
+                $superAdmins = $db->collection('admins')
+                    ->where('role', '=', 'super_admin')
+                    ->documents();
+
+                $count = 0;
+                foreach ($superAdmins as $s) {
+                    if ($s->exists()) $count++;
+                }
+
+                if ($count <= 1) {
+                    http_response_code(403);
+                    echo json_encode([
+                        'status'  => 'error',
+                        'message' => 'Cannot change the role of the last super_admin account',
+                    ]);
+                    exit;
+                }
+            }
+
+            $payload = $existing;
+            $payload['email'] = $newEmail;
+            $payload['role'] = $role;
+            $payload['name'] = $name;
+            $payload['full_name'] = $name;
+            $payload['phone'] = $phone;
+            $payload['phone_number'] = $phone;
+
+            if ($newEmail !== $email) {
+                [$newDocRef, $newSnap] = admin_doc_for_email($db, $newEmail);
+                if ($newSnap->exists()) {
+                    http_response_code(409);
+                    echo json_encode(['status' => 'error', 'message' => "Admin '{$newEmail}' already exists"]);
+                    exit;
+                }
+
+                $newDocRef->set($payload);
+                $docRef->delete();
+            } else {
+                $docRef->update([
+                    ['path' => 'email', 'value' => $newEmail],
+                    ['path' => 'role', 'value' => $role],
+                    ['path' => 'name', 'value' => $name],
+                    ['path' => 'full_name', 'value' => $name],
+                    ['path' => 'phone', 'value' => $phone],
+                    ['path' => 'phone_number', 'value' => $phone],
+                ]);
+            }
+
+            NolaCache::invalidateAdminDashboard();
+
+            echo json_encode(['status' => 'success', 'message' => "Admin '{$newEmail}' updated successfully"]);
+        } catch (Exception $e) {
+            http_response_code(500);
+            echo json_encode(['status' => 'error', 'message' => 'Database error: ' . $e->getMessage()]);
+        }
+        exit;
+    }
     if ($action === 'reset_password') {
         $email        = admin_email_from_input($input);
         $new_password = $input['new_password'] ?? '';
