@@ -20,7 +20,8 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 
 $input    = json_decode(file_get_contents('php://input'), true);
-$email    = strtolower(trim($input['email']    ?? ''));
+$rawEmail = trim((string)($input['email'] ?? ''));
+$email    = strtolower($rawEmail);
 $password = $input['password'] ?? '';
 $rememberMe = !empty($input['remember_me']) || !empty($input['rememberMe']);
 
@@ -37,40 +38,63 @@ if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
     exit;
 }
 
+function login_find_user_by_email($db, string $email, string $rawEmail): array
+{
+    $candidates = array_values(array_unique(array_filter([
+        strtolower(trim($email)),
+        trim($rawEmail),
+    ], fn($value) => $value !== '')));
+
+    foreach (['agency_users', 'users'] as $collection) {
+        foreach ($candidates as $candidate) {
+            $results = $db->collection($collection)
+                ->where('email', '=', $candidate)
+                ->limit(1)
+                ->documents();
+
+            foreach ($results as $doc) {
+                if ($doc->exists()) {
+                    return [$doc->id(), $doc->data(), $collection];
+                }
+            }
+        }
+    }
+
+    // Firestore equality is case-sensitive; use this only after indexed lookups fail.
+    foreach (['agency_users', 'users'] as $collection) {
+        $docs = $db->collection($collection)->documents();
+        foreach ($docs as $doc) {
+            if (!$doc->exists()) {
+                continue;
+            }
+            $data = $doc->data();
+            $storedEmail = $data['email'] ?? $data['email_address'] ?? $data['username'] ?? '';
+            if (strtolower(trim((string)$storedEmail)) === $email || strtolower((string)$doc->id()) === $email) {
+                return [$doc->id(), $data, $collection];
+            }
+        }
+    }
+
+    return [null, null, null];
+}
+
+function login_stored_password_hash(array $userData): string
+{
+    foreach (['password_hash', 'hashed_password', 'passwordHash', 'hashedPassword'] as $field) {
+        $value = trim((string)($userData[$field] ?? ''));
+        if ($value !== '') {
+            return $value;
+        }
+    }
+
+    return '';
+}
 try {
     $db = get_firestore();
 
     // ── Prefer agency_users for agency accounts, fallback to users ───────────
-    $results = $db->collection('agency_users')
-        ->where('email', '=', $email)
-        ->limit(1)
-        ->documents();
+    [$userId, $userData, $authCollection] = login_find_user_by_email($db, $email, $rawEmail);
 
-    $userId   = null;
-    $userData = null;
-    $authCollection = 'agency_users';
-    foreach ($results as $doc) {
-        if ($doc->exists()) {
-            $userId   = $doc->id();
-            $userData = $doc->data();
-            break;
-        }
-    }
-
-    if (!$userData) {
-        $authCollection = 'users';
-        $results = $db->collection('users')
-            ->where('email', '=', $email)
-            ->limit(1)
-            ->documents();
-        foreach ($results as $doc) {
-            if ($doc->exists()) {
-                $userId   = $doc->id();
-                $userData = $doc->data();
-                break;
-            }
-        }
-    }
 
     if (!$userData) {
         http_response_code(401);
@@ -79,14 +103,14 @@ try {
     }
 
     // ── Verify password ──────────────────────────────────────────────────────
-    $storedHash = $userData['password_hash'] ?? '';
-    if (!password_verify($password, $storedHash)) {
+    $storedHash = login_stored_password_hash($userData);
+    if ($storedHash === '' || !password_verify($password, $storedHash)) {
         http_response_code(401);
         echo json_encode(['error' => 'Invalid email or password.']);
         exit;
     }
 
-    if (empty($userData['active'])) {
+    if (array_key_exists('active', $userData) && empty($userData['active'])) {
         http_response_code(403);
         echo json_encode(['error' => 'Your account has been deactivated.']);
         exit;
