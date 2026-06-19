@@ -2,6 +2,8 @@
 
 namespace Tests\Feature\Bridge;
 
+use App\Services\LegacyPhpBridgeService;
+use Mockery;
 use Tests\TestCase;
 
 class WebhookBridgeTest extends TestCase
@@ -25,5 +27,35 @@ class WebhookBridgeTest extends TestCase
 
         $response->assertStatus(200)
                  ->assertJson($expectedResponse);
+    }
+
+    public function test_receive_sms_unisms_forwards_headers_to_legacy_script(): void
+    {
+        $expectedResponse = ['status' => 'success', 'message' => 'Webhook processed'];
+
+        $this->mock(LegacyPhpBridgeService::class, function (Mockery\MockInterface $mock) use ($expectedResponse) {
+            $mock->shouldReceive('call')
+                ->withArgs(function ($actualScript, $actualMethod, $actualQuery, $actualRawBody, $actualHeaders) {
+                    return str_ends_with($actualScript, 'api/webhook/receive_sms_unisms.php')
+                        && $actualMethod === 'POST'
+                        && ($actualHeaders['x-webhook-secret'][0] ?? null) === 'fake_secret'
+                        && str_contains($actualRawBody, 'message.sent');
+                })
+                ->once()
+                ->andReturn([
+                    'status' => 200,
+                    'body' => json_encode($expectedResponse),
+                ]);
+        });
+
+        $response = $this->withHeaders([
+            'X-Webhook-Secret' => 'fake_secret',
+        ])->postJson('/api/v2/webhook/receive_sms_unisms', [
+            'event' => 'message.sent',
+            'id' => 'msg_test',
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJson($expectedResponse);
     }
 }

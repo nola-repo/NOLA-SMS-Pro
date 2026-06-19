@@ -36,10 +36,11 @@ function unisms_header_value(string $name): string
 
 function unisms_webhook_secret_status(array $config): array
 {
-    $receivedSecret = unisms_header_value('X-Webhook-Secret');
-    if ($receivedSecret === '') {
-        $receivedSecret = (string)($_GET['secret'] ?? $_GET['token'] ?? '');
-    }
+    $receivedSecrets = array_values(array_filter(array_unique(array_map('trim', [
+        unisms_header_value('X-Webhook-Secret'),
+        (string)($_GET['secret'] ?? ''),
+        (string)($_GET['token'] ?? ''),
+    ]))));
 
     $expectedSecrets = array_values(array_filter(array_unique([
         trim((string)($config['UNISMS_WEBHOOK_SECRET'] ?? '')),
@@ -49,16 +50,18 @@ function unisms_webhook_secret_status(array $config): array
 
     if (empty($expectedSecrets)) {
         error_log('[receive_sms_unisms] Server misconfiguration: no webhook secret configured.');
-        return ['ok' => false, 'configured' => false, 'secret_present' => $receivedSecret !== ''];
+        return ['ok' => false, 'configured' => false, 'secret_present' => !empty($receivedSecrets)];
     }
 
     foreach ($expectedSecrets as $expectedSecret) {
-        if ($receivedSecret !== '' && hash_equals($expectedSecret, $receivedSecret)) {
-            return ['ok' => true, 'configured' => true, 'secret_present' => true];
+        foreach ($receivedSecrets as $receivedSecret) {
+            if ($receivedSecret !== '' && hash_equals($expectedSecret, $receivedSecret)) {
+                return ['ok' => true, 'configured' => true, 'secret_present' => true];
+            }
         }
     }
 
-    return ['ok' => false, 'configured' => true, 'secret_present' => $receivedSecret !== ''];
+    return ['ok' => false, 'configured' => true, 'secret_present' => !empty($receivedSecrets)];
 }
 
 function unisms_clean_number($number): string
@@ -126,10 +129,11 @@ function unisms_existing_record_matches(array $record, string $referenceId): boo
     $provider = strtolower(trim((string)($record['provider'] ?? '')));
     $source = strtolower(trim((string)($record['source'] ?? '')));
     $providerReferenceId = trim((string)($record['provider_reference_id'] ?? ''));
+    $providerMessageId = trim((string)($record['provider_message_id'] ?? ''));
     $messageId = trim((string)($record['message_id'] ?? ''));
 
     return ($provider === 'unisms' || $source === 'unisms')
-        && ($providerReferenceId === $referenceId || $messageId === $referenceId || $providerReferenceId === '');
+        && ($providerReferenceId === $referenceId || $providerMessageId === $referenceId || $messageId === $referenceId);
 }
 
 function unisms_update_outbound_status($db, array $data, array $messageObj, string $event, bool $requireExistingUnismsRecord = false): array
@@ -140,6 +144,7 @@ function unisms_update_outbound_status($db, array $data, array $messageObj, stri
     $now = new \Google\Cloud\Core\Timestamp(new \DateTime());
     $updated = [];
     $ghlSyncTargets = [];
+    $updatedPaths = [];
 
     if ($referenceId === '') {
         return ['updated' => [], 'status' => $localStatus, 'reference_id' => null];
@@ -165,7 +170,9 @@ function unisms_update_outbound_status($db, array $data, array $messageObj, stri
                 }
                 $existingData = $snap->data();
                 $docRef->update($updatePayload);
-                $updated[] = "{$collection}/{$referenceId}";
+                $path = "{$collection}/{$referenceId}";
+                $updatedPaths[$path] = true;
+                $updated[] = $path;
                 if (in_array($localStatus, ['Sent', 'Failed'], true) && !empty($existingData['location_id']) && !empty($existingData['ghl_message_id'])) {
                     $ghlSyncTargets[$existingData['location_id'] . ':' . $existingData['ghl_message_id']] = [
                         'location_id' => $existingData['location_id'],
@@ -178,30 +185,37 @@ function unisms_update_outbound_status($db, array $data, array $messageObj, stri
             error_log("[receive_sms_unisms] {$collection} direct update failed for {$referenceId}: " . $e->getMessage());
         }
 
-        try {
-            $query = $db->collection($collection)
-                ->where('provider_reference_id', '=', $referenceId)
-                ->limit(5)
-                ->documents();
-            foreach ($query as $doc) {
-                if (!$doc->exists()) {
-                    continue;
+        foreach (['provider_reference_id', 'provider_message_id'] as $lookupField) {
+            try {
+                $query = $db->collection($collection)
+                    ->where($lookupField, '=', $referenceId)
+                    ->limit(5)
+                    ->documents();
+                foreach ($query as $doc) {
+                    if (!$doc->exists()) {
+                        continue;
+                    }
+                    $path = "{$collection}/" . $doc->id();
+                    if (isset($updatedPaths[$path])) {
+                        continue;
+                    }
+                    if ($requireExistingUnismsRecord && !unisms_existing_record_matches($doc->data(), $referenceId)) {
+                        continue;
+                    }
+                    $existingData = $doc->data();
+                    $doc->reference()->update($updatePayload);
+                    $updatedPaths[$path] = true;
+                    $updated[] = $path;
+                    if (in_array($localStatus, ['Sent', 'Failed'], true) && !empty($existingData['location_id']) && !empty($existingData['ghl_message_id'])) {
+                        $ghlSyncTargets[$existingData['location_id'] . ':' . $existingData['ghl_message_id']] = [
+                            'location_id' => $existingData['location_id'],
+                            'ghl_message_id' => $existingData['ghl_message_id'],
+                        ];
+                    }
                 }
-                if ($requireExistingUnismsRecord && !unisms_existing_record_matches($doc->data(), $referenceId)) {
-                    continue;
-                }
-                $existingData = $doc->data();
-                $doc->reference()->update($updatePayload);
-                $updated[] = "{$collection}/" . $doc->id();
-                if (in_array($localStatus, ['Sent', 'Failed'], true) && !empty($existingData['location_id']) && !empty($existingData['ghl_message_id'])) {
-                    $ghlSyncTargets[$existingData['location_id'] . ':' . $existingData['ghl_message_id']] = [
-                        'location_id' => $existingData['location_id'],
-                        'ghl_message_id' => $existingData['ghl_message_id'],
-                    ];
-                }
+            } catch (\Throwable $e) {
+                error_log("[receive_sms_unisms] {$collection} {$lookupField} update failed for {$referenceId}: " . $e->getMessage());
             }
-        } catch (\Throwable $e) {
-            error_log("[receive_sms_unisms] {$collection} provider_reference_id update failed for {$referenceId}: " . $e->getMessage());
         }
     }
 
@@ -255,6 +269,35 @@ $auth = unisms_webhook_secret_status($config);
 error_log('[receive_sms_unisms] Webhook received: ' . json_encode(unisms_payload_log_context($data, $messageObj, $event)));
 
 if (!$auth['ok']) {
+    if (unisms_event_is_status_callback($event)) {
+        $result = unisms_update_outbound_status($db, $data, $messageObj, $event, true);
+        if (!empty($result['updated'])) {
+            error_log('[receive_sms_unisms] Status callback accepted by existing UniSMS record. reference_id=' . (string)$result['reference_id']);
+            unisms_json(200, [
+                'status' => 'success',
+                'message' => 'Webhook processed',
+                'event' => $event,
+                'provider' => 'unisms',
+                'reference_id' => $result['reference_id'],
+                'local_status' => $result['status'],
+                'updated' => $result['updated'],
+                'ghl_sync_results' => $result['ghl_sync_results'] ?? [],
+                'auth' => 'matched_existing_unisms_record',
+            ]);
+        }
+
+        error_log('[receive_sms_unisms] Status callback ignored: no matching UniSMS record. secret_present=' . ($auth['secret_present'] ? 'yes' : 'no') . ' event=' . $event . ' reference_id=' . unisms_reference_id($data, $messageObj));
+        unisms_json(200, [
+            'status' => 'success',
+            'message' => 'Webhook ignored',
+            'event' => $event,
+            'provider' => 'unisms',
+            'reference_id' => unisms_reference_id($data, $messageObj),
+            'reason' => 'unmatched_status_callback',
+            'auth' => 'none',
+        ]);
+    }
+
     if (!$auth['configured']) {
         unisms_json(500, ['status' => 'error', 'message' => 'Server misconfiguration: webhook secret missing']);
     }

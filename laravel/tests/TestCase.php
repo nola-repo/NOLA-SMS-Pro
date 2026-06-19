@@ -17,7 +17,7 @@ abstract class TestCase extends BaseTestCase
     {
         $this->mock(\App\Services\LegacyPhpBridgeService::class, function (\Mockery\MockInterface $mock) use ($script, $status, $body) {
             $mock->shouldReceive('call')
-                ->withArgs(function ($actualScript, $actualMethod, $actualQuery, $actualRawBody) use ($script) {
+                ->withArgs(function ($actualScript) use ($script) {
                     return str_ends_with($actualScript, $script);
                 })
                 ->once()

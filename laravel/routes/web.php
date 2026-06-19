@@ -73,6 +73,7 @@ Route::any('/api/v2/check_pending', [ProductV2LegacyBridgeController::class, 'ch
 // Webhook Routes
 Route::any('/api/v2/webhook/send_sms', [WebhookV2LegacyBridgeController::class, 'sendSms']);
 Route::any('/api/v2/webhook/receive_sms', [WebhookV2LegacyBridgeController::class, 'receiveSms']);
+Route::any('/api/v2/webhook/receive_sms_unisms', [WebhookV2LegacyBridgeController::class, 'receiveSmsUniSms']);
 Route::any('/api/v2/webhook/retrieve_status', [WebhookV2LegacyBridgeController::class, 'retrieveStatus']);
 Route::any('/api/v2/webhook/debug_ghl', [WebhookV2LegacyBridgeController::class, 'debugGhl']);
 Route::any('/api/v2/webhook/fetch_bulk_messages', [WebhookV2LegacyBridgeController::class, 'fetchBulkMessages']);
