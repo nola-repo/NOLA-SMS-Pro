@@ -56,16 +56,41 @@ if (empty($locationId)) {
 }
 
 auth_assert_ghl_api_location_allowed($db, $jwtCtx, (string) $locationId);
-$tokenRegistryId = auth_resolve_ghl_token_registry_id($db, $jwtCtx, (string) $locationId);
+$resolvedTokenRegistryId = auth_resolve_ghl_token_registry_id($db, $jwtCtx, (string) $locationId);
+
+// Contacts are a location-scoped GHL API surface. Prefer the location OAuth
+// registry even when the profile/JWT points at an agency/company token; the
+// token provider can still use the company token to mint a fresh location token.
+$tokenRegistryId = (string) $locationId;
+if ($resolvedTokenRegistryId !== $tokenRegistryId) {
+    error_log('[ghl_contacts] using location token registry for contacts ' . json_encode([
+        'location_id' => (string)$locationId,
+        'resolved_registry_id' => $resolvedTokenRegistryId,
+        'contacts_registry_id' => $tokenRegistryId,
+    ]));
+}
 
 // ── 2. Initialize GHL Client (Handles Token Lookup & Refresh) ──────────────
 try {
     $ghlClient = new GhlClient($db, (string) $locationId, $tokenRegistryId);
 } catch (\Exception $e) {
-    error_log("[ghl_contacts] Client initialization failed: " . $e->getMessage());
-    http_response_code(404);
-    echo json_encode(['error' => $e->getMessage()]);
-    exit;
+    if ($resolvedTokenRegistryId !== $tokenRegistryId) {
+        try {
+            error_log("[ghl_contacts] Location token client initialization failed; trying resolved registry {$resolvedTokenRegistryId}: " . $e->getMessage());
+            $tokenRegistryId = $resolvedTokenRegistryId;
+            $ghlClient = new GhlClient($db, (string) $locationId, $tokenRegistryId);
+        } catch (\Exception $fallbackE) {
+            error_log("[ghl_contacts] Client initialization failed: " . $fallbackE->getMessage());
+            http_response_code(404);
+            echo json_encode(['error' => $fallbackE->getMessage()]);
+            exit;
+        }
+    } else {
+        error_log("[ghl_contacts] Client initialization failed: " . $e->getMessage());
+        http_response_code(404);
+        echo json_encode(['error' => $e->getMessage()]);
+        exit;
+    }
 }
 
 // ── 3. Handle CRUD Requests ───────────────────────────────────────────────

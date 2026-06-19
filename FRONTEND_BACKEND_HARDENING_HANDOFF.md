@@ -16,6 +16,7 @@ No frontend payload changes are required for the current implementation.
 - `api/webhook/send_sms.php`, `api/webhook/ghl_provider.php`, and `api/services/MessageSyncService.php` now reuse those services.
 - The backend no longer blocks UniSMS messages for being under 10 characters.
 - `api/ghl_contacts.php` now keeps a longer last-good contacts cache. If GHL has a temporary outage or transient token-refresh failure, the backend can return the last synced contacts with `stale: true` instead of immediately failing the UI with `503`.
+- Contact fetches now prefer the location OAuth registry even when a profile token reference points to an agency/company token, so the backend can mint/use the proper location-scoped token for GHL Contacts.
 
 ## Frontend Requirements
 
