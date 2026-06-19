@@ -231,7 +231,7 @@ $contactData = normalize_payload_section($payload['contact'] ?? $data['contact']
 $batch_id = $customData['batch_id'] ?? $data['batch_id'] ?? $payload['batch_id'] ?? $_POST['batch_id'] ?? null;
 $recipient_key = $customData['recipient_key'] ?? $data['recipient_key'] ?? $payload['recipient_key'] ?? $_POST['recipient_key'] ?? null;
 
-// GHL Contact ID — passed by GHL Workflows as {{contact.id}} in customData.
+// GHL Contact ID � passed by GHL Workflows as {{contact.id}} in customData.
 // Used by the GHL sync block below to post the message back to GHL Conversations.
 $contactId = $customData['contactId'] ?? $customData['contact_id']
     ?? $data['contactId'] ?? $data['contact_id']
@@ -248,14 +248,14 @@ $message = first_non_empty_payload_value($customData, $payload, $data, [
 ]) ?? '';
 
 if ($message) {
-    // NOTE: Do NOT use strip_tags() here — it removes anything resembling an HTML tag,
+    // NOTE: Do NOT use strip_tags() here � it removes anything resembling an HTML tag,
     // e.g. "hi <3" becomes "hi " which silently truncates the user's message.
     // The message arrives as JSON (not HTML) so HTML stripping is never needed.
     $message = html_entity_decode($message, ENT_QUOTES | ENT_HTML5, 'UTF-8');
     
     // Sanitize smart unicode punctuation to GSM-7 equivalents to prevent UCS-2 segment limits
     $message = str_replace(
-        ['‘', '’', '“', '”', '–', '—', '…', '`', '´'],
+        ['�', '�', '�', '�', '�', '�', '�', '`', '�'],
         ["'", "'", '"', '"', '-', '-', '...', "'", "'"],
         $message
     );
@@ -266,7 +266,7 @@ if ($message) {
 }
 log_sms("MESSAGE_CLEANED", $message);
 
-// Extract Numbers — GHL Marketplace may send as 'number' or 'phone' depending on field reference
+// Extract Numbers � GHL Marketplace may send as 'number' or 'phone' depending on field reference
 $numberRaw = first_non_empty_payload_value($customData, $payload, $data, $contactData, [
     'number',
     'phone',
@@ -292,8 +292,8 @@ if ($num_recipients === 0) {
 // Calculate Credits
 $required_credits = CreditManager::calculateRequiredCredits($message, $num_recipients);
 
-// ── Multi-Tenancy: Get and Validate locationId ──────────────────────────────────
-// GHL does NOT interpolate {{variables}} in custom HTTP headers for Marketplace actions —
+// -- Multi-Tenancy: Get and Validate locationId ----------------------------------
+// GHL does NOT interpolate {{variables}} in custom HTTP headers for Marketplace actions �
 // only in the request body. So we check the header first, then fall back to the body.
 $locId = get_ghl_location_id();
 if (!$locId) {
@@ -412,11 +412,18 @@ try {
     ]);
     exit;
 } catch (\Throwable $e) {
-    Logger::error('Idempotency guard failed open', [
+    Logger::error('Idempotency guard failed closed', [
         'location_id' => $locId,
         'idempotency_key' => $idempotencyKey,
         'error' => $e->getMessage(),
     ]);
+    http_response_code(503);
+    echo json_encode([
+        'status' => 'error',
+        'error' => 'idempotency_unavailable',
+        'message' => 'SMS duplicate protection is temporarily unavailable. Please retry shortly.',
+    ]);
+    exit;
 }
 
 $markIdempotencyFailed = function (string $error, string $message, int $httpStatus = 400) use (&$idempotencyRef, &$idempotencyKey) {
@@ -441,7 +448,7 @@ $markIdempotencyFailed = function (string $error, string $message, int $httpStat
     }
 };
 
-// ── System Notification Detection ────────────────────────────────────────────
+// -- System Notification Detection --------------------------------------------
 // Identifies webhooks originating from the central NOLA admin location that are
 // authorized to send free system notifications (welcome, low-balance, top-up, etc.).
 // Security: the bypass is granted when the triggering GHL location matches the
@@ -475,7 +482,7 @@ if ($centralLocationId !== '') {
         $isSystemNotification = true;
     }
 
-    // Explicit flag in customData — trusted only when central location is involved
+    // Explicit flag in customData � trusted only when central location is involved
     $reqSystemFlag = $customData['is_system_notification'] ?? $payload['is_system_notification'] ?? $data['is_system_notification'] ?? null;
     $flagIsTrue    = ($reqSystemFlag === true || $reqSystemFlag === 'true' || $reqSystemFlag === 1 || $reqSystemFlag === '1');
     $isKnownSystemAlert = $systemAlertType !== '' && in_array($systemAlertType, $knownSystemAlertTypes, true);
@@ -490,7 +497,7 @@ error_log('[send_sms] System notification check: isSystemNotification=' . ($isSy
     . ' locId=' . $locId
     . ' alertType=' . ($systemAlertType ?: '(none)'));
 
-// ── Dynamic MASTER_APPROVED_SENDERS from Firestore ──────────────────────────
+// -- Dynamic MASTER_APPROVED_SENDERS from Firestore --------------------------
 // Replaces the old static config whitelist. Admin-approved senders are auto-added
 // to this Firestore doc by admin_sender_requests.php when a request is approved.
 $masterSendersSnap = $db->collection('admin_config')->document('master_senders')->snapshot();
@@ -503,7 +510,7 @@ $intRef = $db->collection('integrations')->document($intDocId);
 $intSnap = $intRef->snapshot();
 $intData = $intSnap->exists() ? $intSnap->data() : [];
 
-// ── Check Agency Toggle & Rate Limits ─────────────────────────────────────
+// -- Check Agency Toggle & Rate Limits -------------------------------------
 $tokenRef = $db->collection('ghl_tokens')->document($locId);
 $tokenSnap = $tokenRef->snapshot();
 $tokenData = $tokenSnap->exists() ? $tokenSnap->data() : [];
@@ -584,15 +591,15 @@ $freeCreditsTotal = $intData['free_credits_total'] ?? 10;
 $requestedSender = $customData['sendername'] ?? $payload['sendername'] ?? $data['sendername'] ??
     $customData['sender_name'] ?? $payload['sender_name'] ?? $data['sender_name'] ?? null;
 
-// ── Sender & Gateway Resolution (single authoritative block) ─────────────────
+// -- Sender & Gateway Resolution (single authoritative block) -----------------
 //
-// PATH A — Subaccount has its own (external) API key:
-//   → Route through their key. They own their sender registrations.
-//   → Skip NOLA credit deduction ($usingCustomSender = true).
+// PATH A � Subaccount has its own (external) API key:
+//   ? Route through their key. They own their sender registrations.
+//   ? Skip NOLA credit deduction ($usingCustomSender = true).
 //
-// PATH B — Using the NOLA master billing gateway:
-//   → NOLA credits apply. Sender MUST be in MASTER_APPROVED_SENDERS.
-//   → If the subaccount's approved sender is not on the master account,
+// PATH B � Using the NOLA master billing gateway:
+//   ? NOLA credits apply. Sender MUST be in MASTER_APPROVED_SENDERS.
+//   ? If the subaccount's approved sender is not on the master account,
 //     fall back to the default (NOLASMSPro) to guarantee delivery.
 
 $senderResolution = SenderResolver::resolve(
@@ -635,7 +642,7 @@ $sysKey  = trim((string)$SEMAPHORE_API_KEY);
 $userKey = trim((string)($customApiKey ?? ''));
 
 if (false && $userKey !== '' && $userKey !== $sysKey) {
-    // ── PATH A: External API key ─────────────────────────────────────────────
+    // -- PATH A: External API key ---------------------------------------------
     $usingCustomSender = true;
     $activeApiKey      = $customApiKey;
 
@@ -661,7 +668,7 @@ if (false && $userKey !== '' && $userKey !== $sysKey) {
     // else: $sender stays as the system default 'NOLASMSPro'
 
 } elseif (false) {
-    // ── PATH B: Master billing gateway ──────────────────────────────────────
+    // -- PATH B: Master billing gateway --------------------------------------
     error_log("[send_sms] Resolving Sender ID for Loc: {$locId} (requested: '{$requestedSender}')");
 
     if ($isSystemNotification) {
@@ -690,7 +697,7 @@ if (false && $userKey !== '' && $userKey !== $sysKey) {
     }
 }
 
-// ── Charging Logic (Quota vs Paid) ───────────────────────────────────────────
+// -- Charging Logic (Quota vs Paid) -------------------------------------------
 // Rules per handoff design:
 // - Subaccounts using the NOLA master gateway: free trial applies first, then paid.
 // - Subaccounts using their OWN API key (PATH A): trial applies before paid credits.
@@ -708,7 +715,7 @@ $account_id = $locId ?: 'default';
 // System notifications skip ALL credit logic (trial and paid).
 $bypassBilling = $isSystemNotification;
 
-// ── Debug: Log the billing decision path ─────────────────────────────────────
+// -- Debug: Log the billing decision path -------------------------------------
 Logger::info('SMS billing decision', [
     'location_id'          => $locId,
     'num_recipients'       => $num_recipients,
@@ -738,13 +745,13 @@ error_log("[send_sms] BILLING DECISION for loc={$locId}: " . json_encode([
         'api_key_source'       => $apiKeySource,
 ]));
 
-// ── Credit Deduction & Trial ──────────────────────────────────────────────────
+// -- Credit Deduction & Trial --------------------------------------------------
 if ($bypassBilling) {
-    // Free system notification — no trial counter increment, no wallet deduction.
+    // Free system notification � no trial counter increment, no wallet deduction.
     error_log("[send_sms] BILLING BYPASS: System notification. Skipping credit deduction for loc={$locId}.");
 
 } elseif ($usingFreeCredits) {
-    // Free Trial (PATH B only) → increment counter, no paid credit deduction
+    // Free Trial (PATH B only) ? increment counter, no paid credit deduction
     $intRef->set([
         'free_usage_count' => $freeUsageCount + $required_credits,
         'updated_at'       => new \Google\Cloud\Core\Timestamp(new \DateTime()),
@@ -764,7 +771,7 @@ if ($bypassBilling) {
     }
 
 } else {
-    // Paid deduction — applies to ALL sends (both PATH A and non-trial PATH B).
+    // Paid deduction � applies to ALL sends (both PATH A and non-trial PATH B).
     // Own-API-key users consume paid NOLA platform credits only after trial is exhausted.
 
     // Resolve agency_id for logging and lock check.
@@ -779,10 +786,10 @@ if ($bypassBilling) {
         }
     }
 
-    // ── 1. Subaccount balance pre-flight ────────────────────────────────────
+    // -- 1. Subaccount balance pre-flight ------------------------------------
     $subBalance = $creditManager->get_balance($account_id);
     if ($subBalance <= 0) {
-        Logger::error('Insufficient credits — subaccount balance zero', ['location_id' => $locId, 'balance' => $subBalance]);
+        Logger::error('Insufficient credits � subaccount balance zero', ['location_id' => $locId, 'balance' => $subBalance]);
         Logger::response(402, ['status' => 'error', 'error' => 'insufficient_credits']);
         $markIdempotencyFailed('insufficient_credits', 'Your account has no credits. Please top up or request credits from your agency.', 402);
         http_response_code(402);
@@ -795,7 +802,7 @@ if ($bypassBilling) {
         exit;
     }
 
-    // ── 2. Optional master balance lock check ────────────────────────────────
+    // -- 2. Optional master balance lock check --------------------------------
     $billingMasterLock = $billingAgencyId !== '' && $creditManager->get_agency_master_lock($billingAgencyId);
     if ($billingMasterLock) {
         $agencyBalance = $creditManager->get_agency_balance($billingAgencyId);
@@ -812,7 +819,7 @@ if ($bypassBilling) {
         }
     }
 
-    // ── 3. Deduct from subaccount wallet (atomic Firestore txn) ─────────────
+    // -- 3. Deduct from subaccount wallet (atomic Firestore txn) -------------
     try {
         $desc  = "SMS to " . ($num_recipients === 1 ? $validNumbers[0] : "$num_recipients recipient(s)");
         $refId = $batch_id ?? ('sms_' . bin2hex(random_bytes(4)));
@@ -842,7 +849,7 @@ if ($bypassBilling) {
         }
 
         if ($billingMasterLock) {
-            // Master balance lock is ON — deduct from BOTH agency and subaccount wallets.
+            // Master balance lock is ON � deduct from BOTH agency and subaccount wallets.
             // Agency balance must cover the send; if empty, the send is blocked.
             $creditManager->deduct_agency_and_subaccount(
                 $account_id,
@@ -857,7 +864,7 @@ if ($bypassBilling) {
                 $txMetadata
             );
         } else {
-            // No agency master lock — deduct from subaccount wallet only.
+            // No agency master lock � deduct from subaccount wallet only.
             // agency_id is passed for transaction logging/reporting only; no agency balance required.
             $creditManager->deduct_subaccount_only(
                 $account_id,
@@ -890,7 +897,7 @@ if ($bypassBilling) {
         exit;
     }
 
-    // ── 4. Low Balance Alert ─────────────────────────────────────────────────
+    // -- 4. Low Balance Alert -------------------------------------------------
     try {
         require_once __DIR__ . '/../services/NotificationService.php';
         $newBalance = $creditManager->get_balance($account_id);
@@ -967,7 +974,7 @@ if (!empty($message_results)) {
 
     // A send is "bulk" (uses a shared group conversation) when:
     //   - Multiple numbers are in this single request (GHL Marketplace style), OR
-    //   - A batch_id is present — the frontend always sets batch_id for bulk sends,
+    //   - A batch_id is present � the frontend always sets batch_id for bulk sends,
     //     even though it calls this endpoint one phone at a time.
     $isBulk = count($validNumbers) > 1 || !empty($batch_id);
     $prefix = $locId . '_';
@@ -993,7 +1000,7 @@ if (!empty($message_results)) {
         $recipientKey = $recipient_key ?? $recipient;
         $recipientName = $customData['name'] ?? $recipient;
 
-        // ── Resolve initial status from Semaphore response ─────────────────────
+        // -- Resolve initial status from Semaphore response ---------------------
         // Semaphore returns the actual send status in the response (e.g. 'Queued', 'Sent').
         // Use it directly instead of always storing 'Sending', so the frontend
         // sees the real status immediately without waiting for the 5-min cron.
@@ -1004,7 +1011,7 @@ if (!empty($message_results)) {
         } elseif (in_array($rawMsgStatus, ['failed', 'expired', 'rejected', 'undelivered'])) {
             $initialStatus = 'Failed';
         }
-        // 'queued' and 'pending' intentionally stay as 'Sending' — they will be
+        // 'queued' and 'pending' intentionally stay as 'Sending' � they will be
         // polled by check_message_status.php and resolved quickly.
 
         MessageSyncService::recordMessageEvent($db, [
@@ -1109,7 +1116,7 @@ if (!empty($message_results)) {
 
     // For bulk sends the frontend calls this endpoint once per recipient (sequential),
     // all sharing the same batch_id. Using arrayUnion in a set+merge means each call
-    // atomically appends its recipient to the members list — works whether the doc
+    // atomically appends its recipient to the members list � works whether the doc
     // already exists or is being created for the very first time.
     // For direct (single) sends, we simply set the members array normally.
     if (false && $isBulk) {
@@ -1122,7 +1129,7 @@ if (!empty($message_results)) {
                 'last_message_at' => $ts,
                 'updated_at'      => $ts,
                 'type'            => 'group',
-                // arrayUnion creates the field if missing, appends if it exists — never duplicates
+                // arrayUnion creates the field if missing, appends if it exists � never duplicates
                 'members'         => \Google\Cloud\Firestore\FieldValue::arrayUnion($validNumbers),
             ], ['merge' => true]);
     } elseif (false) {
@@ -1147,7 +1154,7 @@ if (!empty($message_results)) {
         error_log("[send_sms] Cache invalidation failed: " . $cacheEx->getMessage());
     }
 
-    // ── GHL Bidirectional Sync (Best-Effort) ─────────────────────────────────
+    // -- GHL Bidirectional Sync (Best-Effort) ---------------------------------
     // GHL bidirectional sync: run for every individual-number send (including bulk
     // recipients), since each message should appear in its GHL contact's conversation.
     // Sync is skipped if the message failed to send, to avoid false sync and timeouts.
@@ -1170,10 +1177,10 @@ if (!empty($message_results)) {
             error_log('[GHL Sync] Failed (non-fatal): ' . $e->getMessage());
         }
 
-        // ── Apply Tags to GHL Contact ────────────────────────────────────────────
+        // -- Apply Tags to GHL Contact --------------------------------------------
         // If the frontend passed tags (via the "Apply Tags" button in the Composer),
         // post them to the GHL Contacts API. Requires a resolved GHL contact ID.
-        // This is non-fatal — a tagging failure will never block SMS delivery.
+        // This is non-fatal � a tagging failure will never block SMS delivery.
         $tagsToApply = $customData['tagsToApply'] ?? [];
         if (!empty($tagsToApply) && is_array($tagsToApply) && $contactId) {
             try {
@@ -1191,7 +1198,7 @@ if (!empty($message_results)) {
         }
     }
 
-// ── End GHL Sync ──────────────────────────────────────────────────────────
+// -- End GHL Sync ----------------------------------------------------------
 }
 
 // GHL-friendly log structure

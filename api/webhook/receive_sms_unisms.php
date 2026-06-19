@@ -106,6 +106,21 @@ function unisms_reference_id(array $data, array $messageObj): string
     ));
 }
 
+function unisms_payload_log_context(array $data, array $messageObj, string $event): array
+{
+    $senderRaw = $messageObj['sender'] ?? $messageObj['from'] ?? $messageObj['number'] ?? $data['sender'] ?? '';
+    $senderNumber = unisms_clean_number($senderRaw);
+
+    return [
+        'event' => $event,
+        'id' => $data['id'] ?? null,
+        'reference_id' => unisms_reference_id($data, $messageObj),
+        'provider_status' => $messageObj['status'] ?? $data['status'] ?? null,
+        'sender_hash' => $senderNumber !== '' ? hash('sha256', $senderNumber) : null,
+        'message_present' => trim((string)($messageObj['content'] ?? $messageObj['message'] ?? $data['message'] ?? '')) !== '',
+    ];
+}
+
 function unisms_existing_record_matches(array $record, string $referenceId): bool
 {
     $provider = strtolower(trim((string)($record['provider'] ?? '')));
@@ -232,19 +247,23 @@ if (!is_array($data)) {
     unisms_json(400, ['status' => 'error', 'message' => 'Invalid JSON payload']);
 }
 
-error_log('[receive_sms_unisms] Inbound webhook payload: ' . $raw);
-
 $event = (string)($data['event'] ?? '');
 $messageObj = is_array($data['message'] ?? null) ? $data['message'] : [];
 $db = get_firestore();
 $auth = unisms_webhook_secret_status($config);
 
-if (unisms_event_is_status_callback($event)) {
-    $result = unisms_update_outbound_status($db, $data, $messageObj, $event, !$auth['ok']);
-    if (!$auth['ok'] && empty($result['updated'])) {
-        error_log('[receive_sms_unisms] Unauthorized status webhook. secret_present=' . ($auth['secret_present'] ? 'yes' : 'no') . ' reference_id=' . (string)$result['reference_id']);
-        unisms_json(401, ['status' => 'error', 'message' => 'Unauthorized Access']);
+error_log('[receive_sms_unisms] Webhook received: ' . json_encode(unisms_payload_log_context($data, $messageObj, $event)));
+
+if (!$auth['ok']) {
+    if (!$auth['configured']) {
+        unisms_json(500, ['status' => 'error', 'message' => 'Server misconfiguration: webhook secret missing']);
     }
+    error_log('[receive_sms_unisms] Unauthorized webhook. secret_present=' . ($auth['secret_present'] ? 'yes' : 'no') . ' event=' . $event . ' reference_id=' . unisms_reference_id($data, $messageObj));
+    unisms_json(401, ['status' => 'error', 'message' => 'Unauthorized Access']);
+}
+
+if (unisms_event_is_status_callback($event)) {
+    $result = unisms_update_outbound_status($db, $data, $messageObj, $event, false);
     unisms_json(200, [
         'status' => 'success',
         'message' => 'Webhook processed',
@@ -254,25 +273,17 @@ if (unisms_event_is_status_callback($event)) {
         'local_status' => $result['status'],
         'updated' => $result['updated'],
         'ghl_sync_results' => $result['ghl_sync_results'] ?? [],
-        'auth' => $auth['ok'] ? 'secret' : 'matched_existing_unisms_record',
+        'auth' => 'secret',
     ]);
 }
-
-if (!$auth['ok']) {
-    if (!$auth['configured']) {
-        unisms_json(500, ['status' => 'error', 'message' => 'Server misconfiguration: webhook secret missing']);
-    }
-    error_log('[receive_sms_unisms] Unauthorized inbound webhook. secret_present=' . ($auth['secret_present'] ? 'yes' : 'no'));
-    unisms_json(401, ['status' => 'error', 'message' => 'Unauthorized Access']);
-}
-
 $senderRaw = $messageObj['sender'] ?? $messageObj['from'] ?? $messageObj['number'] ?? $data['sender'] ?? '';
 $message = $messageObj['content'] ?? $messageObj['message'] ?? $data['message'] ?? '';
 $messageId = $data['id'] ?? $messageObj['reference_id'] ?? $messageObj['id'] ?? uniqid('unisms_in_');
 $senderNumber = unisms_clean_number($senderRaw);
 
 if ($senderNumber === '' || trim((string)$message) === '') {
-    error_log("[receive_sms_unisms] Ignored: missing senderNumber ({$senderNumber}) or message ({$message})");
+    $senderHash = $senderNumber !== '' ? hash('sha256', $senderNumber) : null;
+    error_log('[receive_sms_unisms] Ignored: missing inbound data. sender_hash=' . (string)$senderHash . ' message_present=' . (trim((string)$message) !== '' ? 'yes' : 'no'));
     unisms_json(200, [
         'status' => 'success',
         'message' => 'Webhook ignored',
@@ -298,7 +309,7 @@ foreach ($convQuery as $doc) {
 }
 
 if (empty($matchingConvs)) {
-    error_log("[receive_sms_unisms] No recent conversation found for {$senderNumber}. Ignored to prevent cross-account bleeding.");
+    error_log('[receive_sms_unisms] No recent conversation found. sender_hash=' . hash('sha256', $senderNumber) . ' Ignored to prevent cross-account bleeding.');
     unisms_json(200, [
         'status' => 'success',
         'message' => 'Webhook ignored',

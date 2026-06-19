@@ -99,7 +99,16 @@ class ProviderResultService
         }
 
         $error = preg_replace('/\s+/', ' ', $error);
+        $error = self::redactSensitiveText($error);
         return substr($error, 0, 500);
+    }
+
+    private static function redactSensitiveText(string $error): string
+    {
+        $error = preg_replace('/(api[_-]?key|token|secret|authorization|password)\s*[:=]\s*[^,\s"]+/i', '$1=[redacted]', $error);
+        $error = preg_replace('/Bearer\s+[A-Za-z0-9._~+\/=-]+/i', 'Bearer [redacted]', $error);
+
+        return $error;
     }
 
     public static function publicFailureStatus(?int $providerHttpStatus): int
