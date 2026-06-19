@@ -15,6 +15,7 @@ No frontend payload changes are required for the current implementation.
 - Provider send result/failure handling now flows through `api/services/ProviderResultService.php`.
 - `api/webhook/send_sms.php`, `api/webhook/ghl_provider.php`, and `api/services/MessageSyncService.php` now reuse those services.
 - The backend no longer blocks UniSMS messages for being under 10 characters.
+- `api/ghl_contacts.php` now keeps a longer last-good contacts cache. If GHL has a temporary outage or transient token-refresh failure, the backend can return the last synced contacts with `stale: true` instead of immediately failing the UI with `503`.
 
 ## Frontend Requirements
 
@@ -36,6 +37,7 @@ No minimum SMS character count is required on the frontend. If UniSMS rejects a 
 - SMS success should still be determined from `output.success` / `status` in the response.
 - Failed provider sends may still create local failed message rows so the UI can show a failed delivery instead of hiding the attempt.
 - Bulk sends remain one request per recipient from the frontend, with a shared `batch_id`; backend duplicate protection should continue to treat each recipient send as its own operation.
+- Contact fetches may include `stale: true` and `warning` when the backend is showing last synced GHL contacts during a temporary GHL/token issue.
 
 ## Backend Files Touched
 
@@ -45,4 +47,5 @@ No minimum SMS character count is required on the frontend. If UniSMS rejects a 
 - `api/webhook/send_sms.php`
 - `api/webhook/ghl_provider.php`
 - `api/services/MessageSyncService.php`
+- `api/ghl_contacts.php`
 - `laravel/tests/Unit/BackendHardeningServicesTest.php`

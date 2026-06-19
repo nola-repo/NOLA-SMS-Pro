@@ -184,6 +184,7 @@ function nola_sync_contact_conversation($db, string $locationId, string $contact
 if ($method === 'GET') {
     require_once __DIR__ . '/cache_helper.php';
     $cacheKey = "ghl_contacts_list_{$locationId}";
+    $lastGoodCacheKey = "ghl_contacts_last_good_{$locationId}";
     $registryKey = "ghl_contacts_registry_{$locationId}";
 
     $cachedContacts = NolaCache::get($cacheKey);
@@ -202,6 +203,29 @@ if ($method === 'GET') {
 
         if ($resp['status'] >= 400) {
             if (!empty($allContacts)) break; // Return what we have so far
+
+            $errorBody = json_decode((string)$resp['body'], true);
+            $isReconnectRequired = is_array($errorBody) && !empty($errorBody['requires_reconnect']);
+            $isTemporaryFailure = !$isReconnectRequired && (
+                (int)$resp['status'] >= 500 ||
+                (int)$resp['status'] === 429
+            );
+
+            if ($isTemporaryFailure) {
+                $lastGoodContacts = NolaCache::get($lastGoodCacheKey);
+                if (is_array($lastGoodContacts)) {
+                    error_log("[ghl_contacts] Returning last-good contacts after temporary GHL failure for {$locationId} status={$resp['status']}");
+                    http_response_code(200);
+                    echo json_encode([
+                        'contacts' => $lastGoodContacts,
+                        'cached' => true,
+                        'stale' => true,
+                        'warning' => 'GHL contacts are temporarily unavailable; showing last synced contacts.',
+                    ]);
+                    exit;
+                }
+            }
+
             http_response_code($resp['status']);
             echo $resp['body'];
             exit;
@@ -228,6 +252,7 @@ if ($method === 'GET') {
     } while ($path && $pageCount < $maxPages);
 
     NolaCache::setWithRegistry($registryKey, $cacheKey, $allContacts, 1800); // Cache for 30 minutes
+    NolaCache::setWithRegistry($registryKey, $lastGoodCacheKey, $allContacts, 604800); // Last-good fallback for 7 days
 
     error_log("[ghl_contacts] Successfully fetched " . count($allContacts) . " contacts (Pages: $pageCount)");
     echo json_encode(['contacts' => $allContacts, 'cached' => false]);
