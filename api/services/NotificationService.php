@@ -1402,8 +1402,8 @@ class NotificationService
             if ($snap->exists()) {
                 $existingPrefs = $snap->data()['notification_preferences'] ?? [];
                 if (isset($existingPrefs['last_low_balance_notified_at']) || isset($existingPrefs['last_zero_balance_notified_at'])) {
-                    $existingPrefs['last_low_balance_notified_at'] = \Google\Cloud\Firestore\FieldValue::delete();
-                    $existingPrefs['last_zero_balance_notified_at'] = \Google\Cloud\Firestore\FieldValue::delete();
+                    $existingPrefs['last_low_balance_notified_at'] = \Google\Cloud\Firestore\FieldValue::deleteField();
+                    $existingPrefs['last_zero_balance_notified_at'] = \Google\Cloud\Firestore\FieldValue::deleteField();
                     $docRef->set(['notification_preferences' => $existingPrefs], ['merge' => true]);
                     error_log("[LowBalanceAlert] Cleared last_low_balance_notified_at and last_zero_balance_notified_at for location {$locationId}");
                 }

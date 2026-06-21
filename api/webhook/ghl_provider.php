@@ -113,6 +113,63 @@ function build_local_sms_doc_id(string $locationId, string $provider, string $pr
     return FirestoreId::smsLogId($locationId, $provider, $providerMessageId, $recipient, $ghlMessageId);
 }
 
+function provider_record_blocked_message($db, string $locationId, ?string $phone, string $message, string $reason, ?string $contactId = null, ?string $ghlMessageId = null, array $context = []): ?string
+{
+    if (!$db || trim($locationId) === '') {
+        return null;
+    }
+
+    $digits = preg_replace('/\D/', '', (string)($phone ?? ''));
+    $member = $digits !== '' ? $digits : 'unknown';
+    $conversationId = $digits !== '' ? ($locationId . '_conv_' . $member) : ($locationId . '_workflow_blocked');
+    $messageId = 'ghlp_block_' . substr(hash('sha256', json_encode([
+        $locationId,
+        $phone,
+        $message,
+        $reason,
+        microtime(true),
+        bin2hex(random_bytes(4)),
+    ])), 0, 32);
+    $now = new \Google\Cloud\Core\Timestamp(new \DateTime());
+
+    try {
+        MessageSyncService::recordMessageEvent($db, [
+            'origin' => 'ghl_provider_blocked',
+            'conversation_id' => $conversationId,
+            'conversation_type' => 'direct',
+            'conversation_members' => $digits !== '' ? [$member] : [],
+            'location_id' => $locationId,
+            'number' => $member,
+            'message' => $message !== '' ? $message : ('GHL SMS blocked: ' . $reason),
+            'direction' => 'outbound',
+            'status' => 'Failed',
+            'created_at' => $now,
+            'date_created' => $now,
+            'timestamp' => $now,
+            'source' => 'ghl_provider',
+            'provider' => 'nola_internal',
+            'provider_status' => 'blocked',
+            'provider_error' => $reason,
+            'ghl_message_id' => $ghlMessageId,
+            'ghl_contact_id' => $contactId,
+            'message_id' => $messageId,
+        ]);
+
+        $extra = array_filter([
+            'workflow_blocked' => true,
+            'workflow_block_reason' => $reason,
+            'workflow_block_context' => $context,
+            'updated_at' => $now,
+        ], static fn($v) => $v !== null);
+        $db->collection('messages')->document($messageId)->set($extra, ['merge' => true]);
+        $db->collection('sms_logs')->document($messageId)->set($extra, ['merge' => true]);
+        return $messageId;
+    } catch (\Throwable $e) {
+        error_log('[ghl_provider] Failed to record blocked provider message: ' . $e->getMessage());
+        return null;
+    }
+}
+
 function provider_payload_section($value): array
 {
     if (is_array($value)) {
@@ -348,13 +405,29 @@ elseif (str_starts_with($digits, '9') && strlen($digits) === 10) {
     $normalizedPhone = '0' . $digits;
 }
 else {
+    if (!isset($db)) {
+        $db = get_firestore();
+    }
+    $blockedMessageId = provider_record_blocked_message($db, (string)$locationId, (string)$phone, (string)$message, 'invalid_phone', $contactId ? (string)$contactId : null, $messageId ? (string)$messageId : null, [
+        'req_id' => $providerReqId,
+        'raw_phone' => $phone,
+        'digits' => $digits,
+        'expected' => 'Philippine mobile number beginning 09 or +639',
+    ]);
     error_log('[ghl_provider][REJECT] ' . json_encode([
         'req_id' => $providerReqId,
         'reason' => 'invalid_phone',
         'phone' => $phone,
+        'local_message_id' => $blockedMessageId,
     ]));
     http_response_code(400);
-    echo json_encode(['success' => false, 'error' => "Invalid Philippine mobile number: {$phone}"]);
+    echo json_encode([
+        'success' => false,
+        'error' => 'invalid_phone',
+        'message' => "Invalid Philippine mobile number: {$phone}. Use a mobile number beginning 09 or +639.",
+        'messageId' => $messageId,
+        'local_message_id' => $blockedMessageId,
+    ]);
     exit;
 }
 
@@ -598,10 +671,55 @@ if (!$usingFreeCredits) {
     }
 }
 
-// Defer the GHL success response until the SMS gateway has accepted the message.
-// This prevents workflow executions from showing success when the handset never receives an SMS.
+// ── EARLY RESPONSE TO GHL ────────────────────────────────────────────────────
+// GHL's provider webhook times out at ~15s. Our billing + gateway send can take
+// longer. We flush HTTP 200 NOW so GHL marks the step as executed, then continue
+// all slow work in the background.
+$earlyResponseBody = json_encode([
+    'success'              => true,
+    'messageId'            => $messageId,
+    'status'               => 'success',
+    'message'              => "SMS queued for {$normalizedPhone}",
+    'execution_log'        => "NOLA Provider: SMS accepted for $normalizedPhone via $sender. Credits: $required_credits.",
+    'action_executed_from' => 'Nola Web',
+    'event_details'        => [
+        'Status'       => 'Success',
+        'Recipient'    => $normalizedPhone,
+        'SMS Message'  => $message,
+        'Credits Used' => $required_credits,
+        'Sender ID'    => $sender,
+        'Location ID'  => $locationId,
+        'Timestamp'    => date('Y-m-d H:i:s'),
+    ],
+    'data' => [
+        'messageId'    => $messageId,
+        'number'       => $normalizedPhone,
+        'credits_used' => $required_credits,
+        'location_id'  => $locationId,
+        'sender'       => $sender,
+    ],
+]);
 
-// Provider processing continues after the gateway response is flushed to GHL.
+if (!headers_sent()) {
+    http_response_code(200);
+    header('Content-Type: application/json');
+    header('Connection: close');
+    header('Content-Length: ' . strlen($earlyResponseBody));
+    echo $earlyResponseBody;
+    if (function_exists('fastcgi_finish_request')) {
+        fastcgi_finish_request();
+    } else {
+        while (ob_get_level() > 0) { ob_end_flush(); }
+        flush();
+    }
+}
+error_log('[ghl_provider][EARLY_RESPONSE_FLUSHED] ' . json_encode([
+    'req_id'     => $providerReqId,
+    'locationId' => $locationId,
+    'messageId'  => $messageId,
+]));
+
+// ── BACKGROUND PROCESSING (after HTTP 200 has been flushed to GHL) ───────────
 
 // ── Credit Deduction & Trial Logging ─────────────────────────────────────────
 if ($usingFreeCredits) {
@@ -753,9 +871,8 @@ error_log('[ghl_provider][GATEWAY_RESULT] ' . json_encode([
 ]));
 
 if (!$gatewayAccepted) {
-    // Semaphore rejected the message. We already sent 200 to GHL, so we can't
-    // return an error HTTP code. Instead, refund the credits and call the GHL
-    // status API with 'failed' so GHL updates the message badge correctly.
+    // GHL already got HTTP 200 (early flush above). We cannot change the HTTP
+    // status, but we refund credits and log the failure for investigation.
     error_log('[ghl_provider][PROVIDER_FAILED_POST_FLUSH] ' . ucfirst($chosenProvider) . ' rejected msg for loc=' . $locationId . ' msgId=' . $messageId . ' status=' . $smsStatus);
 
     if ($usingFreeCredits) {
@@ -818,61 +935,17 @@ if (!$gatewayAccepted) {
         error_log('[ghl_provider] Failed status GHL sync error: ' . $e->getMessage());
     }
     $failureReason = $gateway_error ?: ProviderResultService::failureMessage($gatewaySummary['errors'] ?? [], $chosenProvider);
-    provider_flush_json_response([
-        'success' => false,
-        'status' => 'error',
-        'error' => 'sms_gateway_rejected',
-        'message' => $failureReason,
-        'messageId' => $messageId,
-        'action_executed_from' => 'Nola Web',
-        'execution_log' => 'NOLA Provider: SMS failed for ' . $normalizedPhone . ' via ' . ucfirst($chosenProvider) . '. Reason: ' . $failureReason,
-        'event_details' => [
-            'Status' => 'Failed',
-            'Recipient' => $normalizedPhone,
-            'SMS Message' => $message,
-            'Credits Used' => 0,
-            'Sender ID' => $sender,
-            'Location ID' => $locationId,
-            'Reason' => $failureReason,
-            'Timestamp' => date('Y-m-d H:i:s'),
-        ],
-    ], $smsStatus >= 400 ? $smsStatus : 502);
-    error_log('[ghl_provider][GATEWAY_FAILURE_RESPONSE_FLUSHED] ' . json_encode([
-        'req_id' => $providerReqId,
+    error_log('[ghl_provider][GATEWAY_FAILURE_POST_FLUSH] ' . json_encode([
+        'req_id'     => $providerReqId,
         'locationId' => $locationId,
-        'messageId' => $messageId,
-        'status' => $smsStatus,
+        'messageId'  => $messageId,
+        'status'     => $smsStatus,
+        'reason'     => $failureReason,
     ]));
     exit;
 }
 
-provider_flush_json_response([
-    'success'              => true,
-    'messageId'            => $messageId,
-    'status'               => 'success',
-    'message'              => 'SMS accepted by ' . ucfirst($chosenProvider) . ' for ' . $normalizedPhone,
-    'execution_log'        => 'NOLA Provider: SMS accepted by ' . ucfirst($chosenProvider) . ' for ' . $normalizedPhone . ' via ' . $sender . '. Credits: ' . $required_credits . '.',
-    'action_executed_from' => 'Nola Web',
-    'event_details'        => [
-        'Status'       => 'Success',
-        'Recipient'    => $normalizedPhone,
-        'SMS Message'  => $message,
-        'Credits Used' => $required_credits,
-        'Sender ID'    => $sender,
-        'Location ID'  => $locationId,
-        'Provider'     => ucfirst($chosenProvider),
-        'Timestamp'    => date('Y-m-d H:i:s'),
-    ],
-    'data' => [
-        'messageId'   => $messageId,
-        'number'      => $normalizedPhone,
-        'credits_used'=> $required_credits,
-        'location_id' => $locationId,
-        'sender'      => $sender,
-        'provider'    => $chosenProvider,
-    ],
-]);
-error_log('[ghl_provider][GATEWAY_ACCEPTED_RESPONSE_FLUSHED] ' . json_encode([
+error_log('[ghl_provider][GATEWAY_ACCEPTED_POST_FLUSH] ' . json_encode([
     'req_id' => $providerReqId,
     'locationId' => $locationId,
     'messageId' => $messageId,
