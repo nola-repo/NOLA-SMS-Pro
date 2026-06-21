@@ -343,12 +343,26 @@ auth_assert_ghl_api_location_allowed($db, $jwtCtx, (string) $locId);
 $ghlTokenRegistryId = auth_resolve_ghl_token_registry_id($db, $jwtCtx, (string) $locId);
 
 // Idempotency guard: prevents duplicate sends and duplicate credit deductions.
-// The frontend may pass Idempotency-Key; otherwise derive a stable short-window key
-// from the normalized send payload.
+// The frontend may pass Idempotency-Key. GHL executions may pass an execution id.
+// If neither exists, generate a unique request key so repeated workflow runs send independently.
 $providedIdempotencyKey = request_header_value('Idempotency-Key')
     ?: ($payload['idempotency_key'] ?? $customData['idempotency_key'] ?? null);
 $requestedSenderForIdempotency = $customData['sendername'] ?? $payload['sendername'] ?? $data['sendername'] ??
     $customData['sender_name'] ?? $payload['sender_name'] ?? $data['sender_name'] ?? null;
+$workflowExecutionIdForIdempotency = first_non_empty_payload_value($customData, $payload, $data, $workflowData, [
+    'workflow_execution_id',
+    'workflowExecutionId',
+    'execution_id',
+    'executionId',
+    'workflow_run_id',
+    'workflowRunId',
+    'run_id',
+    'runId',
+    'trigger_event_id',
+    'triggerEventId',
+    'event_id',
+    'eventId',
+]);
 $idempotencyMaterial = [
     'location_id' => (string)$locId,
     'numbers' => array_values($validNumbers),
@@ -357,6 +371,23 @@ $idempotencyMaterial = [
     'batch_id' => $batch_id,
     'recipient_key' => $recipient_key,
 ];
+
+if ($workflowExecutionIdForIdempotency !== null) {
+    $idempotencyMaterial['workflow_execution_id'] = (string)$workflowExecutionIdForIdempotency;
+}
+
+// Without an explicit idempotency key or a workflow execution id, identical
+// workflow bodies must still be treated as separate sends. The old auto key used
+// only location + recipient + message, which collapsed repeated workflow runs.
+$idempotencyScope = 'unique_request';
+if ($providedIdempotencyKey) {
+    $idempotencyScope = 'explicit_key';
+} elseif ($workflowExecutionIdForIdempotency !== null) {
+    $idempotencyScope = 'workflow_execution';
+} else {
+    $idempotencyMaterial['request_nonce'] = bin2hex(random_bytes(12));
+}
+
 $idempotencyKey = $providedIdempotencyKey
     ? sanitize_firestore_doc_id((string)$providedIdempotencyKey)
     : ('auto_' . hash('sha256', canonical_json($idempotencyMaterial)));
@@ -369,6 +400,11 @@ try {
         $idemData = $existingIdem->data();
         $sameRequest = ($idemData['request_hash'] ?? '') === $requestHash;
         if ($sameRequest && ($idemData['status'] ?? '') === 'completed') {
+            Logger::info('Idempotency replayed completed SMS request', [
+                'location_id' => $locId,
+                'scope' => $idempotencyScope,
+                'message_ids' => $idemData['message_ids'] ?? [],
+            ]);
             $responseBody = $idemData['response_body'] ?? null;
             http_response_code((int)($idemData['http_status'] ?? 200));
             echo json_encode(is_array($responseBody) ? $responseBody : [
@@ -383,6 +419,10 @@ try {
             exit;
         }
         if ($sameRequest && ($idemData['status'] ?? '') === 'processing') {
+            Logger::error('Duplicate SMS request already processing', [
+                'location_id' => $locId,
+                'scope' => $idempotencyScope,
+            ]);
             http_response_code(409);
             echo json_encode([
                 'status' => 'error',
@@ -415,6 +455,8 @@ try {
             'idempotency_key' => $idempotencyKey,
             'request_hash' => $requestHash,
             'location_id' => (string)$locId,
+            'scope' => $idempotencyScope,
+            'workflow_execution_id' => $workflowExecutionIdForIdempotency !== null ? (string)$workflowExecutionIdForIdempotency : null,
             'status' => 'processing',
             'created_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
             'expires_at' => new \Google\Cloud\Core\Timestamp((new \DateTime())->modify('+24 hours')),
@@ -1177,10 +1219,24 @@ if (!empty($message_results)) {
     // GHL bidirectional sync: run for every individual-number send (including bulk
     // recipients), since each message should appear in its GHL contact's conversation.
     // Sync is skipped if the message failed to send, to avoid false sync and timeouts.
+    $msgSyncResp = ['success' => true, 'skipped' => true, 'reason' => 'not_single_recipient_or_failed'];
     if (count($validNumbers) === 1 && $locId && !empty($messageId) && $initialStatus !== 'Failed') {
         try {
             $ghlSync = new \Nola\Services\GhlSyncService($db, $locId, $ghlTokenRegistryId);
             $syncRes = $ghlSync->syncOutboundMessage($validNumbers[0], $message, $contactId);
+            $msgSyncResp = $syncRes;
+
+            $syncUpdate = array_filter([
+                'ghl_sync_success' => (bool)($syncRes['success'] ?? false),
+                'ghl_sync_skipped' => (bool)($syncRes['skipped'] ?? false),
+                'ghl_sync_reason' => $syncRes['reason'] ?? null,
+                'ghl_sync_error' => $syncRes['error'] ?? null,
+                'ghl_sync_http_status' => $syncRes['ghl_response']['status'] ?? null,
+                'ghl_sync_updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+            ], static fn($v) => $v !== null);
+            $db->collection('messages')->document($messageId)->set($syncUpdate, ['merge' => true]);
+            $db->collection('sms_logs')->document($messageId)->set($syncUpdate, ['merge' => true]);
+
             if (!empty($syncRes['ghl_message_id'])) {
                 $ghlMessageId = $syncRes['ghl_message_id'];
                 
@@ -1191,11 +1247,28 @@ if (!empty($message_results)) {
                 $db->collection('sms_logs')->document($messageId)->update([
                     ['path' => 'ghl_message_id', 'value' => $ghlMessageId]
                 ]);
+            } else {
+                error_log('[GHL Sync] Outbound sync completed without GHL message id: ' . json_encode([
+                    'location_id' => $locId,
+                    'local_message_id' => $messageId,
+                    'sync_result' => $syncRes,
+                ]));
             }
         } catch (\Throwable $e) {
+            $msgSyncResp = ['success' => false, 'error' => $e->getMessage()];
+            try {
+                $syncUpdate = [
+                    'ghl_sync_success' => false,
+                    'ghl_sync_error' => $e->getMessage(),
+                    'ghl_sync_updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+                ];
+                $db->collection('messages')->document($messageId)->set($syncUpdate, ['merge' => true]);
+                $db->collection('sms_logs')->document($messageId)->set($syncUpdate, ['merge' => true]);
+            } catch (\Throwable $writeEx) {
+                error_log('[GHL Sync] Failed to persist sync error: ' . $writeEx->getMessage());
+            }
             error_log('[GHL Sync] Failed (non-fatal): ' . $e->getMessage());
         }
-
         // -- Apply Tags to GHL Contact --------------------------------------------
         // If the frontend passed tags (via the "Apply Tags" button in the Composer),
         // post them to the GHL Contacts API. Requires a resolved GHL contact ID.
@@ -1363,7 +1436,10 @@ $responsePayload = [
         "billing_rollback_error"  => $billingRollbackError,
         "provider"              => $chosenProvider,
         "provider_http_status"  => $provider_http_status,
-        "gateway_errors"        => $gateway_errors
+        "gateway_errors"        => $gateway_errors,
+        "idempotency_scope"     => $idempotencyScope ?? null,
+        "workflow_execution_id"  => $workflowExecutionIdForIdempotency ?? null,
+        "ghl_sync_result"       => $msgSyncResp ?? null
     ]
 ];
 
@@ -1376,6 +1452,8 @@ if (isset($idempotencyRef)) {
             'response_body' => $responsePayload,
             'provider' => $chosenProvider,
             'provider_http_status' => $provider_http_status,
+            'scope' => $idempotencyScope ?? null,
+            'workflow_execution_id' => $workflowExecutionIdForIdempotency !== null ? (string)$workflowExecutionIdForIdempotency : null,
             'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
         ], ['merge' => true]);
     } catch (\Throwable $e) {

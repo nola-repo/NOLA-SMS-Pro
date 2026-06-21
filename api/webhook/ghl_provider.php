@@ -151,6 +151,29 @@ function provider_first_scalar(array $payload, array $paths): ?string
     return null;
 }
 
+function provider_flush_json_response(array $body, int $statusCode = 200): void
+{
+    if (headers_sent()) {
+        return;
+    }
+
+    $responseBody = json_encode($body);
+    http_response_code($statusCode);
+    header('Content-Type: application/json');
+    header('Connection: close');
+    header('Content-Length: ' . strlen($responseBody));
+    echo $responseBody;
+
+    if (function_exists('fastcgi_finish_request')) {
+        fastcgi_finish_request();
+    } else {
+        while (ob_get_level() > 0) {
+            ob_end_flush();
+        }
+        flush();
+    }
+}
+
 $payload = is_array($payload) ? $payload : [];
 $payload['data'] = provider_payload_section($payload['data'] ?? []);
 $payload['customData'] = provider_payload_section($payload['customData'] ?? []);
@@ -575,57 +598,10 @@ if (!$usingFreeCredits) {
     }
 }
 
-// ── EARLY RESPONSE TO GHL ────────────────────────────────────────────────────
-// GHL's provider webhook times out at ~10-15s. Our billing + Semaphore send can
-// take 15-25s. We flush HTTP 200 NOW (with Content-Length so GHL closes its side),
-// then continue all slow work in the background.
-$earlyResponseBody = json_encode([
-    'success'              => true,
-    'messageId'            => $messageId,
-    'status'               => 'success',
-    'message'              => "SMS sent successfully to {$normalizedPhone}",
-    'execution_log'        => "NOLA Provider: SMS accepted for $normalizedPhone via $sender. Credits: $required_credits.",
-    'action_executed_from' => 'Nola Web',
-    'event_details'        => [
-        'Status'       => 'Success',
-        'Recipient'    => $normalizedPhone,
-        'SMS Message'  => $message,
-        'Credits Used' => $required_credits,
-        'Sender ID'    => $sender,
-        'Location ID'  => $locationId,
-        'Timestamp'    => date('Y-m-d H:i:s'),
-    ],
-    'data' => [
-        'messageId'   => $messageId,
-        'number'      => $normalizedPhone,
-        'credits_used'=> $required_credits,
-        'location_id' => $locationId,
-        'sender'      => $sender,
-    ],
-]);
+// Defer the GHL success response until the SMS gateway has accepted the message.
+// This prevents workflow executions from showing success when the handset never receives an SMS.
 
-http_response_code(200);
-header('Connection: close');
-header('Content-Length: ' . strlen($earlyResponseBody));
-echo $earlyResponseBody;
-
-// Flush all output buffers so GHL receives the response immediately
-if (function_exists('fastcgi_finish_request')) {
-    fastcgi_finish_request();
-} else {
-    while (ob_get_level() > 0) {
-        ob_end_flush();
-    }
-    flush();
-}
-
-error_log('[ghl_provider][EARLY_RESPONSE_FLUSHED] ' . json_encode([
-    'req_id'     => $providerReqId,
-    'locationId' => $locationId,
-    'messageId'  => $messageId,
-]));
-
-// ── BACKGROUND PROCESSING (after HTTP 200 has been flushed to GHL) ───────────
+// Provider processing continues after the gateway response is flushed to GHL.
 
 // ── Credit Deduction & Trial Logging ─────────────────────────────────────────
 if ($usingFreeCredits) {
@@ -841,8 +817,67 @@ if (!$gatewayAccepted) {
     } catch (\Throwable $e) {
         error_log('[ghl_provider] Failed status GHL sync error: ' . $e->getMessage());
     }
+    $failureReason = $gateway_error ?: ProviderResultService::failureMessage($gatewaySummary['errors'] ?? [], $chosenProvider);
+    provider_flush_json_response([
+        'success' => false,
+        'status' => 'error',
+        'error' => 'sms_gateway_rejected',
+        'message' => $failureReason,
+        'messageId' => $messageId,
+        'action_executed_from' => 'Nola Web',
+        'execution_log' => 'NOLA Provider: SMS failed for ' . $normalizedPhone . ' via ' . ucfirst($chosenProvider) . '. Reason: ' . $failureReason,
+        'event_details' => [
+            'Status' => 'Failed',
+            'Recipient' => $normalizedPhone,
+            'SMS Message' => $message,
+            'Credits Used' => 0,
+            'Sender ID' => $sender,
+            'Location ID' => $locationId,
+            'Reason' => $failureReason,
+            'Timestamp' => date('Y-m-d H:i:s'),
+        ],
+    ], $smsStatus >= 400 ? $smsStatus : 502);
+    error_log('[ghl_provider][GATEWAY_FAILURE_RESPONSE_FLUSHED] ' . json_encode([
+        'req_id' => $providerReqId,
+        'locationId' => $locationId,
+        'messageId' => $messageId,
+        'status' => $smsStatus,
+    ]));
     exit;
 }
+
+provider_flush_json_response([
+    'success'              => true,
+    'messageId'            => $messageId,
+    'status'               => 'success',
+    'message'              => 'SMS accepted by ' . ucfirst($chosenProvider) . ' for ' . $normalizedPhone,
+    'execution_log'        => 'NOLA Provider: SMS accepted by ' . ucfirst($chosenProvider) . ' for ' . $normalizedPhone . ' via ' . $sender . '. Credits: ' . $required_credits . '.',
+    'action_executed_from' => 'Nola Web',
+    'event_details'        => [
+        'Status'       => 'Success',
+        'Recipient'    => $normalizedPhone,
+        'SMS Message'  => $message,
+        'Credits Used' => $required_credits,
+        'Sender ID'    => $sender,
+        'Location ID'  => $locationId,
+        'Provider'     => ucfirst($chosenProvider),
+        'Timestamp'    => date('Y-m-d H:i:s'),
+    ],
+    'data' => [
+        'messageId'   => $messageId,
+        'number'      => $normalizedPhone,
+        'credits_used'=> $required_credits,
+        'location_id' => $locationId,
+        'sender'      => $sender,
+        'provider'    => $chosenProvider,
+    ],
+]);
+error_log('[ghl_provider][GATEWAY_ACCEPTED_RESPONSE_FLUSHED] ' . json_encode([
+    'req_id' => $providerReqId,
+    'locationId' => $locationId,
+    'messageId' => $messageId,
+    'provider' => $chosenProvider,
+]));
 
 // ── Persist to Firestore ────────────────────────────────────────────────────
 $now        = new \DateTime();
@@ -973,21 +1008,32 @@ try {
 }
 }
 
-// ── Sync 'delivered' status back to GHL (background, after SMS confirmed sent) ────
-try {
-    require_once __DIR__ . '/../services/GhlSyncService.php';
-    $ghlSync  = new \Nola\Services\GhlSyncService($db, $locationId);
-    $syncResult = $ghlSync->syncMessageStatus($messageId, 'Sent');
-    error_log('[ghl_provider][STATUS_SYNC] ' . json_encode([
-        'req_id'     => $providerReqId,
-        'messageId'  => $messageId,
-        'ghl_http'   => $syncResult['ghl_response']['status'] ?? null,
-        'ghl_body'   => substr((string)($syncResult['ghl_response']['body'] ?? ''), 0, 300),
-        'skipped'    => $syncResult['skipped'] ?? false,
-        'skip_reason'=> $syncResult['reason'] ?? null,
+// Sync only terminal provider statuses back to GHL.
+// Gateway acceptance can still be queued/pending; the status cron promotes
+// those messages after the carrier/provider confirms final delivery state.
+if ($initialStatus === 'Sent') {
+    try {
+        require_once __DIR__ . '/../services/GhlSyncService.php';
+        $ghlSync  = new \Nola\Services\GhlSyncService($db, $locationId);
+        $syncResult = $ghlSync->syncMessageStatus($messageId, 'Sent');
+        error_log('[ghl_provider][STATUS_SYNC] ' . json_encode([
+            'req_id'     => $providerReqId,
+            'messageId'  => $messageId,
+            'ghl_http'   => $syncResult['ghl_response']['status'] ?? null,
+            'ghl_body'   => substr((string)($syncResult['ghl_response']['body'] ?? ''), 0, 300),
+            'skipped'    => $syncResult['skipped'] ?? false,
+            'skip_reason'=> $syncResult['reason'] ?? null,
+        ]));
+    } catch (\Throwable $e) {
+        error_log('[ghl_provider] GHL status sync failed: ' . $e->getMessage());
+    }
+} else {
+    error_log('[ghl_provider][STATUS_SYNC_DEFERRED] ' . json_encode([
+        'req_id' => $providerReqId,
+        'messageId' => $messageId,
+        'provider_status' => $firstRes['status'] ?? null,
+        'initial_status' => $initialStatus,
     ]));
-} catch (\Throwable $e) {
-    error_log('[ghl_provider] GHL status sync failed: ' . $e->getMessage());
 }
 
 error_log('[ghl_provider][SUCCESS] ' . json_encode([
