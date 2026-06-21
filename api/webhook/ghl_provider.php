@@ -51,6 +51,7 @@ require __DIR__ . '/../install_helpers.php';
 require __DIR__ . '/../services/CreditManager.php';
 require_once __DIR__ . '/../services/SenderResolver.php';
 require_once __DIR__ . '/../services/MessageSyncService.php';
+require_once __DIR__ . '/../services/GhlClient.php';
 require_once __DIR__ . '/../services/SmsGatewayService.php';
 require_once __DIR__ . '/../services/FirestoreId.php';
 require_once __DIR__ . '/../services/ProviderResultService.php';
@@ -112,14 +113,131 @@ function build_local_sms_doc_id(string $locationId, string $provider, string $pr
     return FirestoreId::smsLogId($locationId, $provider, $providerMessageId, $recipient, $ghlMessageId);
 }
 
-$locationId = $payload['locationId'] ?? $payload['location_id'] ?? null;
+function provider_payload_section($value): array
+{
+    if (is_array($value)) {
+        return $value;
+    }
+    if (is_string($value) && trim($value) !== '') {
+        $decoded = json_decode($value, true);
+        return is_array($decoded) ? $decoded : [];
+    }
+    return [];
+}
+
+function provider_nested_value(array $payload, array $path)
+{
+    $current = $payload;
+    foreach ($path as $segment) {
+        if (!is_array($current) || !array_key_exists($segment, $current)) {
+            return null;
+        }
+        $current = $current[$segment];
+    }
+    return $current;
+}
+
+function provider_first_scalar(array $payload, array $paths): ?string
+{
+    foreach ($paths as $path) {
+        $value = is_array($path) ? provider_nested_value($payload, $path) : ($payload[$path] ?? null);
+        if ($value !== null && !is_array($value) && !is_object($value) && trim((string)$value) !== '') {
+            $value = trim((string)$value);
+            if (strpos($value, '{{') === false) {
+                return $value;
+            }
+        }
+    }
+    return null;
+}
+
+$payload = is_array($payload) ? $payload : [];
+$payload['data'] = provider_payload_section($payload['data'] ?? []);
+$payload['customData'] = provider_payload_section($payload['customData'] ?? []);
+$payload['contact'] = provider_payload_section($payload['contact'] ?? ($payload['data']['contact'] ?? []));
+$payload['location'] = provider_payload_section($payload['location'] ?? ($payload['data']['location'] ?? []));
+$payload['workflow'] = provider_payload_section($payload['workflow'] ?? ($payload['data']['workflow'] ?? []));
+$messageNode = provider_payload_section($payload['message'] ?? $payload['messageData'] ?? ($payload['data']['message'] ?? []));
+
+$locationId = provider_first_scalar($payload, [
+    'locationId',
+    'location_id',
+    ['location', 'id'],
+    ['location', 'locationId'],
+    ['data', 'locationId'],
+    ['data', 'location_id'],
+    ['customData', 'locationId'],
+    ['customData', 'location_id'],
+    ['workflow', 'locationId'],
+    ['workflow', 'location_id'],
+]);
 if ($locationId) $locationId = trim((string)$locationId);
 
-$contactId = $payload['contactId'] ?? $payload['contact_id'] ?? null;
-$phone = $payload['phone'] ?? null;
-$message = $payload['message'] ?? $payload['body'] ?? null;
-$messageId = $payload['messageId'] ?? $payload['message_id'] ?? null;
-$msgType = strtoupper($payload['type'] ?? 'SMS');
+$contactId = provider_first_scalar($payload, [
+    'contactId',
+    'contact_id',
+    ['contact', 'id'],
+    ['contact', 'contactId'],
+    ['data', 'contactId'],
+    ['data', 'contact_id'],
+    ['customData', 'contactId'],
+    ['customData', 'contact_id'],
+    ['workflow', 'contactId'],
+]);
+$phone = provider_first_scalar($payload, [
+    'phone',
+    'to',
+    'number',
+    'recipient',
+    ['contact', 'phone'],
+    ['contact', 'phoneNumber'],
+    ['contact', 'mobile'],
+    ['data', 'phone'],
+    ['data', 'to'],
+    ['customData', 'phone'],
+    ['customData', 'number'],
+    ['message', 'to'],
+]);
+$message = provider_first_scalar($payload, [
+    'message',
+    'body',
+    'text',
+    'content',
+    'messageText',
+    'message_text',
+    ['data', 'message'],
+    ['data', 'body'],
+    ['customData', 'message'],
+    ['customData', 'body'],
+    ['message', 'message'],
+    ['message', 'body'],
+    ['message', 'text'],
+]);
+if (!$message && !empty($messageNode)) {
+    $message = provider_first_scalar(['message' => $messageNode], [
+        ['message', 'message'],
+        ['message', 'body'],
+        ['message', 'text'],
+        ['message', 'content'],
+    ]);
+}
+$messageId = provider_first_scalar($payload, [
+    'messageId',
+    'message_id',
+    'id',
+    ['message', 'messageId'],
+    ['message', 'message_id'],
+    ['message', 'id'],
+    ['data', 'messageId'],
+    ['data', 'message_id'],
+]);
+$msgType = strtoupper(provider_first_scalar($payload, [
+    'type',
+    'messageType',
+    'message_type',
+    ['message', 'type'],
+    ['data', 'type'],
+]) ?? 'SMS');
 error_log('[ghl_provider][NORMALIZED] ' . json_encode([
     'req_id' => $providerReqId,
     'locationId' => $locationId,
@@ -149,6 +267,47 @@ if ($msgType !== 'SMS') {
 }
 
 // ── Normalize Phone Number ───────────────────────────────────────────────────
+if (!$phone && $locationId && $contactId) {
+    if (!isset($db)) {
+        $db = get_firestore();
+    }
+
+    try {
+        $contactClient = new \GhlClient($db, (string)$locationId);
+        $contactResp = $contactClient->request('GET', '/contacts/' . urlencode((string)$contactId));
+        if (($contactResp['status'] ?? 500) < 300) {
+            $contactPayload = json_decode((string)($contactResp['body'] ?? ''), true);
+            $contactNode = is_array($contactPayload) ? ($contactPayload['contact'] ?? $contactPayload) : [];
+            if (is_array($contactNode)) {
+                $phone = provider_first_scalar(['contact' => $contactNode], [
+                    ['contact', 'phone'],
+                    ['contact', 'phoneNumber'],
+                    ['contact', 'mobile'],
+                    ['contact', 'additionalPhones', 0],
+                ]);
+                if (!empty($contactNode)) {
+                    $payload['contact'] = array_merge($payload['contact'] ?? [], $contactNode);
+                }
+            }
+        } else {
+            error_log('[ghl_provider][CONTACT_PHONE_LOOKUP_FAILED] ' . json_encode([
+                'req_id' => $providerReqId,
+                'locationId' => $locationId,
+                'contactId' => $contactId,
+                'status' => $contactResp['status'] ?? null,
+                'body' => substr((string)($contactResp['body'] ?? ''), 0, 200),
+            ]));
+        }
+    } catch (\Throwable $e) {
+        error_log('[ghl_provider][CONTACT_PHONE_LOOKUP_ERROR] ' . json_encode([
+            'req_id' => $providerReqId,
+            'locationId' => $locationId,
+            'contactId' => $contactId,
+            'error' => $e->getMessage(),
+        ]));
+    }
+}
+
 if (!$phone) {
     http_response_code(400);
     echo json_encode(['success' => false, 'error' => 'Missing phone number']);
@@ -703,7 +862,15 @@ if (in_array($rawMsgStatus, ['sent', 'success', 'delivered'])) {
 }
 
 // Derive a display name — GHL provider doesn't always send contact name
-$displayName = $payload['contactName'] ?? $payload['name'] ?? $normalizedPhone;
+$displayName = provider_first_scalar($payload, [
+    'contactName',
+    'name',
+    ['contact', 'name'],
+    ['contact', 'fullName'],
+    ['contact', 'firstName'],
+    ['data', 'contactName'],
+    ['customData', 'contactName'],
+]) ?? $normalizedPhone;
 
 MessageSyncService::recordMessageEvent($db, [
     'origin' => 'ghl_provider',

@@ -19,6 +19,44 @@ require __DIR__ . '/../auth_helpers.php';
 require __DIR__ . '/../install_helpers.php';
 require __DIR__ . '/../services/GhlClient.php';
 
+function normalize_payload_section($value): array
+{
+    if (is_array($value)) {
+        return $value;
+    }
+    if (is_string($value) && trim($value) !== '') {
+        $decoded = json_decode($value, true);
+        return is_array($decoded) ? $decoded : [];
+    }
+    return [];
+}
+
+function nested_payload_value(array $payload, array $path)
+{
+    $current = $payload;
+    foreach ($path as $segment) {
+        if (!is_array($current) || !array_key_exists($segment, $current)) {
+            return null;
+        }
+        $current = $current[$segment];
+    }
+    return $current;
+}
+
+function first_non_empty_payload_value(array $payload, array $paths): ?string
+{
+    foreach ($paths as $path) {
+        $value = is_array($path) ? nested_payload_value($payload, $path) : ($payload[$path] ?? null);
+        if ($value !== null && !is_array($value) && !is_object($value) && trim((string)$value) !== '') {
+            $value = trim((string)$value);
+            if (strpos($value, '{{') === false) {
+                return $value;
+            }
+        }
+    }
+    return null;
+}
+
 // 1. Security Check
 validate_api_request();
 
@@ -28,19 +66,52 @@ $jwtCtx = auth_get_optional_jwt_context($db);
 // 2. Parse Input
 $raw = file_get_contents('php://input');
 $payload = json_decode($raw, true) ?: $_POST;
+$payload = is_array($payload) ? $payload : [];
+$payload['customData'] = normalize_payload_section($payload['customData'] ?? []);
+$payload['data'] = normalize_payload_section($payload['data'] ?? []);
+$payload['contact'] = normalize_payload_section($payload['contact'] ?? ($payload['data']['contact'] ?? []));
+$payload['location'] = normalize_payload_section($payload['location'] ?? ($payload['data']['location'] ?? []));
+$payload['workflow'] = normalize_payload_section($payload['workflow'] ?? []);
 
-$contactId = $payload['contactId'] ?? $payload['contact_id'] ?? null;
-$locationId = get_ghl_location_id() ?: ($payload['locationId'] ?? $payload['location_id'] ?? null);
+$contactId = first_non_empty_payload_value($payload, [
+    'contactId',
+    'contact_id',
+    ['customData', 'contactId'],
+    ['customData', 'contact_id'],
+    ['data', 'contactId'],
+    ['data', 'contact_id'],
+    ['contact', 'id'],
+    ['contact', 'contactId'],
+    ['workflow', 'contactId'],
+]);
+$locationId = get_ghl_location_id() ?: first_non_empty_payload_value($payload, [
+    'locationId',
+    'location_id',
+    ['customData', 'locationId'],
+    ['customData', 'location_id'],
+    ['data', 'locationId'],
+    ['data', 'location_id'],
+    ['location', 'id'],
+    ['location', 'locationId'],
+    ['workflow', 'locationId'],
+    ['workflow', 'location_id'],
+]);
 
 if (!$contactId || !$locationId) {
     http_response_code(400);
     echo json_encode([
         'success' => false,
         'error' => 'Missing required fields',
+        'message' => 'Pass contactId and locationId either as flat fields, customData fields, contact.id, location.id, or X-GHL-Location-ID.',
         'received' => [
             'contactId' => $contactId,
             'locationId' => $locationId
-        ]
+        ],
+        'event_details' => [
+            'action' => 'Create conversation',
+            'status' => 'failed',
+            'reason' => 'missing_required_fields',
+        ],
     ]);
     exit;
 }
@@ -143,7 +214,15 @@ try {
         'success' => true,
         'ghl_conversation_id' => $ghlConvId,
         'local_conversation_id' => $localDocId,
-        'message' => 'Conversation synced successfully'
+        'message' => 'Conversation synced successfully',
+        'event_details' => [
+            'action' => 'Create conversation',
+            'status' => 'executed',
+            'location_id' => $locationId,
+            'contact_id' => $contactId,
+            'ghl_conversation_id' => $ghlConvId,
+            'local_conversation_id' => $localDocId,
+        ],
     ]);
 
 }

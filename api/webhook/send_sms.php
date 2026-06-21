@@ -110,6 +110,17 @@ function first_non_empty_payload_value(array ...$sections)
     return null;
 }
 
+function nested_payload_value(array $payload, array $path)
+{
+    $current = $payload;
+    foreach ($path as $segment) {
+        if (!is_array($current) || !array_key_exists($segment, $current)) {
+            return null;
+        }
+        $current = $current[$segment];
+    }
+    return $current;
+}
 function sanitize_firestore_doc_id(string $value): string
 {
     return FirestoreId::sanitize($value);
@@ -227,6 +238,8 @@ log_full_payload($raw, $payload);
 $customData = normalize_payload_section($payload['customData'] ?? []);
 $data = normalize_payload_section($payload['data'] ?? []);
 $contactData = normalize_payload_section($payload['contact'] ?? $data['contact'] ?? $customData['contact'] ?? []);
+$locationData = normalize_payload_section($payload['location'] ?? $data['location'] ?? $customData['location'] ?? []);
+$workflowData = normalize_payload_section($payload['workflow'] ?? $data['workflow'] ?? $customData['workflow'] ?? []);
 
 $batch_id = $customData['batch_id'] ?? $data['batch_id'] ?? $payload['batch_id'] ?? $_POST['batch_id'] ?? null;
 $recipient_key = $customData['recipient_key'] ?? $data['recipient_key'] ?? $payload['recipient_key'] ?? $_POST['recipient_key'] ?? null;
@@ -235,6 +248,7 @@ $recipient_key = $customData['recipient_key'] ?? $data['recipient_key'] ?? $payl
 // Used by the GHL sync block below to post the message back to GHL Conversations.
 $contactId = $customData['contactId'] ?? $customData['contact_id']
     ?? $data['contactId'] ?? $data['contact_id']
+    ?? $contactData['id'] ?? $contactData['contactId'] ?? $workflowData['contactId']
     ?? $payload['contactId'] ?? $payload['contact_id'] ?? null;
 
 $message = first_non_empty_payload_value($customData, $payload, $data, [
@@ -300,7 +314,12 @@ if (!$locId) {
     // Fallback: read location_id from common GHL payload fields
     $locId = $customData['location_id'] ?? $customData['locationId'] 
         ?? $payload['location_id'] ?? $payload['locationId']
-        ?? $data['location_id'] ?? $data['locationId'] ?? null;
+        ?? $data['location_id'] ?? $data['locationId']
+        ?? $locationData['id'] ?? $locationData['locationId'] ?? $locationData['location_id']
+        ?? $workflowData['locationId'] ?? $workflowData['location_id']
+        ?? nested_payload_value($payload, ['location', 'id'])
+        ?? nested_payload_value($payload, ['workflow', 'locationId'])
+        ?? null;
     
     // Clean and Sanitise
     if ($locId) {

@@ -68,6 +68,7 @@
     # Generic: /webhook/XXX -> /api/webhook/XXX.php
     RewriteRule ^webhooks/ghl/conversation-message/?$ /api/webhook/ghl_conversation_message.php [NC,L,QSA]
     RewriteRule ^webhook/ghl/conversation-message/?$ /api/webhook/ghl_conversation_message.php [NC,L,QSA]
+    RewriteRule ^webhook/([^/]+)\.php/?$ /api/webhook/$1.php [NC,L,QSA]
     RewriteRule ^webhook/(.+)/?$ /api/webhook/$1.php [NC,L,QSA]
 
     # ── SMS sending (frontend uses /api/sms) ─────────────────────────
