@@ -1,7 +1,6 @@
 <?php
 /**
- * Raw Request Catcher for GHL Debugging
- * Saves headers and body to a JSON file for inspection.
+ * Redacted request catcher for non-production GHL debugging.
  */
 
 $appEnv = strtolower((string) (getenv('APP_ENV') ?: getenv('ENVIRONMENT') ?: 'production'));
@@ -12,46 +11,70 @@ if ($appEnv === 'production') {
     exit;
 }
 
-// 1. Capture Headers
+function debug_ghl_hash(?string $value): ?string
+{
+    if ($value === null || $value === '') {
+        return null;
+    }
+    return hash('sha256', $value);
+}
+
+function debug_ghl_redact_key(string $key, $value)
+{
+    $sensitive = ['authorization', 'token', 'secret', 'password', 'key', 'signature', 'phone', 'email', 'message', 'body'];
+    $lower = strtolower($key);
+    foreach ($sensitive as $needle) {
+        if (strpos($lower, $needle) !== false) {
+            return '[REDACTED:' . debug_ghl_hash(is_scalar($value) ? (string) $value : json_encode($value)) . ']';
+        }
+    }
+    return $value;
+}
+
+function debug_ghl_redact_array(array $data): array
+{
+    $out = [];
+    foreach ($data as $key => $value) {
+        $keyText = is_string($key) ? $key : (string) $key;
+        if (is_array($value)) {
+            $out[$key] = debug_ghl_redact_key($keyText, debug_ghl_redact_array($value));
+        } else {
+            $out[$key] = debug_ghl_redact_key($keyText, $value);
+        }
+    }
+    return $out;
+}
+
 $headers = function_exists('getallheaders') ? getallheaders() : [];
+$rawBody = file_get_contents('php://input') ?: '';
+$jsonBody = json_decode($rawBody, true);
 
-// 2. Capture Body
-$raw_body = file_get_contents('php://input');
-$json_body = json_decode($raw_body, true);
-
-// 3. Prepare Debug Info
-$debug_info = [
-    'timestamp' => date('Y-m-d H:i:s'),
+$debugInfo = [
+    'timestamp' => date('c'),
     'method' => $_SERVER['REQUEST_METHOD'] ?? 'UNKNOWN',
-    'uri' => $_SERVER['REQUEST_URI'] ?? 'UNKNOWN',
-    'headers' => $headers,
-    'raw_body' => $raw_body,
-    'json_body' => $json_body,
-    'get_params' => $_GET,
-    'post_params' => $_POST
+    'uri_hash' => debug_ghl_hash($_SERVER['REQUEST_URI'] ?? ''),
+    'headers' => debug_ghl_redact_array(is_array($headers) ? $headers : []),
+    'body_sha256' => debug_ghl_hash($rawBody),
+    'body_json' => is_array($jsonBody) ? debug_ghl_redact_array($jsonBody) : null,
+    'get_params' => debug_ghl_redact_array($_GET),
+    'post_params' => debug_ghl_redact_array($_POST),
 ];
 
-// 4. Save to /tmp for easy viewing
-$log_file = sys_get_temp_dir() . '/ghl_debug_raw.json';
-file_put_contents($log_file, json_encode($debug_info, JSON_PRETTY_PRINT));
+$logFile = sys_get_temp_dir() . '/ghl_debug_redacted.json';
+file_put_contents($logFile, json_encode($debugInfo, JSON_PRETTY_PRINT));
 
-// 5. Handle VIEWING via GET
+header('Content-Type: application/json');
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-    header('Content-Type: application/json');
-    if (file_exists($log_file)) {
-        echo file_get_contents($log_file);
+    if (file_exists($logFile)) {
+        echo file_get_contents($logFile);
     } else {
-        echo json_encode(['status' => 'error', 'message' => 'No log found yet. Send a POST request from GHL first.']);
+        echo json_encode(['status' => 'error', 'message' => 'No redacted debug snapshot found.']);
     }
     exit;
 }
 
-// 6. ALWAYS return 200 SUCCESS to GHL
-// This prevents GHL from "skipping" the action so we can see if it's hitting our server.
-header('Content-Type: application/json');
 http_response_code(200);
 echo json_encode([
     'status' => 'success',
-    'message' => 'Payload captured for debugging.',
-    'log_saved_to' => $log_file
+    'message' => 'Redacted payload snapshot captured.',
 ]);

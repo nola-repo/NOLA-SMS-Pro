@@ -25,15 +25,15 @@ try {
 
         // Merge payloads, prioritizing JSON but allowing form fields as fallback
         $payload = array_merge($formPayload, $jsonPayload);
-
-        // ALWAYS log the payload for webhook debugging
-        $headers = function_exists('getallheaders') ? getallheaders() : [];
-        $debugMsg = date('[Y-m-d H:i:s] ') . "Method: $method\nHeaders: " . json_encode($headers) . "\nPayload: " . json_encode($payload) . "\n\n";
-
-        // Try multiple log locations
-        file_put_contents(__DIR__ . '/credits_debug.log', $debugMsg, FILE_APPEND);
-        @file_put_contents('/tmp/credits_debug.log', $debugMsg, FILE_APPEND);
-        error_log("Credits API Debug: " . $debugMsg);
+        $requestId = $_SERVER['HTTP_X_REQUEST_ID'] ?? $_SERVER['HTTP_X_CORRELATION_ID'] ?? bin2hex(random_bytes(8));
+        error_log('[credits.php] request ' . json_encode([
+            'request_id' => $requestId,
+            'method' => $method,
+            'action' => $payload['action'] ?? $payload['Action'] ?? ($payload['customData']['action'] ?? null),
+            'location_id_hash' => isset($payload['location_id']) ? hash('sha256', (string)$payload['location_id']) : null,
+            'reference_hash' => isset($payload['reference']) ? hash('sha256', (string)$payload['reference']) : null,
+            'has_secret' => !empty($_SERVER['HTTP_X_WEBHOOK_SECRET'] ?? $_GET['secret'] ?? $_GET['token'] ?? ''),
+        ]));
 
         $action = trim(strtolower($payload['action'] ?? $payload['Action'] ?? ''));
 
@@ -56,9 +56,7 @@ try {
         $description = $payload['description'] ?? $payload['Description'] ?? 'Balance updated via API';
 
         if ($amount <= 0) {
-            // Log the failure to help troubleshoot
-            $logMsg = date('[Y-m-d H:i:s] ') . "Invalid Amount Failure. Payload: " . json_encode($payload) . " | Raw Amount: " . var_export($amountValue, true) . "\n";
-            file_put_contents(__DIR__ . '/credits_error.log', $logMsg, FILE_APPEND);
+            error_log('[credits.php] invalid amount request_id=' . ($requestId ?? 'unknown') . ' raw_amount_type=' . gettype($amountValue));
 
             http_response_code(400);
             echo json_encode([
@@ -123,9 +121,7 @@ try {
             $newBalance = $creditManager->deduct_credits($accountId, $amount, $reference, $description);
         }
         else {
-            // Log the failure to help troubleshoot
-            $logMsg = date('[Y-m-d H:i:s] ') . "Invalid Action Failure. Payload: " . json_encode($payload) . " | Raw Action: " . var_export($action, true) . "\n";
-            file_put_contents(__DIR__ . '/credits_error.log', $logMsg, FILE_APPEND);
+            error_log('[credits.php] invalid action request_id=' . ($requestId ?? 'unknown') . ' action_hash=' . hash('sha256', (string)$action));
 
             http_response_code(400);
             echo json_encode([

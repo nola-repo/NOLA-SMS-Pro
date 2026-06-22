@@ -3,16 +3,21 @@
  * oauth_debug.php — GHL OAuth Live-Exchange Diagnostic Tool
  *
  * Usage:
- *   https://smspro-api.nolacrm.io/oauth_debug.php?key=nola_debug_2026&code=PASTE_CODE
+ *   Enable with OAUTH_DEBUG_ENABLED=1 and pass OAUTH_DEBUG_KEY as ?key=...
  *
- * IMPORTANT: Protected by a static key. Remove or disable this file once
+ * IMPORTANT: Disabled unless OAUTH_DEBUG_ENABLED=1. Keep disabled once
  * the OAuth issue is resolved.
  */
 
 // ── Auth guard ──────────────────────────────────────────────────────────────
-define('DEBUG_KEY', 'nola_debug_2026');
+if (getenv('OAUTH_DEBUG_ENABLED') !== '1') {
+    http_response_code(404);
+    die('Not found');
+}
 
-if (($_GET['key'] ?? '') !== DEBUG_KEY) {
+define('DEBUG_KEY', getenv('OAUTH_DEBUG_KEY') ?: '');
+
+if (DEBUG_KEY === '' || ($_GET['key'] ?? '') !== DEBUG_KEY) {
     http_response_code(403);
     die('Forbidden');
 }
@@ -31,13 +36,13 @@ $apps = [
     'subaccount' => [
         'label' => 'Sub-account App (6999da…mmn30t4f)',
         'client_id' => getenv('GHL_CLIENT_ID') ?: '6999da2b8f278296d95f7274-mmn30t4f',
-        'client_secret' => getenv('GHL_CLIENT_SECRET') ?: 'd91017ad-f4eb-461f-8967-b1d51cd1c1eb',
+        'client_secret' => getenv('GHL_CLIENT_SECRET') ?: '',
         'user_type' => 'Location',
     ],
     'agency' => [
         'label' => 'Agency App (69d31f…mnqxvtt3)',
         'client_id' => getenv('GHL_AGENCY_CLIENT_ID') ?: '69d31f33b3071b25dbcc5656-mnqxvtt3',
-        'client_secret' => getenv('GHL_AGENCY_CLIENT_SECRET') ?: '64b90a28-8cb1-4a44-8212-0a8f3f255322',
+        'client_secret' => getenv('GHL_AGENCY_CLIENT_SECRET') ?: '',
         'user_type' => 'Company',
     ],
 ];
@@ -73,7 +78,7 @@ function exchangeCode(array $app, string $code, string $redirectUri): array
     return [
         'http_code' => $httpCode,
         'curl_error' => $curlErr,
-        'raw_body' => $body,
+        'response_body_hash' => is_string($body) ? hash('sha256', $body) : null,
         'parsed' => json_decode($body, true),
     ];
 }
@@ -438,12 +443,12 @@ function jsonBlock(mixed $data): string
                     <?php elseif ($r['http_code'] === 200): ?>
                         <div class="ok">✅ Token exchange SUCCEEDED with this credential set.</div>
                     <?php else: ?>
-                        <div class="warn">❌ GHL rejected this exchange (HTTP <?= $r['http_code'] ?>). See raw body below.</div>
+                        <div class="warn">❌ GHL rejected this exchange (HTTP <?= $r['http_code'] ?>). See redacted response details below.</div>
                     <?php endif; ?>
 
                     <div class="result-block">
-                        <div class="result-title">GHL Raw Response</div>
-                        <?= jsonBlock($r['raw_body']) ?>
+                        <div class="result-title">GHL Response Body Hash</div>
+                        <?= jsonBlock($r['response_body_hash'] ?? null) ?>
                     </div>
 
                     <?php if ($r['http_code'] === 200 && is_array($r['parsed'])): ?>
@@ -546,7 +551,7 @@ function jsonBlock(mixed $data): string
         <?php endif; ?>
 
         <p style="font-size:11px;color:#334155;text-align:center;margin-top:24px">
-            🔒 Protected endpoint — remove <code>oauth_debug.php</code> once the issue is resolved.
+            🔒 Protected endpoint — keep disabled outside controlled diagnostics.
         </p>
     </div>
 </body>

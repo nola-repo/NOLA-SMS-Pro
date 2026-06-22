@@ -10,7 +10,6 @@ header('Content-Type: application/json');
 require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
 
-validate_api_request();
 
 $db = get_firestore();
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -22,6 +21,8 @@ try {
         echo json_encode(['success' => false, 'error' => 'Missing location_id (X-GHL-Location-ID header or query param required)']);
         exit;
     }
+
+    auth_require_api_or_jwt_for_location($db, (string)$locId);
 
     if ($method === 'GET') {
         $limit = min((int)($_GET['limit'] ?? 50), 100);
@@ -134,10 +135,18 @@ try {
             exit;
         }
 
-        if ($locId) {
-            $updateData[] = ['path' => 'location_id', 'value' => $locId];
+        if ((string)($doc->data()['location_id'] ?? '') !== (string)$locId) {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'error' => 'Permission denied']);
+            exit;
         }
-        $updateData[] = ['path' => 'id', 'value' => $id];
+
+        $updateData = [
+            ['path' => 'name', 'value' => $name],
+            ['path' => 'location_id', 'value' => $locId],
+            ['path' => 'id', 'value' => $id],
+            ['path' => 'updated_at', 'value' => new \Google\Cloud\Core\Timestamp(new \DateTime())],
+        ];
 
         $docRef->set(array_column($updateData, 'value', 'path'), ['merge' => true]);
 

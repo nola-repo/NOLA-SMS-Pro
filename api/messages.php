@@ -11,7 +11,6 @@ require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
 require_once __DIR__ . '/services/StatusSync.php';
 
-validate_api_request();
 
 $db = get_firestore();
 $config = require __DIR__ . '/webhook/config.php';
@@ -31,13 +30,14 @@ $locId = get_ghl_location_id();
 $status = $_GET['status'] ?? null;
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
-if ($method === 'GET') {
-    if (!$locId) {
-        http_response_code(400);
-        echo json_encode(['success' => false, 'error' => 'Missing location_id']);
-        exit;
-    }
+if (!$locId) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'error' => 'Missing location_id']);
+    exit;
 }
+
+auth_require_api_or_jwt_for_location($db, (string)$locId);
+
 
 if ($method === 'PUT') {
     // Rename conversation

@@ -396,6 +396,28 @@ function auth_assert_agency_billing_allowed($db, string $agencyId): void
     }
 }
 
+
+/**
+ * Allows browser JWT callers or legacy webhook-secret callers, then enforces
+ * location ownership when a JWT is used.
+ *
+ * @return array{payload: array, profile: array, firestore_collection: string, uid: string}|null
+ */
+function auth_require_api_or_jwt_for_location($db, ?string $locationId = null): ?array
+{
+    $jwtCtx = auth_get_optional_jwt_context($db);
+    if ($jwtCtx === null) {
+        validate_api_request();
+        return null;
+    }
+
+    if ($locationId !== null && trim((string)$locationId) !== '') {
+        auth_assert_ghl_api_location_allowed($db, $jwtCtx, (string)$locationId);
+    }
+
+    return $jwtCtx;
+}
+
 /**
  * Authorizes read-only agency billing/report routes.
  *

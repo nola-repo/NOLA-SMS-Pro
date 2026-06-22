@@ -2,14 +2,36 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper: Checks if the user is authenticated (including anonymously)
     function isAuthenticated() {
       return request.auth != null;
     }
 
-    // 1. User Profiles & Sub-collections
+    function tokenLocationIds() {
+      return request.auth.token.location_ids is list
+        ? request.auth.token.location_ids
+        : (
+          request.auth.token.location_id is string
+            ? [request.auth.token.location_id]
+            : []
+        );
+    }
+
+    function canAccessLocation(locationId) {
+      return isAuthenticated()
+        && locationId is string
+        && locationId in tokenLocationIds();
+    }
+
+    function incomingLocationId() {
+      return request.resource.data.location_id;
+    }
+
     match /users/{userId} {
-      allow read: if isAuthenticated();
+      allow read: if isAuthenticated() && (
+        request.auth.uid == userId
+        || canAccessLocation(resource.data.location_id)
+        || canAccessLocation(resource.data.active_location_id)
+      );
       allow write: if isAuthenticated() && request.auth.uid == userId;
 
       match /ghl_accounts/{accountId} {
@@ -21,44 +43,66 @@ service cloud.firestore {
       }
     }
 
-    // 2. Conversations
     match /conversations/{conversationId} {
-      allow read, write: if isAuthenticated();
+      allow read: if canAccessLocation(resource.data.location_id);
+      allow create: if canAccessLocation(incomingLocationId());
+      allow update: if canAccessLocation(resource.data.location_id)
+        && incomingLocationId() == resource.data.location_id;
+      allow delete: if canAccessLocation(resource.data.location_id);
     }
 
-    // 3. Messages
     match /messages/{messageId} {
-      allow read, write: if isAuthenticated();
+      allow read: if canAccessLocation(resource.data.location_id);
+      allow create: if canAccessLocation(incomingLocationId());
+      allow update: if canAccessLocation(resource.data.location_id)
+        && incomingLocationId() == resource.data.location_id;
+      allow delete: if false;
     }
 
-    // 4. SMS Logs
     match /sms_logs/{logId} {
-      allow read: if isAuthenticated();
-      allow write: if false; // Only written by PHP backend
+      allow read: if canAccessLocation(resource.data.location_id);
+      allow write: if false;
     }
 
-    // 5. Integrations
     match /integrations/{integrationId} {
-      allow read: if isAuthenticated();
-      allow write: if false; // Only written by PHP backend
+      allow read: if canAccessLocation(resource.data.location_id)
+        || canAccessLocation(resource.data.locationId);
+      allow write: if false;
     }
 
-    // 6. Agency Users
     match /agency_users/{userId} {
-      allow read: if isAuthenticated();
-      allow write: if false; // Only written by PHP backend
+      allow read: if isAuthenticated() && (
+        request.auth.uid == userId
+        || (
+          request.auth.token.company_id is string
+          && (
+            request.auth.token.company_id == resource.data.company_id
+            || request.auth.token.company_id == resource.data.agency_id
+          )
+        )
+      );
+      allow write: if false;
     }
 
-    // 7. GHL Tokens
     match /ghl_tokens/{tokenId} {
-      allow read: if isAuthenticated();
-      allow write: if false; // Only written by PHP backend
+      allow read: if canAccessLocation(resource.data.location_id)
+        || canAccessLocation(resource.data.locationId)
+        || (
+          request.auth.token.company_id is string
+          && (
+            request.auth.token.company_id == tokenId
+            || request.auth.token.company_id == resource.data.companyId
+            || request.auth.token.company_id == resource.data.company_id
+          )
+        );
+      allow write: if false;
     }
 
-    // 8. Agency Wallet
     match /agency_wallet/{walletId} {
-      allow read: if isAuthenticated();
-      allow write: if false; // Only written by PHP backend
+      allow read: if isAuthenticated()
+        && request.auth.token.company_id is string
+        && request.auth.token.company_id == walletId;
+      allow write: if false;
     }
   }
 }

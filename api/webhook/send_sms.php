@@ -46,37 +46,22 @@ function log_sms($label, $data)
     error_log("[" . date('Y-m-d H:i:s') . "] $label: " . json_encode($data));
 }
 
-function log_full_payload($raw, $payload)
+function log_payload_hash($raw, $payload)
 {
-    $headers = function_exists('getallheaders') ? getallheaders() : [];
-    $redactedHeaders = [];
-    foreach ($headers as $key => $value) {
-        $keyString = (string)$key;
-        if (preg_match('/^(authorization|x-webhook-secret|x-api-key|cookie)$/i', $keyString)) {
-            $redactedHeaders[$keyString] = '[REDACTED]';
-            continue;
-        }
-        $redactedHeaders[$keyString] = $value;
-    }
-
     $debug = [
         "timestamp" => date('Y-m-d H:i:s'),
         "method" => $_SERVER['REQUEST_METHOD'] ?? null,
-        "uri" => $_SERVER['REQUEST_URI'] ?? null,
-        "headers" => $redactedHeaders,
-        "raw_body" => $raw,
-        "json_decoded_payload" => $payload,
-        "post_data" => $_POST,
-        "get_data" => $_GET
+        "uri_hash" => hash('sha256', (string) ($_SERVER['REQUEST_URI'] ?? '')),
+        "body_sha256" => is_string($raw) && $raw !== '' ? hash('sha256', $raw) : null,
+        "payload_keys" => is_array($payload) ? array_values(array_map('strval', array_keys($payload))) : [],
+        "has_numbers" => is_array($payload) && (isset($payload['number']) || isset($payload['numbers'])),
+        "has_message" => is_array($payload) && isset($payload['message']),
     ];
-    error_log("[FULL_PAYLOAD] " . json_encode($debug));
 
     if (getenv('SMS_PAYLOAD_DEBUG') === '1') {
-        $payloadFile = sys_get_temp_dir() . '/last_payload_debug.json';
-        file_put_contents($payloadFile, json_encode($debug, JSON_PRETTY_PRINT));
+        error_log("[SMS_PAYLOAD_META] " . json_encode($debug));
     }
 }
-
 /* |-------------------------------------------------------------------------- | CLEAN PH NUMBERS |-------------------------------------------------------------------------- */
 function clean_numbers($numberString): array
 {
@@ -232,7 +217,7 @@ if (install_is_marketplace_lifecycle_payload($payload)) {
     exit;
 }
 
-log_full_payload($raw, $payload);
+log_payload_hash($raw, $payload);
 
 /* |-------------------------------------------------------------------------- | EXTRACT MESSAGE + SENDER |-------------------------------------------------------------------------- */
 $customData = normalize_payload_section($payload['customData'] ?? []);
@@ -1422,24 +1407,6 @@ $responsePayload = [
         "error"        => $failureReason,
         "location_id"  => $locId,
         "message_ids"  => $saved_message_ids ?? []
-    ],
-    "debug_info" => [
-        "location_id"           => $locId,
-        "ghl_sync_status"       => isset($msgSyncResp) ? $msgSyncResp : "skipped",
-        "is_custom_provider"    => $usingCustomSender,
-        "is_free_trial"         => $usingFreeCredits,
-        "is_system_notification"=> $isSystemNotification,
-        "bypass_billing"        => $bypassBilling,
-        "used_credits"          => $reportedCredits,
-        "attempted_credits"     => $bypassBilling ? 0 : $required_credits,
-        "billing_rollback_status" => $billingRollbackStatus,
-        "billing_rollback_error"  => $billingRollbackError,
-        "provider"              => $chosenProvider,
-        "provider_http_status"  => $provider_http_status,
-        "gateway_errors"        => $gateway_errors,
-        "idempotency_scope"     => $idempotencyScope ?? null,
-        "workflow_execution_id"  => $workflowExecutionIdForIdempotency ?? null,
-        "ghl_sync_result"       => $msgSyncResp ?? null
     ]
 ];
 

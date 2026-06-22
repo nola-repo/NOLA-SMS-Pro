@@ -114,7 +114,7 @@ try {
     $decrypted = decrypt_cryptojs($encryptedPayload, $sharedSecret);
 
     if ($decrypted === false) {
-        error_log('[GHL_SSO] Decryption failed for payload: ' . substr($encryptedPayload, 0, 50) . '...');
+        error_log('[GHL_SSO] Decryption failed for payload_hash=' . hash('sha256', $encryptedPayload));
         http_response_code(400);
         echo json_encode(['success' => false, 'error' => 'Failed to decrypt SSO payload. Verify your Shared Secret.']);
         exit;
@@ -123,7 +123,7 @@ try {
     $userData = json_decode($decrypted, true);
 
     if (!is_array($userData)) {
-        error_log('[GHL_SSO] Decrypted data is not valid JSON: ' . $decrypted);
+        error_log('[GHL_SSO] Decrypted data is not valid JSON. payload_hash=' . hash('sha256', $encryptedPayload));
         http_response_code(400);
         echo json_encode(['success' => false, 'error' => 'Decrypted payload is not valid JSON.']);
         exit;
@@ -132,20 +132,17 @@ try {
     $companyId = $userData['companyId'] ?? $userData['company_id'] ?? null;
     $userId = $userData['userId'] ?? $userData['user_id'] ?? null;
     $activeLocation = $userData['activeLocation'] ?? $userData['location_id'] ?? null;
-
-    error_log(sprintf(
-        '[GHL_SSO] Decrypted successfully — companyId=%s userId=%s activeLocation=%s',
-        $companyId ?? '(null)',
-        $userId ?? '(null)',
-        $activeLocation ?? '(null)'
-    ));
+    error_log('[GHL_SSO] Decrypted successfully ' . json_encode([
+        'company_id_hash' => $companyId ? hash('sha256', (string)$companyId) : null,
+        'user_id_hash' => $userId ? hash('sha256', (string)$userId) : null,
+        'active_location_hash' => $activeLocation ? hash('sha256', (string)$activeLocation) : null,
+    ]));
 
     echo json_encode([
         'success'        => true,
         'companyId'      => $companyId,
         'userId'         => $userId,
-        'activeLocation' => $activeLocation,
-        'raw'            => $userData, // Full decrypted context for debugging
+        'activeLocation' => $activeLocation
     ]);
 
 } catch (Exception $e) {

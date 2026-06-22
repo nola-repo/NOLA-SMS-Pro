@@ -17,7 +17,6 @@ header('Content-Type: application/json');
 require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
 
-validate_api_request();
 
 $db     = get_firestore();
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -29,6 +28,8 @@ try {
         echo json_encode(['success' => false, 'error' => 'Missing location_id (X-GHL-Location-ID header required)']);
         exit;
     }
+
+    auth_require_api_or_jwt_for_location($db, (string)$locId);
 
     $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string) $locId);
 
