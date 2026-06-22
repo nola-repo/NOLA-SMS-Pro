@@ -8,6 +8,9 @@ require_once __DIR__ . '/../../../api/services/FirestoreId.php';
 require_once __DIR__ . '/../../../api/services/PhoneNormalizer.php';
 require_once __DIR__ . '/../../../api/services/ProviderResultService.php';
 require_once __DIR__ . '/../../../api/services/GhlTokenProvider.php';
+require_once __DIR__ . '/../../../api/services/ApiValueFormatter.php';
+require_once __DIR__ . '/../../../api/services/LocationUserResolver.php';
+require_once __DIR__ . '/../../../api/logger.php';
 
 class BackendHardeningServicesTest extends TestCase
 {
@@ -84,5 +87,45 @@ class BackendHardeningServicesTest extends TestCase
             \GhlOAuthRefreshException::REASON_TRANSIENT,
             \GhlTokenProvider::classifyOAuthRefreshFailure(503, ['error' => 'temporarily_unavailable'])
         );
+    }
+
+    public function test_api_value_formatter_accepts_mixed_timestamp_values(): void
+    {
+        $date = new \DateTimeImmutable('2026-06-22T08:30:00+00:00');
+
+        $this->assertSame('2026-06-22T08:30:00+00:00', \ApiValueFormatter::timestamp($date));
+        $this->assertSame('2026-06-22T08:30:00Z', \ApiValueFormatter::timestamp(' 2026-06-22T08:30:00Z '));
+        $this->assertSame('1970-01-01T00:00:00+00:00', \ApiValueFormatter::timestamp(0));
+        $this->assertNull(\ApiValueFormatter::timestamp(null));
+        $this->assertNull(\ApiValueFormatter::timestamp(['not' => 'a timestamp']));
+    }
+
+    public function test_location_user_resolver_validates_location_and_deduplicates_matches(): void
+    {
+        $data = [
+            'role' => 'user',
+            'active' => true,
+            'active_location_id' => 'loc-123',
+            'ghl_token_ref' => 'ghl_tokens/loc-123',
+        ];
+
+        $this->assertTrue(\LocationUserResolver::isEligibleUser($data, 'loc-123'));
+        $this->assertFalse(\LocationUserResolver::isEligibleUser($data, 'loc-other'));
+        $this->assertFalse(\LocationUserResolver::isEligibleUser(array_merge($data, ['role' => 'agency']), 'loc-123'));
+        $this->assertFalse(\LocationUserResolver::isEligibleUser(array_merge($data, ['location_id' => 'loc-other']), 'loc-123'));
+
+        $unique = \LocationUserResolver::deduplicateMatches([
+            ['id' => 'user-1', 'data' => $data],
+            ['id' => 'user-1', 'data' => $data],
+            ['id' => 'user-2', 'data' => $data],
+        ]);
+        $this->assertSame(['user-1', 'user-2'], array_keys($unique));
+    }
+
+    public function test_logger_accepts_only_bounded_safe_request_ids(): void
+    {
+        $this->assertSame('123e4567-e89b-12d3-a456-426614174000', \Logger::normalizeRequestId('123e4567-e89b-12d3-a456-426614174000'));
+        $this->assertNull(\Logger::normalizeRequestId("bad\nheader"));
+        $this->assertNull(\Logger::normalizeRequestId(str_repeat('a', 129)));
     }
 }

@@ -12,6 +12,7 @@ header('Content-Type: application/json');
 require __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/../jwt_helper.php';
 require_once __DIR__ . '/user_profile_helper.php';
+require_once __DIR__ . '/../services/LocationUserResolver.php';
 
 if (!in_array($_SERVER['REQUEST_METHOD'] ?? '', ['GET', 'POST'], true)) {
     http_response_code(405);
@@ -54,36 +55,7 @@ function nola_auth_location_doc_id(string $locationId): string
 
 function nola_auth_find_user_for_location($db, string $locationId): ?array
 {
-    $candidates = array_values(array_unique([
-        $locationId,
-        nola_auth_location_doc_id($locationId),
-    ]));
-
-    foreach ($candidates as $candidate) {
-        foreach (['active_location_id', 'location_id', 'ghl_location_id'] as $field) {
-            $docs = $db->collection('users')
-                ->where($field, '=', $candidate)
-                ->limit(2)
-                ->documents();
-
-            $matches = [];
-            foreach ($docs as $doc) {
-                if ($doc->exists()) {
-                    $matches[] = ['id' => $doc->id(), 'data' => $doc->data()];
-                }
-            }
-
-            if (count($matches) === 1) {
-                return $matches[0];
-            }
-
-            if (count($matches) > 1) {
-                throw new RuntimeException('Multiple users are linked to this location.');
-            }
-        }
-    }
-
-    return null;
+    return LocationUserResolver::find($db, $locationId);
 }
 
 function nola_auth_has_agency_token($db, string $companyId): bool
@@ -157,7 +129,10 @@ function nola_auth_agency_autologin($db, string $companyId, string $jwtSecret): 
     if (!$userData) {
         if (!nola_auth_has_agency_token($db, $companyId)) {
             http_response_code(404);
-            echo json_encode(['error' => 'No agency account is linked to this GHL company. Please install the Agency App first.']);
+            echo json_encode([
+                'error' => 'No agency account is linked to this GHL company. Please install the Agency App first.',
+                'code' => 'LOCATION_NOT_INSTALLED',
+            ]);
             return;
         }
 
@@ -175,7 +150,7 @@ function nola_auth_agency_autologin($db, string $companyId, string $jwtSecret): 
 
     if (empty($userData['active'])) {
         http_response_code(403);
-        echo json_encode(['error' => 'This agency account has been deactivated.']);
+        echo json_encode(['error' => 'This agency account has been deactivated.', 'code' => 'LOCATION_INACTIVE']);
         return;
     }
 
@@ -226,7 +201,7 @@ try {
 
     if ($locationId === '') {
         http_response_code(400);
-        echo json_encode(['error' => 'location_id is required.']);
+        echo json_encode(['error' => 'location_id is required.', 'code' => 'LOCATION_ID_REQUIRED']);
         exit;
     }
 
@@ -238,20 +213,23 @@ try {
     $installed = $tokenSnap->exists() || $intSnap->exists();
     if (!$installed) {
         http_response_code(404);
-        echo json_encode(['error' => 'NOLA SMS Pro is not installed for this location.']);
+        echo json_encode(['error' => 'NOLA SMS Pro is not installed for this location.', 'code' => 'LOCATION_NOT_INSTALLED']);
         exit;
     }
 
     if (($tokenData['is_live'] ?? true) === false || ($tokenData['install_state'] ?? 'installed') === 'uninstalled') {
         http_response_code(403);
-        echo json_encode(['error' => 'NOLA SMS Pro is not active for this location.']);
+        echo json_encode(['error' => 'NOLA SMS Pro is not active for this location.', 'code' => 'LOCATION_INACTIVE']);
         exit;
     }
 
     $match = nola_auth_find_user_for_location($db, $locationId);
     if ($match === null) {
         http_response_code(404);
-        echo json_encode(['error' => 'No user account is linked to this GHL location. Please finish installation or log in manually.']);
+        echo json_encode([
+            'error' => 'No user account is linked to this GHL location. Please finish installation or log in manually.',
+            'code' => 'LOCATION_USER_NOT_FOUND',
+        ]);
         exit;
     }
 
@@ -259,7 +237,7 @@ try {
     $userData = $match['data'];
     if (empty($userData['active'])) {
         http_response_code(403);
-        echo json_encode(['error' => 'This user account has been deactivated.']);
+        echo json_encode(['error' => 'This user account has been deactivated.', 'code' => 'LOCATION_INACTIVE']);
         exit;
     }
 
@@ -302,9 +280,13 @@ try {
         'location_id' => $locationId,
         'user' => auth_user_payload_for_api($userData, (string)($userData['email'] ?? '')),
     ]);
-} catch (RuntimeException $e) {
+} catch (LocationUserResolutionException $e) {
+    error_log('[api/auth/ghl_autologin.php] Location ownership needs repair: ' . $e->getMessage());
     http_response_code(409);
-    echo json_encode(['error' => $e->getMessage()]);
+    echo json_encode([
+        'error' => 'Multiple users are linked to this location.',
+        'code' => 'DUPLICATE_LOCATION_USERS',
+    ]);
 } catch (Exception $e) {
     error_log('[api/auth/ghl_autologin.php] Auto-login failed: ' . $e->getMessage());
     http_response_code(500);

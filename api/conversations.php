@@ -9,6 +9,7 @@ header('Content-Type: application/json');
 
 require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
+require_once __DIR__ . '/services/ApiValueFormatter.php';
 
 
 $db = get_firestore();
@@ -79,8 +80,8 @@ try {
                 'members' => $d['members'] ?? [],
                 'name' => $d['name'] ?? null,
                 'last_message' => $d['last_message'] ?? null,
-                'last_message_at' => isset($d['last_message_at']) ? $d['last_message_at']->formatAsString() : null,
-                'updated_at' => isset($d['updated_at']) ? $d['updated_at']->formatAsString() : null,
+                'last_message_at' => ApiValueFormatter::timestamp($d['last_message_at'] ?? null),
+                'updated_at' => ApiValueFormatter::timestamp($d['updated_at'] ?? null),
                 'ghl_contact_id' => $d['ghl_contact_id'] ?? null,
             ];
 
@@ -214,10 +215,10 @@ try {
     }
 }
 catch (\Throwable $e) {
+    error_log('[conversations] Failed to process request: ' . $e->getMessage());
     http_response_code(500);
     echo json_encode([
         'success' => false,
         'error' => 'Failed to process request',
-        'message' => $e->getMessage(),
     ], JSON_PRETTY_PRINT);
 }

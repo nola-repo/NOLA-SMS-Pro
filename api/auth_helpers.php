@@ -281,6 +281,17 @@ function auth_parse_ghl_token_ref(string $ref): ?array
     return ['collection' => 'ghl_tokens', 'id' => $m[1]];
 }
 
+function auth_json_error(int $status, string $error, string $code, array $extra = []): void
+{
+    header('Content-Type: application/json');
+    http_response_code($status);
+    echo json_encode(array_merge([
+        'error' => $error,
+        'code' => $code,
+    ], $extra));
+    exit;
+}
+
 /**
  * When `Authorization` is omitted: returns null (webhook-secret-only callers unchanged).
  * When present: verifies JWT + loads Firestore profile; exits on 401/404/500 as appropriate.
@@ -482,63 +493,38 @@ function auth_assert_ghl_api_location_allowed($db, ?array $jwtCtx, string $reque
     $refParsed = $refRaw !== '' ? auth_parse_ghl_token_ref($refRaw) : null;
 
     if ($refRaw !== '' && $refParsed === null) {
-        header('Content-Type: application/json');
-        http_response_code(400);
-        echo json_encode([
-            'error' => 'Invalid ghl_token_ref on profile; expected ghl_tokens/{id}.',
+        auth_json_error(400, 'Invalid ghl_token_ref on profile; expected ghl_tokens/{id}.', 'INVALID_TOKEN_REFERENCE', [
             'hint' => 'ghl_tokens/{documentId}',
         ]);
-        exit;
     }
 
     if ($collection === 'agency_users') {
         $companyId = trim((string) ($profile['company_id'] ?? ''));
         if ($companyId === '') {
-            header('Content-Type: application/json');
-            http_response_code(403);
-            echo json_encode(['error' => 'Agency profile missing company_id.']);
-            exit;
+            auth_json_error(403, 'Agency profile missing company_id.', 'LOCATION_NOT_AUTHORIZED');
         }
         if ($refParsed !== null && $refParsed['id'] !== $companyId) {
-            header('Content-Type: application/json');
-            http_response_code(403);
-            echo json_encode(['error' => 'ghl_token_ref does not match company_id for agency profile.']);
-            exit;
+            auth_json_error(403, 'ghl_token_ref does not match company_id for agency profile.', 'PROFILE_LOCATION_CONFLICT');
         }
         if (!auth_location_belongs_to_company($db, $requestedLocationId, $companyId)) {
-            header('Content-Type: application/json');
-            http_response_code(403);
-            echo json_encode(['error' => 'Not allowed to access this GHL location.']);
-            exit;
+            auth_json_error(403, 'Not allowed to access this GHL location.', 'LOCATION_NOT_AUTHORIZED');
         }
 
         return;
     }
 
     $active = trim((string) ($profile['active_location_id'] ?? ''));
+    if ($active !== '' && $refParsed !== null && $active !== $refParsed['id']) {
+        auth_json_error(403, 'active_location_id and ghl_token_ref disagree.', 'PROFILE_LOCATION_CONFLICT');
+    }
     if ($active !== '' && $active !== $requestedLocationId) {
-        header('Content-Type: application/json');
-        http_response_code(403);
-        echo json_encode(['error' => 'Location does not match your active_location_id.']);
-        exit;
+        auth_json_error(403, 'Location does not match your active_location_id.', 'LOCATION_SESSION_MISMATCH');
     }
     if ($refParsed !== null && $refParsed['id'] !== $requestedLocationId) {
-        header('Content-Type: application/json');
-        http_response_code(403);
-        echo json_encode(['error' => 'Location does not match ghl_token_ref.']);
-        exit;
-    }
-    if ($active !== '' && $refParsed !== null && $active !== $refParsed['id']) {
-        header('Content-Type: application/json');
-        http_response_code(403);
-        echo json_encode(['error' => 'active_location_id and ghl_token_ref disagree.']);
-        exit;
+        auth_json_error(403, 'Location does not match ghl_token_ref.', 'LOCATION_NOT_AUTHORIZED');
     }
     if ($active === '' && $refParsed === null) {
-        header('Content-Type: application/json');
-        http_response_code(403);
-        echo json_encode(['error' => 'Profile missing active_location_id and ghl_token_ref; cannot authorize GHL access.']);
-        exit;
+        auth_json_error(403, 'Profile missing active_location_id and ghl_token_ref; cannot authorize GHL access.', 'LOCATION_NOT_AUTHORIZED');
     }
 }
 

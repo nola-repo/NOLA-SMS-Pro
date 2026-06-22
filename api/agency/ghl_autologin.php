@@ -29,7 +29,7 @@ $companyId = trim($input['company_id'] ?? '');
 if (!$companyId) {
     error_log('[GHL_AUTOLOGIN] Attempted auto-login without company_id.');
     http_response_code(400);
-    echo json_encode(['error' => 'company_id is required.']);
+    echo json_encode(['error' => 'company_id is required.', 'code' => 'COMPANY_ID_REQUIRED']);
     exit;
 }
 error_log('[GHL_AUTOLOGIN] Attempting auto-login for company_id: ' . $companyId);
@@ -117,7 +117,10 @@ try {
         if (!has_agency_token($db, $companyId)) {
             error_log('[GHL_AUTOLOGIN] Company is not a registered agency-level install in ghl_tokens.');
             http_response_code(404);
-            echo json_encode(['error' => 'No agency account is linked to this GHL company. Please install the Agency App first.']);
+            echo json_encode([
+                'error' => 'No agency account is linked to this GHL company. Please install the Agency App first.',
+                'code' => 'LOCATION_NOT_INSTALLED',
+            ]);
             exit;
         }
 
@@ -138,7 +141,7 @@ try {
 
     if (empty($userData['active'])) {
         http_response_code(403);
-        echo json_encode(['error' => 'This agency account has been deactivated.']);
+        echo json_encode(['error' => 'This agency account has been deactivated.', 'code' => 'LOCATION_INACTIVE']);
         exit;
     }
 

@@ -65,8 +65,16 @@ class Logger
         self::$initialized = true;
 
         try {
-            // Generate a short unique ID for this request
-            self::$requestId = bin2hex(random_bytes(4)); // 8 hex chars
+            $inboundRequestId = $_SERVER['HTTP_X_REQUEST_ID']
+                ?? $_SERVER['HTTP_X_CORRELATION_ID']
+                ?? null;
+            self::$requestId = self::normalizeRequestId(
+                is_string($inboundRequestId) ? $inboundRequestId : null
+            ) ?? bin2hex(random_bytes(8));
+
+            if (!headers_sent()) {
+                header('X-Request-ID: ' . self::$requestId);
+            }
 
             // Set up the daily log file path
             $logDir = __DIR__ . '/logs';
@@ -177,6 +185,18 @@ class Logger
     public static function requestId(): ?string
     {
         return self::$requestId;
+    }
+
+    public static function normalizeRequestId(?string $requestId): ?string
+    {
+        $requestId = trim((string)$requestId);
+        if ($requestId === '' || strlen($requestId) > 128) {
+            return null;
+        }
+
+        return preg_match('/^[A-Za-z0-9][A-Za-z0-9._:-]*$/', $requestId) === 1
+            ? $requestId
+            : null;
     }
 
     // -------------------------------------------------------------------------
