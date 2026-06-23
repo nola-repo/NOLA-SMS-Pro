@@ -14,6 +14,20 @@ function firebase_token_error(int $status, string $message): void
     exit;
 }
 
+function firebase_token_unavailable(string $message, string $code): void
+{
+    Logger::error($message, ['endpoint' => 'firebase_token', 'code' => $code]);
+    http_response_code(200);
+    echo json_encode([
+        'success' => false,
+        'realtime_enabled' => false,
+        'token' => null,
+        'code' => $code,
+        'error' => $message,
+    ]);
+    exit;
+}
+
 function firebase_service_account_config(): array
 {
     $json = getenv('FIREBASE_SERVICE_ACCOUNT_JSON');
@@ -42,7 +56,10 @@ function firebase_service_account_config(): array
         }
     }
 
-    firebase_token_error(500, 'Firebase service account credentials are not configured for custom token signing.');
+    firebase_token_unavailable(
+        'Firebase service account credentials are not configured for custom token signing.',
+        'FIREBASE_CUSTOM_TOKEN_UNCONFIGURED'
+    );
 }
 
 function firebase_sign_custom_token(string $uid, array $claims): string
@@ -52,7 +69,10 @@ function firebase_sign_custom_token(string $uid, array $claims): string
     $privateKey = str_replace('\\n', "\n", trim((string) ($serviceAccount['private_key'] ?? '')));
 
     if ($clientEmail === '' || $privateKey === '') {
-        firebase_token_error(500, 'Firebase service account credentials are missing client_email or private_key.');
+        firebase_token_unavailable(
+            'Firebase service account credentials are missing client_email or private_key.',
+            'FIREBASE_CUSTOM_TOKEN_INVALID_CONFIG'
+        );
     }
 
     $now = time();
@@ -70,7 +90,10 @@ function firebase_sign_custom_token(string $uid, array $claims): string
     $signature = '';
     $ok = openssl_sign($header . '.' . $payload, $signature, $privateKey, OPENSSL_ALGO_SHA256);
     if (!$ok) {
-        firebase_token_error(500, 'Could not sign Firebase custom token.');
+        firebase_token_unavailable(
+            'Could not sign Firebase custom token.',
+            'FIREBASE_CUSTOM_TOKEN_SIGNING_FAILED'
+        );
     }
 
     return $header . '.' . $payload . '.' . base64url_encode($signature);

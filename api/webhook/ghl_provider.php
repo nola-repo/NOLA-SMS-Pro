@@ -675,6 +675,64 @@ if (!$usingFreeCredits) {
 // GHL's provider webhook times out at ~15s. Our billing + gateway send can take
 // longer. We flush HTTP 200 NOW so GHL marks the step as executed, then continue
 // all slow work in the background.
+$convId = $locationId . '_conv_' . $normalizedPhone;
+$displayName = provider_first_scalar($payload, [
+    'contactName',
+    'name',
+    ['contact', 'name'],
+    ['contact', 'fullName'],
+    ['contact', 'firstName'],
+    ['data', 'contactName'],
+    ['customData', 'contactName'],
+]) ?? $normalizedPhone;
+$localProviderMessageId = build_local_sms_doc_id(
+    (string)$locationId,
+    'ghl_provider',
+    (string)($messageId ?: $providerReqId),
+    (string)$normalizedPhone,
+    $messageId ? (string)$messageId : null
+);
+$providerPreflightTs = new \Google\Cloud\Core\Timestamp(new \DateTime());
+
+try {
+    MessageSyncService::recordMessageEvent($db, [
+        'origin' => 'ghl_provider_preflight',
+        'conversation_id' => $convId,
+        'conversation_type' => 'direct',
+        'conversation_members' => [$normalizedPhone],
+        'location_id' => $locationId,
+        'number' => $normalizedPhone,
+        'message' => $message,
+        'direction' => 'outbound',
+        'sender_id' => $sender,
+        'sender_name' => $sender,
+        'status' => 'Sending',
+        'ghl_message_id' => $messageId,
+        'ghl_contact_id' => $contactId,
+        'created_at' => $providerPreflightTs,
+        'date_created' => $providerPreflightTs,
+        'timestamp' => $providerPreflightTs,
+        'segments' => $required_credits,
+        'credits_used' => $required_credits,
+        'source' => 'ghl_provider',
+        'provider' => 'ghl_provider',
+        'provider_reference_id' => $messageId ?: $localProviderMessageId,
+        'provider_message_id' => $messageId ?: $localProviderMessageId,
+        'provider_status' => 'accepted',
+        'name' => $displayName,
+        'conversation_name' => $displayName,
+        'message_id' => $localProviderMessageId,
+    ]);
+} catch (\Throwable $e) {
+    error_log('[ghl_provider][PREFLIGHT_LOCAL_WRITE_FAILED] ' . json_encode([
+        'req_id' => $providerReqId,
+        'locationId' => $locationId,
+        'messageId' => $messageId,
+        'local_message_id' => $localProviderMessageId,
+        'error' => $e->getMessage(),
+    ]));
+}
+
 $earlyResponseBody = json_encode([
     'success'              => true,
     'messageId'            => $messageId,
@@ -942,6 +1000,36 @@ if (!$gatewayAccepted) {
         'status'     => $smsStatus,
         'reason'     => $failureReason,
     ]));
+    try {
+        MessageSyncService::recordMessageEvent($db, [
+            'origin' => 'ghl_provider_failed',
+            'conversation_id' => $convId,
+            'conversation_type' => 'direct',
+            'conversation_members' => [$normalizedPhone],
+            'location_id' => $locationId,
+            'number' => $normalizedPhone,
+            'message' => $message,
+            'direction' => 'outbound',
+            'sender_id' => $sender,
+            'sender_name' => $sender,
+            'status' => 'Failed',
+            'ghl_message_id' => $messageId,
+            'ghl_contact_id' => $contactId,
+            'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+            'segments' => $required_credits,
+            'credits_used' => $required_credits,
+            'source' => 'ghl_provider',
+            'provider' => $chosenProvider,
+            'provider_status' => $firstRes['status'] ?? null,
+            'provider_response' => $firstRes['provider_response'] ?? null,
+            'provider_error' => $failureReason,
+            'name' => $displayName,
+            'conversation_name' => $displayName,
+            'message_id' => $localProviderMessageId,
+        ]);
+    } catch (\Throwable $e) {
+        error_log('[ghl_provider][FAILED_LOCAL_UPDATE_ERROR] ' . $e->getMessage());
+    }
     exit;
 }
 
@@ -955,12 +1043,11 @@ error_log('[ghl_provider][GATEWAY_ACCEPTED_POST_FLUSH] ' . json_encode([
 // ── Persist to Firestore ────────────────────────────────────────────────────
 $now        = new \DateTime();
 $ts         = new \Google\Cloud\Core\Timestamp($now);
-$convId     = $locationId . '_conv_' . $normalizedPhone;
 $firstRes = $gatewayResults[0] ?? [];
 $providerRawMessageId = isset($storedMsgId) ? (string)$storedMsgId : (string)($messageId ?? uniqid('ghl_'));
 $providerReferenceId = $firstRes['provider_reference_id'] ?? $providerRawMessageId;
 $providerMessageId = $firstRes['provider_message_id'] ?? $providerReferenceId;
-$storedMsgId = build_local_sms_doc_id((string)$locationId, (string)$chosenProvider, (string)$providerRawMessageId, (string)$normalizedPhone, $messageId ? (string)$messageId : null);
+$storedMsgId = $localProviderMessageId;
 $rawMsgStatus = strtolower($firstRes['status'] ?? 'queued');
 $initialStatus = 'Sending';
 if (in_array($rawMsgStatus, ['sent', 'success', 'delivered'])) {

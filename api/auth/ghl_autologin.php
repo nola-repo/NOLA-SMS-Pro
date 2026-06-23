@@ -286,6 +286,8 @@ try {
     echo json_encode([
         'error' => 'Multiple users are linked to this location.',
         'code' => 'DUPLICATE_LOCATION_USERS',
+        'location_id' => $locationId ?? null,
+        'repair_hint' => 'Run scripts/audit_location_users.php for this location, then set the canonical owner in location_owners.',
     ]);
 } catch (Exception $e) {
     error_log('[api/auth/ghl_autologin.php] Auto-login failed: ' . $e->getMessage());
