@@ -36,21 +36,6 @@ class GhlNativeMessageSyncService
     public static function recordConversationMessagePayload($db, array $payload, string $origin = 'ghl_native_webhook'): array
     {
         $event = self::mapPayloadToMessageEvent($payload, $origin);
-        if (($event['direction'] ?? '') !== 'outbound') {
-            $skipped = [
-                'success' => true,
-                'skipped' => true,
-                'reason' => 'non_outbound_message_ignored',
-                'direction' => $event['direction'] ?? null,
-                'message_id' => $event['message_id'] ?? null,
-                'conversation_id' => $event['conversation_id'] ?? null,
-                'ghl_message_id' => $event['ghl_message_id'] ?? null,
-                'ghl_conversation_id' => $event['ghl_conversation_id'] ?? null,
-            ];
-            error_log('[GhlNativeMessageSyncService] skipped ' . json_encode($skipped));
-            return $skipped;
-        }
-
         $result = MessageSyncService::recordMessageEvent($db, $event);
 
         error_log('[GhlNativeMessageSyncService] recorded ' . json_encode([
@@ -212,15 +197,7 @@ class GhlNativeMessageSyncService
             $contact['id'] ?? null,
         ]);
 
-        $direction = self::normalizeDirection(self::firstNonEmpty([
-            $payload['direction'] ?? null,
-            $payload['messageDirection'] ?? null,
-            $payload['message_direction'] ?? null,
-            $message['direction'] ?? null,
-            $message['messageDirection'] ?? null,
-            $message['type'] ?? null,
-            $payload['type'] ?? null,
-        ]));
+        $direction = self::inferDirection($payload, $message);
 
         $phone = self::firstNonEmpty($direction === 'outbound'
             ? [
@@ -467,16 +444,99 @@ class GhlNativeMessageSyncService
         return $payload;
     }
 
-    private static function normalizeDirection(?string $value): string
+    private static function inferDirection(array $payload, array $message): string
+    {
+        $explicit = self::firstNonEmpty([
+            $payload['direction'] ?? null,
+            $payload['messageDirection'] ?? null,
+            $payload['message_direction'] ?? null,
+            $payload['directionType'] ?? null,
+            $payload['direction_type'] ?? null,
+            $message['direction'] ?? null,
+            $message['messageDirection'] ?? null,
+            $message['message_direction'] ?? null,
+            $message['directionType'] ?? null,
+            $message['direction_type'] ?? null,
+        ]);
+
+        $normalized = self::normalizeDirection($explicit);
+        if ($normalized !== null) {
+            return $normalized;
+        }
+
+        $from = self::firstNonEmpty([
+            $message['from'] ?? null,
+            $payload['from'] ?? null,
+            $message['fromPhone'] ?? null,
+            $payload['fromPhone'] ?? null,
+            $message['from_phone'] ?? null,
+            $payload['from_phone'] ?? null,
+            $message['senderPhone'] ?? null,
+            $payload['senderPhone'] ?? null,
+        ]);
+        $to = self::firstNonEmpty([
+            $message['to'] ?? null,
+            $payload['to'] ?? null,
+            $message['recipient'] ?? null,
+            $payload['recipient'] ?? null,
+        ]);
+
+        if ($to !== null && $from === null) {
+            return 'outbound';
+        }
+        if ($from !== null && $to === null) {
+            return 'inbound';
+        }
+
+        $outboundHints = self::firstNonEmpty([
+            $payload['userId'] ?? null,
+            $payload['user_id'] ?? null,
+            $message['userId'] ?? null,
+            $message['user_id'] ?? null,
+            $payload['workflowId'] ?? null,
+            $payload['workflow_id'] ?? null,
+            $message['workflowId'] ?? null,
+            $message['workflow_id'] ?? null,
+            self::nested($payload, ['workflow', 'id']),
+        ]);
+        if ($outboundHints !== null) {
+            return 'outbound';
+        }
+
+        $type = self::firstNonEmpty([
+            $message['type'] ?? null,
+            $payload['type'] ?? null,
+            $message['messageType'] ?? null,
+            $payload['messageType'] ?? null,
+            $message['source'] ?? null,
+            $payload['source'] ?? null,
+            $message['status'] ?? null,
+            $payload['status'] ?? null,
+        ]);
+        $normalizedType = self::normalizeDirection($type);
+        if ($normalizedType !== null) {
+            return $normalizedType;
+        }
+
+        // GHL conversation payloads often identify SMS type without a direction.
+        // Treat ambiguous GHL-native events as outbound so workflow/provider sends
+        // are not silently dropped from the local inbox.
+        return 'outbound';
+    }
+
+    private static function normalizeDirection(?string $value): ?string
     {
         $raw = strtolower(trim((string)$value));
-        if (str_contains($raw, 'outbound') || str_contains($raw, 'outgoing') || str_contains($raw, 'sent')) {
+        if ($raw === '') {
+            return null;
+        }
+        if (str_contains($raw, 'outbound') || str_contains($raw, 'outgoing') || str_contains($raw, 'sent') || str_contains($raw, 'send') || str_contains($raw, 'delivered')) {
             return 'outbound';
         }
         if (str_contains($raw, 'inbound') || str_contains($raw, 'incoming') || str_contains($raw, 'received')) {
             return 'inbound';
         }
-        return 'inbound';
+        return null;
     }
 
     private static function extractDateTime(array $data, array $keys): ?\DateTimeImmutable
