@@ -236,7 +236,7 @@ try {
             // Set default rate_limit only if not already configured
             $existingTokenSnap = $db->collection('ghl_tokens')->document((string)$locId)->snapshot();
             if ($existingTokenSnap->exists() && !array_key_exists('rate_limit', $existingTokenSnap->data())) {
-                $db->collection('ghl_tokens')->document((string)$locId)->set(['rate_limit' => 10], ['merge' => true]);
+                $db->collection('ghl_tokens')->document((string)$locId)->set(['rate_limit' => 0, 'rate_limit_enabled' => false, 'rate_limit_source' => 'default_unlimited'], ['merge' => true]);
             }
 
 

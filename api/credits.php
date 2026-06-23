@@ -158,8 +158,8 @@ try {
 
     $cachedData = NolaCache::get($cacheKey);
     if (!$forceFresh && $cachedData !== null) {
-        $cachedData['cached'] = true;
-        echo json_encode($cachedData, JSON_PRETTY_PRINT);
+        NolaCache::sendApiCacheHeaders(30, true);
+        echo json_encode(NolaCache::withCacheMeta($cachedData, 30, true, 'location'), JSON_PRETTY_PRINT);
         exit;
     }
 
@@ -326,8 +326,8 @@ try {
 
     NolaCache::setWithRegistry($registryKey, $cacheKey, $responsePayload, 30); // Short cache; UI can request fresh values.
 
-    $responsePayload['cached'] = false;
-    echo json_encode($responsePayload, JSON_PRETTY_PRINT);
+    NolaCache::sendApiCacheHeaders(30, $forceFresh ? 'BYPASS' : false);
+    echo json_encode(NolaCache::withCacheMeta($responsePayload, 30, $forceFresh ? 'BYPASS' : false, 'location'), JSON_PRETTY_PRINT);
 }
 catch (\Throwable $e) {
     http_response_code(500);

@@ -34,19 +34,22 @@ try {
 
         // Try to load cached conversations list first
         require_once __DIR__ . '/cache_helper.php';
+        $cacheTtl = 120;
         $paramsHash = md5(serialize([$limit, $offset, $type, $conversationId]));
         $cacheKey = "conversations_list_{$locId}_{$paramsHash}";
         $registryKey = "conversations_registry_{$locId}";
+        $bypassCache = isset($_GET['refresh']) || isset($_GET['bypass_cache']);
 
-        $cachedData = NolaCache::get($cacheKey);
+        $cachedData = !$bypassCache ? NolaCache::get($cacheKey) : null;
         if ($cachedData !== null) {
-            echo json_encode([
+            NolaCache::sendApiCacheHeaders($cacheTtl, true);
+            $responsePayload = [
                 'success' => true,
                 'data' => $cachedData,
                 'limit' => $limit,
                 'offset' => $offset,
-                'cached' => true,
-            ], JSON_PRETTY_PRINT);
+            ];
+            echo json_encode(NolaCache::withCacheMeta($responsePayload, $cacheTtl, true, 'location'), JSON_PRETTY_PRINT);
             exit;
         }
 
@@ -93,15 +96,16 @@ try {
         }
 
         // Store rows in Cache with Registry mapping
-        NolaCache::setWithRegistry($registryKey, $cacheKey, $rows, 300); // 5-minute TTL
+        NolaCache::setWithRegistry($registryKey, $cacheKey, $rows, $cacheTtl);
 
-        echo json_encode([
+        $responsePayload = [
             'success' => true,
             'data' => $rows,
             'limit' => $limit,
             'offset' => $offset,
-            'cached' => false,
-        ], JSON_PRETTY_PRINT);
+        ];
+        NolaCache::sendApiCacheHeaders($cacheTtl, $bypassCache ? 'BYPASS' : false);
+        echo json_encode(NolaCache::withCacheMeta($responsePayload, $cacheTtl, $bypassCache ? 'BYPASS' : false, 'location'), JSON_PRETTY_PRINT);
     }
     elseif ($method === 'POST' || $method === 'PUT') {
         // Update conversation name

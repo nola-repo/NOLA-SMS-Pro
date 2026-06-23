@@ -208,13 +208,15 @@ function nola_sync_contact_conversation($db, string $locationId, string $contact
 // ── GET: fetch contacts (with pagination) ─────────────────────────────────
 if ($method === 'GET') {
     require_once __DIR__ . '/cache_helper.php';
+    $cacheTtl = 1800;
     $cacheKey = "ghl_contacts_list_{$locationId}";
     $lastGoodCacheKey = "ghl_contacts_last_good_{$locationId}";
     $registryKey = "ghl_contacts_registry_{$locationId}";
 
     $cachedContacts = NolaCache::get($cacheKey);
     if ($cachedContacts !== null) {
-        echo json_encode(['contacts' => $cachedContacts, 'cached' => true]);
+        NolaCache::sendApiCacheHeaders($cacheTtl, true);
+        echo json_encode(NolaCache::withCacheMeta(['contacts' => $cachedContacts], $cacheTtl, true, 'location'));
         exit;
     }
 
@@ -241,12 +243,11 @@ if ($method === 'GET') {
                 if (is_array($lastGoodContacts)) {
                     error_log("[ghl_contacts] Returning last-good contacts after temporary GHL failure for {$locationId} status={$resp['status']}");
                     http_response_code(200);
-                    echo json_encode([
+                    NolaCache::sendApiCacheHeaders(604800, 'STALE');
+                    echo json_encode(NolaCache::withCacheMeta([
                         'contacts' => $lastGoodContacts,
-                        'cached' => true,
-                        'stale' => true,
                         'warning' => 'GHL contacts are temporarily unavailable; showing last synced contacts.',
-                    ]);
+                    ], 604800, 'STALE', 'location', true));
                     exit;
                 }
             }
@@ -276,11 +277,12 @@ if ($method === 'GET') {
         $pageCount++;
     } while ($path && $pageCount < $maxPages);
 
-    NolaCache::setWithRegistry($registryKey, $cacheKey, $allContacts, 1800); // Cache for 30 minutes
+    NolaCache::setWithRegistry($registryKey, $cacheKey, $allContacts, $cacheTtl); // Cache for 30 minutes
     NolaCache::setWithRegistry($registryKey, $lastGoodCacheKey, $allContacts, 604800); // Last-good fallback for 7 days
 
     error_log("[ghl_contacts] Successfully fetched " . count($allContacts) . " contacts (Pages: $pageCount)");
-    echo json_encode(['contacts' => $allContacts, 'cached' => false]);
+    NolaCache::sendApiCacheHeaders($cacheTtl, false);
+    echo json_encode(NolaCache::withCacheMeta(['contacts' => $allContacts], $cacheTtl, false, 'location'));
     exit;
 }
 

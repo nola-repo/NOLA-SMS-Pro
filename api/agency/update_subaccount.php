@@ -119,7 +119,10 @@ try {
     $tokenData = $tokenSnap->exists() ? $tokenSnap->data() : [];
     
     $toggleEnabled = isset($input['toggle_enabled']) ? (bool)$input['toggle_enabled'] : ($tokenData['toggle_enabled'] ?? true);
-    $rateLimit = isset($input['rate_limit']) ? (int)$input['rate_limit'] : ($tokenData['rate_limit'] ?? 5);
+    $rateLimit = isset($input['rate_limit']) ? (int)$input['rate_limit'] : ($tokenData['rate_limit'] ?? 0);
+    $rateLimitEnabled = array_key_exists('rate_limit', $input)
+        ? ($rateLimit > 0)
+        : (bool)($tokenData['rate_limit_enabled'] ?? false);
     $resetCounter = isset($input['reset_counter']) ? (bool)$input['reset_counter'] : false;
     
     $activations = (int)($tokenData['toggle_activation_count'] ?? 0);
@@ -128,6 +131,8 @@ try {
     $updates = [
         'toggle_enabled' => $toggleEnabled,
         'rate_limit' => $rateLimit,
+        'rate_limit_enabled' => $rateLimitEnabled,
+        'rate_limit_source' => array_key_exists('rate_limit', $input) ? 'agency_configured' : ($tokenData['rate_limit_source'] ?? 'default_unlimited'),
         'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTimeImmutable())
     ];
     

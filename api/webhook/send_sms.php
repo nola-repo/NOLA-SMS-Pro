@@ -116,6 +116,64 @@ function build_local_sms_log_id(string $locationId, string $provider, string $pr
     return FirestoreId::smsLogId($locationId, $provider, $providerMessageId, $recipient, $batchId);
 }
 
+function record_workflow_sms_block($db, string $locationId, array $numbers, string $message, string $reason, array $context = []): ?string
+{
+    if (!$db || trim($locationId) === '') {
+        return null;
+    }
+
+    $recipient = $numbers[0] ?? PhoneNormalizer::philippineMobile((string)($context['raw_number'] ?? '')) ?? '';
+    $messageId = 'wf_block_' . substr(hash('sha256', json_encode([
+        $locationId,
+        $recipient,
+        $message,
+        $reason,
+        microtime(true),
+        bin2hex(random_bytes(4)),
+    ])), 0, 32);
+    $conversationId = $recipient !== '' ? ($locationId . '_conv_' . $recipient) : ($locationId . '_workflow_blocked');
+    $now = new \Google\Cloud\Core\Timestamp(new \DateTime());
+
+    try {
+        MessageSyncService::recordMessageEvent($db, [
+            'origin' => 'send_sms_blocked',
+            'conversation_id' => $conversationId,
+            'conversation_type' => 'direct',
+            'conversation_members' => $recipient !== '' ? [$recipient] : [],
+            'location_id' => $locationId,
+            'number' => $recipient,
+            'message' => $message !== '' ? $message : ('Workflow SMS blocked: ' . $reason),
+            'direction' => 'outbound',
+            'sender_id' => $context['sender'] ?? null,
+            'sender_name' => $context['sender'] ?? null,
+            'status' => 'Failed',
+            'created_at' => $now,
+            'date_created' => $now,
+            'timestamp' => $now,
+            'source' => 'send_sms',
+            'provider' => 'nola_internal',
+            'provider_status' => 'blocked',
+            'provider_error' => $reason,
+            'ghl_contact_id' => $context['contact_id'] ?? null,
+            'message_id' => $messageId,
+            'idempotency_key' => $context['idempotency_key'] ?? null,
+        ]);
+
+        $extra = array_filter([
+            'workflow_blocked' => true,
+            'workflow_block_reason' => $reason,
+            'workflow_block_context' => $context,
+            'updated_at' => $now,
+        ], static fn($v) => $v !== null);
+        $db->collection('messages')->document($messageId)->set($extra, ['merge' => true]);
+        $db->collection('sms_logs')->document($messageId)->set($extra, ['merge' => true]);
+        return $messageId;
+    } catch (\Throwable $e) {
+        error_log('[send_sms] Failed to record blocked workflow SMS: ' . $e->getMessage());
+        return null;
+    }
+}
+
 function request_header_value(string $name): ?string
 {
     $serverKey = 'HTTP_' . strtoupper(str_replace('-', '_', $name));
@@ -563,29 +621,43 @@ $tokenData = $tokenSnap->exists() ? $tokenSnap->data() : [];
 
 $toggleEnabled = isset($tokenData['toggle_enabled']) ? (bool)$tokenData['toggle_enabled'] : true;
 $rateLimit = isset($tokenData['rate_limit']) ? (int)$tokenData['rate_limit'] : 0;
+$rateLimitEnabled = isset($tokenData['rate_limit_enabled'])
+    ? (bool)$tokenData['rate_limit_enabled']
+    : (($tokenData['rate_limit_source'] ?? '') === 'agency_configured');
 $attemptCount = isset($tokenData['attempt_count']) ? (int)$tokenData['attempt_count'] : 0;
 $lastReset = $tokenData['last_reset_date'] ?? '';
 
 if (!$toggleEnabled) {
     Logger::error('SMS toggle disabled for location', ['location_id' => $locId]);
     Logger::response(403, ['status' => 'error', 'message' => 'SMS sending is currently disabled.']);
+    $blockedMessageId = record_workflow_sms_block($db, (string)$locId, $validNumbers, $message, 'sms_disabled', [
+        'contact_id' => $contactId,
+        'idempotency_key' => $idempotencyKey ?? null,
+    ]);
     $markIdempotencyFailed('sms_disabled', 'SMS sending is currently disabled for this account. Please contact your agency.', 403);
     http_response_code(403);
     echo json_encode([
         'status' => 'error',
-        'message' => 'SMS sending is currently disabled for this account. Please contact your agency.'
+        'message' => 'SMS sending is currently disabled for this account. Please contact your agency.',
+        'message_id' => $blockedMessageId ?? null
     ]);
     exit;
 }
 
 $installGate = install_location_sms_gate($db, (string)$locId);
 if (empty($installGate['allowed'])) {
+    $blockedMessageId = record_workflow_sms_block($db, (string)$locId, $validNumbers, $message, (string)($installGate['code'] ?? 'install_blocked'), [
+        'install_reason' => $installGate['reason'] ?? null,
+        'contact_id' => $contactId,
+        'idempotency_key' => $idempotencyKey ?? null,
+    ]);
     $markIdempotencyFailed((string)($installGate['code'] ?? 'install_blocked'), (string)($installGate['reason'] ?? 'NOLA SMS Pro is not installed for this sub-account.'), 403);
     http_response_code(403);
     echo json_encode([
         'status' => 'error',
         'error' => (string)($installGate['code'] ?? 'install_blocked'),
         'message' => (string)($installGate['reason'] ?? 'NOLA SMS Pro is not installed for this sub-account.'),
+        'message_id' => $blockedMessageId ?? null,
     ]);
     exit;
 }
@@ -601,21 +673,28 @@ if ($lastReset !== $today) {
 }
 
 // Block if limit reached
-if ($rateLimit > 0 && $attemptCount >= $rateLimit) {
+if ($rateLimitEnabled && $rateLimit > 0 && $attemptCount >= $rateLimit) {
     Logger::error('Rate limit reached', ['location_id' => $locId, 'rate_limit' => $rateLimit, 'attempt_count' => $attemptCount]);
     Logger::response(403, ['status' => 'error', 'error' => 'rate_limit_reached']);
+    $blockedMessageId = record_workflow_sms_block($db, (string)$locId, $validNumbers, $message, 'rate_limit_reached', [
+        'rate_limit' => $rateLimit,
+        'attempt_count' => $attemptCount,
+        'contact_id' => $contactId,
+        'idempotency_key' => $idempotencyKey ?? null,
+    ]);
     $markIdempotencyFailed('rate_limit_reached', "Agency subaccount credit limit exceeded ($rateLimit).", 403);
     http_response_code(403);
     echo json_encode([
         "status" => "error", 
         "error"  => "rate_limit_reached",
-        "message" => "Agency subaccount credit limit exceeded ($rateLimit)."
+        "message" => "Agency subaccount credit limit exceeded ($rateLimit).",
+        "message_id" => $blockedMessageId ?? null
     ]);
     exit;
 }
 
 // Atomically reserve an attempt
-if ($rateLimit > 0 || isset($tokenData['rate_limit'])) {
+if ($rateLimitEnabled && $rateLimit > 0) {
     $tokenRef->set([
         'attempt_count' => \Google\Cloud\Firestore\FieldValue::increment(1)
     ], ['merge' => true]);

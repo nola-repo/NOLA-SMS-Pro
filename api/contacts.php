@@ -9,6 +9,8 @@ header('Content-Type: application/json');
 
 require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
+require_once __DIR__ . '/cache_helper.php';
+require_once __DIR__ . '/services/ApiValueFormatter.php';
 
 
 $db     = get_firestore();
@@ -39,6 +41,21 @@ try {
 
         auth_require_api_or_jwt_for_location($db, (string)$locId);
 
+        $cacheTtl = 300;
+        $paramsHash = md5(serialize([$limit, $offset, $phone]));
+        $cacheKey = "contacts_list_{$locId}_{$paramsHash}";
+        $registryKey = "contacts_registry_{$locId}";
+        $bypassCache = isset($_GET['refresh']) || isset($_GET['bypass_cache']);
+
+        if (!$bypassCache) {
+            $cachedPayload = NolaCache::get($cacheKey);
+            if (is_array($cachedPayload)) {
+                NolaCache::sendApiCacheHeaders($cacheTtl, true);
+                echo json_encode(NolaCache::withCacheMeta($cachedPayload, $cacheTtl, true, 'location'), JSON_PRETTY_PRINT);
+                exit;
+            }
+        }
+
         $q = $db->collection('contacts')
             ->where('location_id', '==', $locId)
             ->orderBy('created_at', 'DESC');
@@ -62,17 +79,21 @@ try {
                 'phone'      => $d['phone'] ?? null,
                 'email'      => $d['email'] ?? null,
                 'ghl_contact_id' => $d['ghl_contact_id'] ?? null,
-                'created_at' => isset($d['created_at']) ? $d['created_at']->formatAsString() : null,
-                'updated_at' => isset($d['updated_at']) ? $d['updated_at']->formatAsString() : null,
+                'created_at' => ApiValueFormatter::timestamp($d['created_at'] ?? null),
+                'updated_at' => ApiValueFormatter::timestamp($d['updated_at'] ?? null),
             ];
         }
 
-        echo json_encode([
+        $responsePayload = [
             'success' => true,
             'data'    => $results,
             'limit'   => $limit,
             'offset'  => $offset,
-        ], JSON_PRETTY_PRINT);
+        ];
+
+        NolaCache::setWithRegistry($registryKey, $cacheKey, $responsePayload, $cacheTtl);
+        NolaCache::sendApiCacheHeaders($cacheTtl, $bypassCache ? 'BYPASS' : false);
+        echo json_encode(NolaCache::withCacheMeta($responsePayload, $cacheTtl, $bypassCache ? 'BYPASS' : false, 'location'), JSON_PRETTY_PRINT);
         exit;
     }
 
@@ -109,6 +130,13 @@ try {
         ];
 
         $docRef = $db->collection('contacts')->add($data);
+
+        try {
+            NolaCache::deleteRegistry("contacts_registry_{$locId}");
+            NolaCache::deleteRegistry("ghl_contacts_registry_{$locId}");
+        } catch (\Throwable $cacheEx) {
+            error_log("[contacts] Cache invalidation failed: " . $cacheEx->getMessage());
+        }
 
         echo json_encode([
             'success' => true,

@@ -95,14 +95,66 @@ class NolaCache
     /**
      * Send conservative HTTP cache headers for API responses backed by NolaCache.
      */
-    public static function sendApiCacheHeaders(int $ttl, bool $hit = false): void
+    public static function sendApiCacheHeaders(int $ttl, bool|string $hit = false): void
     {
         if (headers_sent()) {
             return;
         }
 
+        $status = self::cacheStatus($hit);
         header('Cache-Control: private, max-age=' . max(0, $ttl) . ', stale-while-revalidate=30');
-        header('X-Nola-Cache: ' . ($hit ? 'HIT' : 'MISS'));
+        header('X-Nola-Cache: ' . $status);
+        header('Vary: Origin, Authorization, X-GHL-Location-ID, X-GHL-LocationID, X-Agency-ID', false);
+    }
+
+    /**
+     * Add a consistent cache metadata envelope to JSON response payloads.
+     */
+    public static function withCacheMeta(
+        array $payload,
+        int $ttl,
+        bool|string $hit = false,
+        ?string $scope = null,
+        bool $stale = false,
+        ?string $generatedAt = null
+    ): array {
+        $status = self::cacheStatus($hit);
+        $isCached = in_array($status, ['HIT', 'STALE'], true) || $stale;
+
+        $payload['cached'] = $isCached;
+        if ($stale) {
+            $payload['stale'] = true;
+        }
+
+        $existingMeta = isset($payload['meta']) && is_array($payload['meta'])
+            ? $payload['meta']
+            : [];
+
+        $existingCacheMeta = isset($existingMeta['cache']) && is_array($existingMeta['cache'])
+            ? $existingMeta['cache']
+            : [];
+
+        $existingMeta['cache'] = array_filter([
+            'status' => $stale ? 'STALE' : $status,
+            'cached' => $isCached,
+            'stale' => $stale,
+            'generated_at' => $generatedAt ?: ($existingCacheMeta['generated_at'] ?? gmdate('c')),
+            'cache_ttl' => max(0, $ttl),
+            'cache_key_scope' => $scope,
+        ], static fn($value) => $value !== null);
+
+        $payload['meta'] = $existingMeta;
+        return $payload;
+    }
+
+    private static function cacheStatus(bool|string $hit): string
+    {
+        if (is_string($hit)) {
+            $status = strtoupper(trim($hit));
+            return $status !== '' ? $status : 'MISS';
+        }
+
+        return $hit ? 'HIT' : 'MISS';
     }
 
     /**

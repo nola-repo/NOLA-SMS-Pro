@@ -41,7 +41,13 @@ if ($data['agency_id'] !== $agency_id) {
     exit;
 }
 
-$docRef->set(['rate_limit' => $rate_limit], ['merge' => true]);
+$rateLimitPayload = [
+    'rate_limit' => $rate_limit,
+    'rate_limit_enabled' => $rate_limit > 0,
+    'rate_limit_source' => 'agency_configured',
+];
+$docRef->set($rateLimitPayload, ['merge' => true]);
+$db->collection('ghl_tokens')->document($subaccount_id)->set($rateLimitPayload, ['merge' => true]);
 
 // Invalidate agency subaccounts cache
 try {
