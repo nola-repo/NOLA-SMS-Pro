@@ -33,6 +33,35 @@ function account_extract_bearer_token(): ?string
     return null;
 }
 
+function account_is_suspicious_location_id(string $locationId): bool
+{
+    $locationId = trim($locationId);
+    if ($locationId === '') {
+        return false;
+    }
+
+    // Numeric-only values observed from the iframe are account/company context,
+    // not GHL subaccount location IDs.
+    return (bool)preg_match('/^\d+$/', $locationId);
+}
+
+function account_invalid_location_response(string $locationId): void
+{
+    error_log('[api/account.php] Invalid/suspicious location_id received: ' . json_encode([
+        'location_id' => $locationId,
+        'reason' => 'numeric_only_not_installed',
+    ]));
+
+    http_response_code(422);
+    echo json_encode([
+        'status' => 'error',
+        'message' => 'The provided location_id does not match an installed GHL subaccount. Check frontend location detection.',
+        'code' => 'INVALID_GHL_LOCATION_ID',
+        'location_id' => $locationId,
+    ]);
+    exit;
+}
+
 // 1. Authentication
 validate_api_request();
 
@@ -134,6 +163,15 @@ try {
         exit;
     }
 
+    if (account_is_suspicious_location_id((string)$locId)) {
+        $precheckTokenSnap = $db->collection('ghl_tokens')->document((string)$locId)->snapshot();
+        $precheckIntDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
+        $precheckIntSnap = $db->collection('integrations')->document($precheckIntDocId)->snapshot();
+        if (!$precheckTokenSnap->exists() && !$precheckIntSnap->exists()) {
+            account_invalid_location_response((string)$locId);
+        }
+    }
+
     // Cache check for GET requests
     $cacheKey = "account_profile_" . $locId;
     if ($_SERVER['REQUEST_METHOD'] === 'GET') {
@@ -167,6 +205,10 @@ try {
     }
 
     $intData = $intSnap->exists() ? $intSnap->data() : [];
+
+    if (!$tokenSnap->exists() && !$intSnap->exists() && account_is_suspicious_location_id((string)$locId)) {
+        account_invalid_location_response((string)$locId);
+    }
 
     // 3b. Fetch subaccount owner's profile for Settings personal details
     $userEmail = null;
