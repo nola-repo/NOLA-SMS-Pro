@@ -42,6 +42,11 @@ class ProductV2LegacyBridgeController extends Controller
         return $this->forwardToLegacy(base_path('../api/templates.php'), $request->method(), $request->all(), (string) $request->getContent());
     }
 
+    public function tickets(Request $request): Response
+    {
+        return $this->forwardToLegacy(base_path('../api/tickets.php'), $request->method(), $request->all(), (string) $request->getContent());
+    }
+
     public function notificationSettings(Request $request): Response
     {
         return $this->forwardToLegacy(base_path('../api/notification-settings.php'), $request->method(), $request->all(), (string) $request->getContent());

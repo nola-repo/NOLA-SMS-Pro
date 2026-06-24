@@ -51,6 +51,7 @@ Route::post('/api/v2/agency/update_subaccount', [AgencyV2LegacyBridgeController:
 Route::match(['get', 'post'], '/api/v2/billing/agency_wallet', [BillingV2LegacyBridgeController::class, 'agencyWallet']);
 Route::match(['get', 'post'], '/api/v2/billing/subaccount_wallet', [BillingV2LegacyBridgeController::class, 'subaccountWallet']);
 Route::get('/api/v2/billing/transactions', [BillingV2LegacyBridgeController::class, 'transactions']);
+Route::get('/api/v2/billing/report', [BillingV2LegacyBridgeController::class, 'report']);
 Route::match(['get', 'post'], '/api/v2/billing/credit_requests', [BillingV2LegacyBridgeController::class, 'creditRequests']);
 Route::match(['get', 'post'], '/api/v2/billing/auto_recharge_cron', [BillingV2LegacyBridgeController::class, 'autoRechargeCron']);
 
@@ -61,6 +62,7 @@ Route::any('/api/v2/messages', [ProductV2LegacyBridgeController::class, 'message
 Route::any('/api/v2/contacts', [ProductV2LegacyBridgeController::class, 'contacts']);
 Route::any('/api/v2/conversations', [ProductV2LegacyBridgeController::class, 'conversations']);
 Route::any('/api/v2/templates', [ProductV2LegacyBridgeController::class, 'templates']);
+Route::any('/api/v2/tickets', [ProductV2LegacyBridgeController::class, 'tickets']);
 Route::any('/api/v2/notification-settings', [ProductV2LegacyBridgeController::class, 'notificationSettings']);
 Route::any('/api/v2/account', [ProductV2LegacyBridgeController::class, 'account']);
 Route::any('/api/v2/account-sender', [ProductV2LegacyBridgeController::class, 'accountSender']);

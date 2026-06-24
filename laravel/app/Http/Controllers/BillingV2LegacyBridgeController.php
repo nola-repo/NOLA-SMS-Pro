@@ -27,6 +27,20 @@ class BillingV2LegacyBridgeController extends Controller
         return $this->forwardToLegacy(base_path('../api/billing/transactions.php'), $request->method(), $request->all(), (string) $request->getContent());
     }
 
+    public function report(Request $request): Response
+    {
+        $result = $this->bridge->call(base_path('../api/billing/report.php'), $request->method(), $request->all(), (string) $request->getContent());
+        $format = strtolower((string) $request->query('format', 'pdf'));
+        $contentType = match ($format) {
+            'csv' => 'text/csv',
+            'json' => 'application/json',
+            default => 'application/pdf',
+        };
+
+        return response($result['body'], $result['status'])
+            ->header('Content-Type', $contentType);
+    }
+
     public function creditRequests(Request $request): Response
     {
         return $this->forwardToLegacy(base_path('../api/billing/credit_requests.php'), $request->method(), $request->all(), (string) $request->getContent());
