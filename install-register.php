@@ -194,13 +194,28 @@ function ir_page(string $title, string $body): void {
             width: 100%; padding: 14px; border-radius: 14px;
             background: linear-gradient(90deg, #2b83fa 0%, #1d6bd4 100%); color: #fff; font-size: 14px; font-weight: 700;
             border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;
+            min-height: 48px;
             box-shadow: 0 8px 25px rgba(43, 131, 250, 0.4); transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
         }
         .btn-submit:hover { box-shadow: 0 12px 28px rgba(43, 131, 250, 0.5); transform: translateY(-2px); }
         .btn-submit:active { transform: scale(0.985) translateY(0); }
+        .btn-submit:focus-visible, .btn-back:focus-visible, .checkbox-wrap:focus-visible { outline: 2px solid #93c5fd; outline-offset: 3px; }
         .btn-submit:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
+        .btn-submit.is-loading { opacity: 1; cursor: wait; box-shadow: 0 8px 25px rgba(43, 131, 250, 0.24); }
+        .btn-submit.is-loading:hover { transform: none; box-shadow: 0 8px 25px rgba(43, 131, 250, 0.24); }
         .btn-back { width: auto; padding: 14px 24px; border-radius: 14px; background: rgba(13, 18, 30, 0.4); border: 1px solid rgba(255, 255, 255, 0.08); color: #94a3b8; font-size: 13.5px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; transition: all 0.2s; }
         .btn-back:hover { background: rgba(13, 18, 30, 0.6); border-color: rgba(255, 255, 255, 0.15); color: #fff; }
+        .btn-back:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+        .btn-spinner {
+            width: 16px;
+            height: 16px;
+            border-radius: 999px;
+            border: 2px solid rgba(255, 255, 255, 0.42);
+            border-top-color: #ffffff;
+            flex: 0 0 auto;
+            animation: spin 0.75s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
         
         /* Step containers */
         .step-content { display: none; animation: fade-in 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
@@ -600,7 +615,7 @@ ir_page('Create Your Account', <<<HTML
             <div class="review-row"><span class="review-label">{$entityIdLabelSafe}</span><span class="review-val hl">{$entityIdValue}</span></div>
         </div>
         
-        <div class="checkbox-wrap" onclick="toggleAgree()">
+        <div class="checkbox-wrap" id="agree-wrap" role="checkbox" tabindex="0" aria-checked="false" onclick="toggleAgree()" onkeydown="handleAgreeKeydown(event)">
             <div class="checkbox" id="agree-box">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="display:none;" id="agree-chk"><polyline points="20 6 9 17 4 12"></polyline></svg>
             </div>
@@ -613,7 +628,7 @@ ir_page('Create Your Account', <<<HTML
         </div>
 
         <div style="display: flex; gap: 12px;">
-            <button class="btn-back" onclick="goToStep1()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg> Edit</button>
+            <button class="btn-back" id="edit-btn" onclick="goToStep1()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg> Edit</button>
             <button class="btn-submit" id="submit-btn" style="flex:1;" disabled onclick="submitForm()">Create Account <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg></button>
         </div>
     </div>
@@ -625,7 +640,7 @@ ir_page('Create Your Account', <<<HTML
         </div>
         <h1>Account Created!</h1>
         <p class="subtitle" style="max-width: 280px; margin: 8px auto 24px;">Welcome to NOLA SMS Pro. Your account is ready for <strong>{$locDisplay}</strong>.</p>
-        <button class="btn-submit" id="dash-btn" onclick="goDashboard()" disabled>Redirecting...</button>
+        <button class="btn-submit is-loading" id="dash-btn" onclick="goDashboard()" disabled aria-busy="true"><span class="btn-spinner" aria-hidden="true"></span> Redirecting...</button>
     </div>
 
     <script>
@@ -754,13 +769,26 @@ ir_page('Create Your Account', <<<HTML
             id('agree-box').className = agreed ? 'checkbox checked' : 'checkbox';
             id('agree-chk').style.display = agreed ? 'block' : 'none';
             id('submit-btn').disabled = !agreed;
+            const agreeWrap = id('agree-wrap');
+            if (agreeWrap) agreeWrap.setAttribute('aria-checked', agreed ? 'true' : 'false');
+        }
+
+        function handleAgreeKeydown(event) {
+            if (event.key === ' ' || event.key === 'Enter') {
+                event.preventDefault();
+                toggleAgree();
+            }
         }
 
         async function submitForm() {
             if (!agreed) return;
             const btn = id('submit-btn');
+            const editBtn = id('edit-btn');
             btn.disabled = true;
-            btn.innerHTML = `<svg class="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation: spin 1s linear infinite;"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Creating...`;
+            btn.classList.add('is-loading');
+            btn.setAttribute('aria-busy', 'true');
+            if (editBtn) editBtn.disabled = true;
+            btn.innerHTML = `<span class="btn-spinner" aria-hidden="true"></span> Creating account...`;
             id('api-error').style.display = 'none';
 
             try {
@@ -788,12 +816,25 @@ ir_page('Create Your Account', <<<HTML
                 
                 id('step-2').classList.remove('active');
                 id('step-3').classList.add('active');
+
+                const dashBtn = id('dash-btn');
+                if (dashBtn) {
+                    setTimeout(function() {
+                        dashBtn.disabled = false;
+                        dashBtn.classList.remove('is-loading');
+                        dashBtn.removeAttribute('aria-busy');
+                        dashBtn.textContent = 'Continue to Dashboard';
+                    }, 1200);
+                }
                 
                 setTimeout(goDashboard, 3000);
             } catch (err) {
                 id('api-error-text').textContent = err.message;
                 id('api-error').style.display = 'flex';
                 btn.disabled = false;
+                btn.classList.remove('is-loading');
+                btn.removeAttribute('aria-busy');
+                if (editBtn) editBtn.disabled = false;
                 btn.innerHTML = `Create Account <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>`;
             }
         }

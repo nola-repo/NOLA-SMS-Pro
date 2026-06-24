@@ -170,10 +170,24 @@ function il_page(string $title, string $body): void {
             box-shadow: 0 8px 25px rgba(43, 131, 250, 0.4);
             transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); font-family: inherit;
             display: flex; align-items: center; justify-content: center; gap: 8px;
+            min-height: 48px;
         }
         .btn-submit:hover { transform: translateY(-2px); box-shadow: 0 12px 28px rgba(43, 131, 250, 0.5); }
         .btn-submit:active { transform: scale(0.985) translateY(0); }
+        .btn-submit:focus-visible { outline: 2px solid #93c5fd; outline-offset: 3px; }
         .btn-submit:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
+        .btn-submit.is-loading { opacity: 1; cursor: wait; box-shadow: 0 8px 25px rgba(43, 131, 250, 0.24); }
+        .btn-submit.is-loading:hover { transform: none; box-shadow: 0 8px 25px rgba(43, 131, 250, 0.24); }
+        .btn-spinner {
+            width: 16px;
+            height: 16px;
+            border-radius: 999px;
+            border: 2px solid rgba(255, 255, 255, 0.42);
+            border-top-color: #ffffff;
+            flex: 0 0 auto;
+            animation: spin 0.75s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
         
         .error-box {
             background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 14px;
@@ -237,7 +251,9 @@ function il_page(string $title, string $body): void {
       if (form) form.addEventListener('submit', function() {
         var btn = document.getElementById('submit-btn');
         btn.disabled = true;
-        btn.textContent = 'Signing in…';
+        btn.classList.add('is-loading');
+        btn.setAttribute('aria-busy', 'true');
+        btn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span><span>Signing in...</span>';
       });
     </script>
 </body>
@@ -435,7 +451,9 @@ if ($action === 'reset_password' || (isset($_POST['form_action']) && $_POST['for
             if (form) form.addEventListener('submit', function() {
                 var btn = document.getElementById('reset-submit-btn');
                 btn.disabled = true;
-                btn.textContent = 'Resetting…';
+                btn.classList.add('is-loading');
+                btn.setAttribute('aria-busy', 'true');
+                btn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span><span>Resetting...</span>';
             });
         </script>
 HTML);

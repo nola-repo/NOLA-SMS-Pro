@@ -226,10 +226,24 @@ function ifp_page(string $title, string $body): void {
             transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
             font-family: inherit;
             display: flex; align-items: center; justify-content: center; gap: 8px;
+            min-height: 48px;
         }
         .btn-submit:hover { transform: translateY(-2px); box-shadow: 0 12px 30px rgba(43,131,250,0.5); }
         .btn-submit:active { transform: scale(0.985) translateY(0); }
+        .btn-submit:focus-visible { outline: 2px solid #93c5fd; outline-offset: 3px; }
         .btn-submit:disabled { opacity: 0.55; cursor: not-allowed; transform: none; box-shadow: none; }
+        .btn-submit.is-loading { opacity: 1; cursor: wait; box-shadow: 0 8px 24px rgba(43,131,250,0.24); }
+        .btn-submit.is-loading:hover { transform: none; box-shadow: 0 8px 24px rgba(43,131,250,0.24); }
+        .btn-spinner {
+            width: 16px;
+            height: 16px;
+            border-radius: 999px;
+            border: 2px solid rgba(255,255,255,0.42);
+            border-top-color: #ffffff;
+            flex: 0 0 auto;
+            animation: spin 0.75s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
 
         /* ── Alerts ── */
         .error-box {
@@ -438,6 +452,21 @@ $bodyContent = <<<HTML
         function clearAlerts() {
             errAlert.style.display = 'none';
             succAlert.style.display = 'none';
+        }
+        function setButtonLoading(btn, isLoading, label) {
+            if (!btn) return;
+            if (!btn.dataset.defaultHtml) {
+                btn.dataset.defaultHtml = btn.innerHTML;
+            }
+            btn.disabled = isLoading;
+            btn.classList.toggle('is-loading', isLoading);
+            if (isLoading) {
+                btn.setAttribute('aria-busy', 'true');
+                btn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span><span>' + label + '</span>';
+            } else {
+                btn.removeAttribute('aria-busy');
+                btn.innerHTML = btn.dataset.defaultHtml;
+            }
         }
 
         /* ─────────────────────────────────────────
@@ -654,8 +683,7 @@ $bodyContent = <<<HTML
                 var email = document.getElementById('email').value.trim().toLowerCase();
                 if (!email) { showError('Email address is required.'); return; }
 
-                step1Btn.disabled = true;
-                step1Btn.querySelector('span').textContent = 'Sending…';
+                setButtonLoading(step1Btn, true, 'Sending...');
 
                 try {
                     var res  = await fetch('/api/auth/forgot-password-otp', {
@@ -675,8 +703,7 @@ $bodyContent = <<<HTML
                 } catch(err) {
                     showError('Connection failed. Please check your internet connection.');
                 } finally {
-                    step1Btn.disabled = false;
-                    step1Btn.querySelector('span').textContent = 'Send Verification Code';
+                    setButtonLoading(step1Btn, false);
                 }
             });
         }
@@ -695,8 +722,7 @@ $bodyContent = <<<HTML
                     return;
                 }
 
-                step2Btn.disabled = true;
-                step2Btn.querySelector('span').textContent = 'Verifying…';
+                setButtonLoading(step2Btn, true, 'Verifying...');
 
                 try {
                     /* Verify OTP against backend before advancing */
@@ -728,8 +754,7 @@ $bodyContent = <<<HTML
                     if (expiryInterval) clearInterval(expiryInterval);
                     goToStep(3);
                 } finally {
-                    step2Btn.disabled = false;
-                    step2Btn.querySelector('span').textContent = 'Verify Code';
+                    setButtonLoading(step2Btn, false);
                 }
             });
         }
@@ -786,8 +811,7 @@ $bodyContent = <<<HTML
                     return;
                 }
 
-                step3Btn.disabled = true;
-                step3Btn.querySelector('span').textContent = 'Resetting…';
+                setButtonLoading(step3Btn, true, 'Resetting...');
 
                 try {
                     var res = await fetch('/api/auth/reset-password-otp', {
@@ -804,18 +828,17 @@ $bodyContent = <<<HTML
                     if (res.ok && data.status === 'success') {
                         if (cooldownInterval) clearInterval(cooldownInterval);
                         showSuccess('🎉 Password updated! Redirecting to sign in…');
+                        setButtonLoading(step3Btn, true, 'Redirecting...');
                         setTimeout(function() {
                             window.location.assign('/login?reset_success=1');
                         }, 1800);
                     } else {
                         showError(data.message || 'Failed to reset password. Please go back and re-enter your verification code.');
-                        step3Btn.disabled = false;
-                        step3Btn.querySelector('span').textContent = 'Reset Password';
+                        setButtonLoading(step3Btn, false);
                     }
                 } catch(err) {
                     showError('Connection failed. Please check your internet connection.');
-                    step3Btn.disabled = false;
-                    step3Btn.querySelector('span').textContent = 'Reset Password';
+                    setButtonLoading(step3Btn, false);
                 }
             });
         }
