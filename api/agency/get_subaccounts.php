@@ -114,6 +114,15 @@ try {
 
     $creditManager = new CreditManager();
 
+    // Pre-fetch integrations to avoid O(N) queries
+    $integrationsSnap = $db->collection('integrations')->documents();
+    $integrationMap = [];
+    foreach ($integrationsSnap as $doc) {
+        if ($doc->exists()) {
+            $integrationMap[$doc->id()] = $doc->data();
+        }
+    }
+
     // 4. Merge and return
     $subaccounts = [];
     foreach ($locationIds as $locId) {
@@ -122,6 +131,15 @@ try {
 
         // Subaccount balance: users.credit_balance (via CreditManager) with legacy fallback
         $creditBalance = $creditManager->get_balance((string)$locId);
+
+        $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
+        $intData = $integrationMap[$intDocId] ?? $integrationMap[$locId] ?? null;
+        $freeUsageCount = 0;
+        $freeCreditsTotal = 10;
+        if ($intData) {
+            $freeUsageCount = (int)($intData['free_usage_count'] ?? 0);
+            $freeCreditsTotal = (int)($intData['free_credits_total'] ?? 10);
+        }
 
         $subaccountData = [
             'location_id'             => $locId,
@@ -139,6 +157,10 @@ try {
         if (empty($config) || ($config['agency_name'] ?? '') !== $agencyName || ($config['location_name'] ?? '') !== $locName) {
             $db->collection('agency_subaccounts')->document($locId)->set($subaccountData, ['merge' => true]);
         }
+
+        // Include the dynamic/fresh trial fields for response only
+        $subaccountData['free_usage_count'] = $freeUsageCount;
+        $subaccountData['free_credits_total'] = $freeCreditsTotal;
 
         $subaccounts[] = $subaccountData;
     }
