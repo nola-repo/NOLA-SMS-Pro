@@ -98,6 +98,7 @@ Route::any('/api/v2/admin_list_agency_users', [AdminV2LegacyBridgeController::cl
 Route::any('/api/v2/admin_settings', [AdminV2LegacyBridgeController::class, 'settings']);
 Route::any('/api/v2/admin_sender_requests', [AdminV2LegacyBridgeController::class, 'senderRequests']);
 Route::any('/api/v2/admin_forgot_password', [AdminV2LegacyBridgeController::class, 'forgotPassword']);
+Route::any('/api/v2/admin_health', [AdminV2LegacyBridgeController::class, 'health']);
 Route::any('/api/v2/seed_admin', [AdminV2LegacyBridgeController::class, 'seedAdmin']);
 
 // GHL & Public Routes

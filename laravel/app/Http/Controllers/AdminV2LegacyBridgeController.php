@@ -52,6 +52,11 @@ class AdminV2LegacyBridgeController extends Controller
         return $this->forwardToLegacy(base_path('../api/seed_admin.php'), $request->method(), $request->query->all(), (string) $request->getContent());
     }
 
+    public function health(Request $request): Response
+    {
+        return $this->forwardToLegacy(base_path('../api/admin_health.php'), $request->method(), $request->query->all(), (string) $request->getContent());
+    }
+
     private function forwardToLegacy(string $script, string $method, array $query = [], string $rawBody = ''): Response
     {
         $result = $this->bridge->call($script, $method, $query, $rawBody);
