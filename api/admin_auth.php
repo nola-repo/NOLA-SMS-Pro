@@ -60,6 +60,135 @@ if ($method !== 'POST') {
 }
 
 $input = json_decode(file_get_contents('php://input'), true) ?? [];
+$action = $input['action'] ?? '';
+
+if ($action === 'update_profile') {
+    require_once __DIR__ . '/admin_auth_helper.php';
+    $claims = require_secure_admin_auth();
+    $currentEmail = strtolower(trim((string)($claims['email'] ?? $claims['username'] ?? '')));
+    
+    $name = trim((string)($input['name'] ?? $input['full_name'] ?? ''));
+    $newEmail = strtolower(trim((string)($input['email'] ?? $input['username'] ?? $currentEmail)));
+    $phone = trim((string)($input['phone'] ?? $input['phone_number'] ?? ''));
+
+    if (empty($name) || empty($newEmail)) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'Name and email are required']);
+        exit;
+    }
+
+    if (!filter_var($newEmail, FILTER_VALIDATE_EMAIL)) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'Invalid email address']);
+        exit;
+    }
+
+    $db = get_firestore();
+    try {
+        $adminRef = $db->collection('admins')->document($currentEmail);
+        $snap = $adminRef->snapshot();
+
+        if (!$snap->exists()) {
+            $matches = $db->collection('admins')
+                ->where('email', '=', $currentEmail)
+                ->limit(1)
+                ->documents();
+
+            foreach ($matches as $doc) {
+                if ($doc->exists()) {
+                    $adminRef = $db->collection('admins')->document($doc->id());
+                    $snap = $doc;
+                    break;
+                }
+            }
+        }
+
+        if (!$snap->exists()) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Admin account not found']);
+            exit;
+        }
+
+        $existing = $snap->data();
+        $payload = $existing;
+        $payload['email'] = $newEmail;
+        $payload['name'] = $name;
+        $payload['full_name'] = $name;
+        $payload['phone'] = $phone;
+        $payload['phone_number'] = $phone;
+
+        if ($newEmail !== $currentEmail) {
+            $newDocRef = $db->collection('admins')->document($newEmail);
+            $newSnap = $newDocRef->snapshot();
+            
+            if (!$newSnap->exists()) {
+                $matches = $db->collection('admins')
+                    ->where('email', '=', $newEmail)
+                    ->limit(1)
+                    ->documents();
+                foreach ($matches as $doc) {
+                    if ($doc->exists()) {
+                        $newSnap = $doc;
+                        break;
+                    }
+                }
+            }
+
+            if ($newSnap->exists()) {
+                http_response_code(409);
+                echo json_encode(['status' => 'error', 'message' => "Admin '{$newEmail}' already exists"]);
+                exit;
+            }
+
+            $newDocRef->set($payload);
+            $adminRef->delete();
+        } else {
+            $adminRef->update([
+                ['path' => 'name', 'value' => $name],
+                ['path' => 'full_name', 'value' => $name],
+                ['path' => 'phone', 'value' => $phone],
+                ['path' => 'phone_number', 'value' => $phone],
+            ]);
+        }
+
+        // Generate new JWT
+        $secret = getenv('JWT_SECRET');
+        $tokenTtl = 28800; // 8 hours
+        $token = jwt_sign([
+            'email' => $newEmail,
+            'username' => $newEmail,
+            'role' => $existing['role'] ?? 'viewer',
+            'name' => $name,
+            'full_name' => $name
+        ], $secret, $tokenTtl);
+
+        // Invalidate cache
+        require_once __DIR__ . '/cache_helper.php';
+        NolaCache::invalidateAdminDashboard();
+        if (class_exists('NolaCache') && method_exists('NolaCache', 'delete')) {
+            NolaCache::delete("admin_admins_list");
+        }
+
+        echo json_encode([
+            'status' => 'success',
+            'message' => 'Profile updated successfully',
+            'token' => $token,
+            'user' => [
+                'email' => $newEmail,
+                'username' => $newEmail,
+                'role' => $existing['role'] ?? 'viewer',
+                'name' => $name,
+                'full_name' => $name,
+                'phone' => $phone
+            ]
+        ]);
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'message' => 'Database error: ' . $e->getMessage()]);
+    }
+    exit;
+}
+
 $email = strtolower(trim($input['email'] ?? $input['username'] ?? ''));
 $password = $input['password'] ?? '';
 $rememberMe = !empty($input['remember_me']) || !empty($input['rememberMe']);
