@@ -174,16 +174,31 @@ try {
 
     if ($snapshot->exists()) {
         $trialBackfill = [];
+        $existingUpdatedAt = isset($data['updated_at']) && $data['updated_at'] instanceof \Google\Cloud\Core\Timestamp
+            ? $data['updated_at']
+            : null;
+        $shouldTouchUpdatedAt = false;
+
         if (!array_key_exists('free_credits_total', $data)) {
             $trialBackfill['free_credits_total'] = 10;
             $data['free_credits_total'] = 10;
+            $shouldTouchUpdatedAt = true;
         }
         if (!array_key_exists('free_usage_count', $data)) {
             $trialBackfill['free_usage_count'] = 0;
             $data['free_usage_count'] = 0;
+            $shouldTouchUpdatedAt = true;
+        }
+        if (!isset($data['created_at']) || !$data['created_at'] instanceof \Google\Cloud\Core\Timestamp) {
+            $createdAtBackfill = $existingUpdatedAt ?: new \Google\Cloud\Core\Timestamp(new \DateTimeImmutable());
+            $trialBackfill['created_at'] = $createdAtBackfill;
+            $data['created_at'] = $createdAtBackfill;
         }
         if (!empty($trialBackfill)) {
-            $trialBackfill['updated_at'] = new \Google\Cloud\Core\Timestamp(new \DateTimeImmutable());
+            if ($shouldTouchUpdatedAt) {
+                $trialBackfill['updated_at'] = new \Google\Cloud\Core\Timestamp(new \DateTimeImmutable());
+                $data['updated_at'] = $trialBackfill['updated_at'];
+            }
             $docRef->set($trialBackfill, ['merge' => true]);
         }
 
