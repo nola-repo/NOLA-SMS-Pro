@@ -40,7 +40,7 @@ require __DIR__ . '/services/GhlClient.php';
 validate_api_request();
 
 $db = get_firestore();
-$jwtCtx = auth_get_optional_jwt_context($db);
+$jwtCtx = auth_get_optional_jwt_context($db, false);
 
 // ── 1. Read & validate locationId ─────────────────────────────────────────
 // Accept from header (preferred for multi-tenant) or query param

@@ -147,9 +147,11 @@ try {
     // Default GET logic
     $locId = get_ghl_location_id();
     if (!$locId) {
+        http_response_code(400);
         echo json_encode(['success' => false, 'error' => 'Missing location_id']);
         exit;
     }
+    $locationLookup = auth_require_installed_location_or_error($db, (string)$locId);
 
     require_once __DIR__ . '/cache_helper.php';
     $cacheKey = "credits_data_{$locId}";
@@ -173,8 +175,8 @@ try {
     $creditManager = new CreditManager();
     $creditBalance = $creditManager->get_balance((string)$locId);
 
-    $snapshot = $docRef->snapshot();
-    $data = $snapshot->exists() ? $snapshot->data() : [];
+    $snapshot = $locationLookup['integration_snap'];
+    $data = $locationLookup['integration_data'];
 
     if ($snapshot->exists()) {
         $trialBackfill = [];
@@ -239,23 +241,17 @@ try {
             : null;
     }
     else {
-        // Initialize with zero balance if not present (legacy integrations doc)
+        // Do not create integration rows from dashboard reads. A missing
+        // integration doc with an installed token can be served with defaults,
+        // but unknown locations are rejected by auth_require_installed_location_or_error().
         $now = new DateTimeImmutable();
         $currency = 'PHP';
-        $docRef->set([
-            'credit_balance' => 0,
-            'free_credits_total' => 10,
-            'free_usage_count' => 0,
-            'currency' => $currency,
-            'created_at' => new \Google\Cloud\Core\Timestamp($now),
-            'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-        ]);
         $data = [
             'free_credits_total' => 10,
             'free_usage_count' => 0,
         ];
-        $createdAt = $now->format('Y-m-d H:i:s');
-        $updatedAt = $createdAt;
+        $createdAt = null;
+        $updatedAt = null;
     }
 
     // --- Calculate Stats ---

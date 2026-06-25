@@ -80,6 +80,95 @@ function get_ghl_location_id(): ?string
     return $locId ? (string)$locId : null;
 }
 
+function auth_location_doc_id(string $locationId): string
+{
+    return 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', trim($locationId));
+}
+
+function auth_is_suspicious_location_id(string $locationId): bool
+{
+    $locationId = trim($locationId);
+    if ($locationId === '') {
+        return false;
+    }
+
+    // Numeric-only values observed from the iframe are account/company context,
+    // not GHL subaccount Location IDs.
+    return (bool)preg_match('/^\d+$/', $locationId);
+}
+
+function auth_location_error(int $status, string $code, string $message, string $locationId = ''): void
+{
+    http_response_code($status);
+    echo json_encode([
+        'success' => false,
+        'status' => 'error',
+        'error' => $message,
+        'message' => $message,
+        'code' => $code,
+        'location_id' => $locationId !== '' ? $locationId : null,
+    ]);
+    exit;
+}
+
+function auth_lookup_installed_location($db, string $locationId): array
+{
+    $locationId = trim($locationId);
+    $tokenSnap = $db->collection('ghl_tokens')->document($locationId)->snapshot();
+    $intSnap = $db->collection('integrations')->document(auth_location_doc_id($locationId))->snapshot();
+
+    return [
+        'location_id' => $locationId,
+        'token_snap' => $tokenSnap,
+        'token_data' => $tokenSnap->exists() ? $tokenSnap->data() : [],
+        'integration_snap' => $intSnap,
+        'integration_data' => $intSnap->exists() ? $intSnap->data() : [],
+        'installed' => $tokenSnap->exists() || $intSnap->exists(),
+    ];
+}
+
+function auth_require_installed_location_or_error($db, string $locationId): array
+{
+    $locationId = trim($locationId);
+    if ($locationId === '' || strpos($locationId, '{{') !== false) {
+        auth_location_error(409, 'GHL_CONTEXT_PENDING', 'GHL location context is not ready yet.', $locationId);
+    }
+
+    $lookup = auth_lookup_installed_location($db, $locationId);
+    if (empty($lookup['installed'])) {
+        if (auth_is_suspicious_location_id($locationId)) {
+            error_log('[auth_helpers] Invalid/suspicious location_id received: ' . json_encode([
+                'location_id' => $locationId,
+                'reason' => 'numeric_only_not_installed',
+            ]));
+            auth_location_error(
+                422,
+                'INVALID_GHL_LOCATION_ID',
+                'The provided location_id does not match an installed GHL subaccount.',
+                $locationId
+            );
+        }
+
+        error_log('[auth_helpers] Location not installed: ' . json_encode([
+            'location_id' => $locationId,
+            'token_exists' => false,
+            'integration_exists' => false,
+        ]));
+        auth_location_error(404, 'LOCATION_NOT_INSTALLED', 'NOLA SMS Pro is not installed for this location.', $locationId);
+    }
+
+    if (($lookup['token_snap']->exists() ?? false)) {
+        if (!function_exists('install_token_active_for_sms')) {
+            require_once __DIR__ . '/install_helpers.php';
+        }
+        if (function_exists('install_token_active_for_sms') && !install_token_active_for_sms(true, $lookup['token_data'])) {
+            auth_location_error(403, 'LOCATION_INACTIVE', 'NOLA SMS Pro is not active for this location.', $locationId);
+        }
+    }
+
+    return $lookup;
+}
+
 /**
  * Validates the JWT from the Authorization: Bearer header.
  * Uses the centralized jwt_helper.php library.
@@ -298,7 +387,7 @@ function auth_json_error(int $status, string $error, string $code, array $extra 
  *
  * @return array{payload: array, profile: array, firestore_collection: string, uid: string}|null
  */
-function auth_get_optional_jwt_context($db): ?array
+function auth_get_optional_jwt_context($db, bool $strictInvalid = true): ?array
 {
     $jwt = auth_extract_bearer_token_optional();
     if ($jwt === null || $jwt === '') {
@@ -318,6 +407,9 @@ function auth_get_optional_jwt_context($db): ?array
     $payload = jwt_verify($jwt, $secret);
     if (!$payload) {
         Logger::auth(false, 'optional-jwt', ['reason' => 'invalid-or-expired-token']);
+        if (!$strictInvalid) {
+            return null;
+        }
         header('Content-Type: application/json');
         http_response_code(401);
         echo json_encode(['error' => 'Invalid or expired token.']);
@@ -327,6 +419,9 @@ function auth_get_optional_jwt_context($db): ?array
     $userId = $payload['sub'] ?? null;
     if (!$userId) {
         Logger::auth(false, 'optional-jwt', ['reason' => 'missing-sub-in-payload']);
+        if (!$strictInvalid) {
+            return null;
+        }
         header('Content-Type: application/json');
         http_response_code(401);
         echo json_encode(['error' => 'Invalid token payload.']);
@@ -344,6 +439,9 @@ function auth_get_optional_jwt_context($db): ?array
     }
 
     if (!$snap->exists()) {
+        if (!$strictInvalid) {
+            return null;
+        }
         header('Content-Type: application/json');
         http_response_code(404);
         echo json_encode(['error' => 'User profile not found.']);
@@ -416,7 +514,7 @@ function auth_assert_agency_billing_allowed($db, string $agencyId): void
  */
 function auth_require_api_or_jwt_for_location($db, ?string $locationId = null): ?array
 {
-    $jwtCtx = auth_get_optional_jwt_context($db);
+    $jwtCtx = auth_get_optional_jwt_context($db, false);
     if ($jwtCtx === null) {
         validate_api_request();
         return null;

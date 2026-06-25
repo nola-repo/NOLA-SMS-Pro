@@ -99,6 +99,17 @@ try {
                 if ($candidateActive && $candidateRole === 'agency') {
                     $authUserData = $candidate;
                 } elseif ($candidateActive && $candidateRole !== 'agency' && $candidateLoc) {
+                    if ($requestedLocId && (string)$requestedLocId !== (string)$candidateLoc) {
+                        auth_json_error(
+                            403,
+                            'Location does not match your active_location_id.',
+                            'LOCATION_SESSION_MISMATCH',
+                            [
+                                'requested_location_id' => (string)$requestedLocId,
+                                'active_location_id' => (string)$candidateLoc,
+                            ]
+                        );
+                    }
                     $authUserData = $candidate;
                     $locId = (string)$candidateLoc;
                 }
@@ -163,22 +174,21 @@ try {
         exit;
     }
 
-    if (account_is_suspicious_location_id((string)$locId)) {
-        $precheckTokenSnap = $db->collection('ghl_tokens')->document((string)$locId)->snapshot();
-        $precheckIntDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
-        $precheckIntSnap = $db->collection('integrations')->document($precheckIntDocId)->snapshot();
-        if (!$precheckTokenSnap->exists() && !$precheckIntSnap->exists()) {
-            account_invalid_location_response((string)$locId);
-        }
-    }
+    $locationLookup = auth_require_installed_location_or_error($db, (string)$locId);
 
     // Cache check for GET requests
     $cacheKey = "account_profile_" . $locId;
     if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         $cachedData = NolaCache::get($cacheKey);
         if ($cachedData !== null) {
-            echo json_encode($cachedData);
-            exit;
+            $cachedLocationId = (string)($cachedData['data']['location_id'] ?? '');
+            $cachedLocationName = trim((string)($cachedData['data']['location_name'] ?? ''));
+            if ($cachedLocationId !== (string)$locId || $cachedLocationName === 'Unknown') {
+                NolaCache::delete($cacheKey);
+            } else {
+                echo json_encode($cachedData);
+                exit;
+            }
         }
     }
     
@@ -186,16 +196,16 @@ try {
     $locationName = 'Unknown';
 
     // 1. FIRST check the newer 'ghl_tokens' collection
-    $tokenSnap = $db->collection('ghl_tokens')->document((string)$locId)->snapshot();
+    $tokenSnap = $locationLookup['token_snap'];
     if ($tokenSnap->exists()) {
-        $tokenData = $tokenSnap->data();
+        $tokenData = $locationLookup['token_data'];
         $locationName = $tokenData['location_name'] ?? 'Unknown';
     }
 
     // 2. FALLBACK to 'integrations' collection if still Unknown
-    $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string) $locId);
+    $intDocId = auth_location_doc_id((string) $locId);
     $intRef = $db->collection('integrations')->document($intDocId);
-    $intSnap = $intRef->snapshot();
+    $intSnap = $locationLookup['integration_snap'];
 
     if ($locationName === 'Unknown' || empty($locationName)) {
         if ($intSnap->exists()) {
@@ -205,10 +215,6 @@ try {
     }
 
     $intData = $intSnap->exists() ? $intSnap->data() : [];
-
-    if (!$tokenSnap->exists() && !$intSnap->exists() && account_is_suspicious_location_id((string)$locId)) {
-        account_invalid_location_response((string)$locId);
-    }
 
     // 3b. Fetch subaccount owner's profile for Settings personal details
     $userEmail = null;
