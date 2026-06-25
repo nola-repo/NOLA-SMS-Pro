@@ -158,9 +158,13 @@ try {
 
     $cachedData = NolaCache::get($cacheKey);
     if (!$forceFresh && $cachedData !== null) {
-        NolaCache::sendApiCacheHeaders(30, true);
-        echo json_encode(NolaCache::withCacheMeta($cachedData, 30, true, 'location'), JSON_PRETTY_PRINT);
-        exit;
+        if (isset($cachedData['created_at']) && $cachedData['created_at'] !== null) {
+            NolaCache::sendApiCacheHeaders(30, true);
+            echo json_encode(NolaCache::withCacheMeta($cachedData, 30, true, 'location'), JSON_PRETTY_PRINT);
+            exit;
+        }
+
+        NolaCache::delete($cacheKey);
     }
 
     $docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
