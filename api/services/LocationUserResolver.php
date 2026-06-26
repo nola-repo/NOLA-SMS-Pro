@@ -67,6 +67,132 @@ class LocationUserResolver
         return $unique;
     }
 
+    /**
+     * @param array<string,array{id:string,data:array}> $matches
+     * @return array{id:string,data:array}|null
+     */
+    public static function chooseCanonicalMatch(array $matches): ?array
+    {
+        if ($matches === []) {
+            return null;
+        }
+
+        uasort($matches, static function (array $a, array $b): int {
+            $aData = is_array($a['data'] ?? null) ? $a['data'] : [];
+            $bData = is_array($b['data'] ?? null) ? $b['data'] : [];
+            $aKey = [self::createdSortValue($aData), trim((string)($a['id'] ?? ''))];
+            $bKey = [self::createdSortValue($bData), trim((string)($b['id'] ?? ''))];
+
+            return $aKey <=> $bKey;
+        });
+
+        $first = reset($matches);
+        return is_array($first) ? $first : null;
+    }
+
+    private static function createdSortValue(array $data): int
+    {
+        foreach (['registered_at', 'registeredAt', 'created_at', 'createdAt', 'created'] as $field) {
+            if (!array_key_exists($field, $data)) {
+                continue;
+            }
+
+            $value = $data[$field];
+            try {
+                if ($value instanceof \Google\Cloud\Core\Timestamp) {
+                    return $value->get()->getTimestamp();
+                }
+                if ($value instanceof \DateTimeInterface) {
+                    return $value->getTimestamp();
+                }
+                if (is_int($value)) {
+                    return $value;
+                }
+                if (is_float($value)) {
+                    return (int)$value;
+                }
+                if (is_string($value) && trim($value) !== '') {
+                    $parsed = strtotime($value);
+                    if ($parsed !== false) {
+                        return (int)$parsed;
+                    }
+                }
+            } catch (\Throwable $ignored) {
+            }
+        }
+
+        return PHP_INT_MAX;
+    }
+
+    /**
+     * @param array{id:string,data:array} $chosen
+     * @param array<string,array{id:string,data:array}> $matches
+     */
+    private static function backfillCanonicalOwner($db, string $locationId, array $chosen, array $matches): void
+    {
+        $ownerId = trim((string)($chosen['id'] ?? ''));
+        if ($ownerId === '') {
+            return;
+        }
+
+        $data = is_array($chosen['data'] ?? null) ? $chosen['data'] : [];
+        $email = strtolower(trim((string)($data['email'] ?? '')));
+        $name = trim((string)(
+            $data['name']
+            ?? $data['full_name']
+            ?? trim((string)($data['firstName'] ?? '') . ' ' . (string)($data['lastName'] ?? ''))
+        ));
+        $now = new \DateTimeImmutable();
+        $payload = [
+            'entity_id' => $locationId,
+            'location_id' => $locationId,
+            'owner_user_id' => $ownerId,
+            'owner_uid' => $ownerId,
+            'owner_email' => $email,
+            'owner_name' => $name,
+            'source' => 'LocationUserResolver:first_registered',
+            'legacy_match_count' => count($matches),
+            'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+        ];
+
+        try {
+            $ref = $db->collection('location_owners')->document($locationId);
+            $snap = $ref->snapshot();
+            if (!$snap->exists()) {
+                $ref->set($payload + ['created_at' => new \Google\Cloud\Core\Timestamp($now)], ['merge' => true]);
+            }
+
+            foreach ($matches as $match) {
+                $memberId = trim((string)($match['id'] ?? ''));
+                if ($memberId === '' || $memberId === $ownerId) {
+                    continue;
+                }
+                $memberData = is_array($match['data'] ?? null) ? $match['data'] : [];
+                $memberEmail = strtolower(trim((string)($memberData['email'] ?? '')));
+                $memberName = trim((string)(
+                    $memberData['name']
+                    ?? $memberData['full_name']
+                    ?? trim((string)($memberData['firstName'] ?? '') . ' ' . (string)($memberData['lastName'] ?? ''))
+                ));
+                $ref->collection('members')->document($memberId)->set([
+                    'entity_id' => $locationId,
+                    'location_id' => $locationId,
+                    'user_id' => $memberId,
+                    'owner_user_id' => $memberId,
+                    'email' => $memberEmail,
+                    'owner_email' => $memberEmail,
+                    'name' => $memberName,
+                    'owner_name' => $memberName,
+                    'is_additional_location_member' => true,
+                    'source' => 'LocationUserResolver:first_registered_member',
+                    'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+                ], ['merge' => true]);
+            }
+        } catch (\Throwable $e) {
+            error_log('[LocationUserResolver] canonical owner backfill failed for ' . $locationId . ': ' . $e->getMessage());
+        }
+    }
+
     public static function find($db, string $locationId): ?array
     {
         $ownerSnap = $db->collection('location_owners')->document($locationId)->snapshot();
@@ -128,7 +254,13 @@ class LocationUserResolver
 
         $unique = self::deduplicateMatches($matches);
         if (count($unique) > 1) {
-            throw new LocationUserResolutionException('Multiple users are linked to this location.');
+            $chosen = self::chooseCanonicalMatch($unique);
+            if ($chosen !== null) {
+                self::backfillCanonicalOwner($db, $locationId, $chosen, $unique);
+                $chosen['source'] = 'legacy_user_fields_first_registered';
+
+                return $chosen;
+            }
         }
 
         return count($unique) === 1 ? array_values($unique)[0] + ['source' => 'legacy_user_fields'] : null;

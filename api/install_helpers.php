@@ -2441,14 +2441,14 @@ function install_user_linked_to_location($db, string $uid, string $locationId, ?
             $ownerEmail = install_norm_email($ownerData['owner_email'] ?? $ownerData['email'] ?? $ownerData['user_email'] ?? $ownerData['account_email'] ?? '');
 
             if ($ownerUid !== '') {
-                return $ownerUid === $uid;
+                if ($ownerUid === $uid) {
+                    return true;
+                }
+                // Multiple NOLA users may be linked to one GHL subaccount. A
+                // canonical owner row must not hide valid legacy/member links.
+            } elseif ($email !== null && $ownerEmail !== '' && $ownerEmail === install_norm_email($email)) {
+                return true;
             }
-
-            if ($email !== null && $ownerEmail !== '') {
-                return $ownerEmail === install_norm_email($email);
-            }
-
-            return false;
         }
     } catch (Exception $e) {
         error_log("[install_helpers] user linked owner check failed for {$uid}/{$locationId}: " . $e->getMessage());

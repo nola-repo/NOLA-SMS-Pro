@@ -412,13 +412,15 @@ class GhlClient
             || (($this->integration['appType'] ?? null) === 'agency')
         );
         $isBulkProvisioned = !empty($this->integration['provisioned_from_bulk']) || $isCompanyBackedLocation;
+        $preferCompanyRefresh = !empty($this->integration['prefer_company_refresh']);
 
         // If this is a Location token doc and it already has its own refresh_token,
         // always attempt a Location refresh first. Some docs keep provisioned_from_bulk=true
         // even after a location-scoped token is established; forcing the company->locationToken
         // exchange in that state can 400 and causes 503 loops.
         $forceLocationRefresh = (($this->integration['userType'] ?? null) === 'Location')
-            && !empty($this->integration['refresh_token']);
+            && !empty($this->integration['refresh_token'])
+            && !$preferCompanyRefresh;
         if ($forceLocationRefresh) {
             $isBulkProvisioned = false;
         }
@@ -426,7 +428,11 @@ class GhlClient
         // Recovery path: some legacy / partially-provisioned location docs can have an access_token
         // but no refresh_token, while the linked company doc still has a valid refresh_token.
         // In that case, refresh as Company and exchange to a Location token.
-        if ((!$refreshToken || $refreshToken === '') && $companyId && $companyId !== $this->tokenRegistryId && $companyRefresh) {
+        if ($preferCompanyRefresh && $companyId && $companyId !== $this->tokenRegistryId && $companyRefresh) {
+            $refreshToken = $companyRefresh;
+            $isBulkProvisioned = true;
+            error_log('[GHL_TOKEN] prefer_company_refresh registry_key=' . $this->tokenRegistryId . ' companyId=' . $companyId);
+        } elseif ((!$refreshToken || $refreshToken === '') && $companyId && $companyId !== $this->tokenRegistryId && $companyRefresh) {
             $refreshToken = $companyRefresh;
             $isBulkProvisioned = true;
             error_log('[GHL_TOKEN] refresh_token_missing_using_company_refresh registry_key=' . $this->tokenRegistryId . ' companyId=' . $companyId);
@@ -537,6 +543,7 @@ class GhlClient
         $companyTokenSkippedRefresh = false;
         $data = null;
         $clientId = $storedClientId ?: $subaccountClientId;
+        $preferCompanyRefreshAfterRepair = false;
 
         if ($isBulkProvisioned && $companyAccessToken && time() < ($companyExpiresAt - 300)) {
             $companyTokenSkippedRefresh = true;
@@ -674,6 +681,118 @@ class GhlClient
                     'oauth_attempts' => $oauthAttempts,
                     'location_refresh_only' => $locationRefreshOnly,
                 ];
+
+                if (
+                    $locationRefreshOnly
+                    && $reason === GhlOAuthRefreshException::REASON_INVALID_GRANT
+                    && $companyId
+                    && $companyId !== $this->tokenRegistryId
+                    && ($companyRefresh || ($companyAccessToken && time() < ($companyExpiresAt - 300)))
+                ) {
+                    $companyTokenForExchange = null;
+                    $companyRefreshForStorage = $companyRefresh;
+                    $companyRepairClientId = null;
+                    $companyRepairExpiresIn = null;
+
+                    if ($companyAccessToken && time() < ($companyExpiresAt - 300)) {
+                        $companyTokenForExchange = $companyAccessToken;
+                        $companyRepairClientId = $companyData['client_id'] ?? $companyData['appId'] ?? $clientId;
+                        $oauthAttempts[] = [
+                            'candidate' => 'company-access-location-repair',
+                            'user_type' => 'Company',
+                            'http_code' => 200,
+                            'error' => null,
+                            'error_description' => 'used fresh company access token after invalid location refresh',
+                        ];
+                    } elseif ($companyRefresh) {
+                        $repairCandidates = [];
+                        $addCandidate($repairCandidates, $subaccountClientId, $subaccountSecret, 'Company', 'subaccount-company-location-repair');
+                        $addCandidate($repairCandidates, $agencyClientId, $agencySecret, 'Company', 'agency-company-location-repair');
+
+                        foreach ($repairCandidates as $repairCandidate) {
+                            $ch = curl_init('https://services.leadconnectorhq.com/oauth/token');
+                            curl_setopt_array($ch, [
+                                CURLOPT_RETURNTRANSFER => true,
+                                CURLOPT_POST           => true,
+                                CURLOPT_POSTFIELDS     => http_build_query([
+                                    'client_id'     => $repairCandidate['client_id'],
+                                    'client_secret' => $repairCandidate['client_secret'],
+                                    'grant_type'    => 'refresh_token',
+                                    'refresh_token' => $companyRefresh,
+                                    'user_type'     => 'Company',
+                                ]),
+                                CURLOPT_HTTPHEADER     => [
+                                    'Accept: application/json',
+                                    'Content-Type: application/x-www-form-urlencoded',
+                                    'Version: 2021-07-28',
+                                ],
+                                CURLOPT_CONNECTTIMEOUT => 2,
+                                CURLOPT_TIMEOUT        => 6,
+                            ]);
+
+                            $repairResponse = curl_exec($ch);
+                            $repairHttpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                            curl_close($ch);
+
+                            $repairParsed = json_decode((string)$repairResponse, true);
+                            $oauthAttempts[] = [
+                                'candidate' => (string)($repairCandidate['label'] ?? ''),
+                                'user_type' => 'Company',
+                                'http_code' => $repairHttpCode,
+                                'error' => is_array($repairParsed) ? ($repairParsed['error'] ?? null) : null,
+                                'error_description' => is_array($repairParsed) ? ($repairParsed['error_description'] ?? null) : null,
+                            ];
+
+                            if ($repairHttpCode === 200 && is_array($repairParsed) && !empty($repairParsed['access_token'])) {
+                                $companyTokenForExchange = (string)$repairParsed['access_token'];
+                                $companyRefreshForStorage = $repairParsed['refresh_token'] ?? $companyRefresh;
+                                $companyRepairClientId = (string)$repairCandidate['client_id'];
+                                $companyRepairExpiresIn = (int)($repairParsed['expires_in'] ?? 0);
+
+                                try {
+                                    $this->db->collection('ghl_tokens')->document((string)$companyId)->set([
+                                        'access_token' => $companyTokenForExchange,
+                                        'refresh_token' => $companyRefreshForStorage,
+                                        'expires_at' => time() + $companyRepairExpiresIn,
+                                        'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTimeImmutable()),
+                                        'raw_refresh' => $repairParsed,
+                                        'client_id' => $companyRepairClientId,
+                                        'appId' => $companyRepairClientId,
+                                    ], ['merge' => true]);
+                                } catch (\Throwable $repairWriteError) {
+                                    error_log('[GhlClient] company repair token write failed: ' . $repairWriteError->getMessage());
+                                }
+
+                                break;
+                            }
+                        }
+                    }
+
+                    if ($companyTokenForExchange) {
+                        $ltResult = GhlTokenProvider::exchangeLocationToken(
+                            $companyTokenForExchange,
+                            (string)$companyId,
+                            $this->locationId
+                        );
+                        $ltData = $ltResult['data'];
+                        if (!empty($ltResult['ok']) && !empty($ltData['access_token'])) {
+                            $data = $ltData;
+                            $data['refresh_token'] = $ltData['refresh_token'] ?? $companyRefreshForStorage;
+                            $clientId = $companyRepairClientId ?: $clientId;
+                            $successUserType = 'Location';
+                            $preferCompanyRefreshAfterRepair = empty($ltData['refresh_token']);
+                            $ctx['location_token_repair'] = 'succeeded_from_company_token';
+                            error_log('[GhlClient] repaired invalid location refresh via company locationToken for ' . $this->locationId);
+                        } else {
+                            $ctx['location_token_repair'] = 'failed';
+                            $ctx['location_token_http_code'] = $ltResult['code'] ?? null;
+                        }
+                    }
+                }
+
+                if (is_array($data) && !empty($data['access_token'])) {
+                    $reason = GhlOAuthRefreshException::REASON_OTHER;
+                } else {
                 throw new GhlOAuthRefreshException(
                     'GHL token refresh failed: ' . $lastHint,
                     $reason,
@@ -683,6 +802,7 @@ class GhlClient
                     false,
                     $ctx
                 );
+                }
             }
 
             // If refresh succeeded with a Company token but our API calls require a Location token,
@@ -723,6 +843,9 @@ class GhlClient
                 // Replace access token payload with a location-scoped token; keep refresh_token.
                 $data['access_token'] = $ltData['access_token'];
                 $data['expires_in'] = $ltData['expires_in'] ?? 86400;
+                if (!empty($ltData['refresh_token'])) {
+                    $data['refresh_token'] = $ltData['refresh_token'];
+                }
             }
         }
 
@@ -791,6 +914,14 @@ class GhlClient
         if ($isBulkProvisioned && $companyId) {
             $updateData['provisioned_from_bulk'] = true;
             $updateData['companyId'] = $companyId;
+        }
+        if ($preferCompanyRefreshAfterRepair) {
+            $updateData['prefer_company_refresh'] = true;
+            $updateData['provisioned_from_bulk'] = true;
+            $updateData['companyId'] = $companyId;
+            $updateData['location_refresh_invalid_at'] = new \Google\Cloud\Core\Timestamp($now);
+        } elseif (!empty($this->integration['prefer_company_refresh']) && !$isBulkProvisioned) {
+            $updateData['prefer_company_refresh'] = false;
         }
 
         $this->db->collection('ghl_tokens')->document($docId)->set($updateData, ['merge' => true]);

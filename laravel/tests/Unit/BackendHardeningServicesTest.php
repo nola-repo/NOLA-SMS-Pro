@@ -128,6 +128,18 @@ class BackendHardeningServicesTest extends TestCase
             ['id' => 'user-2', 'data' => $data],
         ]);
         $this->assertSame(['user-1', 'user-2'], array_keys($unique));
+
+        $chosen = \LocationUserResolver::chooseCanonicalMatch([
+            'newer-user' => [
+                'id' => 'newer-user',
+                'data' => array_merge($data, ['created_at' => '2026-01-02T00:00:00Z']),
+            ],
+            'older-user' => [
+                'id' => 'older-user',
+                'data' => array_merge($data, ['created_at' => '2026-01-01T00:00:00Z']),
+            ],
+        ]);
+        $this->assertSame('older-user', $chosen['id']);
     }
 
     public function test_logger_accepts_only_bounded_safe_request_ids(): void
