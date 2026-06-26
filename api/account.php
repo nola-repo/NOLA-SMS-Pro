@@ -100,18 +100,33 @@ try {
                     $authUserData = $candidate;
                 } elseif ($candidateActive && $candidateRole !== 'agency' && $candidateLoc) {
                     if ($requestedLocId && (string)$requestedLocId !== (string)$candidateLoc) {
-                        auth_json_error(
-                            403,
-                            'Location does not match your active_location_id.',
-                            'LOCATION_SESSION_MISMATCH',
-                            [
-                                'requested_location_id' => (string)$requestedLocId,
-                                'active_location_id' => (string)$candidateLoc,
-                            ]
+                        $candidateEmail = trim((string)($candidate['email'] ?? ($payload['email'] ?? '')));
+                        $linkedToRequested = install_user_linked_to_location(
+                            $db,
+                            (string)$authUserId,
+                            (string)$requestedLocId,
+                            $candidateEmail !== '' ? $candidateEmail : null
                         );
+                        if ($linkedToRequested) {
+                            $authUserData = $candidate;
+                            $locId = (string)$requestedLocId;
+                        } else {
+                            auth_json_error(
+                                403,
+                                'Location does not match your active_location_id.',
+                                'LOCATION_SESSION_MISMATCH',
+                                [
+                                    'requested_location_id' => (string)$requestedLocId,
+                                    'active_location_id' => (string)$candidateLoc,
+                                    'requires_reauth' => true,
+                                    'hint' => 'Refresh the GHL iframe session or call autologin for the requested location.',
+                                ]
+                            );
+                        }
+                    } else {
+                        $authUserData = $candidate;
+                        $locId = (string)$candidateLoc;
                     }
-                    $authUserData = $candidate;
-                    $locId = (string)$candidateLoc;
                 }
             }
         }

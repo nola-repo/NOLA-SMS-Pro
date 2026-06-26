@@ -528,8 +528,12 @@ final class GhlTokenProvider
         if ($err === 'invalid_grant' || str_contains($desc, 'invalid_grant')) {
             return GhlOAuthRefreshException::REASON_INVALID_GRANT;
         }
-        if ($err === 'invalid_client') {
-            return GhlOAuthRefreshException::REASON_INVALID_GRANT;
+        if (
+            $err === 'invalid_client'
+            || str_contains($desc, 'invalid client')
+            || str_contains($desc, 'invalid client credentials')
+        ) {
+            return GhlOAuthRefreshException::REASON_OTHER;
         }
         if ($httpCode >= 500 || $httpCode === 429 || $httpCode === 0) {
             return GhlOAuthRefreshException::REASON_TRANSIENT;

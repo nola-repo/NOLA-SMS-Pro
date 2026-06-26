@@ -87,6 +87,14 @@ class BackendHardeningServicesTest extends TestCase
             \GhlOAuthRefreshException::REASON_TRANSIENT,
             \GhlTokenProvider::classifyOAuthRefreshFailure(503, ['error' => 'temporarily_unavailable'])
         );
+
+        $this->assertSame(
+            \GhlOAuthRefreshException::REASON_OTHER,
+            \GhlTokenProvider::classifyOAuthRefreshFailure(401, [
+                'error' => 'UnAuthorized!',
+                'error_description' => 'Invalid client credentials!',
+            ])
+        );
     }
 
     public function test_api_value_formatter_accepts_mixed_timestamp_values(): void

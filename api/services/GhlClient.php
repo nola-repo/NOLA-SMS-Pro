@@ -553,6 +553,10 @@ class GhlClient
         if (!$companyTokenSkippedRefresh) {
             $attemptedCredentialRefresh = true;
             $preferredUserType = $isBulkProvisioned ? 'Company' : ($this->integration['userType'] ?? 'Location');
+            $integrationAppType = (string)($this->integration['appType'] ?? '');
+            $locationRefreshOnly = !$isBulkProvisioned
+                && (string)($this->integration['userType'] ?? 'Location') === 'Location'
+                && !empty($this->integration['refresh_token']);
             $credentialCandidates = [];
             $addCandidate = static function (array &$items, string $id, string $secret, string $userType, string $label): void {
                 if ($id === '' || $secret === '') {
@@ -570,18 +574,25 @@ class GhlClient
                 ];
             };
 
-            if ($storedClientId === $agencyClientId) {
+            if ($locationRefreshOnly) {
+                if ($storedClientId === $agencyClientId || $integrationAppType === 'agency') {
+                    $addCandidate($credentialCandidates, $agencyClientId, $agencySecret, 'Location', 'stored-agency-location');
+                    $addCandidate($credentialCandidates, $subaccountClientId, $subaccountSecret, 'Location', 'subaccount-location');
+                } else {
+                    $addCandidate($credentialCandidates, $subaccountClientId, $subaccountSecret, 'Location', 'stored-subaccount-location');
+                }
+            } elseif ($storedClientId === $agencyClientId) {
                 $addCandidate($credentialCandidates, $agencyClientId, $agencySecret, $preferredUserType, 'stored-agency');
             } else {
                 $addCandidate($credentialCandidates, $subaccountClientId, $subaccountSecret, $preferredUserType, 'stored-subaccount');
             }
 
-            if ($isBulkProvisioned || $companyId) {
+            if ($isBulkProvisioned) {
                 $addCandidate($credentialCandidates, $subaccountClientId, $subaccountSecret, 'Company', 'subaccount-company');
                 $addCandidate($credentialCandidates, $agencyClientId, $agencySecret, 'Company', 'agency-company');
             }
 
-            if (!$isBulkProvisioned) {
+            if (!$isBulkProvisioned && !$locationRefreshOnly) {
                 $addCandidate($credentialCandidates, $subaccountClientId, $subaccountSecret, 'Location', 'subaccount-location');
             }
 
@@ -591,6 +602,7 @@ class GhlClient
             $lastLabel = null;
             $lastUserType = null;
             $successUserType = null;
+            $oauthAttempts = [];
             foreach ($credentialCandidates as $candidate) {
                 $ch = curl_init('https://services.leadconnectorhq.com/oauth/token');
                 curl_setopt_array($ch, [
@@ -622,6 +634,14 @@ class GhlClient
                 $lastLabel = (string) ($candidate['label'] ?? '');
                 $lastUserType = (string) ($candidate['user_type'] ?? '');
 
+                $oauthAttempts[] = [
+                    'candidate' => $lastLabel,
+                    'user_type' => $lastUserType,
+                    'http_code' => $httpCode,
+                    'error' => is_array($parsed) ? ($parsed['error'] ?? null) : null,
+                    'error_description' => is_array($parsed) ? ($parsed['error_description'] ?? null) : null,
+                ];
+
                 if ($httpCode === 200 && is_array($parsed) && !empty($parsed['access_token'])) {
                     $data = $parsed;
                     $clientId = $candidate['client_id'];
@@ -651,6 +671,8 @@ class GhlClient
                     'oauth_user_type' => $lastUserType,
                     'oauth_error' => is_array($lastParsed) ? ($lastParsed['error'] ?? null) : null,
                     'oauth_error_description' => is_array($lastParsed) ? ($lastParsed['error_description'] ?? null) : null,
+                    'oauth_attempts' => $oauthAttempts,
+                    'location_refresh_only' => $locationRefreshOnly,
                 ];
                 throw new GhlOAuthRefreshException(
                     'GHL token refresh failed: ' . $lastHint,

@@ -381,6 +381,27 @@ function auth_json_error(int $status, string $error, string $code, array $extra 
     exit;
 }
 
+function auth_user_linked_to_location($db, array $jwtCtx, string $locationId): bool
+{
+    $uid = trim((string)($jwtCtx['uid'] ?? ''));
+    $profile = $jwtCtx['profile'] ?? [];
+    $email = trim((string)($profile['email'] ?? ($jwtCtx['payload']['email'] ?? '')));
+    if ($uid === '' || trim($locationId) === '') {
+        return false;
+    }
+
+    try {
+        require_once __DIR__ . '/install_helpers.php';
+        if (function_exists('install_user_linked_to_location')) {
+            return install_user_linked_to_location($db, $uid, $locationId, $email !== '' ? $email : null);
+        }
+    } catch (\Throwable $e) {
+        error_log('[auth_helpers] linked location check failed: ' . $e->getMessage());
+    }
+
+    return false;
+}
+
 /**
  * When `Authorization` is omitted: returns null (webhook-secret-only callers unchanged).
  * When present: verifies JWT + loads Firestore profile; exits on 401/404/500 as appropriate.
@@ -612,14 +633,32 @@ function auth_assert_ghl_api_location_allowed($db, ?array $jwtCtx, string $reque
     }
 
     $active = trim((string) ($profile['active_location_id'] ?? ''));
+    $linkedToRequested = false;
     if ($active !== '' && $refParsed !== null && $active !== $refParsed['id']) {
         auth_json_error(403, 'active_location_id and ghl_token_ref disagree.', 'PROFILE_LOCATION_CONFLICT');
     }
     if ($active !== '' && $active !== $requestedLocationId) {
-        auth_json_error(403, 'Location does not match your active_location_id.', 'LOCATION_SESSION_MISMATCH');
+        $linkedToRequested = auth_user_linked_to_location($db, $jwtCtx, $requestedLocationId);
+        if (!$linkedToRequested) {
+            auth_json_error(403, 'Location does not match your active_location_id.', 'LOCATION_SESSION_MISMATCH', [
+                'requested_location_id' => $requestedLocationId,
+                'active_location_id' => $active,
+                'requires_reauth' => true,
+                'hint' => 'Refresh the GHL iframe session or call autologin for the requested location.',
+            ]);
+        }
     }
     if ($refParsed !== null && $refParsed['id'] !== $requestedLocationId) {
-        auth_json_error(403, 'Location does not match ghl_token_ref.', 'LOCATION_NOT_AUTHORIZED');
+        if (!$linkedToRequested) {
+            $linkedToRequested = auth_user_linked_to_location($db, $jwtCtx, $requestedLocationId);
+        }
+        if (!$linkedToRequested) {
+            auth_json_error(403, 'Location does not match ghl_token_ref.', 'LOCATION_NOT_AUTHORIZED', [
+                'requested_location_id' => $requestedLocationId,
+                'token_ref_location_id' => $refParsed['id'],
+                'requires_reauth' => true,
+            ]);
+        }
     }
     if ($active === '' && $refParsed === null) {
         auth_json_error(403, 'Profile missing active_location_id and ghl_token_ref; cannot authorize GHL access.', 'LOCATION_NOT_AUTHORIZED');
