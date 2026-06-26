@@ -57,4 +57,27 @@ class AdminBridgeTest extends TestCase
         $response->assertStatus(200)
             ->assertJson(['status' => 'success', 'data' => [], 'total' => 0]);
     }
+
+    public function test_admin_health_forwards_to_legacy_script(): void
+    {
+        $this->mock(LegacyPhpBridgeService::class, function (Mockery\MockInterface $mock) {
+            $mock->shouldReceive('call')
+                ->withArgs(function ($actualScript, $actualMethod, $actualQuery, $actualRawBody) {
+                    return str_ends_with($actualScript, 'api/admin_health.php')
+                        && $actualMethod === 'GET'
+                        && $actualQuery === []
+                        && $actualRawBody === '[]';
+                })
+                ->once()
+                ->andReturn([
+                    'status' => 200,
+                    'body' => json_encode(['status' => 'success', 'data' => ['database_connected' => true]]),
+                ]);
+        });
+
+        $response = $this->getJson('/api/v2/admin_health');
+
+        $response->assertStatus(200)
+            ->assertJson(['status' => 'success', 'data' => ['database_connected' => true]]);
+    }
 }

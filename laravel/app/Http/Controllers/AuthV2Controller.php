@@ -7,6 +7,7 @@ use App\Support\LegacyAuthProfile;
 use App\Support\LegacyJwt;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Throwable;
 
 class AuthV2Controller extends Controller
@@ -79,22 +80,38 @@ class AuthV2Controller extends Controller
     {
         $token = $this->extractBearerToken($request);
         if ($token === null) {
-            return response()->json(['error' => 'Missing auth token. Provide Authorization: Bearer <token>.'], 401);
+            $this->logProfileFailure('AUTH_TOKEN_MISSING', $request);
+            return response()->json([
+                'error' => 'Missing auth token. Provide Authorization: Bearer <token>.',
+                'code' => 'AUTH_TOKEN_MISSING',
+            ], 401);
         }
 
         $jwtSecret = trim((string) env('JWT_SECRET', ''));
         if ($jwtSecret === '') {
-            return response()->json(['error' => 'Server misconfiguration: JWT secret missing.'], 500);
+            $this->logProfileFailure('JWT_SECRET_MISSING', $request);
+            return response()->json([
+                'error' => 'Server misconfiguration: JWT secret missing.',
+                'code' => 'JWT_SECRET_MISSING',
+            ], 500);
         }
 
         $payload = LegacyJwt::verify($token, $jwtSecret);
         if (!$payload) {
-            return response()->json(['error' => 'Token is invalid or expired.'], 401);
+            $this->logProfileFailure('AUTH_TOKEN_INVALID', $request);
+            return response()->json([
+                'error' => 'Token is invalid or expired.',
+                'code' => 'AUTH_TOKEN_INVALID',
+            ], 401);
         }
 
         $userId = $payload['sub'] ?? null;
         if (!$userId) {
-            return response()->json(['error' => 'Invalid token payload.'], 401);
+            $this->logProfileFailure('AUTH_TOKEN_PAYLOAD_INVALID', $request);
+            return response()->json([
+                'error' => 'Invalid token payload.',
+                'code' => 'AUTH_TOKEN_PAYLOAD_INVALID',
+            ], 401);
         }
 
         try {
@@ -110,7 +127,15 @@ class AuthV2Controller extends Controller
             }
 
             if (!$snap->exists()) {
-                return response()->json(['error' => 'User not found.'], 404);
+                $this->logProfileFailure('AUTH_USER_NOT_FOUND', $request, [
+                    'user_id' => (string) $userId,
+                    'role' => $role,
+                    'collection' => $collection,
+                ]);
+                return response()->json([
+                    'error' => 'User not found.',
+                    'code' => 'AUTH_USER_NOT_FOUND',
+                ], 404);
             }
 
             $doc = $snap->data();
@@ -158,7 +183,13 @@ class AuthV2Controller extends Controller
                 'subaccounts' => $subaccounts,
             ]);
         } catch (Throwable $e) {
-            return response()->json(['error' => 'Failed to fetch profile: ' . $e->getMessage()], 500);
+            $this->logProfileFailure('AUTH_PROFILE_FETCH_FAILED', $request, [
+                'message' => $e->getMessage(),
+            ]);
+            return response()->json([
+                'error' => 'Failed to fetch profile: ' . $e->getMessage(),
+                'code' => 'AUTH_PROFILE_FETCH_FAILED',
+            ], 500);
         }
     }
 
@@ -257,5 +288,14 @@ class AuthV2Controller extends Controller
         }
 
         return null;
+    }
+
+    private function logProfileFailure(string $code, Request $request, array $context = []): void
+    {
+        Log::warning('[api/v2/auth/me] profile failure', array_merge([
+            'code' => $code,
+            'path' => $request->path(),
+            'method' => $request->method(),
+        ], $context));
     }
 }

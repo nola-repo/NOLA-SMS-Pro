@@ -59,4 +59,34 @@ class AuthBridgeTest extends TestCase
         $response->assertStatus(200)
                  ->assertJson($expectedResponse);
     }
+
+    public function test_ghl_autologin_forwards_to_legacy_script(): void
+    {
+        $expectedResponse = [
+            'token' => 'jwt',
+            'role' => 'user',
+            'location_id' => 'loc_123',
+        ];
+
+        $this->mockLegacyBridge(
+            script: 'api/auth/ghl_autologin.php',
+            status: 200,
+            body: $expectedResponse
+        );
+
+        $response = $this->getJson('/api/v2/auth/ghl_autologin?location_id=loc_123');
+
+        $response->assertStatus(200)
+                 ->assertJson($expectedResponse);
+    }
+
+    public function test_auth_me_returns_machine_readable_missing_token_code(): void
+    {
+        $response = $this->getJson('/api/v2/auth/me');
+
+        $response->assertStatus(401)
+                 ->assertJson([
+                     'code' => 'AUTH_TOKEN_MISSING',
+                 ]);
+    }
 }

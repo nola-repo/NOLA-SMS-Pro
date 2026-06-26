@@ -41,6 +41,16 @@ class AuthV2LegacyBridgeController extends Controller
         );
     }
 
+    public function ghlAutologin(Request $request): Response
+    {
+        return $this->forwardToLegacy(
+            base_path('../api/auth/ghl_autologin.php'),
+            $request->method(),
+            $request->query->all(),
+            (string) $request->getContent()
+        );
+    }
+
     private function forwardToLegacy(string $script, string $method, array $query = [], string $rawBody = ''): Response
     {
         $result = $this->bridge->call($script, $method, $query, $rawBody);

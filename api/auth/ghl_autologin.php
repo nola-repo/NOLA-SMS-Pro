@@ -51,6 +51,34 @@ if ($jwtSecret === '') {
     exit;
 }
 
+function nola_auth_autologin_log(string $code, ?string $locationId = null, ?string $companyId = null, array $context = []): void
+{
+    error_log('[api/auth/ghl_autologin.php] ' . json_encode(array_merge([
+        'code' => $code,
+        'location_id' => $locationId,
+        'company_id' => $companyId,
+        'method' => $_SERVER['REQUEST_METHOD'] ?? null,
+        'path' => $_SERVER['REQUEST_URI'] ?? '/api/auth/ghl_autologin',
+    ], $context)));
+}
+
+function nola_auth_error_response(
+    int $status,
+    string $code,
+    string $message,
+    ?string $locationId = null,
+    ?string $companyId = null,
+    array $extra = []
+): void {
+    nola_auth_autologin_log($code, $locationId, $companyId, $extra);
+    http_response_code($status);
+    echo json_encode(array_merge([
+        'error' => $message,
+        'code' => $code,
+    ], $extra));
+    exit;
+}
+
 function nola_auth_location_doc_id(string $locationId): string
 {
     return 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
@@ -137,12 +165,13 @@ function nola_auth_agency_autologin(
 
     if (!$userData) {
         if (!nola_auth_has_agency_token($db, $companyId)) {
-            http_response_code(404);
-            echo json_encode([
-                'error' => 'No agency account is linked to this GHL company. Please install the Agency App first.',
-                'code' => 'LOCATION_NOT_INSTALLED',
-            ]);
-            return;
+            nola_auth_error_response(
+                404,
+                'LOCATION_NOT_INSTALLED',
+                'No agency account is linked to this GHL company. Please install the Agency App first.',
+                $locationId,
+                $companyId
+            );
         }
 
         $userData = [
@@ -158,9 +187,14 @@ function nola_auth_agency_autologin(
     }
 
     if (empty($userData['active'])) {
-        http_response_code(403);
-        echo json_encode(['error' => 'This agency account has been deactivated.', 'code' => 'LOCATION_INACTIVE']);
-        return;
+        nola_auth_error_response(
+            403,
+            'LOCATION_INACTIVE',
+            'This agency account has been deactivated.',
+            $locationId,
+            $companyId,
+            ['auth_collection' => $authCollection]
+        );
     }
 
     if (empty($userData['company_name'])) {
@@ -244,17 +278,9 @@ function nola_auth_is_suspicious_location_id(string $locationId): bool
 
 function nola_auth_invalid_location_response(string $locationId, ?string $companyId = null): void
 {
-    error_log('[api/auth/ghl_autologin.php] Invalid/suspicious location_id received: ' . json_encode([
+    nola_auth_error_response(422, 'INVALID_GHL_LOCATION_ID', 'The provided location_id does not match an installed GHL subaccount. Check frontend location detection.', $locationId, $companyId, [
         'location_id' => $locationId,
-        'company_id' => $companyId,
         'reason' => 'numeric_only_not_installed',
-    ]));
-
-    http_response_code(422);
-    echo json_encode([
-        'error' => 'The provided location_id does not match an installed GHL subaccount. Check frontend location detection.',
-        'code' => 'INVALID_GHL_LOCATION_ID',
-        'location_id' => $locationId,
     ]);
 }
 
@@ -267,9 +293,7 @@ try {
     }
 
     if ($locationId === '') {
-        http_response_code(400);
-        echo json_encode(['error' => 'location_id is required.', 'code' => 'LOCATION_ID_REQUIRED']);
-        exit;
+        nola_auth_error_response(400, 'LOCATION_ID_REQUIRED', 'location_id is required.', null, $companyId !== '' ? $companyId : null);
     }
 
     $tokenSnap = $db->collection('ghl_tokens')->document($locationId)->snapshot();
@@ -284,22 +308,17 @@ try {
             exit;
         }
 
-        error_log('[api/auth/ghl_autologin.php] Location not installed: ' . json_encode([
-            'location_id' => $locationId,
-            'company_id' => $companyId !== '' ? $companyId : null,
+        nola_auth_error_response(404, 'LOCATION_NOT_INSTALLED', 'NOLA SMS Pro is not installed for this location.', $locationId, $companyId !== '' ? $companyId : null, [
             'token_exists' => false,
             'integration_exists' => false,
-        ]));
-
-        http_response_code(404);
-        echo json_encode(['error' => 'NOLA SMS Pro is not installed for this location.', 'code' => 'LOCATION_NOT_INSTALLED']);
-        exit;
+        ]);
     }
 
     if ($tokenSnap->exists() && !install_token_active_for_sms(true, $tokenData)) {
-        http_response_code(403);
-        echo json_encode(['error' => 'NOLA SMS Pro is not active for this location.', 'code' => 'LOCATION_INACTIVE']);
-        exit;
+        nola_auth_error_response(403, 'LOCATION_INACTIVE', 'NOLA SMS Pro is not active for this location.', $locationId, $companyId !== '' ? $companyId : null, [
+            'token_exists' => true,
+            'integration_exists' => $intSnap->exists(),
+        ]);
     }
 
     $match = nola_auth_find_user_for_location($db, $locationId);
@@ -314,27 +333,30 @@ try {
 
         $tokenCompanyId = nola_auth_first_non_empty($tokenData['companyId'] ?? null, $tokenData['company_id'] ?? null);
         if ($companyId !== '' && $tokenCompanyId !== '' && $tokenCompanyId !== $companyId) {
-            http_response_code(403);
-            echo json_encode(['error' => 'Location is not authorized for this company.', 'code' => 'LOCATION_COMPANY_MISMATCH']);
-            exit;
+            nola_auth_error_response(403, 'LOCATION_COMPANY_MISMATCH', 'Location is not authorized for this company.', $locationId, $companyId, [
+                'token_company_id' => $tokenCompanyId,
+                'resolved_company_id' => $resolvedCompanyId,
+            ]);
         }
 
         if (!$tokenSnap->exists() || $resolvedCompanyId === '' || $tokenCompanyId === '' || $tokenCompanyId !== $resolvedCompanyId) {
-            http_response_code(404);
-            echo json_encode([
-                'error' => 'No user account is linked to this GHL location. Please finish installation or log in manually.',
-                'code' => 'LOCATION_USER_NOT_FOUND',
+            nola_auth_error_response(404, 'LOCATION_USER_NOT_FOUND', 'No user account is linked to this GHL location. Please finish installation or log in manually.', $locationId, $companyId !== '' ? $companyId : null, [
+                'token_exists' => $tokenSnap->exists(),
+                'integration_exists' => $intSnap->exists(),
+                'token_company_id' => $tokenCompanyId,
+                'resolved_company_id' => $resolvedCompanyId,
             ]);
-            exit;
         }
 
         if (!nola_auth_has_agency_token($db, $resolvedCompanyId)) {
-            http_response_code(404);
-            echo json_encode([
-                'error' => 'No agency account is linked to this GHL company. Please install the Agency App first.',
-                'code' => 'LOCATION_NOT_INSTALLED',
-            ]);
-            exit;
+            nola_auth_error_response(
+                404,
+                'LOCATION_NOT_INSTALLED',
+                'No agency account is linked to this GHL company. Please install the Agency App first.',
+                $locationId,
+                $resolvedCompanyId,
+                ['token_company_id' => $tokenCompanyId]
+            );
         }
 
         $locationName = nola_auth_first_non_empty(
@@ -357,9 +379,9 @@ try {
     $userId = $match['id'];
     $userData = $match['data'];
     if (empty($userData['active'])) {
-        http_response_code(403);
-        echo json_encode(['error' => 'This user account has been deactivated.', 'code' => 'LOCATION_INACTIVE']);
-        exit;
+        nola_auth_error_response(403, 'LOCATION_INACTIVE', 'This user account has been deactivated.', $locationId, $companyId !== '' ? $companyId : null, [
+            'user_id' => (string)$userId,
+        ]);
     }
 
     $companyId = $userData['company_id']
@@ -402,16 +424,12 @@ try {
         'user' => auth_user_payload_for_api($userData, (string)($userData['email'] ?? '')),
     ]);
 } catch (LocationUserResolutionException $e) {
-    error_log('[api/auth/ghl_autologin.php] Location ownership needs repair: ' . $e->getMessage());
-    http_response_code(409);
-    echo json_encode([
-        'error' => 'Multiple users are linked to this location.',
-        'code' => 'DUPLICATE_LOCATION_USERS',
+    nola_auth_error_response(409, 'DUPLICATE_LOCATION_USERS', 'Multiple users are linked to this location.', $locationId ?? null, $companyId !== '' ? $companyId : null, [
         'location_id' => $locationId ?? null,
         'repair_hint' => 'Run scripts/audit_location_users.php for this location, then set the canonical owner in location_owners.',
     ]);
 } catch (Exception $e) {
-    error_log('[api/auth/ghl_autologin.php] Auto-login failed: ' . $e->getMessage());
-    http_response_code(500);
-    echo json_encode(['error' => 'Auto-login failed.']);
+    nola_auth_error_response(500, 'AUTOLOGIN_FAILED', 'Auto-login failed.', $locationId ?? null, $companyId !== '' ? $companyId : null, [
+        'message' => $e->getMessage(),
+    ]);
 }

@@ -29,6 +29,8 @@
     # ── v2 hot-path bypasses (avoid Laravel bridge process spawn) ────────
     RewriteRule ^api/v2/ghl-contacts/?$ /api/ghl_contacts.php [NC,L,QSA]
     RewriteRule ^api/v2/ghl-conversations/?$ /api/ghl-conversations.php [NC,L,QSA]
+    RewriteRule ^api/v2/admin_health/?$ /api/admin_health.php [NC,L,QSA]
+    RewriteRule ^api/v2/auth/ghl_autologin/?$ /api/auth/ghl_autologin.php [NC,L,QSA]
 
     # ── Laravel v2 (same container) ──────────────────────────────────────
     # Route remaining /api/v2/* traffic to Laravel shim; keep legacy endpoints intact.

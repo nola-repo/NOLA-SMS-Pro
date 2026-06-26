@@ -14,6 +14,25 @@ require __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/../jwt_helper.php';
 require_once __DIR__ . '/user_profile_helper.php';
 
+function auth_json_error(int $status, string $code, string $message, array $extra = []): void
+{
+    http_response_code($status);
+    echo json_encode(array_merge([
+        'error' => $message,
+        'code' => $code,
+    ], $extra));
+    exit;
+}
+
+function auth_log_profile_failure(string $code, array $context = []): void
+{
+    error_log('[api/auth/me.php] ' . json_encode(array_merge([
+        'code' => $code,
+        'path' => $_SERVER['REQUEST_URI'] ?? '/api/auth/me',
+        'method' => $_SERVER['REQUEST_METHOD'] ?? 'GET',
+    ], $context)));
+}
+
 /**
  * Best-effort token extraction for environments where Authorization headers
  * are stripped (proxy, iframe, some browsers).
@@ -103,37 +122,31 @@ function auth_resolve_agency_company_name($db, array $d): ?string
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
-    http_response_code(405);
-    echo json_encode(['error' => 'Method not allowed']);
-    exit;
+    auth_json_error(405, 'METHOD_NOT_ALLOWED', 'Method not allowed');
 }
 
 $jwt = auth_extract_bearer_token();
 if (!$jwt) {
-    http_response_code(401);
-    echo json_encode(['error' => 'Missing auth token. Provide Authorization: Bearer <token>.']);
-    exit;
+    auth_log_profile_failure('AUTH_TOKEN_MISSING');
+    auth_json_error(401, 'AUTH_TOKEN_MISSING', 'Missing auth token. Provide Authorization: Bearer <token>.');
 }
 
 $jwtSecret = getenv('JWT_SECRET');
 if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
-    http_response_code(500);
-    echo json_encode(['error' => 'Server misconfiguration: JWT secret missing.']);
-    exit;
+    auth_log_profile_failure('JWT_SECRET_MISSING');
+    auth_json_error(500, 'JWT_SECRET_MISSING', 'Server misconfiguration: JWT secret missing.');
 }
 $payload   = jwt_verify($jwt, $jwtSecret);
 
 if (!$payload) {
-    http_response_code(401);
-    echo json_encode(['error' => 'Token is invalid or expired.']);
-    exit;
+    auth_log_profile_failure('AUTH_TOKEN_INVALID');
+    auth_json_error(401, 'AUTH_TOKEN_INVALID', 'Token is invalid or expired.');
 }
 
 $userId = $payload['sub'] ?? null;
 if (!$userId) {
-    http_response_code(401);
-    echo json_encode(['error' => 'Invalid token payload.']);
-    exit;
+    auth_log_profile_failure('AUTH_TOKEN_PAYLOAD_INVALID');
+    auth_json_error(401, 'AUTH_TOKEN_PAYLOAD_INVALID', 'Invalid token payload.');
 }
 
 try {
@@ -151,9 +164,12 @@ try {
     }
 
     if (!$snap->exists()) {
-        http_response_code(404);
-        echo json_encode(['error' => 'User not found.']);
-        exit;
+        auth_log_profile_failure('AUTH_USER_NOT_FOUND', [
+            'user_id' => (string)$userId,
+            'role' => $role,
+            'collection' => $collection,
+        ]);
+        auth_json_error(404, 'AUTH_USER_NOT_FOUND', 'User not found.');
     }
 
     $d = $snap->data();
@@ -202,6 +218,8 @@ try {
         'subaccounts' => $subaccounts,
     ]);
 } catch (Exception $e) {
-    http_response_code(500);
-    echo json_encode(['error' => 'Failed to fetch profile: ' . $e->getMessage()]);
+    auth_log_profile_failure('AUTH_PROFILE_FETCH_FAILED', [
+        'message' => $e->getMessage(),
+    ]);
+    auth_json_error(500, 'AUTH_PROFILE_FETCH_FAILED', 'Failed to fetch profile: ' . $e->getMessage());
 }
