@@ -29,18 +29,30 @@ RUN sed -i 's/Listen 80/Listen 8080/' /etc/apache2/ports.conf \
 # Install Composer
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
+# Keep GitHub/codeload dependency downloads conservative. Cloud Build can
+# occasionally receive transient HTTP/2 400 responses when Composer opens many
+# parallel dist downloads; retries below retain Composer's cache and finally
+# fall back to source installs through git.
+ENV COMPOSER_MAX_PARALLEL_HTTP=4 \
+    COMPOSER_PROCESS_TIMEOUT=1200
+RUN git config --global http.version HTTP/1.1
+
 # App lives here
 WORKDIR /var/www/html
 
 # Copy app (vendor excluded; we install in container)
 COPY composer.json composer.lock* ./
-RUN composer install --no-dev --optimize-autoloader --no-interaction
+RUN composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress \
+    || (sleep 5 && composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress) \
+    || (sleep 15 && composer install --no-dev --prefer-source --optimize-autoloader --no-interaction --no-progress)
 
 COPY . .
 
 # Install Laravel dependencies for /api/v2 routes in same container.
 RUN cd /var/www/html/laravel \
-    && composer install --no-dev --optimize-autoloader --no-interaction \
+    && (composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress \
+        || (sleep 5 && composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress) \
+        || (sleep 15 && composer install --no-dev --prefer-source --optimize-autoloader --no-interaction --no-progress)) \
     && chown -R www-data:www-data storage bootstrap/cache
 
 # Generate Laravel .env (gitignored — must be created at build time)
