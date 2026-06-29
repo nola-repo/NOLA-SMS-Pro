@@ -43,6 +43,18 @@ $companyId = trim((string)(
     ?? $input['companyId']
     ?? ''
 ));
+$ghlUserId = trim((string)(
+    $_GET['ghl_user_id']
+    ?? $_GET['ghlUserId']
+    ?? $input['ghl_user_id']
+    ?? $input['ghlUserId']
+    ?? ''
+));
+$email = trim((string)(
+    $_GET['email']
+    ?? $input['email']
+    ?? ''
+));
 
 $jwtSecret = getenv('JWT_SECRET') ?: '';
 if ($jwtSecret === '') {
@@ -321,7 +333,7 @@ try {
         ]);
     }
 
-    $match = nola_auth_find_user_for_location($db, $locationId);
+    $match = LocationUserResolver::findForIframeIdentity($db, $locationId, $ghlUserId, $email);
     if ($match === null) {
         $resolvedCompanyId = nola_auth_first_non_empty(
             $companyId,
@@ -431,10 +443,21 @@ try {
         'location_id' => $locationId,
         'user' => auth_user_payload_for_api($userData, (string)($userData['email'] ?? '')),
     ]);
-} catch (LocationUserResolutionException $e) {
-    nola_auth_error_response(409, 'DUPLICATE_LOCATION_USERS', 'Multiple users are linked to this location.', $locationId ?? null, $companyId !== '' ? $companyId : null, [
+} catch (LocationUserNotLinkedException $e) {
+    nola_auth_error_response(403, 'LOCATION_USER_NOT_LINKED', 'The current user is not linked to this location.', $locationId ?? null, $companyId !== '' ? $companyId : null, [
         'location_id' => $locationId ?? null,
-        'repair_hint' => 'Run scripts/audit_location_users.php for this location, then set the canonical owner in location_owners.',
+        'requires_login' => true,
+        'requires_account_link' => true,
+        'resolution_reason' => $e->getMessage(),
+    ]);
+} catch (LocationUserResolutionException $e) {
+    $errCode = (strpos($e->getMessage(), 'email identity') !== false) 
+        ? 'DUPLICATE_LOCATION_USER_IDENTITY' 
+        : 'DUPLICATE_LOCATION_USERS';
+    nola_auth_error_response(409, $errCode, $e->getMessage(), $locationId ?? null, $companyId !== '' ? $companyId : null, [
+        'location_id' => $locationId ?? null,
+        'resolution_reason' => $e->getMessage(),
+        'repair_hint' => 'Choose the default autologin account in Admin/All Subaccounts or run scripts/audit_location_users.php and scripts/repair_location_owner.php for this location.',
     ]);
 } catch (Exception $e) {
     nola_auth_error_response(500, 'AUTOLOGIN_FAILED', 'Auto-login failed.', $locationId ?? null, $companyId !== '' ? $companyId : null, [

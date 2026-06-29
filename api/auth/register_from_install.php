@@ -16,6 +16,7 @@ require_once __DIR__ . '/../auth_helpers.php';
 require_once __DIR__ . '/../install_helpers.php';
 require_once __DIR__ . '/../services/CreditManager.php';
 require_once __DIR__ . '/user_profile_helper.php';
+require_once __DIR__ . '/../services/LocationUserResolver.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
@@ -34,6 +35,7 @@ $locationId = $input['location_id'] ?? null;
 $companyId = $input['company_id'] ?? null;
 $payloadLocName = $input['location_name'] ?? null;
 $payloadCompName = $input['company_name'] ?? null;
+$ghlUserId = trim((string)($input['ghl_user_id'] ?? $input['ghlUserId'] ?? ''));
 
 $jwtSecret = getenv('JWT_SECRET');
 if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
@@ -54,6 +56,9 @@ if (!$installPayload) {
     http_response_code(401);
     echo json_encode(['error' => 'Install token is invalid or expired. Please reinstall from the GHL Marketplace.']);
     exit;
+}
+if ($ghlUserId === '') {
+    $ghlUserId = trim((string)($installPayload['ghl_user_id'] ?? $installPayload['ghlUserId'] ?? ''));
 }
 $type = $installPayload['type'] ?? '';
 if ($type === 'install') {
@@ -399,6 +404,7 @@ try {
 
         if ($isLocationLevel && $locationId) {
             $ownershipMode = install_attach_user_to_location_ownership($db, (string)$locationId, $existingId, $email, $fullName, $phone, $now, 'register_from_install_existing');
+            LocationUserResolver::createOrUpdateLink($db, $locationId, $existingId, $ghlUserId, $email);
             register_from_install_log_timing($rflogId, 'owner_attach', $rflogStart);
         }
 
@@ -624,6 +630,7 @@ try {
 
     if ($isLocationLevel && $locationId) {
         $ownershipMode = install_attach_user_to_location_ownership($db, (string)$locationId, $newUserId, $email, $fullName, $phone, $now, 'register_from_install_new');
+        LocationUserResolver::createOrUpdateLink($db, $locationId, $newUserId, $ghlUserId, $email);
         register_from_install_log_timing($rflogId, 'owner_attach', $rflogStart);
     }
 
