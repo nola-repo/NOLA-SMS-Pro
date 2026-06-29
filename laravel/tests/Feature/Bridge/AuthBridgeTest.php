@@ -89,4 +89,26 @@ class AuthBridgeTest extends TestCase
                      'code' => 'AUTH_TOKEN_MISSING',
                  ]);
     }
+
+    public function test_location_bootstrap_forwards_to_unified_legacy_gate(): void
+    {
+        $expectedResponse = [
+            'code' => 'LOCATION_READY',
+            'location_id' => 'ugBqfQsPtGijLjrmLdmA',
+            'contacts_can_load' => true,
+            'next_action' => 'load_app',
+        ];
+
+        $this->mockLegacyBridge(
+            script: 'api/location/bootstrap.php',
+            status: 200,
+            body: $expectedResponse
+        );
+
+        $response = $this->withHeader('Authorization', 'Bearer test-jwt')
+            ->getJson('/api/v2/location/bootstrap?location_id=ugBqfQsPtGijLjrmLdmA');
+
+        $response->assertStatus(200)
+            ->assertJson($expectedResponse);
+    }
 }

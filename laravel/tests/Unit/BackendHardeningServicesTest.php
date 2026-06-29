@@ -10,6 +10,7 @@ require_once __DIR__ . '/../../../api/services/ProviderResultService.php';
 require_once __DIR__ . '/../../../api/services/GhlTokenProvider.php';
 require_once __DIR__ . '/../../../api/services/ApiValueFormatter.php';
 require_once __DIR__ . '/../../../api/services/LocationUserResolver.php';
+require_once __DIR__ . '/../../../api/services/LocationBootstrapService.php';
 require_once __DIR__ . '/../../../api/logger.php';
 
 class BackendHardeningServicesTest extends TestCase
@@ -121,6 +122,14 @@ class BackendHardeningServicesTest extends TestCase
         $this->assertFalse(\LocationUserResolver::isEligibleUser($data, 'loc-other'));
         $this->assertFalse(\LocationUserResolver::isEligibleUser(array_merge($data, ['role' => 'agency']), 'loc-123'));
         $this->assertFalse(\LocationUserResolver::isEligibleUser(array_merge($data, ['location_id' => 'loc-other']), 'loc-123'));
+        $withoutLegacyActiveFlag = $data;
+        unset($withoutLegacyActiveFlag['active']);
+        $this->assertTrue(\LocationUserResolver::isEligibleUser($withoutLegacyActiveFlag, 'loc-123'));
+        $this->assertTrue(\LocationUserResolver::isActiveNonAgencyUser([
+            'active_location_id' => 'another-location',
+            'role' => 'user',
+            'active' => true,
+        ]));
 
         $unique = \LocationUserResolver::deduplicateMatches([
             ['id' => 'user-1', 'data' => $data],
@@ -140,6 +149,34 @@ class BackendHardeningServicesTest extends TestCase
             ],
         ]);
         $this->assertSame('older-user', $chosen['id']);
+    }
+
+    public function test_location_bootstrap_contract_maps_install_states(): void
+    {
+        $this->assertTrue(\LocationBootstrapService::isValidLocationId('ugBqfQsPtGijLjrmLdmA'));
+        $this->assertFalse(\LocationBootstrapService::isValidLocationId('123'));
+
+        $registration = \LocationBootstrapService::installBlock([
+            'status' => 'TOKEN_ONLY',
+            'install_state' => 'PENDING_OAUTH',
+        ], ['install_state' => 'PENDING_OAUTH']);
+        $this->assertSame('complete_registration', $registration['next_action']);
+        $this->assertSame('LOCATION_REGISTRATION_REQUIRED', $registration['code']);
+
+        $ready = \LocationBootstrapService::installBlock([
+            'status' => 'LINKED_ACCOUNT',
+            'install_state' => 'INSTALLED',
+        ], ['install_state' => 'INSTALLED', 'is_live' => true]);
+        $this->assertNull($ready);
+
+        $payload = \LocationBootstrapService::payload(
+            'ugBqfQsPtGijLjrmLdmA',
+            'LOCATION_READY',
+            'load_app',
+            'Workspace verified.'
+        );
+        $this->assertTrue($payload['contacts_can_load']);
+        $this->assertSame('load_app', $payload['next_action']);
     }
 
     public function test_logger_accepts_only_bounded_safe_request_ids(): void

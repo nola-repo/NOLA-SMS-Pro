@@ -51,11 +51,51 @@ class AuthV2LegacyBridgeController extends Controller
         );
     }
 
-    private function forwardToLegacy(string $script, string $method, array $query = [], string $rawBody = ''): Response
+    public function locationBootstrap(Request $request): Response
     {
-        $result = $this->bridge->call($script, $method, $query, $rawBody);
+        return $this->forwardToLegacy(
+            base_path('../api/location/bootstrap.php'),
+            'GET',
+            $request->query->all(),
+            '',
+            $this->bootstrapHeaders($request)
+        );
+    }
+
+    private function forwardToLegacy(
+        string $script,
+        string $method,
+        array $query = [],
+        string $rawBody = '',
+        array $headers = []
+    ): Response
+    {
+        $result = $this->bridge->call($script, $method, $query, $rawBody, $headers);
 
         return response($result['body'], $result['status'])
             ->header('Content-Type', 'application/json');
+    }
+
+    private function bootstrapHeaders(Request $request): array
+    {
+        $headers = [];
+        foreach ([
+            'Authorization',
+            'X-Authorization',
+            'X-Auth-Token',
+            'X-GHL-Location-ID',
+            'X-GHL-LocationID',
+            'X-Request-ID',
+            'X-Correlation-ID',
+            'Origin',
+            'Accept',
+        ] as $name) {
+            $value = $request->header($name);
+            if (is_string($value) && trim($value) !== '') {
+                $headers[$name] = $value;
+            }
+        }
+
+        return $headers;
     }
 }

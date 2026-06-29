@@ -382,6 +382,45 @@ final class GhlTokenProvider
             }
         }
 
+        // Very old installs can have OAuth state only in integrations/ghl_{location}.
+        // Recover that state into the canonical registry instead of forcing every
+        // already-installed subaccount through a reinstall.
+        if (!$data) {
+            $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $registryKey);
+            $intSnap = $db->collection('integrations')->document($intDocId)->snapshot();
+            if ($intSnap->exists()) {
+                $legacyIntegration = $intSnap->data();
+                if (!empty($legacyIntegration['access_token']) || !empty($legacyIntegration['refresh_token'])) {
+                    $data = $legacyIntegration;
+                    $data['location_id'] = $data['location_id'] ?? $registryKey;
+                    $data['userType'] = $data['userType'] ?? 'Location';
+                    $data['appType'] = $data['appType'] ?? 'subaccount';
+                    $data['firestore_doc_id'] = $registryKey;
+                    $lookupSource = 'legacy_integration';
+
+                    $payload = $data;
+                    unset($payload['firestore_doc_id']);
+                    $db->collection('ghl_tokens')->document($registryKey)->set($payload, ['merge' => true]);
+                    error_log('[GHL_TOKEN] recovered canonical token registry from integrations/' . $intDocId);
+                }
+            }
+        }
+
+        // If the location row is missing entirely, resolve its company through
+        // agency_subaccounts/integrations and let the existing locationToken
+        // exchange path self-heal the canonical location token.
+        if (!$data) {
+            $resolvedCompanyId = self::resolveCompanyIdForLocation($db, $registryKey);
+            if ($resolvedCompanyId) {
+                $data = [
+                    'companyId' => $resolvedCompanyId,
+                    'location_id' => $registryKey,
+                    'firestore_doc_id' => $registryKey,
+                ];
+                $lookupSource = 'company_resolution';
+            }
+        }
+
         if ($data && empty($data['companyId'])) {
             $resolvedCompanyId = self::resolveCompanyIdForLocation($db, $registryKey, $data);
             if ($resolvedCompanyId) {
@@ -456,18 +495,31 @@ final class GhlTokenProvider
                             . $registryKey
                             . ' (HTTP '
                             . $ltCode
-                            . '). Using company token fallback.'
+                            . '). Seeding a classified location-token repair.'
                         );
-                        $companyData['firestore_doc_id'] = $companyId;
-                        $companyData['location_id'] = $registryKey;
+                        // Do not mark bootstrap ready with a company-scoped access
+                        // token. Seed a location repair so GhlClient performs a
+                        // classified company refresh + locationToken exchange.
                         $data = $companyData;
+                        unset($data['access_token']);
+                        $data['firestore_doc_id'] = $registryKey;
+                        $data['location_id'] = $registryKey;
+                        $data['companyId'] = $companyId;
+                        $data['userType'] = 'Location';
+                        $data['provisioned_from_bulk'] = true;
+                        $data['prefer_company_refresh'] = true;
                     }
                 } else {
-                    if (!empty($companyData['access_token']) || !empty($companyData['refresh_token'])) {
-                        $companyData['firestore_doc_id'] = $companyId;
-                        $companyData['location_id'] = $registryKey;
+                    if (!empty($companyData['refresh_token'])) {
                         $data = $companyData;
-                        error_log('[GhlTokenProvider] Using company token fallback for location ' . $registryKey . ' (location token missing).');
+                        unset($data['access_token']);
+                        $data['firestore_doc_id'] = $registryKey;
+                        $data['location_id'] = $registryKey;
+                        $data['companyId'] = $companyId;
+                        $data['userType'] = 'Location';
+                        $data['provisioned_from_bulk'] = true;
+                        $data['prefer_company_refresh'] = true;
+                        error_log('[GhlTokenProvider] Seeded company refresh repair for location ' . $registryKey . '.');
                     }
                 }
             }

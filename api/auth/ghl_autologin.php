@@ -407,6 +407,14 @@ try {
         $userData['company_name'] = $companyName;
     }
 
+    // The same user may legitimately own or belong to more than one installed
+    // location. Return a session payload scoped to the iframe's requested
+    // location so stale profile fields cannot put the frontend back into a
+    // different subaccount immediately after successful auto-login.
+    $userData['active_location_id'] = $locationId;
+    $userData['location_id'] = $locationId;
+    $userData['ghl_token_ref'] = 'ghl_tokens/' . $locationId;
+
     $token = jwt_sign([
         'sub' => $userId,
         'email' => $userData['email'] ?? '',

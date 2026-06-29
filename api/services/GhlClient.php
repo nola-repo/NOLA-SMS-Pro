@@ -212,6 +212,42 @@ class GhlClient
         return $this->locationId;
     }
 
+    /**
+     * Ensure bootstrap callers have a usable location-scoped access token.
+     * Unlike the request-path proactive refresh, failures are deliberately
+     * surfaced so the bootstrap endpoint can distinguish reconnect from retry.
+     *
+     * @return array{token_registry_id:string,expires_at:?int,refreshed:bool}
+     */
+    public function ensureReady(): array
+    {
+        $expiresAt = $this->integration['expires_at'] ?? null;
+        $expiresSeconds = $expiresAt instanceof \Google\Cloud\Core\Timestamp
+            ? $expiresAt->get()->getTimestamp()
+            : (is_numeric($expiresAt) ? (int)$expiresAt : null);
+        $hasAccessToken = trim((string)($this->integration['access_token'] ?? '')) !== '';
+        $needsRefresh = !$hasAccessToken
+            || ($expiresSeconds !== null && $expiresSeconds - time() < 300);
+
+        if ($needsRefresh) {
+            $this->refreshToken();
+            $expiresAt = $this->integration['expires_at'] ?? null;
+            $expiresSeconds = $expiresAt instanceof \Google\Cloud\Core\Timestamp
+                ? $expiresAt->get()->getTimestamp()
+                : (is_numeric($expiresAt) ? (int)$expiresAt : null);
+        }
+
+        if (trim((string)($this->integration['access_token'] ?? '')) === '') {
+            throw new \RuntimeException('GHL integration has no usable access token.');
+        }
+
+        return [
+            'token_registry_id' => $this->tokenRegistryId,
+            'expires_at' => $expiresSeconds,
+            'refreshed' => $needsRefresh,
+        ];
+    }
+
     // ── Private helpers ─────────────────────────────────────────────────
 
     private static function shouldIncludeDebug(): bool

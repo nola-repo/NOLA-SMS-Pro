@@ -27,6 +27,7 @@ Route::post('/api/v2/auth/register', [AuthV2LegacyBridgeController::class, 'regi
 Route::post('/api/v2/auth/register-from-install', [AuthV2LegacyBridgeController::class, 'registerFromInstall']);
 Route::get('/api/v2/auth/verify-install-token', [AuthV2LegacyBridgeController::class, 'verifyInstallToken']);
 Route::match(['get', 'post'], '/api/v2/auth/ghl_autologin', [AuthV2LegacyBridgeController::class, 'ghlAutologin']);
+Route::get('/api/v2/location/bootstrap', [AuthV2LegacyBridgeController::class, 'locationBootstrap']);
 
 // Agency Install Trio
 Route::match(['get', 'post'], '/api/v2/agency/install/provision', [AgencyV2LegacyBridgeController::class, 'provision']);

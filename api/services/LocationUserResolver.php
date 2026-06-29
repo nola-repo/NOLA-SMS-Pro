@@ -45,10 +45,16 @@ class LocationUserResolver
 
     public static function isEligibleUser(array $data, string $locationId): bool
     {
-        $isActive = !empty($data['active']);
+        return self::isActiveNonAgencyUser($data)
+            && self::userMatchesLocation($data, $locationId);
+    }
+
+    public static function isActiveNonAgencyUser(array $data): bool
+    {
+        $isActive = !array_key_exists('active', $data) || !empty($data['active']);
         $role = strtolower(trim((string)($data['role'] ?? 'user')));
 
-        return $isActive && $role !== 'agency' && self::userMatchesLocation($data, $locationId);
+        return $isActive && $role !== 'agency';
     }
 
     /**
@@ -216,8 +222,8 @@ class LocationUserResolver
             }
 
             $userData = $userSnap->data();
-            if (!is_array($userData) || !self::isEligibleUser($userData, $locationId)) {
-                throw new LocationUserResolutionException('Canonical location owner is inactive or linked to another location.');
+            if (!is_array($userData) || !self::isActiveNonAgencyUser($userData)) {
+                throw new LocationUserResolutionException('Canonical location owner is inactive or invalid.');
             }
 
             return ['id' => $ownerId, 'data' => $userData, 'source' => 'location_owners'];
