@@ -697,8 +697,8 @@ if ($linkedEmailSafe !== '') {
     $linkedLabel = $linkedNameSafe !== '' ? "{$linkedNameSafe} &lt;{$linkedEmailSafe}&gt;" : $linkedEmailSafe;
     $linkedAccountHtml = <<<HTML
     <div class="banner-blue">
-        <p>Primary NOLA SMS Pro owner for this sub-account: <strong>{$linkedLabel}</strong>.<br>
-        Sign in with that email if it is yours. Other team members can enter their own NOLA SMS Pro email and password below.</p>
+        <p>NOLA SMS Pro account for this sub-account: <strong>{$linkedLabel}</strong>.<br>
+        This location supports one account. Sign in with this email to continue.</p>
     </div>
 HTML;
 }
@@ -708,7 +708,7 @@ $emailLabelFor = 'email';
 if ($linkedEmailSafe !== '') {
     $emailFieldHtml = <<<HTML
             <input id="email" name="email" type="email" required
-                placeholder="{$linkedEmailSafe}" value="{$emailVal}" autocomplete="username">
+                value="{$linkedEmailSafe}" autocomplete="username" readonly aria-readonly="true">
 HTML;
 } else {
     $emailFieldHtml = <<<HTML
@@ -728,28 +728,9 @@ $footerHtml = '<p class="footer" style="margin-top:16px;">New installation? <a h
 if ($isBulkInstall) {
     $footerHtml = '<p class="footer" style="margin-top:16px;">After provisioning, open NOLA SMS Pro from the target GoHighLevel sub-account to finish setup.</p>';
 } elseif ($linkedEmailSafe !== '' && $locationIdRaw !== '') {
-    $footerHtml = '<p class="footer" style="margin-top:16px;">New installation? <a href="' . htmlspecialchars($marketplace, ENT_QUOTES, 'UTF-8') . '" style="color:#2b83fa;font-weight:600;">Open Marketplace</a></p>';
-    try {
-        $dbForFooter = isset($dbForInstall) ? $dbForInstall : get_firestore();
-        $locSnap = $dbForFooter->collection('ghl_tokens')->document($locationIdRaw)->snapshot();
-        $locData = $locSnap->exists() ? $locSnap->data() : [];
-        $jwtSecretFooter = getenv('JWT_SECRET');
-        if ($jwtSecretFooter !== false && trim((string)$jwtSecretFooter) !== '') {
-            $registerUrl = install_build_registration_url(
-                (string)$jwtSecretFooter,
-                $locationIdRaw,
-                (string)($locData['location_name'] ?? $locationName ?? ''),
-                (string)($locData['companyId'] ?? $locData['company_id'] ?? '') ?: null,
-                (string)($locData['company_name'] ?? $locData['agency_name'] ?? $companyName ?? ''),
-                'login_create_additional_user',
-                INSTALL_STATE_LINKED_ACCOUNT,
-                ['allow_additional_member' => true]
-            );
-            $footerHtml .= '<p class="footer" style="margin-top:12px;">Need a separate NOLA SMS Pro login for this same GoHighLevel sub-account? <a href="' . htmlspecialchars($registerUrl, ENT_QUOTES, 'UTF-8') . '" style="color:#2b83fa;font-weight:600;">Create account</a></p>';
-        }
-    } catch (Exception $e) {
-        error_log('[install-login] footer additional registration link failed: ' . $e->getMessage());
-    }
+    // Strict 1:1 reinstall: linked locations show login only. Password recovery
+    // remains available beside the password field.
+    $footerHtml = '';
 } elseif ($locationIdRaw !== '') {
     try {
         $dbForFooter = isset($dbForInstall) ? $dbForInstall : get_firestore();

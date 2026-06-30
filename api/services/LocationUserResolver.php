@@ -172,171 +172,18 @@ class LocationUserResolver
                 $ref->set($payload + ['created_at' => new \Google\Cloud\Core\Timestamp($now)], ['merge' => true]);
             }
 
-            foreach ($matches as $match) {
-                $memberId = trim((string)($match['id'] ?? ''));
-                if ($memberId === '' || $memberId === $ownerId) {
-                    continue;
-                }
-                $memberData = is_array($match['data'] ?? null) ? $match['data'] : [];
-                $memberEmail = strtolower(trim((string)($memberData['email'] ?? '')));
-                $memberName = trim((string)(
-                    $memberData['name']
-                    ?? $memberData['full_name']
-                    ?? trim((string)($memberData['firstName'] ?? '') . ' ' . (string)($memberData['lastName'] ?? ''))
-                ));
-                $ref->collection('members')->document($memberId)->set([
-                    'entity_id' => $locationId,
-                    'location_id' => $locationId,
-                    'user_id' => $memberId,
-                    'owner_user_id' => $memberId,
-                    'email' => $memberEmail,
-                    'owner_email' => $memberEmail,
-                    'name' => $memberName,
-                    'owner_name' => $memberName,
-                    'is_additional_location_member' => true,
-                    'source' => 'LocationUserResolver:first_registered_member',
-                    'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-                ], ['merge' => true]);
-            }
         } catch (\Throwable $e) {
             error_log('[LocationUserResolver] canonical owner backfill failed for ' . $locationId . ': ' . $e->getMessage());
         }
     }
 
-    public static function createOrUpdateLink($db, string $locationId, string $userId, ?string $ghlUserId, ?string $emailNormalized): void
-    {
-        $now = new \Google\Cloud\Core\Timestamp(new \DateTimeImmutable());
-        
-        if ($ghlUserId !== null && trim($ghlUserId) !== '') {
-            $ghlUserId = trim($ghlUserId);
-            $ghlUserHash = hash('sha256', $ghlUserId);
-            $linkId = $locationId . '_ghl_user_' . $ghlUserHash;
-            $db->collection('location_user_links')->document($linkId)->set([
-                'location_id' => $locationId,
-                'user_id' => $userId,
-                'identity_type' => 'ghl_user_id',
-                'identity_value_hash' => $ghlUserHash,
-                'ghl_user_id' => $ghlUserId,
-                'email_normalized' => $emailNormalized,
-                'active' => true,
-                'created_at' => $now,
-                'updated_at' => $now,
-            ], ['merge' => true]);
-        }
-        
-        if ($emailNormalized !== null && trim($emailNormalized) !== '') {
-            $emailNormalized = strtolower(trim($emailNormalized));
-            $emailHash = hash('sha256', $emailNormalized);
-            $linkId = $locationId . '_email_' . $emailHash;
-            $db->collection('location_user_links')->document($linkId)->set([
-                'location_id' => $locationId,
-                'user_id' => $userId,
-                'identity_type' => 'email',
-                'identity_value_hash' => $emailHash,
-                'ghl_user_id' => $ghlUserId,
-                'email_normalized' => $emailNormalized,
-                'active' => true,
-                'created_at' => $now,
-                'updated_at' => $now,
-            ], ['merge' => true]);
-        }
-    }
-
     public static function findForIframeIdentity($db, string $locationId, ?string $ghlUserId, ?string $email): ?array
     {
-        $ghlUserId = trim((string)$ghlUserId);
-        $email = trim((string)$email);
-        $emailNormalized = $email !== '' ? strtolower($email) : null;
-
-        // 1. If ghl_user_id is present, look up active location_user_links by location_id + ghl_user_id.
-        if ($ghlUserId !== '') {
-            $ghlUserHash = hash('sha256', $ghlUserId);
-            $linkId = $locationId . '_ghl_user_' . $ghlUserHash;
-            $linkSnap = $db->collection('location_user_links')->document($linkId)->snapshot();
-            if ($linkSnap->exists()) {
-                $linkData = $linkSnap->data();
-                if (!empty($linkData['active'])) {
-                    $userId = trim((string)($linkData['user_id'] ?? ''));
-                    if ($userId !== '') {
-                        $userSnap = $db->collection('users')->document($userId)->snapshot();
-                        if ($userSnap->exists()) {
-                            $userData = $userSnap->data();
-                            if (is_array($userData) && self::isActiveNonAgencyUser($userData)) {
-                                return ['id' => $userId, 'data' => $userData, 'source' => 'location_user_links_ghl_user'];
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 2. If no match and email is present, look up active location_user_links by location_id + normalized email.
-        if ($emailNormalized !== null && $emailNormalized !== '') {
-            $emailHash = hash('sha256', $emailNormalized);
-            $linkId = $locationId . '_email_' . $emailHash;
-            $linkSnap = $db->collection('location_user_links')->document($linkId)->snapshot();
-            if ($linkSnap->exists()) {
-                $linkData = $linkSnap->data();
-                if (!empty($linkData['active'])) {
-                    $userId = trim((string)($linkData['user_id'] ?? ''));
-                    if ($userId !== '') {
-                        $userSnap = $db->collection('users')->document($userId)->snapshot();
-                        if ($userSnap->exists()) {
-                            $userData = $userSnap->data();
-                            if (is_array($userData) && self::isActiveNonAgencyUser($userData)) {
-                                return ['id' => $userId, 'data' => $userData, 'source' => 'location_user_links_email'];
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 3. If no link exists but exactly one eligible user in this location has the same normalized email, create/backfill the link and return that user.
-        if ($emailNormalized !== null && $emailNormalized !== '') {
-            $matchedUsers = [];
-            
-            // Query 1: email == $emailNormalized
-            foreach ($db->collection('users')->where('email', '=', $emailNormalized)->documents() as $doc) {
-                if ($doc->exists()) {
-                    $matchedUsers[$doc->id()] = $doc->data();
-                }
-            }
-            // Query 2: email_normalized == $emailNormalized
-            foreach ($db->collection('users')->where('email_normalized', '=', $emailNormalized)->documents() as $doc) {
-                if ($doc->exists()) {
-                    $matchedUsers[$doc->id()] = $doc->data();
-                }
-            }
-
-            // Filter by isEligibleUser
-            $eligibleUsers = [];
-            foreach ($matchedUsers as $id => $data) {
-                if (self::isEligibleUser($data, $locationId)) {
-                    $eligibleUsers[$id] = $data;
-                }
-            }
-
-            if (count($eligibleUsers) === 1) {
-                $userId = array_key_first($eligibleUsers);
-                $userData = $eligibleUsers[$userId];
-                
-                // Create/backfill links
-                self::createOrUpdateLink($db, $locationId, $userId, $ghlUserId, $emailNormalized);
-                
-                return ['id' => $userId, 'data' => $userData, 'source' => 'legacy_email_backfill'];
-            } elseif (count($eligibleUsers) > 1) {
-                throw new LocationUserResolutionException('Multiple users match the normalized email identity.');
-            }
-        }
-
-        // 4. If no identity is present, fall back to the admin-selected canonical owner in location_owners/{locationId}.
-        if ($ghlUserId === '' && ($emailNormalized === null || $emailNormalized === '')) {
-            return self::find($db, $locationId);
-        }
-
-        // Identity is present but not linked/found.
-        throw new LocationUserNotLinkedException('Location user not linked for the provided identity.');
+        // Location-level accounts are strictly one-to-one. The canonical owner
+        // is authoritative regardless of which GHL staff identity opened the
+        // iframe, preventing stale identity/member links from creating a second
+        // NOLA session for the same location.
+        return self::find($db, $locationId);
     }
 
     public static function find($db, string $locationId): ?array
@@ -374,18 +221,7 @@ class LocationUserResolver
                 'scripts/repair_location_owner.php',
             ], true);
 
-            $memberLinked = false;
-            try {
-                $memberLinked = $db->collection('location_owners')
-                    ->document($locationId)
-                    ->collection('members')
-                    ->document($ownerId)
-                    ->snapshot()
-                    ->exists();
-            } catch (\Throwable $ignored) {
-            }
-
-            if (!self::userMatchesLocation($userData, $locationId) && !$memberLinked && !$adminSelectedOwner) {
+            if (!self::userMatchesLocation($userData, $locationId) && !$adminSelectedOwner) {
                 throw new LocationUserResolutionException('Canonical location owner is not linked to this location.');
             }
 
@@ -422,12 +258,11 @@ class LocationUserResolver
         }
 
         $unique = self::deduplicateMatches($matches);
-        if (count($unique) > 1) {
-            throw new LocationUserResolutionException('Multiple eligible location users exist without an admin-selected default owner.');
-        }
-
-        if (count($unique) === 1) {
-            $chosen = array_values($unique)[0];
+        if (count($unique) >= 1) {
+            $chosen = self::chooseCanonicalMatch($unique);
+            if ($chosen === null) {
+                return null;
+            }
             self::backfillCanonicalOwner($db, $locationId, $chosen, $unique);
 
             return $chosen + ['source' => 'legacy_user_fields'];

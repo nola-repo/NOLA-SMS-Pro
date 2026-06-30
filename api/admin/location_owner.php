@@ -117,24 +117,6 @@ function admin_location_owner_candidates($db, string $locationId): array
         }
     }
 
-    try {
-        foreach ($db->collection('location_owners')->document($locationId)->collection('members')->limit(100)->documents() as $memberDoc) {
-            if (!$memberDoc->exists()) {
-                continue;
-            }
-            $memberId = $memberDoc->id();
-            $userSnap = $db->collection('users')->document($memberId)->snapshot();
-            if ($userSnap->exists()) {
-                $data = $userSnap->data();
-                if (is_array($data)) {
-                    admin_location_owner_add_candidate($matches, $memberId, $data);
-                }
-            }
-        }
-    } catch (Throwable $e) {
-        error_log('[admin/location_owner] member candidate scan failed for ' . $locationId . ': ' . $e->getMessage());
-    }
-
     return $matches;
 }
 
@@ -142,15 +124,6 @@ function admin_location_owner_user_linked($db, string $userId, array $userData, 
 {
     if (LocationUserResolver::isEligibleUser($userData, $locationId)) {
         return true;
-    }
-
-    try {
-        $memberSnap = $db->collection('location_owners')->document($locationId)->collection('members')->document($userId)->snapshot();
-        if ($memberSnap->exists()) {
-            return true;
-        }
-    } catch (Throwable $e) {
-        error_log('[admin/location_owner] member validation failed for ' . $locationId . '/' . $userId . ': ' . $e->getMessage());
     }
 
     try {
@@ -249,7 +222,7 @@ try {
         $issues = [];
         $eligibleCount = count(array_filter($users, static fn(array $u): bool => !empty($u['eligible_for_autologin'])));
         if ($ownerId === null && $eligibleCount > 1) {
-            $issues[] = 'MULTIPLE_USERS_NO_DEFAULT_OWNER';
+            $issues[] = 'LEGACY_MULTIPLE_USERS_REQUIRE_MIGRATION';
         }
         if ($ownerId !== null && !array_filter($users, static fn(array $u): bool => !empty($u['is_default_autologin_account']) && !empty($u['active']))) {
             $issues[] = 'DEFAULT_OWNER_USER_MISSING_OR_INACTIVE';
@@ -318,6 +291,17 @@ try {
         ]);
     }
 
+    foreach ($db->collection('location_owners')->where('owner_user_id', '=', $ownerUserId)->limit(2)->documents() as $ownedLocation) {
+        if ($ownedLocation->exists() && $ownedLocation->id() !== $locationId) {
+            admin_location_owner_json(409, [
+                'status' => 'error',
+                'message' => 'Selected user already owns another GHL location.',
+                'code' => 'USER_ALREADY_OWNS_LOCATION',
+                'owner_user_id' => $ownerUserId,
+            ]);
+        }
+    }
+
     $ownerRef = $db->collection('location_owners')->document($locationId);
     $previousSnap = $ownerRef->snapshot();
     $previousData = $previousSnap->exists() ? $previousSnap->data() : [];
@@ -349,22 +333,6 @@ try {
     }
 
     $ownerRef->set($payload, ['merge' => true]);
-
-    try {
-        $ownerRef->collection('members')->document($ownerUserId)->set([
-            'entity_id' => $locationId,
-            'location_id' => $locationId,
-            'user_id' => $ownerUserId,
-            'email' => admin_location_owner_email($userData['email'] ?? ''),
-            'name' => admin_location_owner_name($userData),
-            'active' => true,
-            'is_default_autologin_account' => true,
-            'source' => 'admin_selected_default_autologin',
-            'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-        ], ['merge' => true]);
-    } catch (Throwable $e) {
-        error_log('[admin/location_owner] member backfill failed for ' . $locationId . '/' . $ownerUserId . ': ' . $e->getMessage());
-    }
 
     try {
         NolaCache::delete('account_profile_' . $locationId);

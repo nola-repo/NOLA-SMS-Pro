@@ -284,10 +284,19 @@ function audit_classify_location($db, array $row): array
 
     if (count($eligibleUsers) > 1 && $owner === null) {
         $issues[] = [
-            'code' => 'MULTIPLE_USERS_NO_DEFAULT_OWNER',
-            'severity' => 'critical',
-            'message' => 'Multiple eligible users are linked, but no location_owners default account exists.',
-            'repair' => 'Choose default account in Admin or run scripts/repair_location_owner.php.',
+            'code' => 'LEGACY_MULTIPLE_LOCATION_USERS',
+            'severity' => 'high',
+            'message' => 'Legacy user records still link multiple NOLA accounts to this location. Runtime autologin will choose one canonical owner.',
+            'repair' => 'Choose the owner and run scripts/enforce_single_location_user.php.',
+        ];
+    }
+
+    if (!empty($row['members'])) {
+        $issues[] = [
+            'code' => 'LEGACY_LOCATION_MEMBERS_PRESENT',
+            'severity' => 'medium',
+            'message' => 'Legacy location member documents remain and should be removed by the single-user migration.',
+            'repair' => 'Run scripts/enforce_single_location_user.php for this location.',
         ];
     }
 

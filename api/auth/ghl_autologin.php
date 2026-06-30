@@ -419,10 +419,7 @@ try {
         $userData['company_name'] = $companyName;
     }
 
-    // The same user may legitimately own or belong to more than one installed
-    // location. Return a session payload scoped to the iframe's requested
-    // location so stale profile fields cannot put the frontend back into a
-    // different subaccount immediately after successful auto-login.
+    // Keep the returned profile and JWT scoped to the canonical location.
     $userData['active_location_id'] = $locationId;
     $userData['location_id'] = $locationId;
     $userData['ghl_token_ref'] = 'ghl_tokens/' . $locationId;
@@ -451,13 +448,10 @@ try {
         'resolution_reason' => $e->getMessage(),
     ]);
 } catch (LocationUserResolutionException $e) {
-    $errCode = (strpos($e->getMessage(), 'email identity') !== false) 
-        ? 'DUPLICATE_LOCATION_USER_IDENTITY' 
-        : 'DUPLICATE_LOCATION_USERS';
-    nola_auth_error_response(409, $errCode, $e->getMessage(), $locationId ?? null, $companyId !== '' ? $companyId : null, [
+    nola_auth_error_response(409, 'LOCATION_OWNER_INVALID', $e->getMessage(), $locationId ?? null, $companyId !== '' ? $companyId : null, [
         'location_id' => $locationId ?? null,
         'resolution_reason' => $e->getMessage(),
-        'repair_hint' => 'Choose the default autologin account in Admin/All Subaccounts or run scripts/audit_location_users.php and scripts/repair_location_owner.php for this location.',
+        'repair_hint' => 'Repair the canonical owner with scripts/repair_location_owner.php, then run scripts/enforce_single_location_user.php for this location.',
     ]);
 } catch (Exception $e) {
     nola_auth_error_response(500, 'AUTOLOGIN_FAILED', 'Auto-login failed.', $locationId ?? null, $companyId !== '' ? $companyId : null, [

@@ -44,13 +44,6 @@ function repair_location_owner_user_linked($db, string $locationId, string $user
     }
 
     try {
-        if ($db->collection('location_owners')->document($locationId)->collection('members')->document($userId)->snapshot()->exists()) {
-            return true;
-        }
-    } catch (Throwable $ignored) {
-    }
-
-    try {
         if ($db->collection('users')->document($userId)->collection('subaccounts')->document($locationId)->snapshot()->exists()) {
             return true;
         }
@@ -83,6 +76,12 @@ try {
         throw new RuntimeException("User {$ownerUserId} is not linked to {$locationId}.");
     }
 
+    foreach ($db->collection('location_owners')->where('owner_user_id', '=', $ownerUserId)->limit(2)->documents() as $ownedLocation) {
+        if ($ownedLocation->exists() && $ownedLocation->id() !== $locationId) {
+            throw new RuntimeException("User {$ownerUserId} already owns location {$ownedLocation->id()}.");
+        }
+    }
+
     $ownerRef = $db->collection('location_owners')->document($locationId);
     $previousSnap = $ownerRef->snapshot();
     $previousData = $previousSnap->exists() ? $previousSnap->data() : [];
@@ -113,17 +112,6 @@ try {
 
     if ($apply) {
         $ownerRef->set($payload, ['merge' => true]);
-        $ownerRef->collection('members')->document($ownerUserId)->set([
-            'entity_id' => $locationId,
-            'location_id' => $locationId,
-            'user_id' => $ownerUserId,
-            'email' => repair_location_owner_email($userData['email'] ?? ''),
-            'name' => repair_location_owner_name($userData),
-            'active' => true,
-            'is_default_autologin_account' => true,
-            'source' => 'manual_repair_default_autologin',
-            'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-        ], ['merge' => true]);
     }
 
     echo json_encode([

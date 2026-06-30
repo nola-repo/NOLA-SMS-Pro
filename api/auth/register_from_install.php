@@ -370,7 +370,7 @@ try {
         }
     }
 
-    // ── 1b. Additional NOLA users may register for the same GHL sub-account; do not block on primary owner email. ──
+    // Linked GHL sub-accounts are handled by the login-only reinstall flow.
 
     // ── 1c. If no email match, check for an INCOMPLETE doc by location_id ────
     if (!$existingDoc && $isLocationLevel) {
@@ -391,6 +391,32 @@ try {
     $ownershipMode = 'none';
     register_from_install_log_timing($rflogId, 'email_lookup', $rflogStart);
 
+    // A GHL location may have exactly one NOLA user. Reinstalling with the
+    // canonical account is allowed; registering a second account is not.
+    if ($isLocationLevel && $locationId) {
+        if (is_array($existingDoc)) {
+            foreach (install_user_location_ids($existingDoc) as $existingLocationId) {
+                if ($existingLocationId !== (string)$locationId) {
+                    register_from_install_account_location_conflict((string)$locationId);
+                }
+            }
+        }
+
+        if ($existingId !== null) {
+            foreach ($db->collection('location_owners')->where('owner_user_id', '=', (string)$existingId)->limit(2)->documents() as $ownedLocation) {
+                if ($ownedLocation->exists() && $ownedLocation->id() !== (string)$locationId) {
+                    register_from_install_account_location_conflict((string)$locationId);
+                }
+            }
+        }
+
+        $canonicalAccount = install_linked_account_for_location($db, (string)$locationId, false);
+        $canonicalUserId = trim((string)($canonicalAccount['id'] ?? ''));
+        if ($canonicalUserId !== '' && $canonicalUserId !== (string)$existingId) {
+            register_from_install_location_conflict((string)$locationId);
+        }
+    }
+
     // ── 2a. EXISTING ACCOUNT — link location / complete profile ───────────────
     if ($existingDoc) {
         // Enforce password verification if the account is already fully set up
@@ -404,7 +430,9 @@ try {
 
         if ($isLocationLevel && $locationId) {
             $ownershipMode = install_attach_user_to_location_ownership($db, (string)$locationId, $existingId, $email, $fullName, $phone, $now, 'register_from_install_existing');
-            LocationUserResolver::createOrUpdateLink($db, $locationId, $existingId, $ghlUserId, $email);
+            if ($ownershipMode !== 'primary') {
+                register_from_install_location_conflict((string)$locationId);
+            }
             register_from_install_log_timing($rflogId, 'owner_attach', $rflogStart);
         }
 
@@ -630,7 +658,9 @@ try {
 
     if ($isLocationLevel && $locationId) {
         $ownershipMode = install_attach_user_to_location_ownership($db, (string)$locationId, $newUserId, $email, $fullName, $phone, $now, 'register_from_install_new');
-        LocationUserResolver::createOrUpdateLink($db, $locationId, $newUserId, $ghlUserId, $email);
+        if ($ownershipMode !== 'primary') {
+            register_from_install_location_conflict((string)$locationId);
+        }
         register_from_install_log_timing($rflogId, 'owner_attach', $rflogStart);
     }
 
@@ -735,6 +765,28 @@ try {
 function register_from_install_log_timing(string $rid, string $step, float $sinceStart): void
 {
     error_log('[register_from_install] rid=' . $rid . ' step=' . $step . ' ms=' . (int) round((microtime(true) - $sinceStart) * 1000));
+}
+
+function register_from_install_location_conflict(string $locationId): void
+{
+    http_response_code(409);
+    echo json_encode([
+        'error' => 'This GHL location already has a NOLA SMS Pro account. Sign in with the existing account or contact support to transfer ownership.',
+        'code' => 'LOCATION_ALREADY_REGISTERED',
+        'location_id' => $locationId,
+    ]);
+    exit;
+}
+
+function register_from_install_account_location_conflict(string $locationId): void
+{
+    http_response_code(409);
+    echo json_encode([
+        'error' => 'This NOLA SMS Pro account is already linked to another GHL location. Use the account assigned to this location or contact support.',
+        'code' => 'ACCOUNT_ALREADY_LINKED_TO_LOCATION',
+        'location_id' => $locationId,
+    ]);
+    exit;
 }
 
 /**

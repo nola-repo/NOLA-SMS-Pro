@@ -92,9 +92,11 @@ try {
     $eligible = array_values(array_filter($users, static fn(array $user): bool => $user['eligible_for_autologin']));
     $classification = 'healthy';
     if (!$ownerSnap->exists()) {
-        $classification = count($eligible) > 1 ? 'ambiguous_legacy_owners' : 'missing_owner_record';
+        $classification = count($eligible) > 1 ? 'legacy_multiple_users_require_migration' : 'missing_owner_record';
     } elseif ($ownerId === '' || !isset($unique[$ownerId]) || !LocationUserResolver::isEligibleUser($unique[$ownerId]['data'], $locationId)) {
         $classification = 'stale_owner_record';
+    } elseif (count($eligible) > 1) {
+        $classification = 'legacy_multiple_users_require_migration';
     }
 
     echo json_encode([

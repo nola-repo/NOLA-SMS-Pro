@@ -2425,15 +2425,6 @@ function install_user_linked_to_location($db, string $uid, string $locationId, ?
     }
 
     try {
-        $memberSnap = $db->collection('location_owners')->document($locationId)->collection('members')->document($uid)->snapshot();
-        if ($memberSnap->exists()) {
-            return true;
-        }
-    } catch (Exception $e) {
-        error_log("[install_helpers] location member lookup failed for {$uid}/{$locationId}: " . $e->getMessage());
-    }
-
-    try {
         $ownerSnap = $db->collection('location_owners')->document($locationId)->snapshot();
         if ($ownerSnap->exists()) {
             $ownerData = $ownerSnap->data();
@@ -2441,14 +2432,12 @@ function install_user_linked_to_location($db, string $uid, string $locationId, ?
             $ownerEmail = install_norm_email($ownerData['owner_email'] ?? $ownerData['email'] ?? $ownerData['user_email'] ?? $ownerData['account_email'] ?? '');
 
             if ($ownerUid !== '') {
-                if ($ownerUid === $uid) {
-                    return true;
-                }
-                // Multiple NOLA users may be linked to one GHL subaccount. A
-                // canonical owner row must not hide valid legacy/member links.
+                return $ownerUid === $uid;
             } elseif ($email !== null && $ownerEmail !== '' && $ownerEmail === install_norm_email($email)) {
                 return true;
             }
+
+            return false;
         }
     } catch (Exception $e) {
         error_log("[install_helpers] user linked owner check failed for {$uid}/{$locationId}: " . $e->getMessage());
@@ -2695,58 +2684,10 @@ function install_build_registration_url(
 }
 
 /**
- * Record a non-primary user linked to a sub-account under location_owners/{locationId}/members/{userId}.
+ * Claim canonical location_owners/{locationId}. A location that already has a
+ * different canonical owner cannot be attached to another NOLA user.
  *
- * @param array<string,mixed> $extra
- */
-function install_record_location_member(
-    $db,
-    string $locationId,
-    string $userId,
-    string $email,
-    string $fullName,
-    string $phone,
-    DateTimeImmutable $now,
-    string $source,
-    array $extra = []
-): void {
-    $locationId = trim($locationId);
-    $userId = trim($userId);
-    if ($locationId === '' || $userId === '') {
-        return;
-    }
-
-    $row = array_merge([
-        'entity_id' => $locationId,
-        'user_id' => $userId,
-        'owner_user_id' => $userId,
-        'email' => install_norm_email($email),
-        'owner_email' => install_norm_email($email),
-        'name' => trim($fullName),
-        'owner_name' => trim($fullName),
-        'phone' => trim($phone),
-        'owner_phone' => trim($phone),
-        'is_additional_location_member' => true,
-        'source' => $source,
-        'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-    ], $extra);
-
-    try {
-        $ref = $db->collection('location_owners')->document($locationId)->collection('members')->document($userId);
-        $snap = $ref->snapshot();
-        if (!$snap->exists()) {
-            $row['created_at'] = new \Google\Cloud\Core\Timestamp($now);
-        }
-        $ref->set($row, ['merge' => true]);
-    } catch (Exception $e) {
-        error_log("[install_helpers] install_record_location_member failed for {$locationId}/members/{$userId}: " . $e->getMessage());
-    }
-}
-
-/**
- * Claim canonical location_owners/{locationId} when empty, or attach as members/{userId} when another owner exists.
- *
- * @return 'primary'|'member'
+ * @return 'primary'|'conflict'
  */
 function install_attach_user_to_location_ownership(
     $db,
@@ -2762,56 +2703,18 @@ function install_attach_user_to_location_ownership(
     $userId = trim($userId);
     $email = install_norm_email($email);
     if ($locationId === '' || $userId === '' || $email === '') {
-        return 'member';
+        return 'conflict';
     }
 
     try {
-        $ref = $db->collection('location_owners')->document($locationId);
-        $snap = $ref->snapshot();
-        if (!$snap->exists()) {
-            if (install_claim_owner_lock($db, 'location_owners', $locationId, $userId, $email, $fullName, $now, $source)) {
-                return 'primary';
-            }
-
-            install_record_location_member($db, $locationId, $userId, $email, $fullName, $phone, $now, $source . ':claim_race');
-            return 'member';
-        }
-
-        $data = $snap->data();
-        $existingUid = trim((string)($data['owner_user_id'] ?? $data['owner_uid'] ?? $data['user_id'] ?? $data['uid'] ?? ''));
-        $existingEmail = install_norm_email($data['owner_email'] ?? $data['email'] ?? $data['user_email'] ?? $data['account_email'] ?? '');
-
-        if ($existingUid !== '' && $existingUid === $userId) {
-            install_claim_owner_lock($db, 'location_owners', $locationId, $userId, $email, $fullName, $now, $source);
-            return 'primary';
-        }
-
-        if ($existingUid === '' && $existingEmail === '') {
-            if (install_claim_owner_lock($db, 'location_owners', $locationId, $userId, $email, $fullName, $now, $source)) {
-                return 'primary';
-            }
-        }
-
-        if ($existingUid !== '' && $existingUid !== $userId) {
-            install_record_location_member($db, $locationId, $userId, $email, $fullName, $phone, $now, $source);
-            return 'member';
-        }
-
-        if ($existingEmail !== '' && $existingEmail !== $email) {
-            install_record_location_member($db, $locationId, $userId, $email, $fullName, $phone, $now, $source);
-            return 'member';
-        }
-
         if (install_claim_owner_lock($db, 'location_owners', $locationId, $userId, $email, $fullName, $now, $source)) {
             return 'primary';
         }
-
-        install_record_location_member($db, $locationId, $userId, $email, $fullName, $phone, $now, $source . ':fallback');
-        return 'member';
     } catch (Exception $e) {
         error_log("[install_helpers] install_attach_user_to_location_ownership failed for {$locationId}/{$userId}: " . $e->getMessage());
-        return 'member';
     }
+
+    return 'conflict';
 }
 
 /**
