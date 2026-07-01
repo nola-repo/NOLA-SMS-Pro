@@ -14,7 +14,6 @@ require __DIR__ . '/../install_helpers.php';
 require __DIR__ . '/../services/CreditManager.php';
 require_once __DIR__ . '/../services/SenderResolver.php';
 require_once __DIR__ . '/../services/MessageSyncService.php';
-require_once __DIR__ . '/../services/SmsDeliveryStatus.php';
 require __DIR__ . '/../services/GhlClient.php';
 require_once __DIR__ . '/../services/GhlSyncService.php';
 require_once __DIR__ . '/../services/FirestoreId.php';
@@ -288,7 +287,7 @@ $workflowData = normalize_payload_section($payload['workflow'] ?? $data['workflo
 $batch_id = $customData['batch_id'] ?? $data['batch_id'] ?? $payload['batch_id'] ?? $_POST['batch_id'] ?? null;
 $recipient_key = $customData['recipient_key'] ?? $data['recipient_key'] ?? $payload['recipient_key'] ?? $_POST['recipient_key'] ?? null;
 
-// GHL Contact ID ? passed by GHL Workflows as {{contact.id}} in customData.
+// GHL Contact ID — passed by GHL Workflows as {{contact.id}} in customData.
 // Used by the GHL sync block below to post the message back to GHL Conversations.
 $contactId = $customData['contactId'] ?? $customData['contact_id']
     ?? $data['contactId'] ?? $data['contact_id']
@@ -306,14 +305,14 @@ $message = first_non_empty_payload_value($customData, $payload, $data, [
 ]) ?? '';
 
 if ($message) {
-    // NOTE: Do NOT use strip_tags() here ? it removes anything resembling an HTML tag,
+    // NOTE: Do NOT use strip_tags() here — it removes anything resembling an HTML tag,
     // e.g. "hi <3" becomes "hi " which silently truncates the user's message.
     // The message arrives as JSON (not HTML) so HTML stripping is never needed.
     $message = html_entity_decode($message, ENT_QUOTES | ENT_HTML5, 'UTF-8');
     
     // Sanitize smart unicode punctuation to GSM-7 equivalents to prevent UCS-2 segment limits
     $message = str_replace(
-        ['?', '?', '?', '?', '?', '?', '?', '`', '?'],
+        ['‘', '’', '“', '”', '–', '—', '…', '`', '´'],
         ["'", "'", '"', '"', '-', '-', '...', "'", "'"],
         $message
     );
@@ -324,7 +323,7 @@ if ($message) {
 }
 log_sms("MESSAGE_CLEANED", $message);
 
-// Extract Numbers ? GHL Marketplace may send as 'number' or 'phone' depending on field reference
+// Extract Numbers — GHL Marketplace may send as 'number' or 'phone' depending on field reference
 $numberRaw = first_non_empty_payload_value($customData, $payload, $data, $contactData, [
     'number',
     'phone',
@@ -351,7 +350,7 @@ if ($num_recipients === 0) {
 $required_credits = CreditManager::calculateRequiredCredits($message, $num_recipients);
 
 // -- Multi-Tenancy: Get and Validate locationId ----------------------------------
-// GHL does NOT interpolate {{variables}} in custom HTTP headers for Marketplace actions ?
+// GHL does NOT interpolate {{variables}} in custom HTTP headers for Marketplace actions —
 // only in the request body. So we check the header first, then fall back to the body.
 $locId = get_ghl_location_id();
 if (!$locId) {
@@ -587,7 +586,7 @@ if ($centralLocationId !== '') {
         $isSystemNotification = true;
     }
 
-    // Explicit flag in customData ? trusted only when central location is involved
+    // Explicit flag in customData — trusted only when central location is involved
     $reqSystemFlag = $customData['is_system_notification'] ?? $payload['is_system_notification'] ?? $data['is_system_notification'] ?? null;
     $flagIsTrue    = ($reqSystemFlag === true || $reqSystemFlag === 'true' || $reqSystemFlag === 1 || $reqSystemFlag === '1');
     $isKnownSystemAlert = $systemAlertType !== '' && in_array($systemAlertType, $knownSystemAlertTypes, true);
@@ -719,11 +718,11 @@ $requestedSender = $customData['sendername'] ?? $payload['sendername'] ?? $data[
 
 // -- Sender & Gateway Resolution (single authoritative block) -----------------
 //
-// PATH A ? Subaccount has its own (external) API key:
+// PATH A — Subaccount has its own (external) API key:
 //   ? Route through their key. They own their sender registrations.
 //   ? Skip NOLA credit deduction ($usingCustomSender = true).
 //
-// PATH B ? Using the NOLA master billing gateway:
+// PATH B — Using the NOLA master billing gateway:
 //   ? NOLA credits apply. Sender MUST be in MASTER_APPROVED_SENDERS.
 //   ? If the subaccount's approved sender is not on the master account,
 //     fall back to the default (NOLASMSPro) to guarantee delivery.
@@ -873,7 +872,7 @@ error_log("[send_sms] BILLING DECISION for loc={$locId}: " . json_encode([
 
 // -- Credit Deduction & Trial --------------------------------------------------
 if ($bypassBilling) {
-    // Free system notification ? no trial counter increment, no wallet deduction.
+    // Free system notification — no trial counter increment, no wallet deduction.
     error_log("[send_sms] BILLING BYPASS: System notification. Skipping credit deduction for loc={$locId}.");
 
 } elseif ($usingFreeCredits) {
@@ -897,7 +896,7 @@ if ($bypassBilling) {
     }
 
 } else {
-    // Paid deduction ? applies to ALL sends (both PATH A and non-trial PATH B).
+    // Paid deduction — applies to ALL sends (both PATH A and non-trial PATH B).
     // Own-API-key users consume paid NOLA platform credits only after trial is exhausted.
 
     // Resolve agency_id for logging and lock check.
@@ -915,7 +914,7 @@ if ($bypassBilling) {
     // -- 1. Subaccount balance pre-flight ------------------------------------
     $subBalance = $creditManager->get_balance($account_id);
     if ($subBalance <= 0) {
-        Logger::error('Insufficient credits ? subaccount balance zero', ['location_id' => $locId, 'balance' => $subBalance]);
+        Logger::error('Insufficient credits — subaccount balance zero', ['location_id' => $locId, 'balance' => $subBalance]);
         Logger::response(402, ['status' => 'error', 'error' => 'insufficient_credits']);
         $markIdempotencyFailed('insufficient_credits', 'Your account has no credits. Please top up or request credits from your agency.', 402);
         http_response_code(402);
@@ -975,7 +974,7 @@ if ($bypassBilling) {
         }
 
         if ($billingMasterLock) {
-            // Master balance lock is ON ? deduct from BOTH agency and subaccount wallets.
+            // Master balance lock is ON — deduct from BOTH agency and subaccount wallets.
             // Agency balance must cover the send; if empty, the send is blocked.
             $creditManager->deduct_agency_and_subaccount(
                 $account_id,
@@ -990,7 +989,7 @@ if ($bypassBilling) {
                 $txMetadata
             );
         } else {
-            // No agency master lock ? deduct from subaccount wallet only.
+            // No agency master lock — deduct from subaccount wallet only.
             // agency_id is passed for transaction logging/reporting only; no agency balance required.
             $creditManager->deduct_subaccount_only(
                 $account_id,
@@ -1100,7 +1099,7 @@ if (!empty($message_results)) {
 
     // A send is "bulk" (uses a shared group conversation) when:
     //   - Multiple numbers are in this single request (GHL Marketplace style), OR
-    //   - A batch_id is present ? the frontend always sets batch_id for bulk sends,
+    //   - A batch_id is present — the frontend always sets batch_id for bulk sends,
     //     even though it calls this endpoint one phone at a time.
     $isBulk = count($validNumbers) > 1 || !empty($batch_id);
     $prefix = $locId . '_';
@@ -1131,11 +1130,13 @@ if (!empty($message_results)) {
         // Use it directly instead of always storing 'Sending', so the frontend
         // sees the real status immediately without waiting for the 5-min cron.
         $rawMsgStatus = strtolower($msg['status'] ?? '');
-        $initialStatus = \Nola\Services\SmsDeliveryStatus::initialStatusFromGateway($chosenProvider, $rawMsgStatus);
-        if (in_array($rawMsgStatus, ['failed', 'expired', 'rejected', 'undelivered'])) {
+        $initialStatus = 'Sending';
+        if (in_array($rawMsgStatus, ['sent', 'success', 'delivered'])) {
+            $initialStatus = 'Sent';
+        } elseif (in_array($rawMsgStatus, ['failed', 'expired', 'rejected', 'undelivered'])) {
             $initialStatus = 'Failed';
         }
-        // 'queued' and 'pending' intentionally stay as 'Sending' ? they will be
+        // 'queued' and 'pending' intentionally stay as 'Sending' — they will be
         // polled by check_message_status.php and resolved quickly.
 
         MessageSyncService::recordMessageEvent($db, [
@@ -1240,7 +1241,7 @@ if (!empty($message_results)) {
 
     // For bulk sends the frontend calls this endpoint once per recipient (sequential),
     // all sharing the same batch_id. Using arrayUnion in a set+merge means each call
-    // atomically appends its recipient to the members list ? works whether the doc
+    // atomically appends its recipient to the members list — works whether the doc
     // already exists or is being created for the very first time.
     // For direct (single) sends, we simply set the members array normally.
     if (false && $isBulk) {
@@ -1253,7 +1254,7 @@ if (!empty($message_results)) {
                 'last_message_at' => $ts,
                 'updated_at'      => $ts,
                 'type'            => 'group',
-                // arrayUnion creates the field if missing, appends if it exists ? never duplicates
+                // arrayUnion creates the field if missing, appends if it exists — never duplicates
                 'members'         => \Google\Cloud\Firestore\FieldValue::arrayUnion($validNumbers),
             ], ['merge' => true]);
     } elseif (false) {
@@ -1335,7 +1336,7 @@ if (!empty($message_results)) {
         // -- Apply Tags to GHL Contact --------------------------------------------
         // If the frontend passed tags (via the "Apply Tags" button in the Composer),
         // post them to the GHL Contacts API. Requires a resolved GHL contact ID.
-        // This is non-fatal ? a tagging failure will never block SMS delivery.
+        // This is non-fatal — a tagging failure will never block SMS delivery.
         $tagsToApply = $customData['tagsToApply'] ?? [];
         if (!empty($tagsToApply) && is_array($tagsToApply) && $contactId) {
             try {

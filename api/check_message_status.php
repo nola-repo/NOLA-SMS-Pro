@@ -20,7 +20,6 @@ require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
 require __DIR__ . '/webhook/config.php';
 require_once __DIR__ . '/services/SenderResolver.php';
-require_once __DIR__ . '/services/SmsDeliveryStatus.php';
 
 validate_api_request();
 
@@ -43,8 +42,13 @@ $db = get_firestore();
 
 $systemApiKey = $config['SEMAPHORE_API_KEY'];
 
-$mapStatus = function ($s, $providerStatus = null, $provider = null) {
-    return \Nola\Services\SmsDeliveryStatus::mapStoredStatus($s, $providerStatus, $provider);
+$mapStatus = function ($s) {
+    if (!$s) return 'Sending';
+    $l = strtolower($s);
+    if (in_array($l, ['queued', 'pending', 'sending'])) return 'Sending';
+    if (in_array($l, ['sent', 'success', 'delivered'])) return 'Sent';
+    if (in_array($l, ['failed', 'expired', 'rejected', 'undelivered'])) return 'Failed';
+    return ucfirst($l);
 };
 
 $results = [];
@@ -65,7 +69,7 @@ foreach ($messageIds as $messageId) {
         $doc = $db->collection('messages')->document($messageId)->snapshot();
         if ($doc->exists()) {
             $data = $doc->data();
-            $storedStatus = $mapStatus($data['status'] ?? null, $data['provider_status'] ?? null, $providerName);
+            $storedStatus = $mapStatus($data['status'] ?? null);
             $providerName = $data['provider'] ?? 'semaphore';
             $isSystem = !empty($data['is_system']);
 
@@ -96,7 +100,12 @@ foreach ($messageIds as $messageId) {
     try {
         $statusRes = $providerInstance->checkStatus($providerMessageId, $activeApiKey);
         $rawStatus = $statusRes['status'] ?? 'sending';
-        $status = \Nola\Services\SmsDeliveryStatus::rawProviderStatusToLocal($providerName, $rawStatus);
+
+        if (in_array($rawStatus, ['sent', 'success', 'delivered'])) {
+            $status = 'Sent';
+        } elseif (in_array($rawStatus, ['failed', 'expired', 'rejected', 'undelivered'])) {
+            $status = 'Failed';
+        }
 
         // Persist to Firestore if resolved
         if (in_array($status, ['Sent', 'Failed'])) {

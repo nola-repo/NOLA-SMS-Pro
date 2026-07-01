@@ -10,76 +10,6 @@ header('Content-Type: application/json');
 require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
 require_once __DIR__ . '/services/StatusSync.php';
-require_once __DIR__ . '/services/SmsDeliveryStatus.php';
-require_once __DIR__ . '/services/CreditManager.php';
-
-function messages_maybe_refund_failed($db, array &$d, string $docId): void
-{
-    if (strtolower((string)($d['status'] ?? '')) !== 'failed') {
-        return;
-    }
-    if (($d['billing_rollback_status'] ?? '') === 'refunded') {
-        return;
-    }
-
-    $locationId = trim((string)($d['location_id'] ?? ''));
-    $creditsUsed = max(0, (int)($d['credits_used'] ?? ($d['segments'] ?? 0)));
-    if ($locationId === '' || $creditsUsed <= 0) {
-        return;
-    }
-
-    $creditManager = new \Nola\Services\CreditManager();
-    $billingReference = $creditManager->resolveBillingReferenceId($d, $docId);
-    $agencyId = $creditManager->resolveAgencyIdForLocation($locationId);
-    $failReason = trim((string)($d['provider_error'] ?? ($d['error_reason'] ?? 'SMS failed')));
-    $result = $creditManager->refundSmsOnProviderFailure(
-        $locationId,
-        $creditsUsed,
-        $billingReference,
-        'Refund - SMS failed after provider acceptance' . ($failReason !== '' ? (': ' . $failReason) : ''),
-        $agencyId !== '' ? $agencyId : null,
-        $creditManager->agencyMasterLockEnabled($agencyId)
-    );
-
-    if (!empty($result['refunded'])) {
-        $d['billing_rollback_status'] = 'refunded';
-        $now = new \Google\Cloud\Core\Timestamp(new \DateTime());
-        $rollbackUpdate = [
-            ['path' => 'billing_rollback_status', 'value' => 'refunded'],
-            ['path' => 'billing_rollback_at', 'value' => $now],
-            ['path' => 'updated_at', 'value' => $now],
-        ];
-        foreach (['messages', 'sms_logs'] as $collection) {
-            try {
-                $db->collection($collection)->document($docId)->update($rollbackUpdate);
-            } catch (\Throwable $e) {
-                error_log('[messages.php] billing rollback update failed: ' . $e->getMessage());
-            }
-        }
-    }
-}
-
-function messages_row(array $d, string $docId, callable $mapStatus): array
-{
-    return [
-        'id' => $docId,
-        'message_id' => $d['message_id'] ?? null,
-        'conversation_id' => $d['conversation_id'] ?? null,
-        'location_id' => $d['location_id'] ?? null,
-        'number' => $d['number'] ?? null,
-        'message' => $d['message'] ?? null,
-        'direction' => $d['direction'] ?? 'outbound',
-        'sender_id' => $d['sender_id'] ?? null,
-        'status' => $mapStatus($d['status'] ?? null, $d['provider_status'] ?? null, $d['provider'] ?? null),
-        'provider_status' => $d['provider_status'] ?? null,
-        'provider_error' => $d['provider_error'] ?? ($d['error_reason'] ?? null),
-        'batch_id' => $d['batch_id'] ?? null,
-        'recipient_key' => $d['recipient_key'] ?? null,
-        'date_created' => isset($d['date_created']) ? $d['date_created']->formatAsString() : null,
-        'created_at' => isset($d['created_at']) ? $d['created_at']->formatAsString() : (isset($d['date_created']) ? $d['date_created']->formatAsString() : null),
-        'name' => $d['name'] ?? null,
-    ];
-}
 
 
 $db = get_firestore();
@@ -183,8 +113,13 @@ $out = [
 ];
 
 // Strictly map statuses for the UI as requested
-$mapStatus = function($s, $providerStatus = null, $provider = null) {
-    return \Nola\Services\SmsDeliveryStatus::mapStoredStatus($s, $providerStatus, $provider);
+$mapStatus = function($s) {
+    if (!$s) return null;
+    $l = strtolower($s);
+    if (in_array($l, ['queued', 'pending', 'sending'])) return 'Sending';
+    if (in_array($l, ['sent', 'success', 'delivered'])) return 'Sent';
+    if (in_array($l, ['failed', 'expired'])) return 'Failed';
+    return ucfirst($l);
 };
 
 try {
@@ -211,8 +146,21 @@ try {
                 continue;
             $d = $doc->data();
             \Nola\Services\StatusSync::checkAndSyncSingleMessage($db, $d, $doc->id(), $apiKey, $apiKeyCache);
-            messages_maybe_refund_failed($db, $d, $doc->id());
-            $out['data'][] = messages_row($d, $doc->id(), $mapStatus);
+            $out['data'][] = [
+                'id' => $doc->id(),
+                'message_id' => $d['message_id'] ?? null,
+                'conversation_id' => $d['conversation_id'] ?? null,
+                'location_id' => $d['location_id'] ?? null,
+                'number' => $d['number'] ?? null,
+                'message' => $d['message'] ?? null,
+                'direction' => $d['direction'] ?? 'outbound',
+                'sender_id' => $d['sender_id'] ?? null,
+                'status' => $mapStatus($d['status'] ?? null),
+                'batch_id' => $d['batch_id'] ?? null,
+                'recipient_key' => $d['recipient_key'] ?? null,
+                'date_created' => isset($d['date_created']) ? $d['date_created']->formatAsString() : null,
+                'name' => $d['name'] ?? null,
+            ];
         }
         $out['total'] = count($out['data']);
         echo json_encode($out, JSON_PRETTY_PRINT);
@@ -260,8 +208,22 @@ try {
                 continue;
             $d = $doc->data();
             \Nola\Services\StatusSync::checkAndSyncSingleMessage($db, $d, $doc->id(), $apiKey, $apiKeyCache);
-            messages_maybe_refund_failed($db, $d, $doc->id());
-            $out['data'][] = messages_row($d, $doc->id(), $mapStatus);
+            $out['data'][] = [
+                'id' => $doc->id(),
+                'message_id' => $d['message_id'] ?? null,
+                'conversation_id' => $d['conversation_id'] ?? null,
+                'location_id' => $d['location_id'] ?? null,
+                'number' => $d['number'] ?? null,
+                'message' => $d['message'] ?? null,
+                'direction' => $d['direction'] ?? 'outbound',
+                'sender_id' => $d['sender_id'] ?? null,
+                'status' => $mapStatus($d['status'] ?? null),
+                'batch_id' => $d['batch_id'] ?? null,
+                'recipient_key' => $d['recipient_key'] ?? null,
+                'date_created' => isset($d['date_created']) ? $d['date_created']->formatAsString() : null,
+                'created_at' => isset($d['created_at']) ? $d['created_at']->formatAsString() : (isset($d['date_created']) ? $d['date_created']->formatAsString() : null),
+                'name' => $d['name'] ?? null,
+            ];
         }
         $out['total'] = count($out['data']);
         echo json_encode($out, JSON_PRETTY_PRINT);
@@ -281,8 +243,22 @@ try {
                 continue;
             $d = $doc->data();
             \Nola\Services\StatusSync::checkAndSyncSingleMessage($db, $d, $doc->id(), $apiKey, $apiKeyCache);
-            messages_maybe_refund_failed($db, $d, $doc->id());
-            $out['data'][] = messages_row($d, $doc->id(), $mapStatus);
+            $out['data'][] = [
+                'id' => $doc->id(),
+                'message_id' => $d['message_id'] ?? null,
+                'conversation_id' => $d['conversation_id'] ?? null,
+                'location_id' => $d['location_id'] ?? null,
+                'number' => $d['number'] ?? null,
+                'message' => $d['message'] ?? null,
+                'direction' => $d['direction'] ?? 'outbound',
+                'sender_id' => $d['sender_id'] ?? null,
+                'status' => $mapStatus($d['status'] ?? null),
+                'batch_id' => $d['batch_id'] ?? null,
+                'recipient_key' => $d['recipient_key'] ?? null,
+                'date_created' => isset($d['date_created']) ? $d['date_created']->formatAsString() : null,
+                'created_at' => isset($d['created_at']) ? $d['created_at']->formatAsString() : (isset($d['date_created']) ? $d['date_created']->formatAsString() : null),
+                'name' => $d['name'] ?? null,
+            ];
         }
         $out['total'] = count($out['data']);
         echo json_encode($out, JSON_PRETTY_PRINT);
@@ -332,12 +308,17 @@ try {
                 continue;
             $d = $doc->data();
             \Nola\Services\StatusSync::checkAndSyncSingleMessage($db, $d, $doc->id(), $apiKey, $apiKeyCache);
-            messages_maybe_refund_failed($db, $d, $doc->id());
-            $rows[] = array_merge(messages_row($d, $doc->id(), $mapStatus), [
+            $rows[] = [
+                'id' => $doc->id(),
                 'direction' => 'outbound',
+                'message_id' => $d['message_id'] ?? null,
                 'numbers' => $d['numbers'] ?? [],
+                'message' => $d['message'] ?? null,
+                'sender_id' => $d['sender_id'] ?? null,
+                'status' => $mapStatus($d['status'] ?? null),
+                'date_created' => isset($d['date_created']) ? $d['date_created']->formatAsString() : null,
                 'source' => $d['source'] ?? null,
-            ]);
+            ];
         }
         $out['data'] = array_merge($out['data'], $rows);
     }

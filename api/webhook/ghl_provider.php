@@ -51,7 +51,6 @@ require __DIR__ . '/../install_helpers.php';
 require __DIR__ . '/../services/CreditManager.php';
 require_once __DIR__ . '/../services/SenderResolver.php';
 require_once __DIR__ . '/../services/MessageSyncService.php';
-require_once __DIR__ . '/../services/SmsDeliveryStatus.php';
 require_once __DIR__ . '/../services/GhlClient.php';
 require_once __DIR__ . '/../services/SmsGatewayService.php';
 require_once __DIR__ . '/../services/FirestoreId.php';
@@ -1050,8 +1049,10 @@ $providerReferenceId = $firstRes['provider_reference_id'] ?? $providerRawMessage
 $providerMessageId = $firstRes['provider_message_id'] ?? $providerReferenceId;
 $storedMsgId = $localProviderMessageId;
 $rawMsgStatus = strtolower($firstRes['status'] ?? 'queued');
-$initialStatus = \Nola\Services\SmsDeliveryStatus::initialStatusFromGateway($chosenProvider, $rawMsgStatus);
-if (in_array($rawMsgStatus, ['failed', 'expired', 'rejected', 'undelivered'])) {
+$initialStatus = 'Sending';
+if (in_array($rawMsgStatus, ['sent', 'success', 'delivered'])) {
+    $initialStatus = 'Sent';
+} elseif (in_array($rawMsgStatus, ['failed', 'expired', 'rejected', 'undelivered'])) {
     $initialStatus = 'Failed';
 }
 
