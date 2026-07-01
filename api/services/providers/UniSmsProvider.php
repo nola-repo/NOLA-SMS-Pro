@@ -224,7 +224,10 @@ class UniSmsProvider implements SmsProviderInterface
         if (in_array($l, ['retrying', 'sending'])) {
             return 'sending';
         }
-        if (in_array($l, ['sent', 'success', 'delivered'])) {
+        if (in_array($l, ['delivered'])) {
+            return 'delivered';
+        }
+        if (in_array($l, ['sent', 'success'])) {
             return 'sent';
         }
         if (in_array($l, ['failed', 'expired', 'rejected', 'undelivered'])) {

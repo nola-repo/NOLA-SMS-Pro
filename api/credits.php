@@ -257,8 +257,9 @@ try {
     // --- Calculate Stats ---
     // Stats count both 'deduction' (legacy) and 'sms_usage' (modern deduct_subaccount_only)
     // transaction types so the figures are always accurate regardless of which code path sent.
-    $startOfMonth = new \DateTimeImmutable('first day of this month 00:00:00');
-    $startOfToday = new \DateTimeImmutable('today 00:00:00');
+    $statsTz = new \DateTimeZone('Asia/Manila');
+    $startOfMonth = new \DateTimeImmutable('first day of this month 00:00:00', $statsTz);
+    $startOfToday = new \DateTimeImmutable('today 00:00:00', $statsTz);
 
     $creditsRef = $db->collection('credit_transactions');
 
@@ -286,43 +287,56 @@ try {
         $sentToday         = 0;
         $creditsUsedToday  = 0;
         $creditsUsedMonth  = 0;
+        $refundedToday     = 0;
+        $refundedMonth     = 0;
 
         foreach ($statsDocs as $txDoc) {
             if (!$txDoc->exists()) continue;
             $tx = $txDoc->data();
 
             $txType = $tx['type'] ?? '';
+            $createdAtTs = $tx['created_at'] ?? null;
+            $createdAt = null;
+            if ($createdAtTs instanceof \Google\Cloud\Core\Timestamp) {
+                $createdAt = $createdAtTs->get()->setTimezone($statsTz);
+            }
 
-            // Count both legacy 'deduction' AND modern 'sms_usage' transaction types.
-            // 'sms_usage' is written by deduct_subaccount_only() (the current SMS path).
-            // 'deduction' is written by the older deduct_credits() path.
-            $isSmsDeduction = ($txType === 'deduction' || $txType === 'sms_usage')
-                && ($tx['wallet_scope'] ?? '') !== 'agency'; // exclude agency-side mirror rows
+            $isSubaccountTx = ($tx['wallet_scope'] ?? '') !== 'agency';
+            $isSmsDeduction = $isSubaccountTx
+                && ($txType === 'deduction' || $txType === 'sms_usage');
+            $isRefund = $isSubaccountTx && $txType === 'refund';
 
             if ($isSmsDeduction) {
                 $amt         = abs((int)($tx['amount'] ?? 0));
                 $freeApplied = (int)($tx['free_usage_applied'] ?? 0);
 
-                // All documents here are >= start of month (enforced by Firestore query)
                 $creditsUsedMonth += $amt;
 
-                $createdAtTs = $tx['created_at'] ?? null;
-                if ($createdAtTs instanceof \Google\Cloud\Core\Timestamp) {
-                    $dt = $createdAtTs->get();
+                if ($createdAt && $createdAt->getTimestamp() >= $startOfToday->getTimestamp()) {
+                    $creditsUsedToday += $amt;
+                    $sentToday += max(1, $amt + $freeApplied);
+                }
+            }
 
-                    if ($dt->getTimestamp() >= $startOfToday->getTimestamp()) {
-                        $creditsUsedToday += $amt;
-                        // sent_today = paid credits used + free trial credits used
-                        $sentToday += max(1, $amt + $freeApplied);
-                    }
+            if ($isRefund) {
+                $refundAmt = abs((int)($tx['amount'] ?? 0));
+                $refundedMonth += $refundAmt;
+                if ($createdAt && $createdAt->getTimestamp() >= $startOfToday->getTimestamp()) {
+                    $refundedToday += $refundAmt;
                 }
             }
         }
+
+        $creditsUsedToday = max(0, $creditsUsedToday - $refundedToday);
+        $creditsUsedMonth = max(0, $creditsUsedMonth - $refundedMonth);
+        $sentToday = $creditsUsedToday;
 
         $stats = [
             'sent_today'         => $sentToday,
             'credits_used_today' => $creditsUsedToday,
             'credits_used_month' => $creditsUsedMonth,
+            'refunded_today'     => $refundedToday,
+            'refunded_month'     => $refundedMonth,
         ];
     }
     // -----------------------

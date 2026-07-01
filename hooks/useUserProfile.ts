@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getSession, SESSION_KEYS } from '../services/authService';
+import { AUTH_SESSION_EVENT, getSession, SESSION_KEYS } from '../services/authService';
 import { safeStorage } from '../utils/safeStorage';
 
 export interface UserProfile {
@@ -75,6 +75,7 @@ export function useUserProfile(): UserProfile | null {
       return null;
     }
   });
+  const [refreshVersion, setRefreshVersion] = useState(0);
 
   const refresh = useCallback(async () => {
     const token = getToken();
@@ -89,8 +90,21 @@ export function useUserProfile(): UserProfile | null {
   }, []);
 
   useEffect(() => {
+    const queueRefresh = () => setRefreshVersion(version => version + 1);
+    if (typeof window === 'undefined') return;
+
+    window.addEventListener(AUTH_SESSION_EVENT, queueRefresh);
+    window.addEventListener('storage', queueRefresh);
+
+    return () => {
+      window.removeEventListener(AUTH_SESSION_EVENT, queueRefresh);
+      window.removeEventListener('storage', queueRefresh);
+    };
+  }, []);
+
+  useEffect(() => {
     refresh();
-  }, [refresh]);
+  }, [refresh, refreshVersion]);
 
   return profile;
 }

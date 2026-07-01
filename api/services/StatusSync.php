@@ -2,6 +2,8 @@
 
 namespace Nola\Services;
 
+require_once __DIR__ . '/SmsDeliveryStatus.php';
+
 class StatusSync
 {
     /**
@@ -132,15 +134,9 @@ class StatusSync
                     }
 
                     if ($rawStatus !== 'error') {
-                        // Strict 3-state Mapping
-                        $newStatus = 'Sending';
-                        if (in_array($rawStatus, ['sent', 'success', 'delivered'])) {
-                            $newStatus = 'Sent';
-                        } elseif (in_array($rawStatus, ['failed', 'expired', 'rejected', 'undelivered'])) {
-                            $newStatus = 'Failed';
-                        }
+                        $newStatus = SmsDeliveryStatus::rawProviderStatusToLocal($providerName, $rawStatus);
 
-                        if (self::isUpgrade($currentStatus, $newStatus)) {
+                        if (self::isUpgrade($currentStatus, $newStatus) || ($rawStatus === 'delivered' && $currentStatus === 'Sent')) {
                             self::finalize($db, $doc, $messageId, $newStatus, null, $rawStatus);
                             $updatedCount++;
                             error_log("[StatusSync] " . json_encode([
@@ -190,7 +186,13 @@ class StatusSync
     {
         // 1. Only process outbound messages that are in a non-final state
         $status = $data['status'] ?? '';
-        if (!in_array(strtolower($status), ['queued', 'pending', 'sending'])) {
+        $providerName = $data['provider'] ?? 'semaphore';
+        $providerStatus = strtolower(trim((string)($data['provider_status'] ?? '')));
+        $isPendingUnismsDelivery = SmsDeliveryStatus::isUnismsProvider($providerName)
+            && strtolower((string)$status) === 'sent'
+            && $providerStatus === 'sent';
+
+        if (!in_array(strtolower((string)$status), ['queued', 'pending', 'sending']) && !$isPendingUnismsDelivery) {
             return;
         }
 
@@ -273,14 +275,9 @@ class StatusSync
             }
 
             if ($rawStatus !== 'error') {
-                $newStatus = 'Sending';
-                if (in_array($rawStatus, ['sent', 'success', 'delivered'])) {
-                    $newStatus = 'Sent';
-                } elseif (in_array($rawStatus, ['failed', 'expired', 'rejected', 'undelivered'])) {
-                    $newStatus = 'Failed';
-                }
+                $newStatus = SmsDeliveryStatus::rawProviderStatusToLocal($providerName, $rawStatus);
 
-                if (self::isUpgrade($status, $newStatus)) {
+                if (self::isUpgrade($status, $newStatus) || ($rawStatus === 'delivered' && $status === 'Sent')) {
                     self::finalize($db, null, $messageId, $newStatus, null, $rawStatus);
                     $data['status'] = $newStatus;
                     $data['updated_at'] = $ts;
@@ -380,7 +377,8 @@ class StatusSync
         $priority = [
             'Queued' => 1, 'Pending' => 1, 'Sending' => 1,
             'queued' => 1, 'pending' => 1, 'sending' => 1,
-            'Sent' => 2, 'Failed' => 2
+            'Sent' => 2, 'Failed' => 2,
+            'sent' => 2, 'failed' => 2,
         ];
         $pCurr = $priority[$curr] ?? 0;
         $pNew = $priority[$new] ?? 0;

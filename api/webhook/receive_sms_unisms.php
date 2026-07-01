@@ -6,6 +6,7 @@ require __DIR__ . '/firestore_client.php';
 require_once __DIR__ . '/../services/GhlSyncService.php';
 require_once __DIR__ . '/../services/CreditManager.php';
 require_once __DIR__ . '/../services/MessageSyncService.php';
+require_once __DIR__ . '/../services/SmsDeliveryStatus.php';
 
 header('Content-Type: application/json');
 
@@ -81,14 +82,79 @@ function unisms_clean_number($number): string
 
 function unisms_status_to_local(?string $status, ?string $event): string
 {
-    $raw = strtolower(trim((string)($status ?: $event)));
-    if (str_contains($raw, 'delivered') || str_contains($raw, 'sent') || str_contains($raw, 'success')) {
-        return 'Sent';
+    return \Nola\Services\SmsDeliveryStatus::rawProviderStatusToLocal('unisms', $status, $event);
+}
+
+function unisms_fail_reason(array $data, array $messageObj): ?string
+{
+    $reason = trim((string)($messageObj['fail_reason'] ?? ''));
+    if ($reason !== '') {
+        return $reason;
     }
-    if (str_contains($raw, 'fail') || str_contains($raw, 'reject') || str_contains($raw, 'undelivered') || str_contains($raw, 'expired')) {
-        return 'Failed';
+
+    $reason = trim((string)($data['fail_reason'] ?? ''));
+    return $reason !== '' ? $reason : null;
+}
+
+function unisms_should_refund_for_event(string $event, string $localStatus): bool
+{
+    if ($localStatus !== 'Failed') {
+        return false;
     }
-    return 'Sending';
+
+    $event = strtolower(trim($event));
+    return in_array($event, ['message.failed', 'message.expired'], true);
+}
+
+function unisms_refund_failed_message($db, array $existingData, string $documentId, string $failReason): array
+{
+    $locationId = trim((string)($existingData['location_id'] ?? ''));
+    if ($locationId === '') {
+        return ['refunded' => false, 'reason' => 'missing_location'];
+    }
+
+    if (($existingData['billing_rollback_status'] ?? '') === 'refunded') {
+        return ['refunded' => false, 'reason' => 'already_refunded'];
+    }
+
+    $creditManager = new \Nola\Services\CreditManager();
+    $billingReference = $creditManager->resolveBillingReferenceId($existingData, $documentId);
+    $creditsUsed = max(0, (int)($existingData['credits_used'] ?? ($existingData['segments'] ?? 1)));
+    if ($creditsUsed <= 0) {
+        return ['refunded' => false, 'reason' => 'no_credits_used'];
+    }
+
+    $agencyId = $creditManager->resolveAgencyIdForLocation($locationId);
+    $refundAgency = $creditManager->agencyMasterLockEnabled($agencyId);
+    $description = 'Refund - SMS failed after provider acceptance'
+        . ($failReason !== '' ? (': ' . $failReason) : '');
+
+    $result = $creditManager->refundSmsOnProviderFailure(
+        $locationId,
+        $creditsUsed,
+        $billingReference,
+        $description,
+        $agencyId !== '' ? $agencyId : null,
+        $refundAgency
+    );
+
+    if (!empty($result['refunded'])) {
+        $now = new \Google\Cloud\Core\Timestamp(new \DateTime());
+        $rollbackUpdate = [
+            ['path' => 'billing_rollback_status', 'value' => 'refunded'],
+            ['path' => 'billing_rollback_at', 'value' => $now],
+            ['path' => 'updated_at', 'value' => $now],
+        ];
+        foreach (['sms_logs', 'messages'] as $collection) {
+            try {
+                $db->collection($collection)->document($documentId)->update($rollbackUpdate);
+            } catch (\Throwable $e) {
+                error_log("[receive_sms_unisms] billing rollback update failed for {$collection}/{$documentId}: " . $e->getMessage());
+            }
+        }
+    }
+
+    return $result;
 }
 
 function unisms_event_is_status_callback(string $event): bool
@@ -141,10 +207,12 @@ function unisms_update_outbound_status($db, array $data, array $messageObj, stri
     $referenceId = unisms_reference_id($data, $messageObj);
     $providerStatus = (string)($messageObj['status'] ?? $data['status'] ?? $event);
     $localStatus = unisms_status_to_local($providerStatus, $event);
+    $failReason = unisms_fail_reason($data, $messageObj);
     $now = new \Google\Cloud\Core\Timestamp(new \DateTime());
     $updated = [];
     $ghlSyncTargets = [];
     $updatedPaths = [];
+    $refundResult = null;
 
     if ($referenceId === '') {
         return ['updated' => [], 'status' => $localStatus, 'reference_id' => null];
@@ -159,6 +227,9 @@ function unisms_update_outbound_status($db, array $data, array $messageObj, stri
         ['path' => 'provider_response', 'value' => $data],
         ['path' => 'updated_at', 'value' => $now],
     ];
+    if ($failReason !== null) {
+        $updatePayload[] = ['path' => 'provider_error', 'value' => $failReason];
+    }
 
     foreach (['sms_logs', 'messages'] as $collection) {
         try {
@@ -173,6 +244,9 @@ function unisms_update_outbound_status($db, array $data, array $messageObj, stri
                 $path = "{$collection}/{$referenceId}";
                 $updatedPaths[$path] = true;
                 $updated[] = $path;
+                if ($refundResult === null && unisms_should_refund_for_event($event, $localStatus)) {
+                    $refundResult = unisms_refund_failed_message($db, $existingData, $referenceId, (string)$failReason);
+                }
                 if (in_array($localStatus, ['Sent', 'Failed'], true) && !empty($existingData['location_id']) && !empty($existingData['ghl_message_id'])) {
                     $ghlSyncTargets[$existingData['location_id'] . ':' . $existingData['ghl_message_id']] = [
                         'location_id' => $existingData['location_id'],
@@ -206,6 +280,9 @@ function unisms_update_outbound_status($db, array $data, array $messageObj, stri
                     $doc->reference()->update($updatePayload);
                     $updatedPaths[$path] = true;
                     $updated[] = $path;
+                    if ($refundResult === null && unisms_should_refund_for_event($event, $localStatus)) {
+                        $refundResult = unisms_refund_failed_message($db, $existingData, $doc->id(), (string)$failReason);
+                    }
                     if (in_array($localStatus, ['Sent', 'Failed'], true) && !empty($existingData['location_id']) && !empty($existingData['ghl_message_id'])) {
                         $ghlSyncTargets[$existingData['location_id'] . ':' . $existingData['ghl_message_id']] = [
                             'location_id' => $existingData['location_id'],
@@ -246,11 +323,20 @@ function unisms_update_outbound_status($db, array $data, array $messageObj, stri
         'reference_id' => $referenceId,
         'provider_status' => $providerStatus,
         'normalized_status' => $localStatus,
+        'fail_reason' => $failReason,
+        'refund_result' => $refundResult,
         'updated' => $updated,
         'ghl_sync_results' => $ghlResults,
     ]));
 
-    return ['updated' => array_values(array_unique($updated)), 'status' => $localStatus, 'reference_id' => $referenceId, 'ghl_sync_results' => $ghlResults];
+    return [
+        'updated' => array_values(array_unique($updated)),
+        'status' => $localStatus,
+        'reference_id' => $referenceId,
+        'ghl_sync_results' => $ghlResults,
+        'refund_result' => $refundResult,
+        'fail_reason' => $failReason,
+    ];
 }
 
 $raw = file_get_contents('php://input');
