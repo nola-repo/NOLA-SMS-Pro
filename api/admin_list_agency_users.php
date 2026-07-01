@@ -14,6 +14,9 @@ require_once __DIR__ . '/webhook/firestore_client.php';
 require_once __DIR__ . '/admin_auth_helper.php';
 require_once __DIR__ . '/cache_helper.php';
 require_once __DIR__ . '/services/CreditManager.php';
+require_once __DIR__ . '/performance_logger.php';
+
+NolaPerformance::start('/api/admin_list_agency_users.php');
 
 function admin_list_agency_users_format_ts($ts): ?string {
     if ($ts === null) return null;
@@ -53,7 +56,9 @@ function admin_list_agency_users_token_name(array $tokenData): ?string {
     return null;
 }
 
+NolaPerformance::begin('auth');
 require_secure_admin_auth(['super_admin', 'support', 'viewer']);
+NolaPerformance::end('auth');
 
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     http_response_code(405);
@@ -64,24 +69,31 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
 $cacheKey = 'admin_agency_users_list';
 $bypassCache = isset($_GET['refresh']) || isset($_GET['bypass_cache']);
 if (!$bypassCache) {
+    NolaPerformance::begin('cache_read');
     $cachedData = NolaCache::get($cacheKey);
+    NolaPerformance::end('cache_read');
     if ($cachedData !== null) {
+        NolaPerformance::cache('HIT');
         echo json_encode($cachedData);
         exit;
     }
 }
+NolaPerformance::cache($bypassCache ? 'BYPASS' : 'MISS');
 
 $db = get_firestore();
 $creditManager = new CreditManager();
 
 try {
+    NolaPerformance::begin('data_load');
     $agencyNames = [];
     foreach (['ghl_agency_tokens', 'ghl_tokens'] as $collection) {
+        NolaPerformance::increment('firestore_queries');
         $tokenDocs = $db->collection($collection)->documents();
         foreach ($tokenDocs as $doc) {
             if (!$doc->exists()) {
                 continue;
             }
+            NolaPerformance::increment('documents_processed');
 
             $data = $doc->data();
             $isAgencyToken = $collection === 'ghl_agency_tokens' || ($data['appType'] ?? '') === 'agency';
@@ -97,6 +109,7 @@ try {
         }
     }
 
+    NolaPerformance::increment('firestore_queries');
     $usersSnap = $db->collection('agency_users')->documents();
     $agencyUsers = [];
 
@@ -104,6 +117,7 @@ try {
         if (!$doc->exists()) {
             continue;
         }
+        NolaPerformance::increment('documents_processed');
 
         $d = $doc->data();
         $email = strtolower(trim((string)($d['email'] ?? '')));
@@ -113,9 +127,12 @@ try {
             $companyName = $agencyNames[$companyId];
         }
 
-        $displayBalance = $companyId !== ''
-            ? $creditManager->get_agency_balance($companyId)
-            : (int)($d['balance'] ?? $d['credit_balance'] ?? 0);
+        if ($companyId !== '') {
+            NolaPerformance::increment('firestore_document_reads', 2);
+            $displayBalance = $creditManager->get_agency_balance($companyId);
+        } else {
+            $displayBalance = (int)($d['balance'] ?? $d['credit_balance'] ?? 0);
+        }
         $subscriptionPlan = (string)($d['subscription_plan'] ?? $d['subscription']['plan'] ?? 'starter');
         $subscriptionStatus = (string)($d['subscription_status'] ?? $d['subscription']['status'] ?? 'active');
         $planSubaccountLimit = (int)($d['plan_subaccount_limit'] ?? $d['subaccount_limit'] ?? $d['subscription']['subaccount_limit'] ?? $d['subscription']['max_active_subaccounts'] ?? $d['max_active_subaccounts'] ?? 1);
@@ -156,7 +173,10 @@ try {
         'total' => count($agencyUsers),
     ];
 
+    NolaPerformance::end('data_load');
+    NolaPerformance::begin('cache_write');
     NolaCache::set($cacheKey, $responsePayload, 300);
+    NolaPerformance::end('cache_write');
     echo json_encode($responsePayload);
 } catch (Exception $e) {
     http_response_code(500);

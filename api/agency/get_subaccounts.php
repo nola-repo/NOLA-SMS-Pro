@@ -11,6 +11,9 @@ header('Content-Type: application/json');
 require __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/../services/CreditManager.php';
 require_once __DIR__ . '/../install_helpers.php';
+require_once __DIR__ . '/../performance_logger.php';
+
+NolaPerformance::start('/api/agency/get_subaccounts.php');
 
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     http_response_code(405);
@@ -19,7 +22,9 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
 }
 
 require_once __DIR__ . '/auth_helper.php';
+NolaPerformance::begin('auth');
 $agencyId = validate_agency_request();
+NolaPerformance::end('auth');
 
 // Fallback: allow agency_id as a query param when header-based ID is absent
 if (!$agencyId) {
@@ -39,21 +44,27 @@ $cacheTtl = 300;
 $bypassCache = isset($_GET['refresh']) || isset($_GET['bypass_cache']);
 $cachedResponse = null;
 if (!$bypassCache) {
+    NolaPerformance::begin('cache_read');
     $cachedResponse = NolaCache::get($cacheKey);
+    NolaPerformance::end('cache_read');
 }
 
 if ($cachedResponse !== null) {
+    NolaPerformance::cache('HIT');
     NolaCache::sendApiCacheHeaders($cacheTtl, true);
     echo json_encode($cachedResponse);
     exit;
 }
+NolaPerformance::cache($bypassCache ? 'BYPASS' : 'MISS');
 
 try {
+    NolaPerformance::begin('data_load');
     $db = get_firestore();
 
     // 1. Get Agency metadata from ghl_tokens/{agencyId} using the robust resolver.
     //    Falls back to checking aliased fields (company_name, companyName, location_name)
     //    and can call the GHL Companies API when a token is available.
+    NolaPerformance::increment('firestore_document_reads');
     $agencyDoc = $db->collection('ghl_tokens')->document($agencyId)->snapshot();
     $agencyName = '';
     if ($agencyDoc->exists()) {
@@ -63,12 +74,14 @@ try {
 
     // 2. Get all installed subaccount tokens from Firestore (same logic as check_installs.php)
     //    This does NOT require a valid agency access token — pure Firestore query.
+    NolaPerformance::increment('firestore_queries');
     $tokenDocs = $db->collection('ghl_tokens')->where('companyId', '=', $agencyId)->documents();
 
     $locationIds = [];
     $locationNames = [];
     foreach ($tokenDocs as $doc) {
         if (!$doc->exists()) continue;
+        NolaPerformance::increment('documents_processed');
         $data = $doc->data();
 
         // Skip the agency-level token itself
@@ -85,10 +98,12 @@ try {
     }
 
     // 3. Fetch existing configs from agency_subaccounts
+    NolaPerformance::increment('firestore_queries');
     $results = $db->collection('agency_subaccounts')->where('agency_id', '=', $agencyId)->documents();
     $dbConfigs = [];
     foreach ($results as $doc) {
         if ($doc->exists()) {
+            NolaPerformance::increment('documents_processed');
             $data = $doc->data();
             $locId = $data['location_id'] ?? $doc->id();
             $dbConfigs[$locId] = $data;
@@ -115,10 +130,12 @@ try {
     $creditManager = new CreditManager();
 
     // Pre-fetch integrations to avoid O(N) queries
+    NolaPerformance::increment('firestore_queries');
     $integrationsSnap = $db->collection('integrations')->documents();
     $integrationMap = [];
     foreach ($integrationsSnap as $doc) {
         if ($doc->exists()) {
+            NolaPerformance::increment('documents_processed');
             $integrationMap[$doc->id()] = $doc->data();
         }
     }
@@ -130,6 +147,7 @@ try {
         $config  = $dbConfigs[$locId] ?? [];
 
         // Subaccount balance: users.credit_balance (via CreditManager) with legacy fallback
+        NolaPerformance::increment('firestore_document_reads');
         $creditBalance = $creditManager->get_balance((string)$locId);
 
         $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
@@ -155,6 +173,7 @@ try {
 
         // Auto-sync into agency_subaccounts if missing or stale
         if (empty($config) || ($config['agency_name'] ?? '') !== $agencyName || ($config['location_name'] ?? '') !== $locName) {
+            NolaPerformance::increment('firestore_writes');
             $db->collection('agency_subaccounts')->document($locId)->set($subaccountData, ['merge' => true]);
         }
 
@@ -170,7 +189,10 @@ try {
         'subaccounts' => $subaccounts
     ];
 
+    NolaPerformance::end('data_load');
+    NolaPerformance::begin('cache_write');
     NolaCache::set($cacheKey, $response, $cacheTtl);
+    NolaPerformance::end('cache_write');
     NolaCache::sendApiCacheHeaders($cacheTtl, false);
 
     echo json_encode($response);

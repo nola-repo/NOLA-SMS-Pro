@@ -7,9 +7,16 @@ require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
 require_once __DIR__ . '/services/CreditManager.php';
 require_once __DIR__ . '/cache_helper.php';
+require_once __DIR__ . '/performance_logger.php';
+
+NolaPerformance::start('/api/admin_sender_requests.php', [
+    'action' => (string)($_GET['action'] ?? ($_SERVER['REQUEST_METHOD'] === 'GET' ? 'sender_requests' : 'mutation')),
+]);
 
 // Authentication: Admin-only secret or specialized check
+NolaPerformance::begin('auth');
 validate_api_request();
+NolaPerformance::end('auth');
 
 $db = get_firestore();
 
@@ -690,10 +697,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'accounts') {
     $cacheKey = "admin_accounts_list";
+    NolaPerformance::begin('cache_read');
     $cachedPayload = NolaCache::get($cacheKey);
+    NolaPerformance::end('cache_read');
     $filterCompanyId = $_GET['company_id'] ?? null;
 
     if ($cachedPayload !== null) {
+        NolaPerformance::cache('HIT');
         if ($filterCompanyId) {
             $filteredResults = [];
             foreach ($cachedPayload['data'] as $item) {
@@ -707,6 +717,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
         }
         exit;
     }
+    NolaPerformance::cache('MISS');
+    NolaPerformance::begin('data_load');
 
     $results = [];
 
@@ -717,9 +729,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
     $subCompanyMap = [];
 
     foreach (['ghl_agency_tokens', 'ghl_tokens'] as $tokenCollection) {
+        NolaPerformance::increment('firestore_queries');
         $allTokens = $db->collection($tokenCollection)->documents();
         foreach ($allTokens as $tokenDoc) {
             if ($tokenDoc->exists()) {
+                NolaPerformance::increment('documents_processed');
                 $tData = $tokenDoc->data();
                 $appType = $tData['appType'] ?? '';
                 $comp = trim((string)($tData['companyId'] ?? $tData['company_id'] ?? $tokenDoc->id()));
@@ -752,11 +766,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
     }
 
     // Pre-fetch all users to map location credit balances and user profile details in-memory (eliminates O(N) nested loop queries)
+    NolaPerformance::increment('firestore_queries');
     $usersRaw = $db->collection('users')->documents();
     $locationToCreditMap = [];
     $locationToUserMap = [];
     foreach ($usersRaw as $userDoc) {
         if ($userDoc->exists()) {
+            NolaPerformance::increment('documents_processed');
             $uData = $userDoc->data();
             
             // Build location to user map
@@ -787,9 +803,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
     }
 
     // 1. Fetch all integrations (Master list)
+    NolaPerformance::increment('firestore_queries');
     $integrationsRaw = $db->collection('integrations')->documents();
 
     foreach ($integrationsRaw as $intDoc) {
+        NolaPerformance::increment('documents_processed');
         $intData = $intDoc->data();
         $intDocId = $intDoc->id();
         $locId = $intData['location_id'] ?? str_replace('ghl_', '', $intDocId);
@@ -804,9 +822,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
             
             if ($accessToken) {
                 try {
+                    NolaPerformance::begin('external_api');
                     $locationUrl = 'https://services.leadconnectorhq.com/locations/' . $locId;
                     $ch = curl_init($locationUrl);
                     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+                    curl_setopt($ch, CURLOPT_TIMEOUT, 8);
                     curl_setopt($ch, CURLOPT_HTTPHEADER, [
                         'Authorization: Bearer ' . $accessToken,
                         'Accept: application/json',
@@ -815,6 +836,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
                     $locResponse = curl_exec($ch);
                     $locHttpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
                     curl_close($ch);
+                    NolaPerformance::end('external_api');
+                    NolaPerformance::increment('external_api_calls');
 
                     if ($locHttpCode === 200) {
                         $locData = json_decode($locResponse, true);
@@ -825,9 +848,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
                             $db->collection('integrations')->document($intDocId)->set([
                                 'location_name' => $locationName
                             ], ['merge' => true]);
+                            NolaPerformance::increment('firestore_writes');
                         }
                     }
                 } catch (Exception $e) {
+                    NolaPerformance::end('external_api');
                     error_log("Failed to fetch location name for $locId: " . $e->getMessage());
                 }
             }
@@ -904,7 +929,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
     }
 
     $responsePayload = ['status' => 'success', 'data' => $results];
+    NolaPerformance::end('data_load');
+    NolaPerformance::begin('cache_write');
     NolaCache::set($cacheKey, $responsePayload, 300); // 5 minutes cache
+    NolaPerformance::end('cache_write');
 
     if ($filterCompanyId) {
         $filteredResults = [];

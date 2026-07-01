@@ -6,22 +6,33 @@ require __DIR__ . '/webhook/firestore_client.php';
 require_once __DIR__ . '/admin_auth_helper.php';
 require_once __DIR__ . '/services/SmsGatewayService.php';
 require_once __DIR__ . '/cache_helper.php';
+require_once __DIR__ . '/performance_logger.php';
+
+NolaPerformance::start('/api/admin_health.php');
 
 // Authenticate GET requests (super_admin, support, viewer allowed)
+NolaPerformance::begin('auth');
 $claims = require_secure_admin_auth(['super_admin', 'support', 'viewer']);
+NolaPerformance::end('auth');
 
 $db = get_firestore();
 
 $cacheKey = "admin_system_health_status";
+NolaPerformance::begin('cache_read');
 $cachedPayload = NolaCache::get($cacheKey);
+NolaPerformance::end('cache_read');
 if ($cachedPayload !== null) {
+    NolaPerformance::cache('HIT');
     echo json_encode($cachedPayload);
     exit;
 }
+NolaPerformance::cache('MISS');
+NolaPerformance::begin('data_load');
 
 // 1. Test database connection
 $dbConnected = false;
 try {
+    NolaPerformance::increment('firestore_document_reads');
     $db->collection('system_settings')->document('core')->snapshot();
     $dbConnected = true;
 } catch (\Throwable $e) {
@@ -36,6 +47,7 @@ $providerConfigured = false;
 $providerDetails = [];
 
 try {
+    NolaPerformance::begin('provider_api');
     $gateway = new SmsGatewayService();
     $providerName = $gateway->getProviderName();
     $resolvedProvider = ($providerName === 'auto_failover') ? 'semaphore' : $providerName;
@@ -55,7 +67,9 @@ try {
         'configured' => $providerConfigured,
         'email' => $accCheck['email'] ?? null,
     ];
+    NolaPerformance::end('provider_api');
 } catch (\Throwable $e) {
+    NolaPerformance::end('provider_api');
     error_log("[admin_health.php] Provider health check failed: " . $e->getMessage());
     $providerDetails = [
         'name' => $providerName,
@@ -74,9 +88,11 @@ $failedCount = 0;
 $pendingCount = 0;
 
 try {
+    NolaPerformance::increment('firestore_queries');
     $messages = $db->collection('messages')->orderBy('date_created', 'DESC')->limit(30)->documents();
     foreach ($messages as $doc) {
         if ($doc->exists()) {
+            NolaPerformance::increment('documents_processed');
             $data = $doc->data();
             $ts = isset($data['date_created']) && $data['date_created'] instanceof \Google\Cloud\Core\Timestamp 
                   ? $data['date_created']->get()->format('c') : null;
@@ -101,9 +117,11 @@ try {
     }
 
     // Fetch sender requests for the unified logs
+    NolaPerformance::increment('firestore_queries');
     $requests = $db->collection('sender_id_requests')->orderBy('created_at', 'DESC')->limit(20)->documents();
     foreach ($requests as $doc) {
         if ($doc->exists()) {
+            NolaPerformance::increment('documents_processed');
             $data = $doc->data();
             $ts = isset($data['created_at']) && $data['created_at'] instanceof \Google\Cloud\Core\Timestamp 
                   ? $data['created_at']->get()->format('c') : null;
@@ -117,9 +135,11 @@ try {
     }
 
     // Fetch credit transactions for the unified logs
+    NolaPerformance::increment('firestore_queries');
     $purchases = $db->collection('credit_transactions')->orderBy('created_at', 'DESC')->limit(20)->documents();
     foreach ($purchases as $doc) {
         if ($doc->exists()) {
+            NolaPerformance::increment('documents_processed');
             $data = $doc->data();
             $ts = isset($data['created_at']) && $data['created_at'] instanceof \Google\Cloud\Core\Timestamp 
                   ? $data['created_at']->get()->format('c') : null;
@@ -152,9 +172,11 @@ $lowBalanceCount = 0;
 
 try {
     $locationToCreditMap = [];
+    NolaPerformance::increment('firestore_queries');
     $users = $db->collection('users')->documents();
     foreach ($users as $userDoc) {
         if ($userDoc->exists()) {
+            NolaPerformance::increment('documents_processed');
             $uData = $userDoc->data();
             $bal = isset($uData['credit_balance']) ? (int)$uData['credit_balance'] : null;
             if ($bal !== null) {
@@ -169,9 +191,11 @@ try {
         }
     }
 
+    NolaPerformance::increment('firestore_queries');
     $integrations = $db->collection('integrations')->documents();
     foreach ($integrations as $intDoc) {
         if ($intDoc->exists()) {
+            NolaPerformance::increment('documents_processed');
             $intData = $intDoc->data();
             $intDocId = $intDoc->id();
             $locId = $intData['location_id'] ?? str_replace('ghl_', '', $intDocId);
@@ -205,6 +229,7 @@ $deliveryRate = $totalMessages > 0 ? round(($sentCount / $totalMessages) * 100) 
 // Fetch settings values required by front-end settings validation
 $settingsData = null;
 try {
+    NolaPerformance::increment('firestore_document_reads', 2);
     $settingsSnap = $db->collection('system_settings')->document('core')->snapshot();
     $providerSnap = $db->collection('admin_config')->document('sms_provider')->snapshot();
     $coreSettings = $settingsSnap->exists() ? $settingsSnap->data() : [];
@@ -245,7 +270,10 @@ $responsePayload = [
 ];
 
 // Cache for 15 seconds to prevent spamming APIs while maintaining freshness
+NolaPerformance::end('data_load');
+NolaPerformance::begin('cache_write');
 NolaCache::set($cacheKey, $responsePayload, 15);
+NolaPerformance::end('cache_write');
 
 echo json_encode($responsePayload);
 exit;

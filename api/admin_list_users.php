@@ -14,6 +14,9 @@ require_once __DIR__ . '/webhook/firestore_client.php';
 require_once __DIR__ . '/jwt_helper.php';
 require_once __DIR__ . '/admin_auth_helper.php';
 require_once __DIR__ . '/cache_helper.php';
+require_once __DIR__ . '/performance_logger.php';
+
+NolaPerformance::start('/api/admin_list_users.php');
 
 // ─── JWT Auth Guard ───────────────────────────────────────────────────────────
 function require_admin_auth(): array {
@@ -107,31 +110,42 @@ function format_ts($ts): ?string {
 }
 
 // ─── Main Logic ──────────────────────────────────────────────────────────────
+NolaPerformance::begin('auth');
 $claims = require_secure_admin_auth();
+NolaPerformance::end('auth');
 
 $cacheKey = "admin_users_list";
+NolaPerformance::begin('cache_read');
 $cachedData = NolaCache::get($cacheKey);
+NolaPerformance::end('cache_read');
 if ($cachedData !== null) {
+    NolaPerformance::cache('HIT');
     echo json_encode($cachedData);
     exit;
 }
+NolaPerformance::cache('MISS');
 
 $db     = get_firestore();
 
 try {
+    NolaPerformance::begin('data_load');
     // High-performance optimization: pre-fetch integrations and ghl_tokens to avoid O(N) queries
+    NolaPerformance::increment('firestore_queries');
     $integrationsSnap = $db->collection('integrations')->documents();
     $integrationMap = [];
     foreach ($integrationsSnap as $doc) {
         if ($doc->exists()) {
+            NolaPerformance::increment('documents_processed');
             $integrationMap[$doc->id()] = $doc->data();
         }
     }
 
+    NolaPerformance::increment('firestore_queries');
     $ghlTokensSnap = $db->collection('ghl_tokens')->documents();
     $ghlTokenMap = [];
     foreach ($ghlTokensSnap as $doc) {
         if ($doc->exists()) {
+            NolaPerformance::increment('documents_processed');
             $ghlTokenMap[$doc->id()] = $doc->data();
         }
     }
@@ -139,9 +153,11 @@ try {
     $agencyNameMap = [];
     foreach (['agency_users', 'agencies'] as $agencyCollection) {
         try {
+            NolaPerformance::increment('firestore_queries');
             $agencySnap = $db->collection($agencyCollection)->documents();
             foreach ($agencySnap as $agencyDoc) {
                 if (!$agencyDoc->exists()) continue;
+                NolaPerformance::increment('documents_processed');
 
                 $agencyData = $agencyDoc->data();
                 $companyId = trim((string)($agencyData['company_id'] ?? $agencyData['companyId'] ?? $agencyDoc->id()));
@@ -166,11 +182,13 @@ try {
     }
 
     // Fetch all users
+    NolaPerformance::increment('firestore_queries');
     $usersSnap = $db->collection('users')->documents();
     $usersList = [];
 
     foreach ($usersSnap as $doc) {
         if (!$doc->exists()) continue;
+        NolaPerformance::increment('documents_processed');
         $d = $doc->data();
 
         $locId = $d['active_location_id'] ?? $d['location_id'] ?? '';
@@ -242,7 +260,10 @@ try {
         'data'   => $usersList,
         'total'  => count($usersList)
     ];
+    NolaPerformance::end('data_load');
+    NolaPerformance::begin('cache_write');
     NolaCache::set($cacheKey, $responsePayload, 300); // 5-minute TTL
+    NolaPerformance::end('cache_write');
     echo json_encode($responsePayload);
 
 } catch (Exception $e) {
