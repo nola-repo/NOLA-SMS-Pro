@@ -10,6 +10,7 @@ header('Content-Type: application/json');
 require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
 require_once __DIR__ . '/cache_helper.php';
+require_once __DIR__ . '/services/ReferenceId.php';
 
 // 1. Authentication
 validate_api_request();
@@ -140,13 +141,14 @@ try {
         }
 
         $requestId = 'req_' . bin2hex(random_bytes(8));
+        $requestReferenceId = ReferenceId::generate('SND');
         $now = new \Google\Cloud\Core\Timestamp(new \DateTime());
 
         // 2. Save new request
         $db->collection('sender_id_requests')->document($requestId)->set([
             'id' => $requestId,
-            'reference_id' => $requestId,
-            'request_reference_id' => $requestId,
+            'reference_id' => $requestReferenceId,
+            'request_reference_id' => $requestReferenceId,
             'location_id' => $locId,
             'requested_id' => $requestedId,
             'requested_id_lower' => $requestedIdLower,
@@ -184,7 +186,7 @@ try {
             error_log("[sender-requests.php] Failed to log admin notification: " . $e->getMessage());
         }
 
-        echo json_encode(['status' => 'success', 'id' => $requestId, 'reference_id' => $requestId]);
+        echo json_encode(['status' => 'success', 'id' => $requestId, 'reference_id' => $requestReferenceId, 'request_reference_id' => $requestReferenceId]);
         exit;
     }
 

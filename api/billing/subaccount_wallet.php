@@ -6,6 +6,7 @@ require_once __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/../jwt_helper.php';
 require_once __DIR__ . '/../services/CreditManager.php';
 require_once __DIR__ . '/../cache_helper.php';
+require_once __DIR__ . '/../services/ReferenceId.php';
 
 // Try standard JWT check first
 $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
@@ -134,6 +135,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         
         $requestRef->set([
             'request_id' => $requestRef->id(),
+            'reference_id' => $requestReferenceId,
+            'request_reference_id' => $requestReferenceId,
             'agency_id' => $agency_id,
             'location_id' => $location_id,
             'location_name' => $location_name,
@@ -146,7 +149,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ]);
 
         NolaCache::deleteRegistry('credit_requests_registry_' . $agency_id);
-        echo json_encode(['success' => true, 'request_id' => $requestRef->id()]);
+        echo json_encode(['success' => true, 'request_id' => $requestRef->id(), 'reference_id' => $requestReferenceId, 'request_reference_id' => $requestReferenceId]);
         exit;
     }
 }

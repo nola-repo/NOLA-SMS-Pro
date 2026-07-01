@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/../webhook/firestore_client.php';
+require_once __DIR__ . '/ReferenceId.php';
 
 use Google\Cloud\Core\Timestamp;
 
@@ -218,6 +219,7 @@ class CreditManager
 
             $transactionPayload = array_merge([
                 'transaction_id' => $transactionRef->id(),
+                'transaction_reference_id' => ReferenceId::generate('TXN'),
                 'account_id'     => $subTxAccountId,
                 'agency_id'      => $agency_id,
                 'wallet_scope'   => 'subaccount',
@@ -347,6 +349,7 @@ class CreditManager
 
             $transactionPayloadSub = array_merge([
                 'transaction_id' => $transactionRefSub->id(),
+                'transaction_reference_id' => ReferenceId::generate('TXN'),
                 'account_id'     => $subTxAccountId,
                 'agency_id'      => $agency_id,
                 'wallet_scope'   => 'subaccount',
@@ -368,6 +371,7 @@ class CreditManager
             // Agency Transaction Log
             $transactionPayloadAgency = array_merge([
                 'transaction_id' => $transactionRefAgency->id(),
+                'transaction_reference_id' => ReferenceId::generate('TXN'),
                 'account_id'     => $agency_id,
                 'target_account' => $subTxAccountId,
                 'wallet_scope'   => 'agency',
@@ -467,6 +471,7 @@ class CreditManager
 
             $transaction->create($transactionRefAgency, [
                 'transaction_id' => $transactionRefAgency->id(),
+                'transaction_reference_id' => ReferenceId::generate('TXN'),
                 'account_id' => $agency_id,
                 'wallet_scope' => 'agency',
                 'type' => 'deduction',
@@ -481,6 +486,7 @@ class CreditManager
 
             $transaction->create($transactionRefSub, [
                 'transaction_id' => $transactionRefSub->id(),
+                'transaction_reference_id' => ReferenceId::generate('TXN'),
                 'account_id' => $subTxAccountId,
                 'wallet_scope' => 'subaccount',
                 'type' => 'deduction',
@@ -544,6 +550,7 @@ class CreditManager
 
             $transaction->create($transactionRef, [
                 'transaction_id' => $transactionRef->id(),
+                'transaction_reference_id' => ReferenceId::generate('TXN'),
                 'account_id' => $txAccountId,
                 'wallet_scope' => 'subaccount',
                 'type' => 'deduction',
@@ -627,6 +634,7 @@ class CreditManager
 
             $transaction->create($transactionRef, [
                 'transaction_id' => $transactionRef->id(),
+                'transaction_reference_id' => ReferenceId::generate('TXN'),
                 'account_id'     => $txAccountId,
                 'wallet_scope'   => $wallet_scope,
                 'type'           => $type,
@@ -680,6 +688,7 @@ class CreditManager
 
         $batch->create($transactionRef, [
             'transaction_id' => $transactionRef->id(),
+                'transaction_reference_id' => ReferenceId::generate('TXN'),
             'account_id' => $txAccountId,
             'wallet_scope' => 'subaccount',
             'type' => 'deduction',

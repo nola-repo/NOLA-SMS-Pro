@@ -4,6 +4,7 @@ require_once __DIR__ . '/../cache_helper.php';
 require_once __DIR__ . '/FirestoreId.php';
 require_once __DIR__ . '/PhoneNormalizer.php';
 require_once __DIR__ . '/ProviderResultService.php';
+require_once __DIR__ . '/ReferenceId.php';
 
 class MessageSyncService
 {
@@ -17,6 +18,7 @@ class MessageSyncService
         $direction = strtolower(trim((string)($event['direction'] ?? 'outbound')));
         $isOutbound = $direction === 'outbound';
         $messageId = self::resolveMessageId($event);
+        $messageReferenceId = ReferenceId::keepOrGenerate($event['message_reference_id'] ?? null, 'SMS');
         $now = self::timestamp($event['timestamp'] ?? null);
 
         $conversationId = (string)($event['conversation_id'] ?? self::conversationId($locationId, $event));
@@ -38,6 +40,7 @@ class MessageSyncService
             'conversation_id' => $conversationId,
             'location_id' => $locationId,
             'message_id' => $messageId,
+            'message_reference_id' => $messageReferenceId,
             'number' => $isOutbound ? ($recipient ?: null) : null,
             'from' => !$isOutbound ? ($recipient ?: ($event['from'] ?? null)) : null,
             'message' => $messageText,
@@ -71,6 +74,7 @@ class MessageSyncService
         if ($isOutbound) {
             $logData = array_filter([
                 'message_id' => $messageId,
+                'message_reference_id' => $messageReferenceId,
                 'location_id' => $locationId,
                 'numbers' => $event['numbers'] ?? ($recipient !== '' ? [$recipient] : []),
                 'message' => $messageText,
@@ -99,6 +103,7 @@ class MessageSyncService
         } elseif (!empty($event['write_inbound_compat'])) {
             $db->collection('inbound_messages')->document($messageId)->set([
                 'message_id' => $messageId,
+                'message_reference_id' => $messageReferenceId,
                 'conversation_id' => $conversationId,
                 'location_id' => $locationId,
                 'from' => $recipient ?: ($event['from'] ?? null),

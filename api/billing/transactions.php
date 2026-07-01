@@ -87,6 +87,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
         $transactions[] = [
             'id'             => $data['transaction_id'] ?? $doc->id(),
+            'transaction_id' => $data['transaction_id'] ?? $doc->id(),
+            'reference_id' => $data['transaction_reference_id'] ?? $data['reference_id'] ?? $doc->id(),
+            'transaction_reference_id' => $data['transaction_reference_id'] ?? $data['reference_id'] ?? $doc->id(),
+            'source_reference_id' => $data['reference_id'] ?? null,
+            'request_reference_id' => $data['request_reference_id'] ?? null,
+            'transfer_reference_id' => $data['transfer_reference_id'] ?? null,
             'type'           => $data['type']           ?? '',
             'wallet_scope'   => $data['wallet_scope']   ?? $scope,
             'deducted_from'  => $data['deducted_from']  ?? null,

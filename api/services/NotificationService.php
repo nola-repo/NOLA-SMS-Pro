@@ -15,6 +15,7 @@
  */
 require_once __DIR__ . '/../auth_helpers.php';
 require_once __DIR__ . '/../install_helpers.php';
+require_once __DIR__ . '/ReferenceId.php';
 
 class NotificationService
 {
@@ -1486,6 +1487,7 @@ class NotificationService
         // 8. Create Internal Admin Notification in Firestore
         try {
             $db->collection('admin_notifications')->add([
+                'notification_reference_id' => ReferenceId::generate('NTF'),
                 'type'          => $alertType,
                 'location_id'   => $locationId,
                 'location_name' => $sourceLocationName,
@@ -1657,6 +1659,7 @@ class NotificationService
     {
         try {
             $payload = array_merge([
+                'notification_reference_id' => ReferenceId::keepOrGenerate($fields['notification_reference_id'] ?? null, 'NTF'),
                 'created_at' => new \Google\Cloud\Core\Timestamp(new \DateTimeImmutable()),
                 'read'       => false,
             ], $fields);

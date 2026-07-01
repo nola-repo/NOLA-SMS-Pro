@@ -5,6 +5,7 @@ header('Content-Type: application/json');
 require_once __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/../auth_helpers.php';
 require_once __DIR__ . '/../cache_helper.php';
+require_once __DIR__ . '/../services/ReferenceId.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
@@ -113,8 +114,12 @@ $agencyRef->set([
 ], ['merge' => true]);
 
 $eventRef = $db->collection('subscription_events')->newDocument();
+$eventReferenceId = ReferenceId::generate('SUB');
 $eventRef->set([
     'agency_id' => $agencyId,
+    'event_id' => $eventRef->id(),
+    'reference_id' => $eventReferenceId,
+    'event_reference_id' => $eventReferenceId,
     'user_id' => $agencyDocId,
     'event_type' => $eventType,
     'from_plan' => $currentPlan ?: null,
@@ -131,4 +136,6 @@ echo json_encode([
     'plan' => $plan,
     'subaccount_limit' => $limit,
     'expires_at' => $expiresAt->format('Y-m-d\TH:i:s\Z'),
+    'reference_id' => $eventReferenceId,
+    'event_reference_id' => $eventReferenceId,
 ]);

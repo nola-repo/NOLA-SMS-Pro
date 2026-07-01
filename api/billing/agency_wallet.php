@@ -6,6 +6,7 @@ require_once __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/../auth_helpers.php';
 require_once __DIR__ . '/../services/CreditManager.php';
 require_once __DIR__ . '/../cache_helper.php';
+require_once __DIR__ . '/../services/ReferenceId.php';
 
 $db = get_firestore();
 
@@ -118,12 +119,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         
         $txRefAgency = $db->collection('credit_transactions')->newDocument();
         $txRefSub = $db->collection('credit_transactions')->newDocument();
+        $transferReferenceId = ReferenceId::generate('GFT');
+        $agencyTxReferenceId = ReferenceId::generate('TXN');
+        $subTxReferenceId = ReferenceId::generate('TXN');
         
         $now = new \DateTimeImmutable();
         $ts = new \Google\Cloud\Core\Timestamp($now);
 
         try {
-            $result = $db->runTransaction(function ($transaction) use ($agencyWalletRef, $subaccountRef, $txRefAgency, $txRefSub, $amount, $note, $ts, $agency_id, $location_id) {
+            $result = $db->runTransaction(function ($transaction) use ($agencyWalletRef, $subaccountRef, $txRefAgency, $txRefSub, $amount, $note, $ts, $agency_id, $location_id, $transferReferenceId, $agencyTxReferenceId, $subTxReferenceId) {
                 $snapAgency = $transaction->snapshot($agencyWalletRef);
                 $snapSub = $transaction->snapshot($subaccountRef);
 
@@ -155,6 +159,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $transaction->create($txRefAgency, [
                     'transaction_id' => $txRefAgency->id(),
+                    'transaction_reference_id' => $agencyTxReferenceId,
+                    'transfer_reference_id' => $transferReferenceId,
                     'account_id'     => $agency_id,
                     'wallet_scope'   => 'agency',
                     'type'           => 'credit_distribution',
@@ -169,6 +175,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $transaction->create($txRefSub, [
                     'transaction_id' => $txRefSub->id(),
+                    'transaction_reference_id' => $subTxReferenceId,
+                    'transfer_reference_id' => $transferReferenceId,
                     'account_id' => $subTxAccountId,
                     'wallet_scope' => 'subaccount',
                     'type' => 'gift_received',
@@ -181,7 +189,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 return [
                     'success' => true,
                     'agency_balance' => $new_agency_balance,
-                    'subaccount_balance' => $new_sub_balance
+                    'subaccount_balance' => $new_sub_balance,
+                    'transfer_reference_id' => $transferReferenceId
                 ];
             });
 

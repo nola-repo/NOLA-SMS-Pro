@@ -131,7 +131,9 @@ function report_collect_transactions($db, string $scope, ?string $agencyId, ?str
             'amount' => (int)($data['amount'] ?? 0),
             'balance_after' => (int)($data['balance_after'] ?? 0),
             'description' => $data['description'] ?? '',
-            'reference_id' => $data['reference_id'] ?? '',
+            'reference_id' => $data['transaction_reference_id'] ?? $data['reference_id'] ?? '',
+            'transaction_reference_id' => $data['transaction_reference_id'] ?? $data['reference_id'] ?? '',
+            'source_reference_id' => $data['reference_id'] ?? null,
             'provider' => $data['provider'] ?? '',
             'created_at' => report_timestamp($createdAt),
         ];
