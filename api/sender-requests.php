@@ -26,6 +26,20 @@ if (!$locId) {
 $db = get_firestore();
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
+function sender_request_format_timestamp($value): ?string
+{
+    if ($value instanceof \Google\Cloud\Core\Timestamp) {
+        return $value->get()->format('Y-m-d H:i:s');
+    }
+    if ($value instanceof \DateTimeInterface) {
+        return $value->format('Y-m-d H:i:s');
+    }
+    if (is_string($value) && trim($value) !== '') {
+        return $value;
+    }
+    return null;
+}
+
 function normalize_sender_provider($value): string
 {
     $provider = strtolower(trim((string)($value ?? 'system')));
@@ -59,9 +73,12 @@ try {
                     'unisms_sender_id' => $d['unisms_sender_id'] ?? null,
                     'purpose' => $d['purpose'] ?? '',
                     'sample_message' => $d['sample_message'] ?? '',
-                    'created_at' => (isset($d['created_at']) && $d['created_at'] instanceof \Google\Cloud\Core\Timestamp) 
-                        ? $d['created_at']->get()->format('Y-m-d H:i:s') 
-                        : null
+                    'reference_id' => $d['reference_id'] ?? $d['request_reference_id'] ?? $doc->id(),
+                    'request_reference_id' => $d['request_reference_id'] ?? $d['reference_id'] ?? $doc->id(),
+                    'created_at' => sender_request_format_timestamp($d['created_at'] ?? null),
+                    'updated_at' => sender_request_format_timestamp($d['updated_at'] ?? null),
+                    'approved_at' => sender_request_format_timestamp($d['approved_at'] ?? null),
+                    'rejected_at' => sender_request_format_timestamp($d['rejected_at'] ?? null)
                 ];
             }
         }
@@ -127,6 +144,9 @@ try {
 
         // 2. Save new request
         $db->collection('sender_id_requests')->document($requestId)->set([
+            'id' => $requestId,
+            'reference_id' => $requestId,
+            'request_reference_id' => $requestId,
             'location_id' => $locId,
             'requested_id' => $requestedId,
             'requested_id_lower' => $requestedIdLower,
@@ -164,7 +184,7 @@ try {
             error_log("[sender-requests.php] Failed to log admin notification: " . $e->getMessage());
         }
 
-        echo json_encode(['status' => 'success', 'id' => $requestId]);
+        echo json_encode(['status' => 'success', 'id' => $requestId, 'reference_id' => $requestId]);
         exit;
     }
 

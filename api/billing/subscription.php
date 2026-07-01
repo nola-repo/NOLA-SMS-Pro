@@ -7,6 +7,34 @@ require_once __DIR__ . '/../auth_helpers.php';
 
 $db = get_firestore();
 
+function billing_subscription_parse_datetime($value): ?DateTimeImmutable
+{
+    if ($value instanceof \Google\Cloud\Core\Timestamp) {
+        return DateTimeImmutable::createFromInterface($value->get());
+    }
+    if ($value instanceof DateTimeInterface) {
+        return DateTimeImmutable::createFromInterface($value);
+    }
+    if (is_string($value) && trim($value) !== '') {
+        try {
+            return new DateTimeImmutable($value);
+        } catch (\Throwable $ignored) {
+            return null;
+        }
+    }
+    return null;
+}
+
+function billing_subscription_effective_status(string $status, $expiresValue): string
+{
+    $normalized = strtolower(trim($status));
+    $expiresAt = billing_subscription_parse_datetime($expiresValue);
+    if ($expiresAt !== null && in_array($normalized, ['active', 'trialing'], true) && $expiresAt < new DateTimeImmutable()) {
+        return 'expired';
+    }
+    return $normalized !== '' ? $normalized : 'active';
+}
+
 function billing_subscription_format_timestamp($value): ?string
 {
     if ($value instanceof \Google\Cloud\Core\Timestamp) {
@@ -205,12 +233,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         ?? 'starter'
     );
 
-    $status = (string) (
+    $expiresRaw = $subscription['expires_at']
+        ?? $subscription['subscription_expires_at']
+        ?? $subscription['current_period_end']
+        ?? $agencyData['subscription_expires_at']
+        ?? $agencyData['expires_at']
+        ?? $agencyData['current_period_end']
+        ?? null;
+
+    $status = billing_subscription_effective_status((string) (
         $subscription['status']
         ?? $agencyData['subscription_status']
         ?? $agencyData['status']
         ?? 'active'
-    );
+    ), $expiresRaw);
 
     $billingCycle = (string) (
         $subscription['billing_cycle']
@@ -220,15 +256,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
     $maxActiveSubaccounts = billing_subscription_resolve_limit($subscription, $agencyData, $plan);
     [$totalSubaccounts, $activeSubaccounts] = billing_subscription_count_subaccounts($db, $agencyId);
-    $expiresAt = billing_subscription_format_timestamp(
-        $subscription['expires_at']
-        ?? $subscription['subscription_expires_at']
-        ?? $subscription['current_period_end']
-        ?? $agencyData['subscription_expires_at']
-        ?? $agencyData['expires_at']
-        ?? $agencyData['current_period_end']
-        ?? null
-    );
+    $expiresAt = billing_subscription_format_timestamp($expiresRaw);
 
     $payload = [
         'success' => true,

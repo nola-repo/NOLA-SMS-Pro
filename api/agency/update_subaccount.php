@@ -26,6 +26,41 @@ function agency_update_plan_limit(string $plan): int
     return $limits[$plan] ?? 1;
 }
 
+function agency_update_parse_subscription_datetime($value): ?DateTimeImmutable
+{
+    if ($value instanceof \Google\Cloud\Core\Timestamp) {
+        return DateTimeImmutable::createFromInterface($value->get());
+    }
+    if ($value instanceof DateTimeInterface) {
+        return DateTimeImmutable::createFromInterface($value);
+    }
+    if (is_string($value) && trim($value) !== '') {
+        try {
+            return new DateTimeImmutable($value);
+        } catch (\Throwable $ignored) {
+            return null;
+        }
+    }
+    return null;
+}
+
+function agency_update_effective_subscription_status(string $status, array $data, array $subscription): string
+{
+    $normalized = strtolower(trim($status));
+    $expiresValue = $subscription['expires_at']
+        ?? $subscription['subscription_expires_at']
+        ?? $subscription['current_period_end']
+        ?? $data['subscription_expires_at']
+        ?? $data['expires_at']
+        ?? $data['current_period_end']
+        ?? null;
+    $expiresAt = agency_update_parse_subscription_datetime($expiresValue);
+    if ($expiresAt !== null && in_array($normalized, ['active', 'trialing'], true) && $expiresAt < new DateTimeImmutable()) {
+        return 'expired';
+    }
+    return $normalized !== '' ? $normalized : 'active';
+}
+
 function agency_update_subscription_state($db, string $agencyId): array
 {
     $data = [];
@@ -54,7 +89,7 @@ function agency_update_subscription_state($db, string $agencyId): array
 
     $subscription = is_array($data['subscription'] ?? null) ? $data['subscription'] : [];
     $plan = strtolower(trim((string)($subscription['plan'] ?? $data['subscription_plan'] ?? $data['plan'] ?? 'starter')));
-    $status = strtolower(trim((string)($subscription['status'] ?? $data['subscription_status'] ?? $data['status'] ?? 'active')));
+    $status = agency_update_effective_subscription_status((string)($subscription['status'] ?? $data['subscription_status'] ?? $data['status'] ?? 'active'), $data, $subscription);
     $limit = $subscription['subaccount_limit']
         ?? $subscription['plan_subaccount_limit']
         ?? $data['plan_subaccount_limit']

@@ -13,6 +13,20 @@ validate_api_request();
 
 $db = get_firestore();
 
+function nola_admin_format_timestamp($value): ?string
+{
+    if ($value instanceof \Google\Cloud\Core\Timestamp) {
+        return $value->get()->format('Y-m-d H:i:s');
+    }
+    if ($value instanceof \DateTimeInterface) {
+        return $value->format('Y-m-d H:i:s');
+    }
+    if (is_string($value) && trim($value) !== '') {
+        return $value;
+    }
+    return null;
+}
+
 function nola_admin_mask_secret(?string $secret): ?string
 {
     $secret = trim((string)($secret ?? ''));
@@ -211,10 +225,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && (!isset($_GET['action']) || $_GET['a
     $results = [];
     foreach ($requests as $request) {
         $data = $request->data();
-        if (isset($data['created_at']) && $data['created_at'] instanceof \Google\Cloud\Core\Timestamp) {
-            $data['created_at'] = $data['created_at']->get()->format('Y-m-d H:i:s');
+        foreach (['created_at', 'updated_at', 'approved_at', 'rejected_at', 'revoked_at'] as $dateField) {
+            $data[$dateField] = nola_admin_format_timestamp($data[$dateField] ?? null);
         }
         $data['id'] = $request->id();
+        $data['reference_id'] = $data['reference_id'] ?? $data['request_reference_id'] ?? $request->id();
+        $data['request_reference_id'] = $data['request_reference_id'] ?? $data['reference_id'] ?? $request->id();
         $results[] = $data;
     }
 
@@ -454,7 +470,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($status === 'rejected' && $note) {
         $updateData['admin_notes'] = $note;
     }
-    $updateData['updated_at'] = new \Google\Cloud\Core\Timestamp(new \DateTime());
+    $now = new \Google\Cloud\Core\Timestamp(new \DateTime());
+    $updateData['updated_at'] = $now;
+    if ($status === 'approved') {
+        $updateData['approved_at'] = $now;
+    } elseif ($status === 'rejected') {
+        $updateData['rejected_at'] = $now;
+    } elseif ($status === 'revoked') {
+        $updateData['revoked_at'] = $now;
+    }
 
     $requestRef->set($updateData, ['merge' => true]);
 

@@ -83,7 +83,7 @@ if ($currentPlan === '' || $currentPlan === 'starter') {
 }
 
 $now = new \DateTimeImmutable();
-$expiresAt = $now->modify('+30 days');
+$expiresAt = $now->modify('+1 month');
 $nowTs = new \Google\Cloud\Core\Timestamp($now);
 $expiresTs = new \Google\Cloud\Core\Timestamp($expiresAt);
 $limit = $plans[$plan]['limit'];
@@ -92,16 +92,23 @@ $agencyRef->set([
     'subscription_plan' => $plan,
     'subscription_status' => 'active',
     'plan_subaccount_limit' => $limit,
+    'subaccount_limit' => $limit,
     'max_active_subaccounts' => $limit,
+    'subscription_started_at' => $nowTs,
+    'current_period_start' => $nowTs,
     'subscription_expires_at' => $expiresTs,
+    'expires_at' => $expiresTs,
     'current_period_end' => $expiresTs,
     'updated_at' => $nowTs,
     'subscription' => [
         'plan' => $plan,
         'status' => 'active',
         'subaccount_limit' => $limit,
+        'plan_subaccount_limit' => $limit,
         'max_active_subaccounts' => $limit,
+        'current_period_start' => $nowTs,
         'current_period_end' => $expiresTs,
+        'expires_at' => $expiresTs,
     ],
 ], ['merge' => true]);
 
