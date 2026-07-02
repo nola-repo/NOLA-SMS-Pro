@@ -2162,6 +2162,75 @@ function install_backfill_location_owner($db, string $locationId, ?array $linked
     error_log("[install_helpers] owner backfill skipped for {$locationId}: canonical owner conflict");
 }
 
+/**
+ * Resolve the active user behind an owner lock. Legacy reinstall tests can
+ * leave location_owners rows behind after deleting the corresponding user.
+ *
+ * @return array{id:string,email:string}|null
+ */
+function install_active_user_for_owner_lock($db, string $ownerUserId, string $ownerEmail): ?array
+{
+    $ownerUserId = trim($ownerUserId);
+    $ownerEmail = install_norm_email($ownerEmail);
+
+    if ($ownerUserId !== '') {
+        try {
+            $userSnap = $db->collection('users')->document($ownerUserId)->snapshot();
+            if ($userSnap->exists()) {
+                $userData = $userSnap->data();
+                if (is_array($userData) && install_is_active_user($userData)) {
+                    return [
+                        'id' => $ownerUserId,
+                        'email' => install_norm_email($userData['email'] ?? $ownerEmail),
+                    ];
+                }
+            }
+        } catch (Exception $e) {
+            error_log('[install_helpers] owner uid validation failed: ' . $e->getMessage());
+            throw $e;
+        }
+    }
+
+    if ($ownerEmail !== '') {
+        try {
+            foreach ($db->collection('users')->where('email', '=', $ownerEmail)->limit(1)->documents() as $doc) {
+                if (!$doc->exists()) {
+                    continue;
+                }
+                $userData = $doc->data();
+                if (is_array($userData) && install_is_active_user($userData)) {
+                    return ['id' => $doc->id(), 'email' => $ownerEmail];
+                }
+            }
+        } catch (Exception $e) {
+            error_log('[install_helpers] owner email validation failed: ' . $e->getMessage());
+            throw $e;
+        }
+    }
+
+    return null;
+}
+
+function install_owner_lock_updated_recently(array $data, int $seconds = 900): bool
+{
+    $value = $data['updated_at'] ?? $data['created_at'] ?? null;
+    try {
+        if ($value instanceof \Google\Cloud\Core\Timestamp) {
+            $updatedAt = $value->get()->getTimestamp();
+        } elseif ($value instanceof DateTimeInterface) {
+            $updatedAt = $value->getTimestamp();
+        } elseif (is_string($value) && trim($value) !== '') {
+            $updatedAt = (new DateTimeImmutable($value))->getTimestamp();
+        } else {
+            return false;
+        }
+    } catch (Throwable $ignored) {
+        return false;
+    }
+
+    return $updatedAt >= (time() - max(60, $seconds));
+}
+
 function install_claim_owner_lock(
     $db,
     string $collection,
@@ -2211,11 +2280,31 @@ function install_claim_owner_lock(
         $existingUid = trim((string)($data['owner_user_id'] ?? $data['owner_uid'] ?? $data['user_id'] ?? $data['uid'] ?? ''));
         $existingEmail = install_norm_email($data['owner_email'] ?? $data['email'] ?? $data['user_email'] ?? $data['account_email'] ?? '');
 
-        if ($existingUid !== '' && $ownerUserId !== '' && $existingUid !== $ownerUserId) {
-            return false;
-        }
-        if ($existingEmail !== '' && $ownerEmail !== '' && $existingEmail !== $ownerEmail) {
-            return false;
+        $uidConflict = $existingUid !== '' && $ownerUserId !== '' && $existingUid !== $ownerUserId;
+        $emailConflict = $existingEmail !== '' && $ownerEmail !== '' && $existingEmail !== $ownerEmail;
+        if ($uidConflict || $emailConflict) {
+            // Only location locks may self-heal. Company ownership remains strict.
+            if ($collection !== 'location_owners') {
+                return false;
+            }
+
+            $activeOwner = install_active_user_for_owner_lock($db, $existingUid, $existingEmail);
+            $sameActiveIdentity = $activeOwner !== null && (
+                ($ownerUserId !== '' && $activeOwner['id'] === $ownerUserId)
+                || ($ownerEmail !== '' && $activeOwner['email'] === $ownerEmail)
+            );
+
+            // Protect valid owners and brand-new locks whose user document may
+            // still be written by an in-flight registration request.
+            if (($activeOwner !== null && !$sameActiveIdentity) ||
+                ($activeOwner === null && install_owner_lock_updated_recently($data))) {
+                return false;
+            }
+
+            $payload['previous_owner_user_id'] = $existingUid !== '' ? $existingUid : null;
+            $payload['previous_owner_email'] = $existingEmail !== '' ? $existingEmail : null;
+            $payload['repair_source'] = 'stale_location_owner_auto_replaced';
+            error_log("[install_helpers] replacing stale location owner lock for {$entityId}");
         }
 
         $ref->set($payload, ['merge' => true]);
