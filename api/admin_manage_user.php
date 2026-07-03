@@ -89,19 +89,28 @@ try {
         ];
         $userRef->set($userUpdate, ['merge' => true]);
 
-        // 2. Reset integration document if location ID exists
+        // 2. Reset balances and usage only. Sender approval is a separate
+        // lifecycle and must only change through the explicit sender actions.
         if (!empty($locId)) {
             $intDocId = CreditManager::integration_doc_id_for_location((string)$locId);
             $intRef   = $db->collection('integrations')->document($intDocId);
             $intSnap  = $intRef->snapshot();
 
             if ($intSnap->exists()) {
+                $intData = $intSnap->data();
                 $intRef->set([
-                    'credit_balance'     => 0,
-                    'free_usage_count'   => 0,
-                    'approved_sender_id' => null,
-                    'updated_at'         => new \Google\Cloud\Core\Timestamp(new \DateTime())
+                    'credit_balance'   => 0,
+                    'free_usage_count' => 0,
+                    'updated_at'       => new \Google\Cloud\Core\Timestamp(new \DateTime())
                 ], ['merge' => true]);
+
+                error_log('[admin_manage_user][RESET] ' . json_encode([
+                    'user_id' => $userId,
+                    'location_id' => $locId,
+                    'admin_id' => $claims['sub'] ?? $claims['user_id'] ?? null,
+                    'admin_role' => $claims['role'] ?? null,
+                    'approved_sender_preserved' => $intData['approved_sender_id'] ?? null,
+                ]));
             }
         }
 
@@ -114,7 +123,7 @@ try {
 
         echo json_encode([
             'status'  => 'success',
-            'message' => 'Subaccount config and usage reset successfully.'
+            'message' => 'Subaccount balances and usage reset successfully.'
         ]);
         exit;
     }
