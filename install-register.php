@@ -335,14 +335,20 @@ if (!$installToken) {
 HTML);
 }
 
-$payload = jwt_verify($installToken, $jwtSecret);
+$installVerification = jwt_verify_detailed($installToken, $jwtSecret);
+$payload = $installVerification['payload'];
 
-if (!$payload) {
-    ir_page('Link Expired', <<<HTML
+if (!$installVerification['valid']) {
+    $expired = $installVerification['reason'] === 'expired';
+    $failureTitle = $expired ? 'Link Expired' : 'Invalid Link';
+    $failureMessage = $expired
+        ? 'This onboarding link has expired. Please restart installation to get a fresh link.'
+        : 'This onboarding link is invalid. Please restart installation from the Marketplace.';
+    ir_page($failureTitle, <<<HTML
         <div style="text-align: center;">
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 16px;"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
-            <h1>Link Expired</h1>
-            <p class="subtitle">This link is valid for 15 minutes and has expired.<br>Please reinstall the app to get a fresh link.</p>
+            <h1>{$failureTitle}</h1>
+            <p class="subtitle">{$failureMessage}</p>
             <a href="{$marketplace}" class="btn-submit" style="display:inline-flex; width:auto; padding:12px 24px; text-decoration:none;">Reinstall from Marketplace</a>
         </div>
 HTML);
@@ -799,7 +805,16 @@ ir_page('Create Your Account', <<<HTML
                     })
                 });
                 const data = await res.json();
-                if (!res.ok) throw new Error(data.error || 'Registration failed');
+                if (!res.ok) {
+                    if (data.code === 'LOCATION_ALREADY_REGISTERED' && data.login_url) {
+                        window.location.replace(data.login_url);
+                        return;
+                    }
+                    if (data.code === 'INSTALL_TOKEN_EXPIRED' || data.code === 'INSTALL_TOKEN_INVALID') {
+                        throw new Error(data.error || 'Please restart installation from the Marketplace.');
+                    }
+                    throw new Error(data.error || 'Registration failed');
+                }
                 
                 successData = data;
                 

@@ -51,10 +51,18 @@ if (!$installToken) {
     exit;
 }
 
-$installPayload = jwt_verify($installToken, $jwtSecret);
-if (!$installPayload) {
+$installVerification = jwt_verify_detailed($installToken, $jwtSecret);
+$installPayload = $installVerification['payload'];
+if (!$installVerification['valid']) {
     http_response_code(401);
-    echo json_encode(['error' => 'Install token is invalid or expired. Please reinstall from the GHL Marketplace.']);
+    $expired = $installVerification['reason'] === 'expired';
+    echo json_encode([
+        'error' => $expired
+            ? 'Install token expired. Please restart installation from the GHL Marketplace.'
+            : 'Install token is invalid. Please restart installation from the GHL Marketplace.',
+        'code' => $expired ? 'INSTALL_TOKEN_EXPIRED' : 'INSTALL_TOKEN_INVALID',
+        'next_action' => 'restart_marketplace_install',
+    ]);
     exit;
 }
 if ($ghlUserId === '') {
@@ -769,11 +777,17 @@ function register_from_install_log_timing(string $rid, string $step, float $sinc
 
 function register_from_install_location_conflict(string $locationId): void
 {
+    $loginUrl = 'https://smspro-api.nolacrm.io/login?welcome_back=1'
+        . '&location_id=' . urlencode($locationId)
+        . '&install_status=' . urlencode(INSTALL_STATE_LINKED_ACCOUNT)
+        . '&resolution_source=' . urlencode('register_conflict_existing_owner');
     http_response_code(409);
     echo json_encode([
         'error' => 'This GHL location already has a NOLA SMS Pro account. Sign in with the existing account or contact support to transfer ownership.',
         'code' => 'LOCATION_ALREADY_REGISTERED',
         'location_id' => $locationId,
+        'next_action' => 'login',
+        'login_url' => $loginUrl,
     ]);
     exit;
 }

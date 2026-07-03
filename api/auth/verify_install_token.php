@@ -36,11 +36,19 @@ if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
     exit;
 }
 
-$payload = jwt_verify($token, $jwtSecret);
+$verification = jwt_verify_detailed($token, $jwtSecret);
+$payload = $verification['payload'];
 
-if (!$payload) {
+if (!$verification['valid']) {
     http_response_code(401);
-    echo json_encode(['error' => 'Install token is invalid or has expired. Please reinstall the app from the GHL Marketplace.']);
+    $expired = $verification['reason'] === 'expired';
+    echo json_encode([
+        'error' => $expired
+            ? 'Install token expired. Please restart installation from the GHL Marketplace.'
+            : 'Install token is invalid. Please restart installation from the GHL Marketplace.',
+        'code' => $expired ? 'INSTALL_TOKEN_EXPIRED' : 'INSTALL_TOKEN_INVALID',
+        'next_action' => 'restart_marketplace_install',
+    ]);
     exit;
 }
 

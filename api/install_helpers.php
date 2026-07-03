@@ -21,6 +21,18 @@ if (!defined('INSTALL_STATE_FRESH_INSTALL')) {
     define('INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION', 'EXACT_SINGLE_LOCATION');
 }
 
+if (!defined('INSTALL_REGISTRATION_TOKEN_TTL_SECONDS')) {
+    // Onboarding includes data entry and review. Fifteen minutes caused valid
+    // installs to expire while users were still completing the form.
+    define('INSTALL_REGISTRATION_TOKEN_TTL_SECONDS', 3600);
+}
+
+function install_registration_token_ttl_seconds(): int
+{
+    $configured = (int)(getenv('INSTALL_REGISTRATION_TOKEN_TTL_SECONDS') ?: INSTALL_REGISTRATION_TOKEN_TTL_SECONDS);
+    return max(900, min(7200, $configured));
+}
+
 /**
  * Whether a ghl_tokens document represents an active Marketplace install (SMS allowed).
  *
@@ -2769,7 +2781,9 @@ function install_build_registration_url(
         $payload[$k] = $v;
     }
 
-    return 'https://smspro-api.nolacrm.io/register?install_token=' . urlencode(jwt_sign($payload, $jwtSecret, 900));
+    return 'https://smspro-api.nolacrm.io/register?install_token=' . urlencode(
+        jwt_sign($payload, $jwtSecret, install_registration_token_ttl_seconds())
+    );
 }
 
 /**
