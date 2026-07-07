@@ -1135,6 +1135,13 @@ if (($data['userType'] ?? '') === 'Company') {
     $expiresIn          = (int)($data['expires_in'] ?? 86400);
     $companyExpiresAt   = time() + $expiresIn;
     $companyNameFromToken = install_resolve_company_name($data, (string)$companyId, $companyToken);
+    install_upsert_agency_registry(
+        $db,
+        (string)$companyId,
+        $companyNameFromToken,
+        'marketplace_company_callback',
+        new DateTimeImmutable()
+    );
 
     if (!$companyId) {
         render_error('Company-scoped install received no companyId in token response.', $data);
@@ -1186,7 +1193,6 @@ if (($data['userType'] ?? '') === 'Company') {
             'appType'       => 'subaccount',
             'userType'      => 'Company',
             'companyId'     => $companyId,
-            'company_name'  => $companyNameFromToken,
             'agency_name'   => $companyNameFromToken,
             'install_state' => INSTALL_STATE_PENDING_OAUTH,
             'install_status' => INSTALL_STATE_INSTALL_PENDING,
@@ -1339,7 +1345,6 @@ if (($data['userType'] ?? '') === 'Company') {
                 'location_id'           => $singleLocationId,
                 'location_name'         => $singleLocName,
                 'companyId'             => $companyId,
-                'company_name'          => $companyNameFromToken,
                 'install_state'         => INSTALL_STATE_PENDING_OAUTH,
                 'install_status'        => INSTALL_STATE_INSTALL_PENDING,
                 'install_resolution_mode' => $caseAResolutionMode,
@@ -1607,6 +1612,13 @@ if (!$locationId) {
         $db = get_firestore();
         $now = new DateTimeImmutable();
         $finalCompanyName = install_extract_company_name($data);
+        install_upsert_agency_registry(
+            $db,
+            (string)$finalCompanyId,
+            $finalCompanyName,
+            'marketplace_ambiguous_callback',
+            new DateTimeImmutable()
+        );
         try {
             $db->collection('ghl_tokens')->document($finalCompanyId)->set([
                 'access_token' => $data['access_token'] ?? null,
@@ -1617,7 +1629,6 @@ if (!$locationId) {
                 'appType' => 'subaccount',
                 'userType' => 'Company',
                 'companyId' => $finalCompanyId,
-                'company_name' => $finalCompanyName,
                 'install_state' => INSTALL_STATE_PENDING_OAUTH,
                 'install_status' => INSTALL_STATE_INSTALL_PENDING,
                 'oauth_pending_started_at' => new \Google\Cloud\Core\Timestamp($now),
@@ -1792,6 +1803,13 @@ $expiresAtUnix = time() + (int)($data['expires_in'] ?? 0);
 $tokenExistedBeforeDirect = install_token_doc_exists($db, (string)$locationId);
 $companyIdForDirect = (string)($data['companyId'] ?? '');
 $companyNameDirect = install_extract_company_name($data);
+install_upsert_agency_registry(
+    $db,
+    (string)($data['companyId'] ?? ''),
+    $companyNameDirect,
+    'marketplace_location_callback',
+    new DateTimeImmutable()
+);
 if (install_location_company_mismatch($db, (string)$locationId, $companyIdForDirect)) {
     render_error('The selected sub-account is already linked to a different GoHighLevel company. Please reinstall from the correct GHL sub-account.', [
         'locationId' => $locationId,
@@ -1808,7 +1826,6 @@ try {
         'expires_at' => $expiresAtUnix,
         'userType' => $userType,
         'companyId' => $data['companyId'] ?? '',
-        'company_name' => $companyNameDirect,
         'hashed_companyId' => $data['hashedCompanyId'] ?? '',
         'userId' => $data['userId'] ?? '',
         'appId'     => $ghlApps[$usedAppType]['clientId'], // Store which app provided this token
@@ -1827,8 +1844,8 @@ try {
         $tokenPayload['location_id'] = $id;
         $tokenPayload['location_name'] = $displayName;
     }
-    else {
-        $tokenPayload['agency_name'] = $displayName;
+    elseif ($companyNameDirect !== '') {
+        $tokenPayload['agency_name'] = $companyNameDirect;
     }
 
     $db->collection('ghl_tokens')->document((string)$id)->set($tokenPayload, ['merge' => true]);
@@ -1841,8 +1858,8 @@ try {
                 ->documents();
 
             $updateFields = ['company_id' => (string)$id, 'updated_at' => new \Google\Cloud\Core\Timestamp($now)];
-            if (!empty($displayName)) {
-                $updateFields['company_name'] = $displayName;
+            if ($companyNameDirect !== '') {
+                $updateFields['company_name'] = $companyNameDirect;
             }
 
             foreach ($userQuery as $uDoc) {
@@ -1851,7 +1868,7 @@ try {
                 }
             }
 
-            error_log(sprintf('[GHL_CALLBACK] Updated users collection with company_id=%s company_name="%s"', $id, $displayName ?: '(empty)'));
+            error_log(sprintf('[GHL_CALLBACK] Updated users collection with company_id=%s company_name="%s"', $id, $companyNameDirect ?: '(empty)'));
         }
         catch (Exception $ue) {
             error_log('GHL Callback - failed to update user docs: ' . $ue->getMessage());

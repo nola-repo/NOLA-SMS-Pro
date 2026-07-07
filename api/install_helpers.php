@@ -446,6 +446,58 @@ function install_extract_company_name(array $data): string
 }
 
 /**
+ * Build the canonical agency registry payload. Empty names are deliberately
+ * rejected so an incomplete location install cannot erase a known agency name.
+ *
+ * @return array<string,mixed>
+ */
+function install_agency_registry_payload(
+    string $companyId,
+    string $companyName,
+    string $source,
+    ?DateTimeImmutable $now = null
+): array {
+    $companyId = trim($companyId);
+    $companyName = trim($companyName);
+    if ($companyId === '' || $companyName === '' || !preg_match('/^[A-Za-z0-9_-]+$/', $companyId)) {
+        return [];
+    }
+
+    $now = $now ?? new DateTimeImmutable();
+    return [
+        'company_id' => $companyId,
+        'company_name' => $companyName,
+        'name_source' => trim($source) !== '' ? trim($source) : 'marketplace_install',
+        'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+    ];
+}
+
+/**
+ * Upsert a verified agency name into agencies/{companyId}. This registry is
+ * display metadata only; companyId remains the functional relationship key.
+ */
+function install_upsert_agency_registry(
+    $db,
+    string $companyId,
+    string $companyName,
+    string $source,
+    ?DateTimeImmutable $now = null
+): bool {
+    $payload = install_agency_registry_payload($companyId, $companyName, $source, $now);
+    if ($payload === []) {
+        return false;
+    }
+
+    try {
+        $db->collection('agencies')->document(trim($companyId))->set($payload, ['merge' => true]);
+        return true;
+    } catch (\Throwable $e) {
+        error_log('[install_upsert_agency_registry] failed for ' . trim($companyId) . ': ' . $e->getMessage());
+        return false;
+    }
+}
+
+/**
  * Fetch agency/company display name from the GHL Companies API.
  */
 function install_fetch_company_name_from_ghl(string $companyId, string $accessToken): string
@@ -1778,7 +1830,6 @@ function install_finalize_registered_location_fast(
         'location_id' => $locationId,
         'location_name' => (string)($tokenData['location_name'] ?? ''),
         'companyId' => $tokenData['companyId'] ?? ($tokenData['company_id'] ?? null),
-        'company_name' => (string)($tokenData['company_name'] ?? ''),
         'access_token' => $tokenData['access_token'] ?? null,
         'refresh_token' => $tokenData['refresh_token'] ?? null,
         'scope' => $tokenData['scope'] ?? null,
@@ -1882,7 +1933,6 @@ function install_finalize_location_install(
         'location_id' => $locationId,
         'location_name' => (string)($tokenData['location_name'] ?? ''),
         'companyId' => $tokenData['companyId'] ?? ($tokenData['company_id'] ?? null),
-        'company_name' => (string)($tokenData['company_name'] ?? ''),
         'access_token' => $tokenData['access_token'] ?? null,
         'refresh_token' => $tokenData['refresh_token'] ?? null,
         'scope' => $tokenData['scope'] ?? null,
@@ -2771,9 +2821,11 @@ function install_build_registration_url(
         'location_id' => $locationId,
         'location_name' => $locationName,
         'company_id' => $companyId,
-        'company_name' => $companyName,
         'resolution_source' => $resolutionSource,
     ];
+    if (trim($companyName) !== '') {
+        $payload['company_name'] = trim($companyName);
+    }
     if ($installStatus !== '') {
         $payload['install_status'] = $installStatus;
     }
@@ -2902,6 +2954,14 @@ function install_complete_company_location_selection(
         }
     }
 
+    install_upsert_agency_registry(
+        $db,
+        $companyId,
+        $companyName,
+        'company_location_selection',
+        $now
+    );
+
     $clientId = $companyData['client_id'] ?? $companyData['appId'] ?? null;
     $freshTokenData = array_merge($preloadedTokenData, [
         'access_token' => $ltData['access_token'],
@@ -2914,7 +2974,6 @@ function install_complete_company_location_selection(
         'location_id' => $locationId,
         'location_name' => $locationName,
         'companyId' => $companyId,
-        'company_name' => $companyName,
         'install_state' => INSTALL_STATE_PENDING_OAUTH,
         'install_status' => INSTALL_STATE_INSTALL_PENDING,
         'install_resolution_mode' => INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION,

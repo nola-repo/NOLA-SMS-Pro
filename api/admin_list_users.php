@@ -14,6 +14,7 @@ require_once __DIR__ . '/webhook/firestore_client.php';
 require_once __DIR__ . '/jwt_helper.php';
 require_once __DIR__ . '/admin_auth_helper.php';
 require_once __DIR__ . '/cache_helper.php';
+require_once __DIR__ . '/services/AgencyNameResolver.php';
 require_once __DIR__ . '/performance_logger.php';
 
 NolaPerformance::start('/api/admin_list_users.php');
@@ -160,17 +161,10 @@ try {
                 NolaPerformance::increment('documents_processed');
 
                 $agencyData = $agencyDoc->data();
-                $companyId = trim((string)($agencyData['company_id'] ?? $agencyData['companyId'] ?? $agencyDoc->id()));
-                $nameParts = trim((string)($agencyData['firstName'] ?? $agencyData['first_name'] ?? '') . ' ' . (string)($agencyData['lastName'] ?? $agencyData['last_name'] ?? ''));
-                $agencyName = trim((string)(
-                    $agencyData['company_name']
-                    ?? $agencyData['agency_name']
-                    ?? $agencyData['name']
-                    ?? $agencyData['full_name']
-                    ?? $nameParts
-                    ?? $agencyData['email']
-                    ?? ''
-                ));
+                $companyId = AgencyNameResolver::companyId($agencyData, $agencyDoc->id());
+                $agencyName = $agencyCollection === 'agencies'
+                    ? AgencyNameResolver::agencyName($agencyData)
+                    : AgencyNameResolver::agencyUserCompanyName($agencyData);
 
                 if ($companyId !== '' && $agencyName !== '') {
                     $agencyNameMap[$companyId] = $agencyName;
@@ -227,10 +221,7 @@ try {
         }
 
         $companyId = $d['company_id'] ?? $d['companyId'] ?? null;
-        $agencyName = trim((string)($d['agency_name'] ?? $d['company_name'] ?? ''));
-        if ($agencyName === '' && $companyId !== null) {
-            $agencyName = $agencyNameMap[(string)$companyId] ?? '';
-        }
+        $agencyName = AgencyNameResolver::forUser($d, $agencyNameMap);
 
         $usersList[] = [
             'id'                 => $doc->id(),
@@ -244,8 +235,8 @@ try {
             'location_id'        => !empty($locId) ? $locId : null,
             'location_name'      => $locationName,
             'company_id'         => $companyId,
-            'company_name'       => $agencyName !== '' ? $agencyName : null,
-            'agency_name'        => $agencyName !== '' ? $agencyName : null,
+            'company_name'       => $agencyName !== '' ? $agencyName : 'Agency name unavailable',
+            'agency_name'        => $agencyName !== '' ? $agencyName : 'Agency name unavailable',
             'credit_balance'     => (int)($d['credit_balance'] ?? 0),
             'free_usage_count'   => $freeUsageCount,
             'free_credits_total' => $freeCreditsTotal,

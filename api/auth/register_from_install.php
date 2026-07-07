@@ -130,6 +130,13 @@ if ($type === 'agency_install') {
             } catch (Exception $ignored) {
             }
         }
+        install_upsert_agency_registry(
+            $db,
+            (string)$companyId,
+            trim((string)$companyName),
+            'agency_registration',
+            $now
+        );
 
         $existingQuery = $agencyUsersRef->where('email', '=', $email)->limit(1)->documents();
         $existingDoc = null;
@@ -155,7 +162,7 @@ if ($type === 'agency_install') {
                 }
                 $legacyData = $legacySnap->data();
                 $migratedRef = $agencyUsersRef->newDocument();
-                $migratedRef->set([
+                $migratedPayload = [
                     'name' => $legacyData['name'] ?? '',
                     'firstName' => $legacyData['firstName'] ?? '',
                     'lastName' => $legacyData['lastName'] ?? '',
@@ -166,12 +173,16 @@ if ($type === 'agency_install') {
                     'active' => isset($legacyData['active']) ? (bool)$legacyData['active'] : true,
                     'source' => $legacyData['source'] ?? 'migrated_from_users',
                     'company_id' => $legacyData['company_id'] ?? $companyId,
-                    'company_name' => $legacyData['company_name'] ?? $companyName,
                     'created_at' => $legacyData['created_at'] ?? new \Google\Cloud\Core\Timestamp($now),
                     'updated_at' => new \Google\Cloud\Core\Timestamp($now),
                     'legacy_user_id' => $legacySnap->id(),
                     'migrated_from_users' => true,
-                ], ['merge' => true]);
+                ];
+                $migratedCompanyName = trim((string)($legacyData['company_name'] ?? $companyName ?? ''));
+                if ($migratedCompanyName !== '') {
+                    $migratedPayload['company_name'] = $migratedCompanyName;
+                }
+                $migratedRef->set($migratedPayload, ['merge' => true]);
 
                 $existingDoc = $migratedRef->snapshot()->data();
                 $existingId = $migratedRef->id();
@@ -223,8 +234,10 @@ if ($type === 'agency_install') {
                 'firstName' => $parts['firstName'],
                 'lastName' => $parts['lastName'],
                 'company_id' => $companyId,
-                'company_name' => $companyName,
             ];
+            if (trim((string)$companyName) !== '') {
+                $updates['company_name'] = trim((string)$companyName);
+            }
             if (empty($existingDoc['password_hash'])) {
                 $updates['password_hash'] = password_hash($password, PASSWORD_BCRYPT);
             }
@@ -272,10 +285,12 @@ if ($type === 'agency_install') {
             'active' => true,
             'source' => 'marketplace_install',
             'company_id' => $companyId,
-            'company_name' => $companyName,
             'created_at' => new \Google\Cloud\Core\Timestamp($now),
             'updated_at' => new \Google\Cloud\Core\Timestamp($now),
         ];
+        if (trim((string)$companyName) !== '') {
+            $agencyData['company_name'] = trim((string)$companyName);
+        }
         $newAgencyDoc->set($agencyData);
         $newAgencyId = $newAgencyDoc->id();
         if ($companyId) {
@@ -471,6 +486,13 @@ try {
             } catch (Exception $ignored) {
             }
         }
+        install_upsert_agency_registry(
+            $db,
+            (string)$companyId,
+            trim((string)$newCompanyName),
+            'location_registration',
+            $now
+        );
 
         if ($newLocationName)
             $updates['location_name'] = $newLocationName;
@@ -863,11 +885,14 @@ function _write_user_subaccount($db, string $uid, string $entityId, array $detai
         $subaccountRef = $db->collection('users')->document($uid)->collection('subaccounts')->document($entityId);
         $payload = [
             'company_id' => $details['company_id'] ?? '',
-            'company_name' => $details['company_name'] ?? '',
             'role' => $details['role'] ?? 'user',
             'is_active' => true,
             'linked_at' => new \Google\Cloud\Core\Timestamp($now),
         ];
+        $companyName = trim((string)($details['company_name'] ?? ''));
+        if ($companyName !== '') {
+            $payload['company_name'] = $companyName;
+        }
 
         if (!$isAgency) {
             $payload['location_id'] = $entityId;

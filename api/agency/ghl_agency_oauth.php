@@ -77,15 +77,18 @@ if ($http_status == 200 && is_array($result) && isset($result['access_token'])) 
 
     // Save token in ghl_tokens as agency
     try {
-        $agencyName = install_resolve_company_name($result, $companyId, (string)$result['access_token']);
-        if ($agencyName === '') {
-            $agencyName = 'Unknown Agency';
-        }
+        $resolvedAgencyName = install_resolve_company_name($result, $companyId, (string)$result['access_token']);
+        $agencyName = $resolvedAgencyName !== '' ? $resolvedAgencyName : 'Agency name unavailable';
         $agencyEmail = $result['userEmail'] ?? $result['email'] ?? '';
+        install_upsert_agency_registry(
+            $db,
+            (string)$companyId,
+            $resolvedAgencyName,
+            'agency_oauth_exchange',
+            new \DateTimeImmutable()
+        );
 
-        $db->collection('ghl_tokens')
-            ->document($companyId)
-            ->set([
+        $companyTokenPayload = [
                 'appType' => 'agency',
                 'appId' => $clientId,
                 'userType' => 'Company',
@@ -93,11 +96,14 @@ if ($http_status == 200 && is_array($result) && isset($result['access_token'])) 
                 'access_token' => $result['access_token'],
                 'refresh_token' => $result['refresh_token'],
                 'expires_at' => time() + (int)($result['expires_in'] ?? 86399),
-                'agency_name' => $agencyName,
-                'company_name' => $agencyName,
-                'location_name' => $agencyName,
                 'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime())
-            ]);
+            ];
+        if ($resolvedAgencyName !== '') {
+            $companyTokenPayload['agency_name'] = $resolvedAgencyName;
+        }
+        $db->collection('ghl_tokens')
+            ->document($companyId)
+            ->set($companyTokenPayload, ['merge' => true]);
 
         // Write admin_notifications entry for new_agency registration
         try {

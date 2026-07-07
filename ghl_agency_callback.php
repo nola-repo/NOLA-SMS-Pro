@@ -1,6 +1,7 @@
 <?php
 require __DIR__ . '/api/webhook/firestore_client.php';
 require_once __DIR__ . '/api/jwt_helper.php';
+require_once __DIR__ . '/api/install_helpers.php';
 
 function agency_render_error(string $msg, array $details = []): void
 {
@@ -124,9 +125,10 @@ if ($companyRes['code'] === 200) {
 
 $db = get_firestore();
 $now = new DateTimeImmutable();
+install_upsert_agency_registry($db, (string)$companyId, $companyName, 'agency_marketplace_callback', $now);
 
 try {
-    $db->collection('ghl_tokens')->document((string)$companyId)->set([
+    $companyTokenPayload = [
         'access_token' => $companyToken,
         'refresh_token' => $companyRefresh,
         'expires_at' => $companyExpiresAt,
@@ -135,9 +137,12 @@ try {
         'appType' => 'agency',
         'userType' => 'Company',
         'companyId' => $companyId,
-        'agency_name' => $companyName,
         'updated_at' => new \Google\Cloud\Core\Timestamp($now),
-    ], ['merge' => true]);
+    ];
+    if (trim($companyName) !== '') {
+        $companyTokenPayload['agency_name'] = trim($companyName);
+    }
+    $db->collection('ghl_tokens')->document((string)$companyId)->set($companyTokenPayload, ['merge' => true]);
 } catch (Exception $e) {
     agency_render_error('Failed to save agency token.');
 }

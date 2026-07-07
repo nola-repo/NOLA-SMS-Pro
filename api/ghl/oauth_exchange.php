@@ -13,6 +13,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 }
 
 require_once __DIR__ . '/../webhook/firestore_client.php';
+require_once __DIR__ . '/../install_helpers.php';
 
 $raw = file_get_contents('php://input');
 $payload = json_decode($raw, true);
@@ -118,7 +119,7 @@ if ($http_status == 200 && is_array($result) && isset($result['access_token'])) 
     }
 
     // Try fetching company name if possible
-    $companyName = 'Your GHL Company';
+    $companyName = '';
     try {
         $companyUrl = 'https://services.leadconnectorhq.com/companies/' . $companyId;
         $ch2 = curl_init($companyUrl);
@@ -134,7 +135,7 @@ if ($http_status == 200 && is_array($result) && isset($result['access_token'])) 
 
         if ($compHttpCode === 200) {
             $compData = json_decode($compResponse, true);
-            $companyName = $compData['company']['name'] ?? $companyName;
+            $companyName = trim((string)($compData['company']['name'] ?? ''));
         }
     } catch (Exception $e) {
         error_log("Failed to fetch company name: " . $e->getMessage());
@@ -145,23 +146,26 @@ if ($http_status == 200 && is_array($result) && isset($result['access_token'])) 
         $expiresIn = (int)($result['expires_in'] ?? 86399);
         $now = new DateTimeImmutable();
         $expiresAt = $now->modify('+' . $expiresIn . ' seconds');
+        install_upsert_agency_registry($db, (string)$companyId, $companyName, 'legacy_oauth_exchange', $now);
 
-        $db->collection('ghl_tokens')
-            ->document($companyId)
-            ->set([
+        $companyTokenPayload = [
                 'access_token' => $result['access_token'],
                 'refresh_token' => $result['refresh_token'],
                 'expires_at' => new \Google\Cloud\Core\Timestamp($expiresAt),
                 'scope' => $result['scope'] ?? '',
                 'company_id' => $companyId,
-                'company_name' => $companyName,
-                'agency_name' => $companyName,
                 'appType' => $usedAppType,
                 'appId' => $ghlApps[$usedAppType]['clientId'],
                 'userType' => $ghlApps[$usedAppType]['userType'],
                 'updated_at' => new \Google\Cloud\Core\Timestamp($now),
                 'created_at' => new \Google\Cloud\Core\Timestamp($now)
-            ], ['merge' => true]);
+            ];
+        if ($companyName !== '') {
+            $companyTokenPayload['agency_name'] = $companyName;
+        }
+        $db->collection('ghl_tokens')
+            ->document($companyId)
+            ->set($companyTokenPayload, ['merge' => true]);
             
         // Also update company_id on matching user documents so login.php can return it
         try {
@@ -172,11 +176,14 @@ if ($http_status == 200 && is_array($result) && isset($result['access_token'])) 
 
             foreach ($userQuery as $userDoc) {
                 if ($userDoc->exists()) {
-                    $userDoc->reference()->set([
+                    $userUpdate = [
                         'company_id'   => $companyId,
-                        'company_name' => $companyName,
                         'updated_at'   => new \Google\Cloud\Core\Timestamp($now),
-                    ], ['merge' => true]);
+                    ];
+                    if ($companyName !== '') {
+                        $userUpdate['company_name'] = $companyName;
+                    }
+                    $userDoc->reference()->set($userUpdate, ['merge' => true]);
                 }
             }
         } catch (Exception $ue) {
@@ -203,7 +210,7 @@ if ($http_status == 200 && is_array($result) && isset($result['access_token'])) 
     echo json_encode([
         "success" => true,
         "company_id" => $companyId,
-        "company_name" => $companyName
+        "company_name" => $companyName !== '' ? $companyName : null
     ]);
 } else {
     http_response_code($http_status ?: 400);
