@@ -76,4 +76,32 @@ class MarketplaceInstallationContractTest extends TestCase
         $this->assertStringContainsString('register_from_install_user_is_incomplete', $source);
         $this->assertStringContainsString('register_from_install_location_conflict((string)$locationId);', $source);
     }
+
+    public function test_registration_activates_install_before_issuing_jwt(): void
+    {
+        $source = file_get_contents($this->rootFile('api/auth/register_from_install.php'));
+
+        $activation = strpos($source, 'install_finalize_registered_location_fast($db, (string)$locationId');
+        $jwt = strpos($source, "'sub' => \$newUserId", $activation);
+        $response = strpos($source, "'message' => 'Account ready.'", $activation);
+
+        $this->assertNotFalse($activation);
+        $this->assertNotFalse($jwt);
+        $this->assertNotFalse($response);
+        $this->assertLessThan($jwt, $activation);
+        $this->assertLessThan($response, $activation);
+        $this->assertStringContainsString("'active' => false", $source);
+        $this->assertStringContainsString("'activation_state' => 'pending'", $source);
+    }
+
+    public function test_pending_install_reconciliation_is_dry_run_by_default(): void
+    {
+        $source = file_get_contents($this->rootFile('scripts/reconcile_pending_installs.php'));
+
+        $this->assertStringContainsString("pending_reconcile_arg('apply', false)", $source);
+        $this->assertStringContainsString('WOULD_EXPIRE', $source);
+        $this->assertStringContainsString('INSTALL_STATE_ONBOARDING_EXPIRED', $source);
+        $this->assertStringContainsString("'access_token' => null", $source);
+        $this->assertStringContainsString("'refresh_token' => null", $source);
+    }
 }

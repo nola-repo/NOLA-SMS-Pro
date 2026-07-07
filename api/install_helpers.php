@@ -17,6 +17,7 @@ if (!defined('INSTALL_STATE_FRESH_INSTALL')) {
     define('INSTALL_STATE_PENDING_OAUTH', 'PENDING_OAUTH');
     define('INSTALL_STATE_INSTALLED', 'INSTALLED');
     define('INSTALL_STATE_UNINSTALLED', 'UNINSTALLED');
+    define('INSTALL_STATE_ONBOARDING_EXPIRED', 'ONBOARDING_EXPIRED');
     define('INSTALL_STATE_INSTALL_PENDING', 'INSTALL_PENDING');
     define('INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION', 'EXACT_SINGLE_LOCATION');
 }
@@ -48,10 +49,16 @@ function install_token_active_for_sms(bool $docExists, array $tokenData = []): b
     if ($state === INSTALL_STATE_UNINSTALLED) {
         return false;
     }
+    if ($state === INSTALL_STATE_ONBOARDING_EXPIRED) {
+        return false;
+    }
     if ($state === INSTALL_STATE_PENDING_OAUTH) {
         return false;
     }
     if (array_key_exists('is_live', $tokenData) && $tokenData['is_live'] === false) {
+        return false;
+    }
+    if (($tokenData['cleanup_in_progress'] ?? false) === true) {
         return false;
     }
 
@@ -95,8 +102,22 @@ function install_location_sms_gate($db, string $locationId): array
     }
 
     $data = $snap->data();
+    if (($data['cleanup_in_progress'] ?? false) === true) {
+        return [
+            'allowed' => false,
+            'code' => 'cleanup_in_progress',
+            'reason' => 'NOLA SMS Pro cleanup is in progress for this test sub-account. SMS sending is disabled.',
+        ];
+    }
     if (!install_token_active_for_sms(true, $data)) {
         $state = (string)($data['install_state'] ?? '');
+        if ($state === INSTALL_STATE_ONBOARDING_EXPIRED) {
+            return [
+                'allowed' => false,
+                'code' => 'onboarding_expired',
+                'reason' => 'The NOLA SMS Pro onboarding session expired. Restart installation from the GoHighLevel Marketplace.',
+            ];
+        }
         if ($state === INSTALL_STATE_UNINSTALLED || (($data['is_live'] ?? null) === false)) {
             return [
                 'allowed' => false,
@@ -1631,6 +1652,61 @@ function install_should_defer_finalize_for_decision(array $decision): bool
     return ((string)($decision['kind'] ?? '')) === 'register';
 }
 
+/**
+ * Confirm registration has an exact, usable location token before any account
+ * can be activated or any login JWT can be issued.
+ *
+ * @return array{ok:bool,code:string,message:string,token_data?:array<string,mixed>}
+ */
+function install_registration_activation_check($db, string $locationId): array
+{
+    $locationId = install_clean_location_id($locationId);
+    if ($locationId === null) {
+        return ['ok' => false, 'code' => 'INVALID_GHL_LOCATION_ID', 'message' => 'A valid GHL location is required.'];
+    }
+
+    try {
+        $snap = $db->collection('ghl_tokens')->document($locationId)->snapshot();
+    } catch (Throwable $e) {
+        return ['ok' => false, 'code' => 'LOCATION_INSTALL_LOOKUP_FAILED', 'message' => 'Installation status could not be verified.'];
+    }
+
+    if (!$snap->exists()) {
+        return ['ok' => false, 'code' => 'LOCATION_NOT_INSTALLED', 'message' => 'No installation token exists for this GHL location.'];
+    }
+
+    $data = $snap->data();
+    $state = (string)($data['install_state'] ?? '');
+    if (in_array($state, [INSTALL_STATE_UNINSTALLED, INSTALL_STATE_ONBOARDING_EXPIRED], true)) {
+        return ['ok' => false, 'code' => 'LOCATION_NOT_INSTALLED', 'message' => 'Restart installation from the GHL Marketplace.'];
+    }
+    if (($data['cleanup_in_progress'] ?? false) === true) {
+        return ['ok' => false, 'code' => 'LOCATION_CLEANUP_IN_PROGRESS', 'message' => 'This location is currently being cleaned up.'];
+    }
+    if (!in_array($state, [INSTALL_STATE_PENDING_OAUTH, INSTALL_STATE_INSTALLED], true)) {
+        return ['ok' => false, 'code' => 'LOCATION_INSTALL_PENDING', 'message' => 'Installation is not ready for registration.'];
+    }
+
+    $tokenLocationId = install_clean_location_id($data['location_id'] ?? ($data['locationId'] ?? null));
+    $hasLocationToken = trim((string)($data['access_token'] ?? '')) !== ''
+        && (($data['userType'] ?? '') === 'Location' || $tokenLocationId === $locationId);
+    if (!$hasLocationToken) {
+        return ['ok' => false, 'code' => 'LOCATION_INSTALL_PENDING', 'message' => 'The location access token is not ready yet.'];
+    }
+
+    $resolutionMode = (string)($data['install_resolution_mode'] ?? INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION);
+    if (empty(install_final_install_checkpoint($locationId, $resolutionMode)['ok'])) {
+        return ['ok' => false, 'code' => 'LOCATION_INSTALL_PENDING', 'message' => 'The selected GHL location is not fully resolved.'];
+    }
+
+    return [
+        'ok' => true,
+        'code' => 'LOCATION_ACTIVATION_READY',
+        'message' => 'Installation is ready for activation.',
+        'token_data' => $data,
+    ];
+}
+
 function install_maybe_finalize_location_install(
     $db,
     string $locationId,
@@ -1726,10 +1802,10 @@ function install_finalize_registered_location_fast(
     string $locationId,
     array $ownerContext,
     DateTimeImmutable $now
-): void {
+): bool {
     $locationId = install_clean_location_id($locationId);
     if ($locationId === null) {
-        return;
+        throw new RuntimeException('Invalid location id during registration activation.');
     }
 
     try {
@@ -1737,33 +1813,29 @@ function install_finalize_registered_location_fast(
         $tokenSnap = $tokenRef->snapshot();
     } catch (Exception $e) {
         error_log('[install_helpers] finalize_registered_fast lookup failed for ' . $locationId . ': ' . $e->getMessage());
-
-        return;
+        throw $e;
     }
 
     if (!$tokenSnap->exists()) {
-        return;
+        throw new RuntimeException('Location token is missing during registration activation.');
     }
 
     $tokenData = $tokenSnap->data();
     $storedState = (string)($tokenData['install_state'] ?? '');
-    if ($storedState === INSTALL_STATE_INSTALLED) {
-        return;
-    }
-    if ($storedState !== INSTALL_STATE_PENDING_OAUTH) {
-        return;
+    if (!in_array($storedState, [INSTALL_STATE_PENDING_OAUTH, INSTALL_STATE_INSTALLED], true)) {
+        throw new RuntimeException('Location is not eligible for registration activation.');
     }
 
     $hasLocationToken = trim((string)($tokenData['access_token'] ?? '')) !== ''
         && (($tokenData['userType'] ?? '') === 'Location'
             || install_clean_location_id($tokenData['location_id'] ?? ($tokenData['locationId'] ?? null)) === $locationId);
     if (!$hasLocationToken) {
-        return;
+        throw new RuntimeException('Location access token is not ready during registration activation.');
     }
 
     $resolutionMode = (string)($tokenData['install_resolution_mode'] ?? INSTALL_RESOLUTION_EXACT_SINGLE_LOCATION);
     if (empty(install_final_install_checkpoint($locationId, $resolutionMode)['ok'])) {
-        return;
+        throw new RuntimeException('Location resolution is incomplete during registration activation.');
     }
 
     $resolutionSource = (string)($tokenData['install_resolution_source'] ?? 'register_from_install');
@@ -1867,7 +1939,32 @@ function install_finalize_registered_location_fast(
     $batch = $db->batch();
     $batch->set($tokenRef, $tokenInstallData, ['merge' => true]);
     $batch->set($intRef, $integrationData, ['merge' => true]);
+    if ($ownerUserId !== '') {
+        $userRef = $db->collection('users')->document($ownerUserId);
+        $ownerRef = $db->collection('location_owners')->document($locationId);
+        $subaccountRef = $userRef->collection('subaccounts')->document($locationId);
+
+        $batch->set($userRef, [
+            'active' => true,
+            'activation_state' => 'active',
+            'activation_completed_at' => $timestamp,
+            'updated_at' => $timestamp,
+        ], ['merge' => true]);
+        $batch->set($ownerRef, array_merge($ownerFields, [
+            'entity_id' => $locationId,
+            'source' => 'register_from_install_atomic_activation',
+            'updated_at' => $timestamp,
+        ]), ['merge' => true]);
+        $batch->set($subaccountRef, [
+            'location_id' => $locationId,
+            'is_active' => true,
+            'activation_state' => 'active',
+            'updated_at' => $timestamp,
+        ], ['merge' => true]);
+    }
     $batch->commit();
+
+    return true;
 }
 
 function install_finalize_location_install(

@@ -377,6 +377,24 @@ try {
     }
 
     $isLocationLevel = !empty($locationId);
+    if ($isLocationLevel && $locationId) {
+        $activationCheck = install_registration_activation_check($db, (string)$locationId);
+        if (empty($activationCheck['ok'])) {
+            $activationCode = (string)($activationCheck['code'] ?? 'LOCATION_INSTALL_PENDING');
+            $activationHttp = $activationCode === 'LOCATION_NOT_INSTALLED' ? 404
+                : ($activationCode === 'LOCATION_CLEANUP_IN_PROGRESS' ? 423 : 409);
+            http_response_code($activationHttp);
+            echo json_encode([
+                'error' => $activationCheck['message'] ?? 'Installation is not ready for registration.',
+                'code' => $activationCode,
+                'next_action' => $activationCode === 'LOCATION_NOT_INSTALLED'
+                    ? 'restart_marketplace_install'
+                    : 'retry_installation_status',
+                'location_id' => $locationId,
+            ]);
+            exit;
+        }
+    }
     register_from_install_log_timing($rflogId, 'guards', $rflogStart);
 
     // ── 1. Check if email already exists ─────────────────────────────────────
@@ -469,7 +487,10 @@ try {
             register_from_install_log_timing($rflogId, 'owner_attach', $rflogStart);
         }
 
-        $updates = ['updated_at' => new \Google\Cloud\Core\Timestamp($now)];
+        $updates = [
+            'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+            'activation_state' => 'pending',
+        ];
 
         // Try to fetch the real name of the new location from ghl_tokens
         $newLocationName = $payloadLocName;
@@ -535,7 +556,6 @@ try {
         register_from_install_log_timing($rflogId, 'user_write', $rflogStart);
 
         if ($isLocationLevel && $locationId) {
-            (new CreditManager())->ensureSubaccountCreditBalanceForLocation((string)$locationId);
             // Enforce one-email -> one-subaccount by pruning stale links first.
             _prune_user_subaccounts_except($db, $existingId, $locationId);
             _write_user_subaccount(
@@ -549,6 +569,7 @@ try {
                     'role' => $existingDoc['role'] ?? 'user',
                 ],
                 $now,
+                false,
                 false
             );
         } elseif (!empty($companyId)) {
@@ -566,6 +587,17 @@ try {
                 $now,
                 true
             );
+        }
+
+        if ($isLocationLevel && $locationId) {
+            install_finalize_registered_location_fast($db, (string)$locationId, [
+                'owner_user_id' => $existingId,
+                'owner_email' => $email,
+                'owner_name' => $fullName,
+                'owner_phone' => $phone,
+            ], $now);
+            (new CreditManager())->ensureSubaccountCreditBalanceForLocation((string)$locationId);
+            register_from_install_log_timing($rflogId, 'activation_commit', $rflogStart);
         }
 
         // Fetch fresh profile for response
@@ -672,7 +704,8 @@ try {
         'phone' => $phone,
         'password_hash' => $passwordHash,
         'role' => $role,
-        'active' => true,
+        'active' => false,
+        'activation_state' => 'pending',
         'source' => 'marketplace_install',
         'created_at' => new \Google\Cloud\Core\Timestamp($now),
         'updated_at' => new \Google\Cloud\Core\Timestamp($now),
@@ -696,19 +729,17 @@ try {
         }
     }
 
+    // Persist a non-usable pending account first. The activation batch below
+    // promotes the user, owner, token, integration, and subaccount together.
+    $newUserDoc->set($userData);
+    register_from_install_log_timing($rflogId, 'pending_user_write', $rflogStart);
+
     if ($isLocationLevel && $locationId) {
         $ownershipMode = install_attach_user_to_location_ownership($db, (string)$locationId, $newUserId, $email, $fullName, $phone, $now, 'register_from_install_new');
         if ($ownershipMode !== 'primary') {
             register_from_install_location_conflict((string)$locationId);
         }
         register_from_install_log_timing($rflogId, 'owner_attach', $rflogStart);
-    }
-
-    $newUserDoc->set($userData);
-    register_from_install_log_timing($rflogId, 'user_write', $rflogStart);
-
-    if ($isLocationLevel && $locationId) {
-        (new CreditManager())->ensureSubaccountCreditBalanceForLocation((string)$locationId);
     }
 
     // Write user-owned subaccount entry
@@ -724,6 +755,7 @@ try {
                 'role' => $role,
             ],
             $now,
+            false,
             false
         );
     } elseif (!empty($companyId)) {
@@ -742,7 +774,22 @@ try {
     }
     register_from_install_log_timing($rflogId, 'subaccount_write', $rflogStart);
 
-    // Return JWT immediately so the install page can cache auth without a second login
+    if ($isLocationLevel && $locationId) {
+        install_finalize_registered_location_fast($db, (string)$locationId, [
+            'owner_user_id' => $newUserId,
+            'owner_email' => $email,
+            'owner_name' => $fullName,
+            'owner_phone' => $phone,
+        ], $now);
+        (new CreditManager())->ensureSubaccountCreditBalanceForLocation((string)$locationId);
+        $freshUser = $newUserDoc->snapshot();
+        if ($freshUser->exists()) {
+            $userData = $freshUser->data();
+        }
+        register_from_install_log_timing($rflogId, 'activation_commit', $rflogStart);
+    }
+
+    // JWT is issued only after synchronous activation succeeds.
     $token = jwt_sign([
         'sub' => $newUserId,
         'email' => $email,
@@ -931,8 +978,6 @@ function register_from_install_run_deferred_finalize(
 
     $finalizeStart = microtime(true);
     try {
-        install_finalize_registered_location_fast($db, $locationId, $ownerContext, $now);
-
         if (trim($registrationEmail) !== '') {
             try {
                 require_once __DIR__ . '/../services/NotificationService.php';
@@ -964,14 +1009,23 @@ function _initial_user_credit_balance_for_location($db, string $locationId): int
  * Write (or update) a subaccount record in users/{uid}/subaccounts/{entityId}.
  * For agencies, entityId is companyId. For location users, entityId is locationId.
  */
-function _write_user_subaccount($db, string $uid, string $entityId, array $details, DateTimeImmutable $now, bool $isAgency = false): void
+function _write_user_subaccount(
+    $db,
+    string $uid,
+    string $entityId,
+    array $details,
+    DateTimeImmutable $now,
+    bool $isAgency = false,
+    bool $isActive = true
+): void
 {
     try {
         $subaccountRef = $db->collection('users')->document($uid)->collection('subaccounts')->document($entityId);
         $payload = [
             'company_id' => $details['company_id'] ?? '',
             'role' => $details['role'] ?? 'user',
-            'is_active' => true,
+            'is_active' => $isActive,
+            'activation_state' => $isActive ? 'active' : 'pending',
             'linked_at' => new \Google\Cloud\Core\Timestamp($now),
         ];
         $companyName = trim((string)($details['company_name'] ?? ''));

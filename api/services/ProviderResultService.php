@@ -6,6 +6,32 @@ class ProviderResultService
 
     public static function providerMessageValidation(string $providerPreference, string $message): ?array
     {
+        if (self::baseProvider($providerPreference) !== 'unisms') {
+            return null;
+        }
+
+        $normalized = strtolower(trim((string)preg_replace('/[^a-z0-9]+/i', ' ', $message)));
+        $knownGenericTestPhrases = [
+            'test',
+            'testing',
+            'sms test',
+            'test sms',
+            'test message',
+            'sms test message',
+            'sms pro test',
+            'nola test',
+            'nola sms test',
+        ];
+
+        if (in_array($normalized, $knownGenericTestPhrases, true)) {
+            return [
+                'error' => 'unisms_likely_spam',
+                'message' => "UniSMS commonly rejects generic test phrases as spam. Use a natural sentence, such as: 'Hi, this is a delivery test from NOLA SMS Pro.'",
+                'provider' => 'unisms',
+                'characters' => mb_strlen($message, 'UTF-8'),
+            ];
+        }
+
         return null;
     }
 

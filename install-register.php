@@ -21,7 +21,7 @@ if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
     }
 }
 $apiBase     = 'https://smspro-api.nolacrm.io';
-$reactApp    = 'https://app.nolasmspro.com';
+$reactApp    = 'https://app.nolacrm.io';
 $marketplace = 'https://marketplace.leadconnectorhq.com/apps/overview/68118e8f9f1bac2ffc84ed23';
 
 /**

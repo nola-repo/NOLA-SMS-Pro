@@ -33,6 +33,24 @@ final class LocationBootstrapService
         $status = (string)($classification['status'] ?? '');
         $storedState = (string)($classification['install_state'] ?? ($tokenData['install_state'] ?? ''));
 
+        if (($tokenData['cleanup_in_progress'] ?? false) === true) {
+            return [
+                'http_status' => 423,
+                'code' => 'LOCATION_CLEANUP_IN_PROGRESS',
+                'next_action' => self::ACTION_SHOW_RETRY,
+                'message' => 'This test workspace is temporarily unavailable while cleanup is in progress.',
+            ];
+        }
+
+        if ($storedState === 'ONBOARDING_EXPIRED') {
+            return [
+                'http_status' => 410,
+                'code' => 'LOCATION_ONBOARDING_EXPIRED',
+                'next_action' => self::ACTION_SHOW_NOT_INSTALLED,
+                'message' => 'The onboarding session expired. Restart installation from the GHL Marketplace.',
+            ];
+        }
+
         if ($storedState === 'UNINSTALLED' || (array_key_exists('is_live', $tokenData) && $tokenData['is_live'] === false)) {
             return [
                 'http_status' => 403,

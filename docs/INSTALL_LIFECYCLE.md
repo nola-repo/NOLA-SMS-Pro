@@ -22,6 +22,8 @@ Firestore documents.
 | Registered | Active location token and active canonical location user | Autologin, then load app |
 | Agency access | Active location token belongs to authenticated agency company | Load app scoped to that location |
 | Reconnect required | Installed/registered, but OAuth refresh cannot recover | Reconnect GHL OAuth |
+| Cleanup in progress | `cleanup_in_progress=true` | Block product access and retry after cleanup |
+| Onboarding expired | `ONBOARDING_EXPIRED` after stale `PENDING_OAUTH` | Restart Marketplace installation |
 | Uninstalled | `UNINSTALLED` or `is_live=false` | Reinstall; all messaging remains blocked |
 
 ## Invariants
@@ -37,6 +39,10 @@ Firestore documents.
 7. Reinstalling a registered location routes to login, not registration.
 8. All product data requests wait until `/api/v2/location/bootstrap` returns
    `next_action=load_app`.
+9. Registration must not issue a JWT before the user, owner, token, integration,
+   and subaccount activation batch commits successfully.
+10. New registration records remain inactive/pending until that activation
+    batch succeeds.
 
 ## Authoritative runtime gate
 
@@ -65,6 +71,9 @@ Contacts, conversations, templates, billing, and messaging must not load before
 8. Wrong company/location pairing is rejected.
 9. Expired onboarding token returns `INSTALL_TOKEN_EXPIRED`.
 10. Uninstall blocks SMS, workflows, conversations, billing, and app bootstrap.
+11. Cleanup lock blocks bootstrap before product requests begin.
+12. Stale pending onboarding is reported by the dry-run reconciler and becomes
+    `ONBOARDING_EXPIRED` only when the reviewed apply mode runs.
 
 ## Release gate
 
@@ -79,6 +88,8 @@ Before production deployment:
 6. Open the location as an authenticated agency user and as its location user.
 7. Attempt access from a sibling location and confirm rejection.
 8. Uninstall and confirm bootstrap and SMS both reject the location.
+9. Run `php scripts/reconcile_pending_installs.php` and review the dry-run
+   output before scheduling or using `--apply`.
 
 ## Production monitoring
 
@@ -91,6 +102,8 @@ Track these structured codes from bootstrap and autologin logs:
 - `GHL_RECONNECT_REQUIRED`
 - `INSTALL_TOKEN_EXPIRED`
 - `LOCATION_BOOTSTRAP_FAILED`
+- `LOCATION_CLEANUP_IN_PROGRESS`
+- `LOCATION_ONBOARDING_EXPIRED`
 
 Initial service objectives:
 

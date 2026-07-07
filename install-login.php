@@ -17,7 +17,7 @@ require_once __DIR__ . '/api/webhook/firestore_client.php';
 require_once __DIR__ . '/api/install_helpers.php';
 
 $apiBase  = 'https://smspro-api.nolacrm.io';
-$reactApp = 'https://app.nolasmspro.com';
+$reactApp = 'https://app.nolacrm.io';
 $marketplace = 'https://marketplace.leadconnectorhq.com/apps/overview/68118e8f9f1bac2ffc84ed23';
 
 // ── Shared page renderer (matches install-register.php / ghl_callback.php) ───

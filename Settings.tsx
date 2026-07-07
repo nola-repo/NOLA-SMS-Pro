@@ -12,7 +12,6 @@ import {
     getAccountSettings, saveAccountSettings,
     getNotificationSettings, saveNotificationSettings,
     getStoredSenderIds, saveStoredSenderIds,
-    getPreferredSender, savePreferredSender,
     type AccountSettings, type NotificationSettings, type StoredSenderId
 } from "../utils/settingsStorage";
 import { SenderRequestModal } from "../components/SenderRequestModal";
@@ -437,7 +436,6 @@ const SenderIdsSection: React.FC<{ autoOpenAddModal?: boolean }> = ({ autoOpenAd
     const [config, setConfig] = useState<AccountSenderConfig | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isAdding, setIsAdding] = useState(false);
-    const [preferredSender, setPreferredSender] = useState<string | null>(getPreferredSender());
 
     // Auto-open modal when triggered from Composer
     useEffect(() => {
@@ -573,8 +571,9 @@ const SenderIdsSection: React.FC<{ autoOpenAddModal?: boolean }> = ({ autoOpenAd
                             const statusCfg = STATUS_CONFIG[sid.status];
                             const icon = SENDER_ICONS[i % SENDER_ICONS.length];
                             
-                            const currentDefaultName = preferredSender || config?.approved_sender_id || systemDefault;
-                            const isDefault = sid.name === currentDefaultName && sid.status === "approved";
+                            // The platform sender is always the default. Approved custom
+                            // senders remain available for explicit selection when sending.
+                            const isDefault = sid.name === systemDefault && sid.status === "approved";
 
                             return (
                                 <div key={sid.id} className="flex items-center gap-3 p-3 rounded-xl bg-[#f7f7f7] dark:bg-[#0d0e10] group">
@@ -605,18 +604,6 @@ const SenderIdsSection: React.FC<{ autoOpenAddModal?: boolean }> = ({ autoOpenAd
                                         <span className="text-[11px] text-[#9aa0a6]">{sid.description}</span>
                                     </div>
                                     
-                                    {/* Action Button */}
-                                    {sid.status === "approved" && !isDefault && (
-                                        <button 
-                                            onClick={() => {
-                                                savePreferredSender(sid.name);
-                                                setPreferredSender(sid.name);
-                                            }}
-                                            className="opacity-0 group-hover:opacity-100 transition-opacity px-3 py-1.5 text-[11px] font-bold text-[#2b83fa] bg-[#2b83fa]/10 hover:bg-[#2b83fa]/20 rounded-lg whitespace-nowrap"
-                                        >
-                                            Set as Default
-                                        </button>
-                                    )}
                                 </div>
                             );
                         })}

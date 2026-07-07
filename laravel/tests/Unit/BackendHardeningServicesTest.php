@@ -39,6 +39,18 @@ class BackendHardeningServicesTest extends TestCase
         $result = \ProviderResultService::providerMessageValidation('unisms_custom', 'hello');
 
         $this->assertNull($result);
+        $this->assertNull(\ProviderResultService::providerMessageValidation('unisms', 'Meet at 5?'));
+    }
+
+    public function test_unisms_known_generic_test_phrase_is_rejected_before_provider_call(): void
+    {
+        $result = \ProviderResultService::providerMessageValidation('unisms_custom', 'SMS pro Test');
+
+        $this->assertSame('unisms_likely_spam', $result['error']);
+        $this->assertSame('unisms', $result['provider']);
+        $this->assertSame(12, $result['characters']);
+        $this->assertStringContainsString('delivery test from NOLA SMS Pro', $result['message']);
+        $this->assertNull(\ProviderResultService::providerMessageValidation('semaphore', 'SMS pro Test'));
     }
 
     public function test_provider_summary_maps_gateway_failure_to_public_status(): void

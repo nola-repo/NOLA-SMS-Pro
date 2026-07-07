@@ -42,6 +42,18 @@ class LocationLifecycleContractTest extends TestCase
                 'LOCATION_UNINSTALLED',
                 'show_not_installed',
             ],
+            'cleanup blocks before product load' => [
+                ['status' => 'LINKED_ACCOUNT', 'install_state' => 'INSTALLED'],
+                ['install_state' => 'INSTALLED', 'is_live' => true, 'cleanup_in_progress' => true],
+                'LOCATION_CLEANUP_IN_PROGRESS',
+                'show_retry',
+            ],
+            'expired onboarding requires restart' => [
+                ['status' => 'TOKEN_ONLY', 'install_state' => 'ONBOARDING_EXPIRED'],
+                ['install_state' => 'ONBOARDING_EXPIRED', 'is_live' => false],
+                'LOCATION_ONBOARDING_EXPIRED',
+                'show_not_installed',
+            ],
         ];
     }
 
