@@ -391,7 +391,7 @@ function jsonBlock(mixed $data): string
                 $installUrl = 'https://marketplace.leadconnectorhq.com/v2/oauth/chooselocation?response_type=code'
                     . '&redirect_uri=' . urlencode('https://smspro-api.nolacrm.io/oauth/callback')
                     . '&client_id=6999da2b8f278296d95f7274-mmn30t4f'
-                    . '&scope=' . urlencode('workflows.readonly conversations/message.readonly conversations.readonly conversations.write contacts.readonly contacts.write conversations/message.write locations.readonly locations/tags.readonly locations/tags.write locations/customFields.readonly')
+                    . '&scope=' . urlencode('contacts.readonly contacts.write conversations.readonly conversations.write conversations/message.readonly conversations/message.write locations.readonly locations/customFields.readonly oauth.readonly oauth.write')
                     . '&version_id=6999da2b8f278296d95f7274';
                 ?>
                     <a href="<?= $installUrl ?>" target="_blank"

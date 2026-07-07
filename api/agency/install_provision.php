@@ -48,13 +48,49 @@ function provision_maybe_update_session($sessionRef, int $processed, int $total,
     }
 }
 
-function provision_fetch_locations(string $companyId, string $companyToken): array
+function provision_marketplace_app_id(array $companyData = []): string
+{
+    $candidates = [
+        getenv('GHL_MARKETPLACE_APP_ID') ?: '',
+        (string)($companyData['appId'] ?? ''),
+        (string)($companyData['client_id'] ?? ''),
+        getenv('GHL_AGENCY_CLIENT_ID') ?: '',
+        getenv('GHL_CLIENT_ID') ?: '',
+        '6999da2b8f278296d95f7274',
+    ];
+
+    foreach ($candidates as $candidate) {
+        $candidate = trim($candidate);
+        if ($candidate === '') {
+            continue;
+        }
+        if (strpos($candidate, '-') !== false) {
+            $candidate = explode('-', $candidate, 2)[0];
+        }
+        if ($candidate !== '') {
+            return $candidate;
+        }
+    }
+
+    return '6999da2b8f278296d95f7274';
+}
+
+function provision_fetch_installed_locations(string $companyId, string $companyToken, array $companyData = []): array
 {
     $all = [];
+    $errors = [];
     $skip = 0;
     $limit = 100;
+    $appId = provision_marketplace_app_id($companyData);
+
     do {
-        $url = "https://services.leadconnectorhq.com/locations/search?companyId={$companyId}&skip={$skip}&limit={$limit}";
+        $url = 'https://services.leadconnectorhq.com/oauth/installedLocations?' . http_build_query([
+            'companyId' => $companyId,
+            'appId' => $appId,
+            'isInstalled' => 'true',
+            'skip' => $skip,
+            'limit' => $limit,
+        ]);
         $ch = curl_init($url);
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
@@ -63,27 +99,49 @@ function provision_fetch_locations(string $companyId, string $companyToken): arr
             CURLOPT_HTTPHEADER => [
                 'Authorization: Bearer ' . $companyToken,
                 'Accept: application/json',
-                'Version: 2021-07-28',
+                'Version: 2023-02-21',
             ],
         ]);
         $resp = curl_exec($ch);
         $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError = curl_error($ch);
         curl_close($ch);
         if ($code < 200 || $code >= 300) {
+            $errors[] = "installedLocations failed (HTTP {$code})" . ($curlError ? ": {$curlError}" : '');
             break;
         }
         $body = json_decode((string)$resp, true);
-        $fetched = $body['locations'] ?? [];
+        $fetched = $body['locations']
+            ?? $body['data']['locations']
+            ?? $body['data']
+            ?? $body['installedLocations']
+            ?? [];
+        if (!is_array($fetched)) {
+            $fetched = [];
+        }
         foreach ($fetched as $loc) {
-            $locId = (string)($loc['id'] ?? '');
+            if (!is_array($loc)) {
+                continue;
+            }
+            if (array_key_exists('isInstalled', $loc) && !$loc['isInstalled']) {
+                continue;
+            }
+            if (array_key_exists('installed', $loc) && !$loc['installed']) {
+                continue;
+            }
+            $locId = (string)($loc['_id'] ?? $loc['id'] ?? $loc['locationId'] ?? '');
             if ($locId !== '') {
-                $all[$locId] = (string)($loc['name'] ?? '');
+                $all[$locId] = (string)($loc['name'] ?? $loc['locationName'] ?? '');
             }
         }
         $skip += $limit;
     } while (!empty($fetched) && count($fetched) === $limit && count($all) < 1000);
 
-    return $all;
+    return [
+        'locations' => $all,
+        'errors' => $errors,
+        'app_id' => $appId,
+    ];
 }
 
 $sessionId = trim((string)($_GET['session_id'] ?? $_POST['session_id'] ?? ''));
@@ -143,19 +201,25 @@ try {
         exit;
     }
 
-    $locations = provision_fetch_locations($companyId, $companyToken);
+    $locationFetch = provision_fetch_installed_locations($companyId, $companyToken, $companyData);
+    $locations = $locationFetch['locations'];
     $totalLocations = count($locations);
     $provisioned = 0;
     $failed = 0;
-    $errors = [];
+    $errors = $locationFetch['errors'];
     $processed = 0;
     $provisionedLocations = [];
+    if ($totalLocations === 0 && empty($errors)) {
+        $errors[] = 'No installed locations were returned by oauth/installedLocations.';
+    }
     $sessionRef->set([
         'progress' => [
             'total_locations' => $totalLocations,
             'provisioned' => 0,
             'failed' => 0,
         ],
+        'installed_locations_source' => 'oauth/installedLocations',
+        'marketplace_app_id' => $locationFetch['app_id'],
         'provisioned_locations' => [],
         'first_location' => null,
         'single_location' => null,
@@ -279,9 +343,9 @@ try {
     }
 
     $status = 'ready';
-    if ($failed > 0 && $provisioned > 0) {
+    if (($failed > 0 || !empty($errors)) && $provisioned > 0) {
         $status = 'partial';
-    } elseif ($failed > 0 && $provisioned === 0) {
+    } elseif (($failed > 0 || !empty($errors)) && $provisioned === 0) {
         $status = 'failed';
     }
 

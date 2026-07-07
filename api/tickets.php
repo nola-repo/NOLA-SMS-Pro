@@ -215,6 +215,34 @@ try {
         $ticketRef->set($payload);
         tickets_invalidate_cache((string)$locId);
 
+        try {
+            require_once __DIR__ . '/services/NotificationService.php';
+            $locationName = NotificationService::resolveLocationName($db, (string)$locId);
+            NotificationService::createAdminNotification($db, [
+                'type' => 'support_ticket',
+                'location_id' => (string)$locId,
+                'location_name' => $locationName,
+                'email' => $actor['email'],
+                'metadata' => [
+                    'ticket_id' => $ticketRef->id(),
+                    'subject' => $subject,
+                    'priority' => $priority,
+                    'status' => 'open',
+                ],
+            ]);
+            NotificationService::notifySupportTicketSubmitted(
+                $db,
+                (string)$locId,
+                $ticketRef->id(),
+                $subject,
+                $priority,
+                $message,
+                $actor['email']
+            );
+        } catch (\Throwable $notifyError) {
+            error_log('[tickets.php] Failed to dispatch support ticket notification: ' . $notifyError->getMessage());
+        }
+
         tickets_json_response([
             'success' => true,
             'message' => 'Ticket submitted',
@@ -361,4 +389,3 @@ try {
         'message' => $e->getMessage(),
     ], 500);
 }
-

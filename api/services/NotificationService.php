@@ -1370,6 +1370,165 @@ class NotificationService
     }
 
     /**
+     * Dispatch a support-ticket submission alert to the central NOLA CRM GHL workflow.
+     *
+     * The ticket is still stored in Firestore first; this method is intentionally
+     * best-effort so a temporary GHL issue never blocks ticket creation.
+     *
+     * Required env vars:
+     *   NOLA_ALERT_GHL_LOCATION_ID             — central GHL location id
+     *   NOLA_ALERT_GHL_TOKEN_REGISTRY_ID       — Firestore ghl_tokens key (defaults to location id)
+     *   NOLA_ALERT_SUPPORT_TICKET_TAG          — tag name (default: nola-support-ticket-alert)
+     */
+    public static function notifySupportTicketSubmitted(
+        $db,
+        string $locationId,
+        string $ticketId,
+        string $subject,
+        string $priority,
+        string $message = '',
+        ?string $emailOverride = null
+    ): void {
+        $centralLocationId = getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: '';
+        if ($centralLocationId === '') {
+            error_log("[SupportTicketAlert] NOLA_ALERT_GHL_LOCATION_ID is not set. Skipping GHL delivery.");
+            return;
+        }
+
+        $details = self::getAccountDetails($db, $locationId);
+        $email = strtolower(trim((string)($emailOverride ?: ($details['email'] ?? ''))));
+        if ($email === '') {
+            error_log("[SupportTicketAlert] No account email found for location {$locationId}; skipping central sync.");
+            return;
+        }
+
+        $name = trim((string)($details['name'] ?? '')) ?: 'NOLA Owner';
+        $sourceLocationName = self::resolveLocationName($db, $locationId);
+        $priority = strtolower(trim($priority)) ?: 'normal';
+        $subject = trim($subject);
+        $messageExcerpt = trim($message);
+        if (strlen($messageExcerpt) > 500) {
+            $messageExcerpt = substr($messageExcerpt, 0, 497) . '...';
+        }
+
+        require_once __DIR__ . '/GhlClient.php';
+
+        $centralTokenRegistryId = getenv('NOLA_ALERT_GHL_TOKEN_REGISTRY_ID') ?: $centralLocationId;
+        $alertTag = getenv('NOLA_ALERT_SUPPORT_TICKET_TAG') ?: 'nola-support-ticket-alert';
+
+        try {
+            $ghlClient = new \GhlClient($db, $centralLocationId, $centralTokenRegistryId);
+
+            $contactId = null;
+            $searchUrl = '/contacts/?locationId=' . urlencode($centralLocationId) . '&query=' . urlencode($email);
+            $searchResp = $ghlClient->request('GET', $searchUrl);
+            if ($searchResp['status'] === 200) {
+                $searchData = json_decode($searchResp['body'], true);
+                $contacts = $searchData['contacts'] ?? $searchData['data'] ?? [];
+                if (is_array($contacts)) {
+                    foreach ($contacts as $contact) {
+                        if (isset($contact['email']) && strtolower(trim((string)$contact['email'])) === $email) {
+                            $contactId = $contact['id'];
+                            break;
+                        }
+                    }
+                }
+            }
+
+            $fieldIdMap = self::resolveCentralGhlCustomFieldIds($db, $ghlClient, $centralLocationId);
+            $now = new \DateTimeImmutable();
+            $alertId = 'support_ticket_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $ticketId);
+            $adminNotes = "Ticket {$ticketId} ({$priority}): {$subject}";
+            if ($messageExcerpt !== '') {
+                $adminNotes .= "\n" . $messageExcerpt;
+            }
+
+            $alertFields = [
+                'nola_sms_alert_type'           => 'support_ticket_submission',
+                'nola_sms_alert_id'             => $alertId,
+                'nola_sms_alerted_at'           => $now->format('c'),
+                'nola_sms_registered_email'     => $email,
+                'nola_sms_source_location_id'   => $locationId,
+                'nola_sms_source_location_name' => $sourceLocationName,
+                'nola_sms_admin_notes'          => $adminNotes,
+            ];
+
+            $ghlCustomFields = [];
+            foreach ($alertFields as $key => $value) {
+                $fieldId = $fieldIdMap[$key] ?? null;
+                if (!$fieldId) {
+                    error_log("[SupportTicketAlert] Warning: no GHL field ID for key '{$key}' - field will be skipped.");
+                    continue;
+                }
+                $ghlCustomFields[] = ['id' => $fieldId, 'value' => (string)$value];
+            }
+
+            $firstName = 'NOLA SMS';
+            $lastName = 'Support';
+            if ($name !== '') {
+                $parts = explode(' ', $name, 2);
+                $firstName = $parts[0];
+                $lastName = $parts[1] ?? '';
+            }
+
+            $contactPayload = [
+                'locationId' => $centralLocationId,
+                'email' => $email,
+                'firstName' => $firstName,
+                'lastName' => $lastName,
+                'customFields' => $ghlCustomFields,
+            ];
+
+            if ($contactId) {
+                $updatePayload = $contactPayload;
+                unset($updatePayload['locationId']);
+                $updateResp = $ghlClient->request('PUT', "/contacts/{$contactId}", json_encode($updatePayload));
+                if ($updateResp['status'] >= 400) {
+                    error_log(
+                        "[SupportTicketAlert] Contact update failed "
+                        . "(central={$centralLocationId}, source={$locationId}, email={$email}, "
+                        . "contact={$contactId}, http=" . $updateResp['status'] . "): "
+                        . substr($updateResp['body'], 0, 500)
+                    );
+                    return;
+                }
+            } else {
+                $createResp = $ghlClient->request('POST', '/contacts/', json_encode($contactPayload));
+                if ($createResp['status'] === 200 || $createResp['status'] === 201) {
+                    $createData = json_decode($createResp['body'], true);
+                    $contactId = $createData['contact']['id'] ?? $createData['id'] ?? null;
+                } else {
+                    error_log(
+                        "[SupportTicketAlert] Contact create failed "
+                        . "(central={$centralLocationId}, source={$locationId}, email={$email}, "
+                        . "http=" . $createResp['status'] . "): "
+                        . substr($createResp['body'], 0, 500)
+                    );
+                    return;
+                }
+            }
+
+            if (!$contactId) {
+                error_log("[SupportTicketAlert] No contact id after central upsert for {$email}.");
+                return;
+            }
+
+            $ghlClient->request('DELETE', "/contacts/{$contactId}/tags", json_encode(['tags' => [$alertTag]]));
+            $tagResp = $ghlClient->request('POST', "/contacts/{$contactId}/tags", json_encode(['tags' => [$alertTag]]));
+            if ($tagResp['status'] >= 400) {
+                error_log(
+                    "[SupportTicketAlert] Tag cycle failed "
+                    . "(central={$centralLocationId}, source={$locationId}, contact={$contactId}, "
+                    . "http=" . $tagResp['status'] . "): "
+                    . substr($tagResp['body'], 0, 300)
+                );
+            }
+        } catch (\Throwable $e) {
+            error_log("[SupportTicketAlert] Central sync exception for {$locationId}: " . $e->getMessage());
+        }
+    }
+
+    /**
      * Check if a low-balance alert should be sent after a credit deduction.
      *
      * Uses the central NOLA CRM GHL location to send a single workflow email
