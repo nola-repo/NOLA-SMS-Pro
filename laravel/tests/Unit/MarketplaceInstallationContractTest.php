@@ -64,4 +64,16 @@ class MarketplaceInstallationContractTest extends TestCase
         $this->assertStringContainsString('NOLA_ALERT_SUPPORT_TICKET_TAG', $notifications);
         $this->assertStringContainsString('nola-support-ticket-alert', $notifications);
     }
+
+    public function test_registration_blocks_second_complete_user_for_same_subaccount(): void
+    {
+        $source = file_get_contents($this->rootFile('api/auth/register_from_install.php'));
+
+        $this->assertStringContainsString('function register_from_install_find_user_for_location', $source);
+        $this->assertStringContainsString("['active_location_id', \$locationId]", $source);
+        $this->assertStringContainsString("['location_id', \$locationId]", $source);
+        $this->assertStringContainsString("['ghl_token_ref', 'ghl_tokens/' . \$locationId]", $source);
+        $this->assertStringContainsString('register_from_install_user_is_incomplete', $source);
+        $this->assertStringContainsString('register_from_install_location_conflict((string)$locationId);', $source);
+    }
 }

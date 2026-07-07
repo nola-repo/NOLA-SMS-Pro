@@ -395,18 +395,18 @@ try {
 
     // Linked GHL sub-accounts are handled by the login-only reinstall flow.
 
-    // ── 1c. If no email match, check for an INCOMPLETE doc by location_id ────
+    // ── 1c. If no email match, enforce one account per location_id ────
     if (!$existingDoc && $isLocationLevel) {
-        $locQuery = $usersRef->where('active_location_id', '=', $locationId)->limit(1)->documents();
-        foreach ($locQuery as $snap) {
-            if ($snap->exists()) {
-                $docData = $snap->data();
-                // If the doc is missing core info, we will treat it as "existing" to finish it
-                if (empty($docData['email']) || empty($docData['password_hash'])) {
-                    $existingDoc = $docData;
-                    $existingId = $snap->id();
-                }
-                break;
+        $locationUser = register_from_install_find_user_for_location($db, (string)$locationId);
+        if ($locationUser !== null) {
+            $docData = $locationUser['data'];
+            // If the doc is missing core info, treat it as "existing" to finish it.
+            // A complete active user for this location means the subaccount is already registered.
+            if (register_from_install_user_is_incomplete($docData)) {
+                $existingDoc = $docData;
+                $existingId = $locationUser['id'];
+            } else {
+                register_from_install_location_conflict((string)$locationId);
             }
         }
     }
@@ -431,6 +431,16 @@ try {
                     register_from_install_account_location_conflict((string)$locationId);
                 }
             }
+        }
+
+        $otherLocationUser = register_from_install_find_user_for_location(
+            $db,
+            (string)$locationId,
+            $existingId !== null ? (string)$existingId : null,
+            true
+        );
+        if ($otherLocationUser !== null) {
+            register_from_install_location_conflict((string)$locationId);
         }
 
         $canonicalAccount = install_linked_account_for_location($db, (string)$locationId, false);
@@ -823,6 +833,81 @@ function register_from_install_account_location_conflict(string $locationId): vo
         'location_id' => $locationId,
     ]);
     exit;
+}
+
+function register_from_install_user_is_incomplete(array $userData): bool
+{
+    return empty($userData['email']) || empty($userData['password_hash']);
+}
+
+/**
+ * Find an active non-agency user that already points at this GHL location.
+ *
+ * This protects the legacy path where users.active_location_id exists but
+ * location_owners/{locationId} has not been backfilled yet. Incomplete
+ * placeholders are returned so registration can finish them; complete users
+ * are treated as an existing account for the subaccount.
+ *
+ * @return array{id:string,data:array}|null
+ */
+function register_from_install_find_user_for_location(
+    $db,
+    string $locationId,
+    ?string $excludeUserId = null,
+    bool $completeOnly = false
+): ?array {
+    $locationId = trim($locationId);
+    if ($locationId === '') {
+        return null;
+    }
+
+    $queries = [
+        ['active_location_id', $locationId],
+        ['location_id', $locationId],
+        ['ghl_location_id', $locationId],
+        ['ghl_token_ref', 'ghl_tokens/' . $locationId],
+    ];
+    $seen = [];
+
+    foreach ($queries as [$field, $value]) {
+        try {
+            foreach ($db->collection('users')->where($field, '=', $value)->limit(10)->documents() as $doc) {
+                if (!$doc->exists()) {
+                    continue;
+                }
+
+                $id = trim((string)$doc->id());
+                if ($id === '' || isset($seen[$id]) || ($excludeUserId !== null && $id === $excludeUserId)) {
+                    continue;
+                }
+                $seen[$id] = true;
+
+                $data = $doc->data();
+                if (!is_array($data) || !install_is_active_user($data)) {
+                    continue;
+                }
+
+                $role = strtolower(trim((string)($data['role'] ?? 'user')));
+                if ($role === 'agency') {
+                    continue;
+                }
+
+                if (!in_array($locationId, install_user_location_ids($data), true)) {
+                    continue;
+                }
+
+                if ($completeOnly && register_from_install_user_is_incomplete($data)) {
+                    continue;
+                }
+
+                return ['id' => $id, 'data' => $data];
+            }
+        } catch (Exception $e) {
+            error_log("[register_from_install] user/location uniqueness lookup failed field={$field} location={$locationId}: " . $e->getMessage());
+        }
+    }
+
+    return null;
 }
 
 /**
