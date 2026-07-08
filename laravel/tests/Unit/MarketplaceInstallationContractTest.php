@@ -65,6 +65,30 @@ class MarketplaceInstallationContractTest extends TestCase
         $this->assertStringContainsString('nola-support-ticket-alert', $notifications);
     }
 
+    public function test_registration_dispatches_in_app_notification_with_email(): void
+    {
+        $register = file_get_contents($this->rootFile('api/auth/register_from_install.php'));
+        $notifications = file_get_contents($this->rootFile('api/services/NotificationService.php'));
+
+        $this->assertStringContainsString('NotificationService::notifyWelcome', $register);
+        $this->assertStringContainsString('createRegistrationAdminNotification', $notifications);
+        $this->assertStringContainsString("'type'          => 'location_registration'", $notifications);
+        $this->assertStringContainsString("'email'         => \$email", $notifications);
+        $this->assertStringContainsString("'registered_email' => \$email", $notifications);
+    }
+
+    public function test_email_workflow_events_are_mirrored_to_in_app_notifications(): void
+    {
+        $notifications = file_get_contents($this->rootFile('api/services/NotificationService.php'));
+        $tickets = file_get_contents($this->rootFile('api/tickets.php'));
+
+        $this->assertStringContainsString("'type'          => \$alertType", $notifications);
+        $this->assertStringContainsString("'type'          => 'top_up_success'", $notifications);
+        $this->assertStringContainsString("'email'         => \$email", $notifications);
+        $this->assertStringContainsString("'type' => 'support_ticket'", $tickets);
+        $this->assertStringContainsString("'email' => \$actor['email']", $tickets);
+    }
+
     public function test_registration_blocks_second_complete_user_for_same_subaccount(): void
     {
         $source = file_get_contents($this->rootFile('api/auth/register_from_install.php'));

@@ -481,6 +481,74 @@ class NotificationService
         return $cachedIds;
     }
 
+    private static function normalizeGhlPhoneForMatch(string $phone): string
+    {
+        return preg_replace('/\D+/', '', $phone) ?: '';
+    }
+
+    private static function centralGhlContactIdByQuery($ghlClient, string $centralLocationId, string $query, string $matchField): ?string
+    {
+        $query = trim($query);
+        if ($query === '') {
+            return null;
+        }
+
+        $searchUrl = '/contacts/?locationId=' . urlencode($centralLocationId) . '&query=' . urlencode($query);
+        $searchResp = $ghlClient->request('GET', $searchUrl);
+        if ($searchResp['status'] !== 200) {
+            return null;
+        }
+
+        $searchData = json_decode($searchResp['body'], true);
+        $contacts = $searchData['contacts'] ?? $searchData['data'] ?? [];
+        if (!is_array($contacts)) {
+            return null;
+        }
+
+        $emailNeedle = strtolower($query);
+        $phoneNeedle = self::normalizeGhlPhoneForMatch($query);
+        foreach ($contacts as $contact) {
+            if (!is_array($contact) || empty($contact['id'])) {
+                continue;
+            }
+
+            if ($matchField === 'email') {
+                $email = strtolower(trim((string)($contact['email'] ?? '')));
+                if ($email !== '' && $email === $emailNeedle) {
+                    return (string)$contact['id'];
+                }
+                continue;
+            }
+
+            if ($matchField === 'phone') {
+                $phone = self::normalizeGhlPhoneForMatch((string)($contact['phone'] ?? ''));
+                if ($phone === '' || $phoneNeedle === '') {
+                    continue;
+                }
+                if ($phone === $phoneNeedle || substr($phone, -10) === substr($phoneNeedle, -10)) {
+                    return (string)$contact['id'];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static function duplicateContactIdFromGhlResponse(array $response): ?string
+    {
+        if (($response['status'] ?? 0) < 400) {
+            return null;
+        }
+
+        $body = json_decode((string)($response['body'] ?? ''), true);
+        if (!is_array($body)) {
+            return null;
+        }
+
+        $contactId = trim((string)($body['meta']['contactId'] ?? ''));
+        return $contactId !== '' ? $contactId : null;
+    }
+
     /**
      * Create or update a contact in the central NOLA CRM GHL location and
      * populate the eight NOLA alert custom fields. Optionally cycles the
@@ -705,15 +773,17 @@ class NotificationService
      */
     public static function notifyWelcome($db, string $locationId, string $email, string $fullName, string $phone, string $role): void
     {
-        $centralLocationId = getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: '';
-        if ($centralLocationId === '') {
-            error_log("[WelcomeAlert] NOLA_ALERT_GHL_LOCATION_ID is not set. Skipping GHL delivery.");
-            return;
-        }
-
         $email = strtolower(trim($email));
         if ($email === '') {
             error_log("[WelcomeAlert] Email is empty. Skipping GHL delivery.");
+            return;
+        }
+
+        self::createRegistrationAdminNotification($db, $locationId, $email, $fullName, $phone, $role);
+
+        $centralLocationId = getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: '';
+        if ($centralLocationId === '') {
+            error_log("[WelcomeAlert] NOLA_ALERT_GHL_LOCATION_ID is not set. Skipping GHL delivery.");
             return;
         }
 
@@ -725,21 +795,12 @@ class NotificationService
         try {
             $ghlClient = new \GhlClient($db, $centralLocationId, $centralTokenRegistryId);
 
-            $contactId = null;
-            $searchUrl = '/contacts/?locationId=' . urlencode($centralLocationId) . '&query=' . urlencode($email);
-            $searchResp = $ghlClient->request('GET', $searchUrl);
-            if ($searchResp['status'] === 200) {
-                $searchData = json_decode($searchResp['body'], true);
-                $contacts = $searchData['contacts'] ?? $searchData['data'] ?? [];
-                if (is_array($contacts)) {
-                    foreach ($contacts as $contact) {
-                        if (isset($contact['email']) && strtolower(trim((string) $contact['email'])) === $email) {
-                            $contactId = $contact['id'];
-                            break;
-                        }
-                    }
-                }
-            }
+            $phone = trim($phone);
+            $emailContactId = self::centralGhlContactIdByQuery($ghlClient, $centralLocationId, $email, 'email');
+            $phoneContactId = $phone !== ''
+                ? self::centralGhlContactIdByQuery($ghlClient, $centralLocationId, $phone, 'phone')
+                : null;
+            $contactId = $emailContactId ?: $phoneContactId;
 
             $fieldIdMap = self::resolveCentralGhlCustomFieldIds($db, $ghlClient, $centralLocationId);
 
@@ -804,8 +865,8 @@ class NotificationService
                 'lastName'     => $lastName,
                 'customFields' => $ghlCustomFields,
             ];
-            if (trim($phone) !== '') {
-                $contactPayload['phone'] = trim($phone);
+            if ($phone !== '' && !($emailContactId && $phoneContactId && $emailContactId !== $phoneContactId)) {
+                $contactPayload['phone'] = $phone;
             }
 
             if ($contactId) {
@@ -813,13 +874,32 @@ class NotificationService
                 unset($updatePayload['locationId']);
                 $updateResp = $ghlClient->request('PUT', "/contacts/{$contactId}", json_encode($updatePayload));
                 if ($updateResp['status'] >= 400) {
-                    error_log(
-                        "[WelcomeAlert] Contact update failed "
-                        . "(central={$centralLocationId}, source={$locationId}, email={$email}, "
-                        . "contact={$contactId}, http=" . $updateResp['status'] . "): "
-                        . substr($updateResp['body'], 0, 500)
-                    );
-                    return;
+                    $duplicateContactId = self::duplicateContactIdFromGhlResponse($updateResp);
+                    if ($updateResp['status'] >= 400 && isset($updatePayload['phone'])) {
+                        unset($updatePayload['phone']);
+                        $updateResp = $ghlClient->request('PUT', "/contacts/{$contactId}", json_encode($updatePayload));
+                    }
+
+                    if ($updateResp['status'] >= 400 && $duplicateContactId && $duplicateContactId !== $contactId) {
+                        $contactId = $duplicateContactId;
+                        $retryPayload = $contactPayload;
+                        unset($retryPayload['locationId'], $retryPayload['phone']);
+                        $updateResp = $ghlClient->request('PUT', "/contacts/{$contactId}", json_encode($retryPayload));
+                        if ($updateResp['status'] >= 400) {
+                            unset($retryPayload['email']);
+                            $updateResp = $ghlClient->request('PUT', "/contacts/{$contactId}", json_encode($retryPayload));
+                        }
+                    }
+
+                    if ($updateResp['status'] >= 400) {
+                        error_log(
+                            "[WelcomeAlert] Contact update failed "
+                            . "(central={$centralLocationId}, source={$locationId}, email={$email}, "
+                            . "contact={$contactId}, http=" . $updateResp['status'] . "): "
+                            . substr($updateResp['body'], 0, 500)
+                        );
+                        return;
+                    }
                 }
             } else {
                 $createResp = $ghlClient->request('POST', '/contacts/', json_encode($contactPayload));
@@ -827,13 +907,34 @@ class NotificationService
                     $createData = json_decode($createResp['body'], true);
                     $contactId = $createData['contact']['id'] ?? $createData['id'] ?? null;
                 } else {
-                    error_log(
-                        "[WelcomeAlert] Contact create failed "
-                        . "(central={$centralLocationId}, source={$locationId}, email={$email}, "
-                        . "http=" . $createResp['status'] . "): "
-                        . substr($createResp['body'], 0, 500)
-                    );
-                    return;
+                    $duplicateContactId = self::duplicateContactIdFromGhlResponse($createResp);
+                    if ($duplicateContactId) {
+                        $contactId = $duplicateContactId;
+                        $retryPayload = $contactPayload;
+                        unset($retryPayload['locationId'], $retryPayload['phone']);
+                        $updateResp = $ghlClient->request('PUT', "/contacts/{$contactId}", json_encode($retryPayload));
+                        if ($updateResp['status'] >= 400) {
+                            unset($retryPayload['email']);
+                            $updateResp = $ghlClient->request('PUT', "/contacts/{$contactId}", json_encode($retryPayload));
+                        }
+                        if ($updateResp['status'] >= 400) {
+                            error_log(
+                                "[WelcomeAlert] Contact create duplicate recovery failed "
+                                . "(central={$centralLocationId}, source={$locationId}, email={$email}, "
+                                . "contact={$contactId}, http=" . $updateResp['status'] . "): "
+                                . substr($updateResp['body'], 0, 500)
+                            );
+                            return;
+                        }
+                    } else {
+                        error_log(
+                            "[WelcomeAlert] Contact create failed "
+                            . "(central={$centralLocationId}, source={$locationId}, email={$email}, "
+                            . "http=" . $createResp['status'] . "): "
+                            . substr($createResp['body'], 0, 500)
+                        );
+                        return;
+                    }
                 }
             }
 
@@ -854,6 +955,57 @@ class NotificationService
         } catch (\Throwable $e) {
             error_log("[WelcomeAlert] GHL welcome sync failed: " . $e->getMessage());
         }
+    }
+
+    /**
+     * Record a registration event for in-app notification feeds.
+     */
+    private static function createRegistrationAdminNotification(
+        $db,
+        string $locationId,
+        string $email,
+        string $fullName,
+        string $phone,
+        string $role
+    ): void {
+        $email = strtolower(trim($email));
+        if ($email === '') {
+            return;
+        }
+
+        try {
+            $docs = $db->collection('admin_notifications')
+                ->where('location_id', '=', $locationId)
+                ->documents();
+
+            foreach ($docs as $doc) {
+                if (!$doc->exists()) {
+                    continue;
+                }
+                $data = $doc->data();
+                if (($data['type'] ?? '') !== 'location_registration') {
+                    continue;
+                }
+                if (strtolower(trim((string)($data['email'] ?? ''))) === $email) {
+                    return;
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log('[WelcomeAlert] Registration notification idempotency check failed: ' . $e->getMessage());
+        }
+
+        self::createAdminNotification($db, [
+            'type'          => 'location_registration',
+            'location_id'   => $locationId,
+            'location_name' => self::resolveLocationName($db, $locationId),
+            'email'         => $email,
+            'metadata'      => [
+                'registered_email' => $email,
+                'full_name'        => trim($fullName),
+                'phone'            => trim($phone),
+                'role'             => trim($role) !== '' ? trim($role) : 'user',
+            ],
+        ]);
     }
 
     /**
@@ -1099,6 +1251,20 @@ class NotificationService
 
         // ── 3. Normalize alert type ──────────────────────────────────────
         $alertType = 'sender_id_' . strtolower($status);
+
+        if (in_array(strtolower($status), ['approved', 'rejected'], true)) {
+            self::createAdminNotification($db, [
+                'type'          => $alertType,
+                'location_id'   => $locationId,
+                'location_name' => $sourceLocationName,
+                'email'         => $email,
+                'metadata'      => [
+                    'sender_id' => $requestedSenderId,
+                    'status'    => strtolower($status),
+                    'notes'     => $adminNotes ?? '',
+                ],
+            ]);
+        }
 
         // ── 4. Sync to central GHL location ──────────────────────────────
         error_log("[SenderIdAlert] Triggering central GHL sync for location {$locationId} (email: {$email}, sender: {$requestedSenderId}, status: {$status})");
@@ -1354,6 +1520,19 @@ class NotificationService
         }
 
         $description = "+{$amount} credits successfully loaded";
+
+        self::createAdminNotification($db, [
+            'type'          => 'top_up_success',
+            'location_id'   => $locationId,
+            'location_name' => $sourceLocationName,
+            'email'         => $email,
+            'balance'       => $newBalance,
+            'metadata'      => [
+                'amount'      => $amount,
+                'new_balance' => $newBalance,
+                'description' => $description,
+            ],
+        ]);
 
         // ── 3. Sync to central GHL location ──────────────────────────────
         error_log("[TopUpSuccessAlert] Triggering central GHL sync for location {$locationId} (email: {$email}, amount: {$amount}, balance: {$newBalance})");
