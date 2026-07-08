@@ -1134,14 +1134,6 @@ if (($data['userType'] ?? '') === 'Company') {
     $companyRefresh     = $data['refresh_token'] ?? null;
     $expiresIn          = (int)($data['expires_in'] ?? 86400);
     $companyExpiresAt   = time() + $expiresIn;
-    $companyNameFromToken = install_resolve_company_name($data, (string)$companyId, $companyToken);
-    install_upsert_agency_registry(
-        $db,
-        (string)$companyId,
-        $companyNameFromToken,
-        'marketplace_company_callback',
-        new DateTimeImmutable()
-    );
 
     if (!$companyId) {
         render_error('Company-scoped install received no companyId in token response.', $data);
@@ -1149,6 +1141,17 @@ if (($data['userType'] ?? '') === 'Company') {
     if ($companyToken === '') {
         render_error('Company-scoped install received no company access token.', $data);
     }
+
+    $db  = get_firestore();
+    $now = new DateTimeImmutable();
+    $companyNameFromToken = install_resolve_company_name($data, (string)$companyId, $companyToken);
+    install_upsert_agency_registry(
+        $db,
+        (string)$companyId,
+        $companyNameFromToken,
+        'marketplace_company_callback',
+        $now
+    );
 
     error_log("[GHL_CALLBACK] Company-scoped selected install detected; resolving one selected location for companyId={$companyId}.");
 
@@ -1178,9 +1181,6 @@ if (($data['userType'] ?? '') === 'Company') {
         'state_preview'      => $state ? substr($state, 0, 120) : null,
     ];
     error_log('[GHL_CALLBACK_DEBUG] ghl_token_response_structure=' . json_encode($debugPayload));
-
-    $db  = get_firestore();
-    $now = new DateTimeImmutable();
 
     // Save Company-level token for future reference
     try {
