@@ -305,11 +305,21 @@ $message = first_non_empty_payload_value($customData, $payload, $data, [
 ]) ?? '';
 
 if ($message) {
-    // NOTE: Do NOT use strip_tags() here — it removes anything resembling an HTML tag,
-    // e.g. "hi <3" becomes "hi " which silently truncates the user's message.
-    // The message arrives as JSON (not HTML) so HTML stripping is never needed.
+    // Strip HTML markup when the message originates from GHL's old Custom Action (HTTP Request),
+    // whose message field is a rich-text editor that wraps content in tags like:
+    //   <p style="margin:0px; padding-left: 0px!important;">hello</p>
+    // We detect REAL HTML tags (a-z tag name + optional attributes) so that plain-text
+    // angle-bracket strings like "hi <3" are NOT affected.
+    if (preg_match('/<[a-zA-Z][^>]*>/', $message)) {
+        // Replace block-level closing tags with a newline before stripping, so that
+        // multi-paragraph messages don't collapse into a single run-on line.
+        $message = preg_replace('/<\/(p|div|br|li|tr|h[1-6])>/i', "\n", $message);
+        $message = strip_tags($message);
+    }
+
+    // Decode any remaining HTML entities (e.g. &amp; &quot; &#39;) to their UTF-8 characters.
     $message = html_entity_decode($message, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-    
+
     // Sanitize smart unicode punctuation to GSM-7 equivalents to prevent UCS-2 segment limits
     $message = str_replace(
         ['‘', '’', '“', '”', '–', '—', '…', '`', '´'],
