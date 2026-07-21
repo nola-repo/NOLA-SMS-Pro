@@ -860,7 +860,8 @@ ir_page('Create Your Account', <<<HTML
                 || '';
             const u = btoa(JSON.stringify(successData.user || {}));
             let redirectDest = REACT_APP;
-            if (locId) {
+            const isInIframe = (window.self !== window.top);
+            if (locId && isInIframe) {
                 const ghlPath = '/v2/location/' + encodeURIComponent(locId) + '/custom-page-link/' + GHL_CUSTOM_PAGE_ID;
                 redirectDest = REACT_APP + '?post_auth_redirect=' + encodeURIComponent(ghlPath);
             }

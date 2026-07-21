@@ -112,6 +112,22 @@
         // The React app's AuthContext will read ?token= from the URL, store it in memory,
         // then clean the URL with history.replaceState().
         var safeRedirect = redirect;
+
+        // If outside GHL iframe (standalone browser tab), strip any GHL deep-links or post_auth_redirect
+        if (window.self === window.top) {
+            try {
+                var urlObj = new URL(safeRedirect, window.location.origin);
+                if (urlObj.searchParams.has('post_auth_redirect')) {
+                    urlObj.searchParams.delete('post_auth_redirect');
+                    safeRedirect = urlObj.toString();
+                }
+                if (urlObj.pathname.indexOf('/v2/location/') !== -1) {
+                    urlObj.pathname = '/';
+                    safeRedirect = urlObj.toString();
+                }
+            } catch (err) {}
+        }
+
         if (token) {
             safeRedirect += (safeRedirect.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(token);
         }

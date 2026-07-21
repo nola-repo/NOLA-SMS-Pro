@@ -617,15 +617,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $userJson = base64_encode(json_encode($result['user'] ?? []));
 
             // Determine the post-login destination:
-            //  • GHL install flow (location_id present) → deep-link into the GHL embedded
-            //    dashboard custom page so the user lands directly in the app inside GHL.
-            //  • Standalone login (no location_id) → standalone user dashboard.
+            //  • GHL install flow inside iframe (location_id present + iframe context) → deep-link
+            //    into the GHL embedded dashboard custom page.
+            //  • Standalone login (outside iframe) → standalone user dashboard.
             $ghlCustomPageId = '69a642aae76974824fd39bb6';
-            if ($locationIdRaw !== '') {
+            $isIframeRequest = (strtolower((string)($_SERVER['HTTP_SEC_FETCH_DEST'] ?? '')) === 'iframe')
+                || !empty($_GET['in_ghl']) || !empty($_POST['in_ghl']) || !empty($_GET['is_iframe']);
+
+            if ($locationIdRaw !== '' && $isIframeRequest) {
                 $ghlPath     = '/v2/location/' . rawurlencode($locationIdRaw) . '/custom-page-link/' . $ghlCustomPageId;
                 $redirectDest = $reactApp . '?post_auth_redirect=' . rawurlencode($ghlPath);
             } else {
-                $redirectDest = 'https://app.nolasmspro.com';
+                $redirectDest = $reactApp;
             }
 
             $dest = $apiBase . '/auth-handoff.html'
