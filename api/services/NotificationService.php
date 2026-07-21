@@ -486,6 +486,27 @@ class NotificationService
         return preg_replace('/\D+/', '', $phone) ?: '';
     }
 
+    public static function formatPhoneE164(string $phone): string
+    {
+        $p = trim($phone);
+        if ($p === '') return '';
+        if (strpos($p, '+') === 0) return $p;
+
+        $digits = preg_replace('/\D+/', '', $p);
+        if ($digits === '') return '';
+
+        if (preg_match('/^09\d{9}$/', $digits)) {
+            return '+639' . substr($digits, 2);
+        }
+        if (preg_match('/^639\d{9}$/', $digits)) {
+            return '+' . $digits;
+        }
+        if (preg_match('/^\d{10}$/', $digits)) {
+            return '+1' . $digits;
+        }
+        return '+' . $digits;
+    }
+
     private static function centralGhlContactIdByQuery($ghlClient, string $centralLocationId, string $query, string $matchField): ?string
     {
         $query = trim($query);
@@ -795,7 +816,7 @@ class NotificationService
         try {
             $ghlClient = new \GhlClient($db, $centralLocationId, $centralTokenRegistryId);
 
-            $phone = trim($phone);
+            $phone = self::formatPhoneE164($phone);
             $emailContactId = self::centralGhlContactIdByQuery($ghlClient, $centralLocationId, $email, 'email');
             $phoneContactId = $phone !== ''
                 ? self::centralGhlContactIdByQuery($ghlClient, $centralLocationId, $phone, 'phone')
@@ -875,13 +896,15 @@ class NotificationService
                 $updateResp = $ghlClient->request('PUT', "/contacts/{$contactId}", json_encode($updatePayload));
                 if ($updateResp['status'] >= 400) {
                     $duplicateContactId = self::duplicateContactIdFromGhlResponse($updateResp);
-                    if ($updateResp['status'] >= 400 && isset($updatePayload['phone'])) {
-                        unset($updatePayload['phone']);
-                        $updateResp = $ghlClient->request('PUT', "/contacts/{$contactId}", json_encode($updatePayload));
+
+                    if ($duplicateContactId && $duplicateContactId !== $contactId) {
+                        $contactId = $duplicateContactId;
+                        $retryPayload = $contactPayload;
+                        unset($retryPayload['locationId']);
+                        $updateResp = $ghlClient->request('PUT', "/contacts/{$contactId}", json_encode($retryPayload));
                     }
 
-                    if ($updateResp['status'] >= 400 && $duplicateContactId && $duplicateContactId !== $contactId) {
-                        $contactId = $duplicateContactId;
+                    if ($updateResp['status'] >= 400 && isset($updatePayload['phone'])) {
                         $retryPayload = $contactPayload;
                         unset($retryPayload['locationId'], $retryPayload['phone']);
                         $updateResp = $ghlClient->request('PUT', "/contacts/{$contactId}", json_encode($retryPayload));
