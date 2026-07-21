@@ -43,3 +43,7 @@ docs/
 # Backups and temp
 temp_*/
 frontend_old/
+tmp/
+outputs/
+.agents/
+*.zip
