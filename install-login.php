@@ -615,12 +615,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $token    = $result['token'];
             $userJson = base64_encode(json_encode($result['user'] ?? []));
-            $dest     = $apiBase . '/auth-handoff.html'
+
+            // Determine the post-login destination:
+            //  • GHL install flow (location_id present) → deep-link into the GHL embedded
+            //    dashboard custom page so the user lands directly in the app inside GHL.
+            //  • Standalone login (no location_id) → standalone user dashboard.
+            $ghlCustomPageId = '69a642aae76974824fd39bb6';
+            if ($locationIdRaw !== '') {
+                $ghlPath     = '/v2/location/' . rawurlencode($locationIdRaw) . '/custom-page-link/' . $ghlCustomPageId;
+                $redirectDest = $reactApp . '?post_auth_redirect=' . rawurlencode($ghlPath);
+            } else {
+                $redirectDest = 'https://app.nolasmspro.com';
+            }
+
+            $dest = $apiBase . '/auth-handoff.html'
                 . '?token='    . urlencode($token)
                 . '&user='     . urlencode($userJson)
-                . '&redirect=' . urlencode($reactApp);
+                . '&redirect=' . urlencode($redirectDest);
             header('Location: ' . $dest, true, 302);
             exit;
+
         } else {
             $formError = htmlspecialchars($result['error'] ?? 'Invalid email or password.', ENT_QUOTES, 'UTF-8');
         }

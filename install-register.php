@@ -851,9 +851,20 @@ ir_page('Create Your Account', <<<HTML
 
         function goDashboard() {
             if (!successData) return;
-            // Build auth-handoff URL
+            // Build auth-handoff URL. If we know the location ID, deep-link into the GHL
+            // embedded dashboard custom page so the user lands directly in the app.
+            const GHL_CUSTOM_PAGE_ID = '69a642aae76974824fd39bb6';
+            const locId = (successData.user && successData.user.location_id)
+                || (successData.user && successData.user.active_location_id)
+                || INSTALL_DIAGNOSTICS.location_id
+                || '';
             const u = btoa(JSON.stringify(successData.user || {}));
-            window.location.href = API_BASE + '/auth-handoff.html?token=' + encodeURIComponent(successData.token) + '&user=' + encodeURIComponent(u) + '&redirect=' + encodeURIComponent(REACT_APP);
+            let redirectDest = REACT_APP;
+            if (locId) {
+                const ghlPath = '/v2/location/' + encodeURIComponent(locId) + '/custom-page-link/' + GHL_CUSTOM_PAGE_ID;
+                redirectDest = REACT_APP + '?post_auth_redirect=' + encodeURIComponent(ghlPath);
+            }
+            window.location.href = API_BASE + '/auth-handoff.html?token=' + encodeURIComponent(successData.token) + '&user=' + encodeURIComponent(u) + '&redirect=' + encodeURIComponent(redirectDest);
         }
     </script>
 HTML);
