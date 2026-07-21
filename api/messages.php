@@ -308,9 +308,22 @@ try {
                 continue;
             $d = $doc->data();
             \Nola\Services\StatusSync::checkAndSyncSingleMessage($db, $d, $doc->id(), $apiKey, $apiKeyCache);
+            $src = $d['source'] ?? '';
+            $type = $d['type'] ?? null;
+            if (!$type || $type === 'SMS') {
+                if ($src === 'send_sms' || str_contains($d['message'] ?? '', 'Send PH SMS')) {
+                    $type = 'Send PH SMS';
+                } elseif ($src === 'ghl_provider') {
+                    $type = 'Conversation Provider';
+                } else {
+                    $type = 'SMS';
+                }
+            }
+
             $rows[] = [
                 'id' => $doc->id(),
                 'direction' => 'outbound',
+                'type' => $type,
                 'message_id' => $d['message_id'] ?? null,
                 'numbers' => $d['numbers'] ?? [],
                 'message' => $d['message'] ?? null,

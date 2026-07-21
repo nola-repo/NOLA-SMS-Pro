@@ -69,6 +69,22 @@ try {
                 $data['date_created'] = $data['date_created']->get()->format('c');
             }
 
+            // Resolve log type dynamically based on source and content for monitoring
+            $source = $data['source'] ?? '';
+            $type = $data['type'] ?? null;
+            if (!$type || $type === 'SMS') {
+                if ($source === 'send_sms' || str_contains($data['message'] ?? '', 'Send PH SMS')) {
+                    $type = 'Send PH SMS';
+                } elseif ($source === 'ghl_provider') {
+                    $type = 'Conversation Provider';
+                } elseif ($source === 'inbound' || ($data['direction'] ?? '') === 'inbound') {
+                    $type = 'Inbound SMS';
+                } else {
+                    $type = 'SMS';
+                }
+            }
+            $data['type'] = $type;
+
             $results[] = array_merge(['id' => $doc->id()], $data);
         }
     }

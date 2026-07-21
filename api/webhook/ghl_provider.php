@@ -715,6 +715,7 @@ try {
         'segments' => $required_credits,
         'credits_used' => $required_credits,
         'source' => 'ghl_provider',
+        'type' => 'Conversation Provider',
         'provider' => 'ghl_provider',
         'provider_reference_id' => $messageId ?: $localProviderMessageId,
         'provider_message_id' => $messageId ?: $localProviderMessageId,
