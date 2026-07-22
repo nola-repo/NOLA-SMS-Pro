@@ -618,17 +618,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             // Determine the post-login destination:
             //  • GHL install flow inside iframe (location_id present + iframe context) → deep-link
-            //    into the GHL embedded dashboard custom page.
-            //  • Standalone login (outside iframe) → standalone user dashboard.
-            $ghlCustomPageId = '69a642aae76974824fd39bb6';
+            //    into the user's GHL location custom page.
+            //  • GHL marketplace / welcome-back flow (location_id present, standalone tab) → fixed
+            //    marketplace location dashboard so the user lands in the correct GHL sub-account.
+            //  • Pure standalone login (no location_id) → NOLA SMS Pro standalone app.
+            $standaloneApp       = 'https://app.nolasmspro.com';
+            $ghlCrm              = 'https://app.nolacrm.io';
+            $ghlMarketplaceLocId = 'ugBqfQsPtGijLjrmLdmA';
+            $ghlCustomPageId     = '69a642aae76974824fd39bb6';
             $isIframeRequest = (strtolower((string)($_SERVER['HTTP_SEC_FETCH_DEST'] ?? '')) === 'iframe')
                 || !empty($_GET['in_ghl']) || !empty($_POST['in_ghl']) || !empty($_GET['is_iframe']);
 
             if ($locationIdRaw !== '' && $isIframeRequest) {
-                $ghlPath     = '/v2/location/' . rawurlencode($locationIdRaw) . '/custom-page-link/' . $ghlCustomPageId;
-                $redirectDest = $reactApp . '?post_auth_redirect=' . rawurlencode($ghlPath);
+                // Embedded in GHL iframe → deep-link to the user's location custom page
+                $ghlPath      = '/v2/location/' . rawurlencode($locationIdRaw) . '/custom-page-link/' . $ghlCustomPageId;
+                $redirectDest = $ghlCrm . $ghlPath;
+            } elseif ($locationIdRaw !== '') {
+                // GHL marketplace / welcome-back (standalone tab) → marketplace location dashboard
+                $redirectDest = $ghlCrm . '/v2/location/' . rawurlencode($ghlMarketplaceLocId) . '/dashboard';
             } else {
-                $redirectDest = $reactApp;
+                // Pure standalone login → NOLA SMS Pro standalone app
+                $redirectDest = $standaloneApp;
             }
 
             $dest = $apiBase . '/auth-handoff.html'

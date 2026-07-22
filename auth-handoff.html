@@ -113,18 +113,25 @@
         // then clean the URL with history.replaceState().
         var safeRedirect = redirect;
 
-        // If outside GHL iframe (standalone browser tab), strip any GHL deep-links or post_auth_redirect
+        // If outside GHL iframe (standalone browser tab), clean up GHL-specific paths —
+        // but ONLY for the NOLA SMS Pro standalone app. Direct GHL CRM redirects
+        // (app.nolacrm.io) are intentional (marketplace/welcome-back flow) and must
+        // pass through unchanged so the user lands at the correct GHL sub-account.
         if (window.self === window.top) {
             try {
                 var urlObj = new URL(safeRedirect, window.location.origin);
-                if (urlObj.searchParams.has('post_auth_redirect')) {
-                    urlObj.searchParams.delete('post_auth_redirect');
-                    safeRedirect = urlObj.toString();
+                if (urlObj.hostname === 'app.nolasmspro.com') {
+                    // Strip GHL-specific params that shouldn't appear in the standalone app
+                    if (urlObj.searchParams.has('post_auth_redirect')) {
+                        urlObj.searchParams.delete('post_auth_redirect');
+                        safeRedirect = urlObj.toString();
+                    }
+                    if (urlObj.pathname.indexOf('/v2/location/') !== -1) {
+                        urlObj.pathname = '/';
+                        safeRedirect = urlObj.toString();
+                    }
                 }
-                if (urlObj.pathname.indexOf('/v2/location/') !== -1) {
-                    urlObj.pathname = '/';
-                    safeRedirect = urlObj.toString();
-                }
+                // app.nolacrm.io (GHL CRM) and other hosts → let the URL through unchanged
             } catch (err) {}
         }
 

@@ -648,6 +648,8 @@ ir_page('Create Your Account', <<<HTML
         const installToken = "{$installToken}";
         const API_BASE = "{$apiBase}";
         const REACT_APP = "{$reactApp}";
+        const STANDALONE_APP = 'https://app.nolasmspro.com';
+        const GHL_MARKETPLACE_LOC_ID = 'ugBqfQsPtGijLjrmLdmA';
         const INSTALL_DIAGNOSTICS = {
             token_type: "{$tokenTypeSafe}",
             location_id: "{$locationIdSafe}",
@@ -851,19 +853,28 @@ ir_page('Create Your Account', <<<HTML
 
         function goDashboard() {
             if (!successData) return;
-            // Build auth-handoff URL. If we know the location ID, deep-link into the GHL
-            // embedded dashboard custom page so the user lands directly in the app.
+            // Three-way redirect:
+            //  • GHL iframe (register page loaded inside GHL) → deep-link to user's location custom page
+            //  • GHL marketplace / non-iframe with location_id → fixed marketplace location dashboard
+            //  • Pure standalone (no location_id) → NOLA SMS Pro standalone app
             const GHL_CUSTOM_PAGE_ID = '69a642aae76974824fd39bb6';
             const locId = (successData.user && successData.user.location_id)
                 || (successData.user && successData.user.active_location_id)
                 || INSTALL_DIAGNOSTICS.location_id
                 || '';
             const u = btoa(JSON.stringify(successData.user || {}));
-            let redirectDest = REACT_APP;
             const isInIframe = (window.self !== window.top);
+            let redirectDest;
             if (locId && isInIframe) {
+                // Embedded in GHL iframe → deep-link to user's GHL location custom page
                 const ghlPath = '/v2/location/' + encodeURIComponent(locId) + '/custom-page-link/' + GHL_CUSTOM_PAGE_ID;
-                redirectDest = REACT_APP + '?post_auth_redirect=' + encodeURIComponent(ghlPath);
+                redirectDest = REACT_APP + ghlPath;
+            } else if (locId) {
+                // GHL marketplace / welcome-back standalone tab → marketplace location dashboard
+                redirectDest = REACT_APP + '/v2/location/' + encodeURIComponent(GHL_MARKETPLACE_LOC_ID) + '/dashboard';
+            } else {
+                // Pure standalone (no location context) → NOLA SMS Pro standalone app
+                redirectDest = STANDALONE_APP;
             }
             window.location.href = API_BASE + '/auth-handoff.html?token=' + encodeURIComponent(successData.token) + '&user=' + encodeURIComponent(u) + '&redirect=' + encodeURIComponent(redirectDest);
         }
