@@ -4,6 +4,9 @@
  * Served at: /forgot-password
  *
  * 3-step premium OTP password reset flow for NOLA SMS Pro.
+ * Step 1 → Email Entry
+ * Step 2 → 6-Box OTP Verification (with brand logo)
+ * Step 3 → New Password + Confirm (with brand logo)
  */
 
 function ifp_page(string $title, string $body): void {
@@ -20,272 +23,284 @@ function ifp_page(string $title, string $body): void {
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-        :root, [data-theme="dark"] {
-            --bg-main: #0a0a0b;
-            --bg-overlay: rgba(10, 10, 11, 0.35);
-            --text-primary: #f4f6fa;
-            --text-secondary: #94a3b8;
-            --text-heading: linear-gradient(135deg, #ffffff 0%, #93c5fd 100%);
-            --input-bg: rgba(18, 20, 26, 0.68);
-            --input-border: rgba(255, 255, 255, 0.12);
-            --input-text: #f4f6fa;
-            --toggle-bg: rgba(255, 255, 255, 0.12);
-            --toggle-border: rgba(255, 255, 255, 0.18);
-            --toggle-icon: #f4f6fa;
-            --blob-opacity: 0.1;
-        }
-
-        [data-theme="light"] {
-            --bg-main: #f1f5f9;
-            --bg-overlay: rgba(241, 245, 249, 0.05);
-            --text-primary: #0f172a;
-            --text-secondary: #334155;
-            --text-heading: linear-gradient(135deg, #0f172a 0%, #1d6bd4 100%);
-            --input-bg: #ffffff;
-            --input-border: #cbd5e1;
-            --input-text: #0f172a;
-            --toggle-bg: rgba(15, 23, 42, 0.08);
-            --toggle-border: rgba(15, 23, 42, 0.12);
-            --toggle-icon: #0f172a;
-            --blob-opacity: 0.18;
-        }
-
-        html { font-family: 'Poppins', system-ui, sans-serif; background: var(--bg-main); color: var(--text-primary); -webkit-font-smoothing: antialiased; }
+        html { font-family: 'Poppins', system-ui, sans-serif; background: #0a0a0b; color: #f4f6fa; -webkit-font-smoothing: antialiased; }
         body {
             min-height: 100vh;
             display: flex;
             flex-direction: column;
             justify-content: center;
             align-items: center;
-            padding: 24px 16px;
-            background-color: var(--bg-main);
+            padding: 20px;
+            background: #0a0a0b;
             position: relative;
             overflow-x: hidden;
-            transition: background-color 0.3s ease, color 0.3s ease;
         }
 
-        .bg-image-layer {
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            z-index: 0;
-            background-size: cover;
-            background-position: center center;
-            background-repeat: no-repeat;
-            pointer-events: none;
-            transition: opacity 0.5s ease-in-out;
-        }
-        .bg-image-layer.dark-layer {
-            background-image: url('/marketplace_install_bg.png');
-        }
-        .bg-image-layer.light-layer {
-            background-image: url('/marketplace_install_lightmode.png');
-        }
-        [data-theme="dark"] .dark-layer { opacity: 1; }
-        [data-theme="dark"] .light-layer { opacity: 0; }
-        [data-theme="light"] .dark-layer { opacity: 0; }
-        [data-theme="light"] .light-layer { opacity: 1; }
-
-        .theme-toggle-btn {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            z-index: 100;
-            width: 42px;
-            height: 42px;
-            border-radius: 50%;
-            background: var(--toggle-bg);
-            border: 1px solid var(--toggle-border);
-            color: var(--toggle-icon);
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            box-shadow: 0 4px 16px rgba(0,0,0,0.15);
-            transition: all 0.25s ease;
-        }
-        .theme-toggle-btn:hover {
-            transform: scale(1.08);
-            box-shadow: 0 6px 20px rgba(0,0,0,0.25);
-        }
-        .sun-icon { display: block; }
-        .moon-icon { display: none; }
-        [data-theme="dark"] .sun-icon { display: block; }
-        [data-theme="dark"] .moon-icon { display: none; }
-        [data-theme="light"] .sun-icon { display: none; }
-        [data-theme="light"] .moon-icon { display: block; }
+        /* ── Ambient blobs ── */
         .blob {
             position: fixed;
             border-radius: 50%;
-            filter: blur(120px);
-            opacity: var(--blob-opacity);
+            filter: blur(130px);
+            opacity: 0.12;
             pointer-events: none;
             z-index: 0;
-            transition: opacity 0.3s ease;
         }
-        .blob-tl { top: -10%; left: -10%; width: 50vw; height: 50vw; background: #3b82f6; }
-        .blob-br { bottom: -10%; right: -10%; width: 50vw; height: 50vw; background: #3b82f6; }
+        .blob-tl { top: -10%; left: -10%; width: 55vw; height: 55vw; background: radial-gradient(circle, #3b82f6, #1d4ed8); }
+        .blob-br { bottom: -10%; right: -10%; width: 55vw; height: 55vw; background: radial-gradient(circle, #6366f1, #3b82f6); }
         .blob-mid { top: 40%; left: 35%; width: 30vw; height: 30vw; background: #1d6bd4; opacity: 0.06; }
 
-        .ifp-canvas-container {
-            max-width: 480px;
-            width: 100%;
-            padding: 20px 0;
-            margin: auto;
-            position: relative;
+        /* ── Card ── */
+        .card {
+            max-width: 480px; width: 100%;
+            background: rgba(18, 19, 24, 0.78);
+            backdrop-filter: blur(28px) saturate(200%);
+            -webkit-backdrop-filter: blur(28px) saturate(200%);
+            border-radius: 32px;
+            padding: 48px 42px;
+            box-shadow: 0 8px 40px 0 rgba(0, 0, 0, 0.55), 0 1px 0 rgba(255,255,255,0.06) inset;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            animation: card-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
             z-index: 10;
             text-align: center;
-            animation: canvas-in 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
         }
-        @keyframes canvas-in {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
+        @keyframes card-in { from { opacity: 0; transform: translateY(28px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
 
-        .logo-wrap { text-align: center; margin-bottom: 24px; }
-        .logo-img { max-height: 56px; width: auto; object-fit: contain; display: block; margin: 0 auto; transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); filter: drop-shadow(0 6px 14px rgba(0,0,0,0.35)); }
+        /* ── Logo ── */
+        .logo-wrap { text-align: center; margin-bottom: 28px; }
+        .logo-img {
+            max-height: 54px; width: auto; object-fit: contain;
+            display: block; margin: 0 auto;
+            transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+            filter: drop-shadow(0 4px 14px rgba(43,131,250,0.22));
+        }
         .logo-img:hover { transform: scale(1.05); }
 
+        /* ── Step progress dots ── */
+        .step-progress {
+            display: flex; align-items: center; justify-content: center;
+            gap: 0; margin-bottom: 32px;
+        }
+        .step-dot {
+            width: 32px; height: 32px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 12px; font-weight: 700;
+            transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative; z-index: 1;
+        }
+        .step-dot.done {
+            background: #2b83fa; color: #fff;
+            box-shadow: 0 0 0 4px rgba(43,131,250,0.2);
+        }
+        .step-dot.active {
+            background: linear-gradient(135deg, #2b83fa, #6366f1);
+            color: #fff;
+            box-shadow: 0 0 0 4px rgba(43,131,250,0.25), 0 4px 14px rgba(43,131,250,0.35);
+        }
+        .step-dot.pending {
+            background: rgba(255,255,255,0.05);
+            color: #64748b;
+            border: 1px solid rgba(255,255,255,0.08);
+        }
+        .step-line {
+            width: 40px; height: 2px;
+            background: rgba(255,255,255,0.07);
+            transition: background 0.4s ease;
+            border-radius: 2px;
+        }
+        .step-line.done { background: #2b83fa; }
+
+        /* ── Headings ── */
         h1 {
-            font-size: 26px;
-            font-weight: 800;
-            letter-spacing: -0.6px;
+            font-size: 24px; font-weight: 800; letter-spacing: -0.7px;
             margin-bottom: 6px;
-            text-align: center;
-            background: var(--text-heading);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+            background: linear-gradient(135deg, #ffffff 0%, #93c5fd 100%);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
         }
-        .subtitle { font-size: 14px; color: var(--text-secondary); margin-bottom: 24px; text-align: center; line-height: 1.45; }
+        .subtitle {
+            font-size: 13.5px; color: #94a3b8; margin-bottom: 28px;
+            font-weight: 500; line-height: 1.5;
+        }
+        .subtitle strong { color: #e2e8f0; }
 
-        label { display: block; font-size: 11.5px; font-weight: 800; text-transform: uppercase; color: var(--text-secondary); letter-spacing: 0.9px; margin-bottom: 8px; text-align: left; }
-        [data-theme="light"] label { color: #1e293b !important; }
-        .field { margin-bottom: 20px; text-align: left; }
-
+        /* ── Fields ── */
+        label {
+            display: block; font-size: 11px; font-weight: 700;
+            text-transform: uppercase; color: #94a3b8;
+            margin-bottom: 8px; letter-spacing: 0.8px; text-align: left;
+        }
+        .field { margin-bottom: 20px; }
         .input-wrap { position: relative; }
-        .input-icon { position: absolute; left: 15px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; color: #64748b; pointer-events: none; transition: color 0.25s ease; z-index: 2; }
-        
+        .input-icon {
+            position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
+            width: 16px; height: 16px; color: #64748b;
+            pointer-events: none; transition: color 0.25s ease; z-index: 2;
+        }
         input[type=email], input[type=password], input[type=text] {
-            width: 100%; min-height: 52px; padding: 13px 16px 13px 44px; border-radius: 16px;
-            border: 1.5px solid var(--input-border); background: var(--input-bg);
-            backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-            font-family: inherit; font-size: 14px; font-weight: 500; outline: none; transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-            color: var(--input-text); position: relative;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.12);
-        }
-        [data-theme="light"] input[type=email],
-        [data-theme="light"] input[type=password],
-        [data-theme="light"] input[type=text] {
-            background: #ffffff !important;
-            border-color: #cbd5e1 !important;
-            color: #0f172a !important;
-            box-shadow: 0 4px 16px rgba(15, 23, 42, 0.07), 0 1px 3px rgba(0, 0, 0, 0.04) !important;
-        }
-        [data-theme="light"] input:focus {
-            border-color: #2b83fa !important;
-            box-shadow: 0 0 0 4px rgba(43, 131, 250, 0.25), 0 8px 24px rgba(43, 131, 250, 0.12) !important;
+            width: 100%; padding: 13px 16px 13px 42px; border-radius: 14px;
+            border: 1px solid rgba(255,255,255,0.07);
+            background: rgba(0,0,0,0.38);
+            font-family: inherit; font-size: 14px; outline: none;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            color: #f4f6fa;
         }
         .pw-wrap input[type=password], .pw-wrap input[type=text] { padding-right: 48px; }
-        input:focus { border-color: #3b82f6; box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.3), 0 6px 24px rgba(0,0,0,0.18); }
-        
+        input:focus {
+            border-color: #3b82f6;
+            background: rgba(0,0,0,0.45);
+            box-shadow: 0 0 0 4px rgba(59,130,246,0.2);
+        }
+        .input-wrap-focus .input-icon { color: #2b83fa; }
         .pw-wrap { position: relative; }
-        .pw-toggle { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; color: #64748b; padding: 4px; display: flex; align-items: center; justify-content: center; transition: color 0.2s; z-index: 3; }
+        .pw-toggle {
+            position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
+            background: none; border: none; cursor: pointer; color: #64748b;
+            padding: 4px; display: flex; align-items: center; justify-content: center;
+            transition: color 0.2s; z-index: 3;
+        }
         .pw-toggle:hover { color: #2b83fa; }
 
-        /* OTP 6-box grid */
-        .otp-grid { display: flex; gap: 10px; justify-content: center; margin-bottom: 24px; }
+        /* ── OTP 6-box grid ── */
+        .otp-grid {
+            display: flex; gap: 10px; justify-content: center;
+            margin-bottom: 28px;
+        }
         .otp-cell {
-            width: 52px !important; height: 60px; padding: 0 !important;
-            border-radius: 16px; border: 1.5px solid var(--input-border);
-            background: var(--input-bg); backdrop-filter: blur(16px);
-            color: var(--input-text); font-family: 'Poppins', monospace;
-            font-size: 22px; font-weight: 700; text-align: center; outline: none;
-            transition: all 0.2s ease; caret-color: #2b83fa;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+            width: 52px !important; height: 60px;
+            padding: 0 !important;
+            border-radius: 14px;
+            border: 1.5px solid rgba(255,255,255,0.09);
+            background: rgba(0,0,0,0.38);
+            color: #f4f6fa;
+            font-family: 'Poppins', monospace;
+            font-size: 22px; font-weight: 700;
+            text-align: center;
+            outline: none;
+            transition: border-color 0.22s, box-shadow 0.22s, background 0.22s, transform 0.18s;
+            caret-color: #2b83fa;
+            appearance: none; -webkit-appearance: none;
+            /* Prevent arrows on number inputs */
+            -moz-appearance: textfield;
         }
-        .otp-cell:focus { border-color: #3b82f6; box-shadow: 0 0 0 4px rgba(59,130,246,0.3); transform: scale(1.05); }
+        .otp-cell::-webkit-outer-spin-button,
+        .otp-cell::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        .otp-cell:focus {
+            border-color: #3b82f6;
+            background: rgba(10, 20, 50, 0.55);
+            box-shadow: 0 0 0 4px rgba(59,130,246,0.22);
+            transform: scale(1.06);
+        }
+        .otp-cell.filled {
+            border-color: rgba(43,131,250,0.55);
+            background: rgba(10,20,50,0.42);
+        }
+        .otp-cell.otp-shake {
+            animation: otp-shake 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97);
+        }
+        @keyframes otp-shake {
+            10%, 90% { transform: translateX(-3px); }
+            20%, 80% { transform: translateX(3px); }
+            30%, 50%, 70% { transform: translateX(-4px); }
+            40%, 60% { transform: translateX(4px); }
+        }
 
-        .btn-submit {
-            width: 100%; padding: 14px; border-radius: 16px;
-            background: linear-gradient(90deg, #2b83fa 0%, #1d6bd4 100%); color: #fff; font-size: 15px; font-weight: 700;
-            border: none; cursor: pointer; margin-top: 10px;
-            box-shadow: 0 8px 28px rgba(43, 131, 250, 0.45);
-            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); font-family: inherit;
-            display: flex; align-items: center; justify-content: center; gap: 8px;
-            min-height: 52px;
+        /* ── Password strength bar ── */
+        .pw-strength-wrap { margin-top: 6px; }
+        .pw-strength-track {
+            height: 4px; border-radius: 999px;
+            background: rgba(255,255,255,0.06);
+            overflow: hidden; margin-bottom: 4px;
         }
-        .btn-submit:hover { transform: translateY(-2px); box-shadow: 0 12px 32px rgba(43, 131, 250, 0.55); }
+        .pw-strength-bar {
+            height: 100%; border-radius: 999px; width: 0%;
+            transition: width 0.35s ease, background 0.35s ease;
+        }
+        .pw-strength-label { font-size: 11px; color: #64748b; text-align: left; font-weight: 600; }
+
+        /* ── Buttons ── */
+        .btn-submit {
+            width: 100%; padding: 14px; border-radius: 14px;
+            background: linear-gradient(90deg, #2b83fa 0%, #1d6bd4 100%);
+            color: #fff; font-size: 14.5px; font-weight: 700;
+            border: none; cursor: pointer; margin-top: 4px;
+            box-shadow: 0 8px 24px rgba(43,131,250,0.38);
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            font-family: inherit;
+            display: flex; align-items: center; justify-content: center; gap: 8px;
+            min-height: 48px;
+        }
+        .btn-submit:hover { transform: translateY(-2px); box-shadow: 0 12px 30px rgba(43,131,250,0.5); }
         .btn-submit:active { transform: scale(0.985) translateY(0); }
-        .btn-submit:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
-        .btn-spinner { width: 16px; height: 16px; border-radius: 999px; border: 2px solid rgba(255,255,255,0.42); border-top-color: #ffffff; flex: 0 0 auto; animation: spin 0.75s linear infinite; }
+        .btn-submit:focus-visible { outline: 2px solid #93c5fd; outline-offset: 3px; }
+        .btn-submit:disabled { opacity: 0.55; cursor: not-allowed; transform: none; box-shadow: none; }
+        .btn-submit.is-loading { opacity: 1; cursor: wait; box-shadow: 0 8px 24px rgba(43,131,250,0.24); }
+        .btn-submit.is-loading:hover { transform: none; box-shadow: 0 8px 24px rgba(43,131,250,0.24); }
+        .btn-spinner {
+            width: 16px;
+            height: 16px;
+            border-radius: 999px;
+            border: 2px solid rgba(255,255,255,0.42);
+            border-top-color: #ffffff;
+            flex: 0 0 auto;
+            animation: spin 0.75s linear infinite;
+        }
         @keyframes spin { to { transform: rotate(360deg); } }
 
-        .timer-badge { background: var(--input-bg); border: 1px solid var(--input-border); backdrop-filter: blur(12px); border-radius: 999px; padding: 6px 16px; font-size: 12.5px; color: var(--text-secondary); display: inline-flex; align-items: center; gap: 6px; margin-bottom: 22px; font-weight: 600; }
-        .timer-badge strong { color: #2b83fa; font-family: monospace; font-size: 13.5px; }
-
-        .error-box { background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 16px; padding: 14px 18px; margin-bottom: 24px; backdrop-filter: blur(12px); font-size: 13px; color: #fca5a5; font-weight: 600; line-height: 1.45; position: relative; overflow: hidden; display: none; }
+        /* ── Alerts ── */
+        .error-box {
+            background: rgba(239,68,68,0.07); border: 1px solid rgba(239,68,68,0.22);
+            border-radius: 14px; padding: 12px 16px; margin-bottom: 20px;
+            font-size: 13px; color: #fca5a5; font-weight: 600; line-height: 1.45;
+            position: relative; overflow: hidden; display: none;
+            animation: fadeInUp 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+        }
         .error-box::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: #ef4444; }
-
-        .banner-success { background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 16px; padding: 14px 18px; margin-bottom: 24px; backdrop-filter: blur(12px); position: relative; overflow: hidden; display: none; }
+        .banner-success {
+            background: rgba(16,185,129,0.07); border: 1px solid rgba(16,185,129,0.22);
+            border-radius: 16px; padding: 12px 18px; margin-bottom: 20px;
+            position: relative; overflow: hidden; display: none;
+            animation: fadeInUp 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+        }
         .banner-success::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: #10b981; }
         .banner-success p { font-size: 13px; color: #6ee7b7; line-height: 1.5; font-weight: 500; padding-left: 4px; }
 
-        .pw-strength-wrap { margin-top: 8px; }
-        .pw-strength-track { height: 4px; border-radius: 999px; background: var(--input-border); overflow: hidden; margin-bottom: 4px; }
-        .pw-strength-bar { height: 100%; border-radius: 999px; width: 0%; transition: width 0.35s ease, background 0.35s ease; }
-        .pw-strength-label { font-size: 11px; color: var(--text-secondary); text-align: left; font-weight: 600; }
-        .match-indicator { font-size: 11.5px; font-weight: 600; margin-top: 6px; text-align: left; min-height: 16px; transition: color 0.2s; }
+        /* ── Timer ── */
+        .timer-badge {
+            background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 999px; padding: 5px 14px;
+            font-size: 12px; color: #94a3b8;
+            display: inline-flex; align-items: center; gap: 6px;
+            margin-bottom: 22px; font-weight: 600;
+        }
+        .timer-badge strong { color: #2b83fa; font-family: monospace; font-size: 13px; }
+        .timer-warning strong { color: #ef4444 !important; animation: pulse 1s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+        /* ── Footer / helpers ── */
+        .hidden { display: none !important; }
+        .fade-in-up { animation: fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) both; }
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+        .footer { font-size: 12.5px; color: #94a3b8; text-align: center; margin-top: 22px; font-weight: 500; }
+        .footer a { text-decoration: none; transition: color 0.2s; color: #2b83fa; font-weight: 600; }
+        .footer a:hover { color: #60a5fa !important; }
+        .footer a.disabled { color: #64748b; cursor: not-allowed; pointer-events: none; }
+
+        /* ── Match indicator ── */
+        .match-indicator {
+            font-size: 11.5px; font-weight: 600;
+            margin-top: 6px; text-align: left;
+            min-height: 16px; transition: color 0.2s;
+        }
         .match-indicator.ok { color: #34d399; }
         .match-indicator.fail { color: #f87171; }
-
-        .hidden { display: none !important; }
-        .footer { font-size: 13px; color: var(--text-secondary); text-align: center; margin-top: 28px; font-weight: 500; }
-        .footer a { text-decoration: none; transition: color 0.2s; font-weight: 600; color: #2b83fa; }
-        .footer a:hover { color: #3b82f6 !important; }
-
-        /* Placeholder contrast */
-        ::placeholder { color: #64748b; opacity: 0.8; }
-        [data-theme="light"] ::placeholder { color: #64748b !important; opacity: 0.85; }
-
-        /* Mobile Viewport Responsiveness */
-        @media (max-width: 600px) {
-            body { padding: 16px 12px; }
-            h1 { font-size: 24px !important; }
-            .subtitle { font-size: 13px !important; margin-bottom: 20px !important; }
-            .bg-image-layer { background-position: center top; }
-            .theme-toggle-btn { top: 14px; right: 14px; width: 38px; height: 38px; }
-            .ifp-canvas-container { padding: 12px 0; }
-            .otp-cell { width: 44px; height: 48px; font-size: 20px; }
-        }
     </style>
 </head>
 <body>
-    <div class="bg-image-layer dark-layer" aria-hidden="true"></div>
-    <div class="bg-image-layer light-layer" aria-hidden="true"></div>
-    <button type="button" id="theme-toggle" class="theme-toggle-btn" title="Toggle Light/Dark Mode" aria-label="Toggle Light/Dark Mode">
-        <svg class="sun-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
-        <svg class="moon-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
-    </button>
     <div class="blob blob-tl"></div>
     <div class="blob blob-br"></div>
     <div class="blob blob-mid"></div>
-    <main class="ifp-canvas-container">
+    <div class="card">
         {$body}
-    </main>
-    <script>
-      var themeBtn = document.getElementById('theme-toggle');
-      if (themeBtn) {
-        themeBtn.addEventListener('click', function() {
-          var cur = document.documentElement.getAttribute('data-theme');
-          var next = cur === 'light' ? 'dark' : 'light';
-          document.documentElement.setAttribute('data-theme', next);
-          localStorage.setItem('nola_theme', next);
-        });
-      }
-      
-    </script>
+    </div>
 </body>
 </html>
 HTML;
@@ -297,11 +312,12 @@ $bodyContent = <<<HTML
     <div id="error-alert" class="error-box"></div>
     <div id="success-alert" class="banner-success"><p id="success-alert-text"></p></div>
 
-    <!-- STEP 1 — Email Entry -->
+    <!-- ════════════════════════════════════════
+         STEP 1 — Email Entry
+    ════════════════════════════════════════ -->
     <div id="step1-wrapper">
-        <div class="logo-wrap">
-            <img src="https://smspro-api.nolacrm.io/PNG%20-%20NOLA%20SMS%20PRO%20Standard.png" alt="NOLA SMS Pro" class="logo-img">
-        </div>
+
+
         <h1>Forgot Password</h1>
         <p class="subtitle">Enter your email address and we'll send<br>you a 6-digit verification code.</p>
 
@@ -318,14 +334,20 @@ $bodyContent = <<<HTML
                 <span>Send Verification Code</span>
             </button>
         </form>
-        <p class="footer"><a href="/login">Back to Sign In</a></p>
+        <p class="footer"><a href="/login">← Back to Sign In</a></p>
     </div>
 
-    <!-- STEP 2 — OTP Verification (6 boxes) -->
+    <!-- ════════════════════════════════════════
+         STEP 2 — OTP Verification (6 boxes)
+    ════════════════════════════════════════ -->
     <div id="step2-wrapper" class="hidden">
+        <!-- Brand Logo -->
         <div class="logo-wrap">
             <img src="https://smspro-api.nolacrm.io/PNG%20-%20NOLA%20SMS%20PRO%20Standard.png" alt="NOLA SMS Pro" class="logo-img">
         </div>
+
+
+
         <h1>Enter Your Code</h1>
         <p class="subtitle" id="step2-subtitle">We sent a 6-digit code to your email.<br>It expires in 10 minutes.</p>
 
@@ -334,6 +356,7 @@ $bodyContent = <<<HTML
             Expires in <strong id="expiry-countdown">10:00</strong>
         </div>
 
+        <!-- 6 Individual OTP Boxes -->
         <div class="otp-grid" id="otp-grid">
             <input class="otp-cell" id="otp-0" type="text" inputmode="numeric" maxlength="1" autocomplete="one-time-code" aria-label="Digit 1">
             <input class="otp-cell" id="otp-1" type="text" inputmode="numeric" maxlength="1" autocomplete="off" aria-label="Digit 2">
@@ -354,11 +377,17 @@ $bodyContent = <<<HTML
         </p>
     </div>
 
-    <!-- STEP 3 — Set New Password -->
+    <!-- ════════════════════════════════════════
+         STEP 3 — Set New Password
+    ════════════════════════════════════════ -->
     <div id="step3-wrapper" class="hidden">
+        <!-- Brand Logo -->
         <div class="logo-wrap">
             <img src="https://smspro-api.nolacrm.io/PNG%20-%20NOLA%20SMS%20PRO%20Standard.png" alt="NOLA SMS Pro" class="logo-img">
         </div>
+
+
+
         <h1>Set New Password</h1>
         <p class="subtitle">Create a strong password to secure<br>your NOLA SMS Pro account.</p>
 
@@ -396,21 +425,25 @@ $bodyContent = <<<HTML
             </button>
         </form>
         <p class="footer" style="margin-top: 20px;">
-            <a href="/login" style="color: #94a3b8; font-weight: 500;">Back to Sign In</a>
+            <a href="/login" style="color: #94a3b8; font-weight: 500;">← Back to Sign In</a>
         </p>
     </div>
-    </main>
+
     <script>
-      var themeBtn = document.getElementById('theme-toggle');
-      if (themeBtn) {
-        themeBtn.addEventListener('click', function() {
-          var cur = document.documentElement.getAttribute('data-theme');
-          var next = cur === 'light' ? 'dark' : 'light';
-          document.documentElement.setAttribute('data-theme', next);
-          localStorage.setItem('nola_theme', next);
-        });
-      }
-      
+      (function() {
+        /* ─────────────────────────────────────────
+           Helpers
+        ───────────────────────────────────────── */
+        var errAlert  = document.getElementById('error-alert');
+        var succAlert = document.getElementById('success-alert');
+        var succText  = document.getElementById('success-alert-text');
+
+        function showError(msg) {
+            succAlert.style.display = 'none';
+            errAlert.textContent = msg;
+            errAlert.style.display = 'block';
+            errAlert.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
         function showSuccess(msg) {
             errAlert.style.display = 'none';
             succText.innerHTML = msg;
@@ -435,6 +468,11 @@ $bodyContent = <<<HTML
                 btn.innerHTML = btn.dataset.defaultHtml;
             }
         }
+
+        /* ─────────────────────────────────────────
+           Input focus classes
+        ───────────────────────────────────────── */
+        document.querySelectorAll('.input-wrap input').forEach(function(inp) {
             inp.addEventListener('focus', function() {
                 var w = inp.closest('.input-wrap');
                 if (w) w.classList.add('input-wrap-focus');
