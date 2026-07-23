@@ -31,6 +31,10 @@ steps:
       - 'managed'
       - '--min-instances'
       - '1'
+      - '--max-instances'
+      - '20'
+      - '--concurrency'
+      - '80'
 
 images:
   - 'gcr.io/$PROJECT_ID/sms-api:latest'
