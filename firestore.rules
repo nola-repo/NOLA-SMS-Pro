@@ -85,16 +85,7 @@ service cloud.firestore {
     }
 
     match /ghl_tokens/{tokenId} {
-      allow read: if canAccessLocation(resource.data.location_id)
-        || canAccessLocation(resource.data.locationId)
-        || (
-          request.auth.token.company_id is string
-          && (
-            request.auth.token.company_id == tokenId
-            || request.auth.token.company_id == resource.data.companyId
-            || request.auth.token.company_id == resource.data.company_id
-          )
-        );
+      allow read: if false;
       allow write: if false;
     }
 

@@ -132,7 +132,7 @@ try {
     NolaPerformance::begin('data_load');
     // High-performance optimization: pre-fetch integrations and ghl_tokens to avoid O(N) queries
     NolaPerformance::increment('firestore_queries');
-    $integrationsSnap = $db->collection('integrations')->documents();
+    $integrationsSnap = $db->collection('integrations')->limit(500)->documents();
     $integrationMap = [];
     foreach ($integrationsSnap as $doc) {
         if ($doc->exists()) {
@@ -142,7 +142,7 @@ try {
     }
 
     NolaPerformance::increment('firestore_queries');
-    $ghlTokensSnap = $db->collection('ghl_tokens')->documents();
+    $ghlTokensSnap = $db->collection('ghl_tokens')->limit(500)->documents();
     $ghlTokenMap = [];
     foreach ($ghlTokensSnap as $doc) {
         if ($doc->exists()) {
@@ -155,7 +155,7 @@ try {
     foreach (['agency_users', 'agencies'] as $agencyCollection) {
         try {
             NolaPerformance::increment('firestore_queries');
-            $agencySnap = $db->collection($agencyCollection)->documents();
+            $agencySnap = $db->collection($agencyCollection)->limit(500)->documents();
             foreach ($agencySnap as $agencyDoc) {
                 if (!$agencyDoc->exists()) continue;
                 NolaPerformance::increment('documents_processed');

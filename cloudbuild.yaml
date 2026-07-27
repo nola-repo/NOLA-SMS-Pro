@@ -34,7 +34,9 @@ steps:
       - '--max-instances'
       - '20'
       - '--concurrency'
-      - '80'
+      - '30'
+      - '--memory'
+      - '2Gi'
 
 images:
   - 'gcr.io/$PROJECT_ID/sms-api:latest'
