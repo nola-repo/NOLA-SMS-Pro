@@ -116,6 +116,7 @@ class SenderResolver
                 $senderSource = 'request.sender';
             }
         } elseif ($usingCustomKey) {
+            // PATH A: subaccount has their own API key — use approved or requested sender freely
             if ($approvedSender !== '') {
                 $sender = $approvedSender;
                 $senderSource = 'integration.approved_sender_id';
@@ -123,10 +124,15 @@ class SenderResolver
                 $sender = trim((string)$requestedSender);
                 $senderSource = 'request.sender';
             }
-        } elseif ($approvedSender !== '' && in_array($approvedSender, $masterSenders, true)) {
+        } elseif ($approvedSender !== '') {
+            // PATH B: subaccount on NOLA master key but has an approved sender ID —
+            // always honour it. No master_senders check needed here because the
+            // admin already approved this sender explicitly for this location.
             $sender = $approvedSender;
             $senderSource = 'integration.approved_sender_id';
         } elseif (trim((string)$requestedSender) !== '' && in_array((string)$requestedSender, $masterSenders, true)) {
+            // PATH C: no approved sender — only allow the requested sender if it is
+            // on the global master whitelist (prevents arbitrary sender spoofing)
             $sender = trim((string)$requestedSender);
             $senderSource = 'request.sender';
         }
