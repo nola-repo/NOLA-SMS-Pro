@@ -61,13 +61,18 @@ class NolaCache
         if (self::$redis) {
             try {
                 $val = self::$redis->get($safeKey);
-                return $val !== false ? unserialize($val) : null;
+                return $val !== false ? json_decode($val, true) : null;
             } catch (\Throwable $e) {
                 error_log("[NolaCache] Redis GET error: " . $e->getMessage());
             }
         }
 
-        // File cache fallback
+        // File cache fallback (disabled in production Cloud Run environments to prevent desync)
+        $appEnv = getenv('APP_ENV') ?: 'production';
+        if ($appEnv === 'production' && getenv('K_SERVICE')) {
+            return null;
+        }
+
         $file = self::$fileCacheDir . '/' . md5($safeKey) . '.cache';
         if (!file_exists($file)) {
             return null;
@@ -78,7 +83,7 @@ class NolaCache
             return null;
         }
 
-        $data = @unserialize($content);
+        $data = @json_decode($content, true);
         if (!$data || !is_array($data) || !isset($data['expire']) || !isset($data['value'])) {
             @unlink($file);
             return null;
@@ -165,24 +170,29 @@ class NolaCache
         self::init();
 
         $safeKey = preg_replace('/[^a-zA-Z0-9_\-]/', '_', $key);
-        $serialized = serialize($value);
+        $encoded = json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
         if (self::$redis) {
             try {
-                return self::$redis->set($safeKey, $serialized, $ttl);
+                return self::$redis->set($safeKey, $encoded, $ttl);
             } catch (\Throwable $e) {
                 error_log("[NolaCache] Redis SET error: " . $e->getMessage());
             }
         }
 
-        // File cache fallback
+        // File cache fallback (disabled in production Cloud Run environments)
+        $appEnv = getenv('APP_ENV') ?: 'production';
+        if ($appEnv === 'production' && getenv('K_SERVICE')) {
+            return false;
+        }
+
         $file = self::$fileCacheDir . '/' . md5($safeKey) . '.cache';
         $data = [
             'expire' => time() + $ttl,
             'value' => $value
         ];
 
-        return @file_put_contents($file, serialize($data)) !== false;
+        return @file_put_contents($file, json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)) !== false;
     }
 
     /**

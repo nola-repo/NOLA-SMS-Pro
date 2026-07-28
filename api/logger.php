@@ -223,8 +223,8 @@ class Logger
 
             $line = json_encode($entry, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . PHP_EOL;
 
-            // Sink 1: Terminal / stdout (picked up by Docker / Cloud Logging)
-            error_log('[NOLA] ' . rtrim($line));
+            // Sink 1: Terminal / stdout (picked up by Docker / Cloud Logging as structured JSON)
+            file_put_contents('php://stdout', $line);
 
             // Sink 2: Daily rotating log file
             if (self::$fileLogEnabled && self::$logFile !== '') {

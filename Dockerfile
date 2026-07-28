@@ -9,8 +9,10 @@ RUN apt-get update && apt-get install -y \
     libcurl4-openssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install extensions for Composer and Firestore (bcmath is required by brick/math)
-RUN docker-php-ext-install zip bcmath fileinfo
+# Install extensions for Redis, Composer, and Firestore (bcmath is required by brick/math)
+RUN pecl install redis \
+    && docker-php-ext-enable redis \
+    && docker-php-ext-install zip bcmath fileinfo
 
 # Enable mod_rewrite and mod_headers for .htaccess and CORS
 RUN a2enmod rewrite headers

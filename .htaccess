@@ -14,6 +14,11 @@
 
     Options -MultiViews
 
+    # ── Security: Deny direct HTTP access to debug, test, and temporary scripts ──
+    <FilesMatch "(oauth_debug|debug_.*|tmp_.*|scratch_.*|test_.*|generate-test|migrate_.*|seed_.*)\.php$">
+        Require all denied
+    </FilesMatch>
+
     # ── CORS: OPTIONS preflight ────────────────────────────────────────
     # OPTIONS requests fall through to the PHP file matched by the rewrite
     # rules below. Every PHP endpoint includes cors.php which returns 204

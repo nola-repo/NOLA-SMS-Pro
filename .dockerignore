@@ -21,6 +21,16 @@ api/webhook/last_payload.json
 raw_logs.txt
 raw_logs_utf8.txt
 scratch/
+oauth_debug.php
+debug_*.php
+tmp_*.php
+scratch_*.php
+test_*.php
+generate-test-link.php
+migrate_*.php
+seed_*.php
+outputs/
+*.exe
 
 # SSL cert bundle (not needed inside container)
 cacert.pem
