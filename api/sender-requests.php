@@ -79,7 +79,15 @@ try {
                     'created_at' => sender_request_format_timestamp($d['created_at'] ?? null),
                     'updated_at' => sender_request_format_timestamp($d['updated_at'] ?? null),
                     'approved_at' => sender_request_format_timestamp($d['approved_at'] ?? null),
-                    'rejected_at' => sender_request_format_timestamp($d['rejected_at'] ?? null)
+                    'rejected_at' => sender_request_format_timestamp($d['rejected_at'] ?? null),
+                    // Return document metadata only (no base64 payload in list view)
+                    'documents' => array_map(function($attached) {
+                        return [
+                            'name' => $attached['name'] ?? '',
+                            'size' => $attached['size'] ?? 0,
+                            'type' => $attached['type'] ?? '',
+                        ];
+                    }, $d['documents'] ?? []),
                 ];
             }
         }
@@ -105,6 +113,44 @@ try {
         $provider = normalize_sender_provider($payload['provider'] ?? $payload['sms_provider'] ?? $payload['provider_preference'] ?? 'system');
         $purpose = $payload['purpose'] ?? '';
         $sampleMessage = $payload['sample_message'] ?? '';
+
+        // ── Validate and sanitize uploaded documents ──────────────────────────
+        $MAX_DOCS          = 3;
+        $MAX_DOC_SIZE_MB   = 5;
+        $MAX_DOC_BYTES     = $MAX_DOC_SIZE_MB * 1024 * 1024;
+        $ALLOWED_MIME_TYPES = [
+            'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+            'application/pdf',
+            'application/msword',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        ];
+
+        $rawDocuments  = isset($payload['documents']) && is_array($payload['documents']) ? $payload['documents'] : [];
+        $storedDocuments = [];
+
+        foreach (array_slice($rawDocuments, 0, $MAX_DOCS) as $idx => $doc) {
+            $docName  = isset($doc['name'])  && is_string($doc['name'])  ? trim($doc['name'])  : '';
+            $docSize  = isset($doc['size'])  && is_numeric($doc['size']) ? (int)$doc['size']  : 0;
+            $docType  = isset($doc['type'])  && is_string($doc['type'])  ? strtolower(trim($doc['type'])) : '';
+            $docData  = isset($doc['data'])  && is_string($doc['data'])  ? $doc['data']  : '';
+
+            if ($docName === '' || $docData === '') continue;
+            if (!in_array($docType, $ALLOWED_MIME_TYPES, true)) continue;
+
+            // Decode base64 to verify size
+            $decoded = base64_decode($docData, true);
+            if ($decoded === false) continue;
+            $actualSize = strlen($decoded);
+            if ($actualSize > $MAX_DOC_BYTES) continue;
+
+            $storedDocuments[] = [
+                'name' => substr($docName, 0, 255),
+                'size' => $actualSize,
+                'type' => $docType,
+                'data' => $docData, // store raw base64 in Firestore
+            ];
+        }
+
 
         if (!$requestedId) {
             http_response_code(400);
@@ -157,6 +203,7 @@ try {
             'unisms_sender_id' => $provider === 'unisms' ? $requestedId : null,
             'purpose' => $purpose,
             'sample_message' => $sampleMessage,
+            'documents' => $storedDocuments,
             'status' => 'pending',
             'created_at' => $now,
             'updated_at' => $now
@@ -166,7 +213,7 @@ try {
         // 3. Dispatch pending email notification
         try {
             require_once __DIR__ . '/services/NotificationService.php';
-            NotificationService::notifySenderIdStatus($db, $locId, $requestedId, 'pending');
+            NotificationService::notifySenderIdStatus($db, $locId, $requestedId, 'pending', null, $purpose, $sampleMessage, !empty($storedDocuments));
         } catch (\Throwable $e) {
             error_log("[sender-requests.php] Failed to send sender ID pending notification: " . $e->getMessage());
         }

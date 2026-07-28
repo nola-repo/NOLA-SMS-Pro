@@ -421,6 +421,10 @@ class NotificationService
             'nola_sms_source_location_id',
             'nola_sms_source_location_name',
             'nola_sms_requested_sender_id',
+            'nola_sms_sender_id',
+            'nola_sms_purpose',
+            'nola_sms_sample_message',
+            'nola_sms_has_documents',
             'nola_sms_admin_notes',
             'nola_sms_otp_code',
             'nola_sms_sender_id_registered',
@@ -1049,7 +1053,10 @@ class NotificationService
         string $requestedSenderId,
         string $alertType, // 'sender_id_pending', 'sender_id_approved', 'sender_id_rejected'
         ?string $adminNotes,
-        string $sourceLocationName
+        string $sourceLocationName,
+        string $purpose = '',
+        string $sampleMessage = '',
+        bool $hasDocuments = false
     ): ?string {
         require_once __DIR__ . '/GhlClient.php';
 
@@ -1126,6 +1133,10 @@ class NotificationService
             'nola_sms_source_location_id'    => $sourceLocationId,
             'nola_sms_source_location_name'  => $sourceLocationName,
             'nola_sms_requested_sender_id'   => $requestedSenderId,
+            'nola_sms_sender_id'             => $requestedSenderId,
+            'nola_sms_purpose'               => $purpose,
+            'nola_sms_sample_message'        => $sampleMessage,
+            'nola_sms_has_documents'         => $hasDocuments ? 'yes' : 'no',
             'nola_sms_admin_notes'           => $adminNotes ?? '',
             'nola_sms_sender_id_registered'  => 'yes',
         ];
@@ -1242,7 +1253,16 @@ class NotificationService
      * @param string $status                  'pending', 'approved', 'rejected'
      * @param string|null $adminNotes         Notes or rejection reason
      */
-    public static function notifySenderIdStatus($db, string $locationId, string $requestedSenderId, string $status, ?string $adminNotes = null): void
+    public static function notifySenderIdStatus(
+        $db,
+        string $locationId,
+        string $requestedSenderId,
+        string $status,
+        ?string $adminNotes = null,
+        string $purpose = '',
+        string $sampleMessage = '',
+        bool $hasDocuments = false
+    ): void
     {
         // ── 1. Resolve registered account details ────────────────────────
         $details = self::getAccountDetails($db, $locationId);
@@ -1300,7 +1320,10 @@ class NotificationService
             $requestedSenderId,
             $alertType,
             $adminNotes,
-            $sourceLocationName
+            $sourceLocationName,
+            $purpose,
+            $sampleMessage,
+            $hasDocuments
         );
     }
 
