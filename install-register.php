@@ -20,9 +20,10 @@ if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
         exit('Server configuration error: JWT secret missing.');
     }
 }
-$apiBase     = 'https://smspro-api.nolacrm.io';
-$reactApp    = 'https://app.nolacrm.io';
-$marketplace = 'https://marketplace.leadconnectorhq.com/apps/overview/68118e8f9f1bac2ffc84ed23';
+$apiBase         = 'https://smspro-api.nolacrm.io';
+$reactApp        = getenv('GHL_CRM_BASE_URL') ?: 'https://app.nolacrm.io';
+$marketplace     = 'https://marketplace.leadconnectorhq.com/apps/overview/68118e8f9f1bac2ffc84ed23';
+$ghlCustomPageId = getenv('GHL_CUSTOM_PAGE_ID') ?: '69a642aae76974824fd39bb6A';
 
 /**
  * Render debug install-token banner only outside production.
@@ -650,6 +651,7 @@ ir_page('Create Your Account', <<<HTML
         const REACT_APP = "{$reactApp}";
         const STANDALONE_APP = 'https://app.nolasmspro.com';
         const GHL_MARKETPLACE_LOC_ID = 'ugBqfQsPtGijLjrmLdmA';
+        const GHL_CUSTOM_PAGE_ID = "{$ghlCustomPageId}";
         const INSTALL_DIAGNOSTICS = {
             token_type: "{$tokenTypeSafe}",
             location_id: "{$locationIdSafe}",
@@ -853,25 +855,19 @@ ir_page('Create Your Account', <<<HTML
 
         function goDashboard() {
             if (!successData) return;
-            // Three-way redirect:
-            //  • GHL iframe (register page loaded inside GHL) → deep-link to user's location custom page
-            //  • GHL marketplace / non-iframe with location_id → fixed marketplace location dashboard
+            // Post-registration redirect:
+            //  • GHL installation (location_id present) → dynamic deep-link to user's exact location custom page link
             //  • Pure standalone (no location_id) → NOLA SMS Pro standalone app
-            const GHL_CUSTOM_PAGE_ID = '69a642aae76974824fd39bb6';
             const locId = (successData.user && successData.user.location_id)
                 || (successData.user && successData.user.active_location_id)
                 || INSTALL_DIAGNOSTICS.location_id
                 || '';
             const u = btoa(JSON.stringify(successData.user || {}));
-            const isInIframe = (window.self !== window.top);
             let redirectDest;
-            if (locId && isInIframe) {
-                // Embedded in GHL iframe → deep-link to user's GHL location custom page
+            if (locId) {
+                // Dynamic subaccount location link for all GHL installations
                 const ghlPath = '/v2/location/' + encodeURIComponent(locId) + '/custom-page-link/' + GHL_CUSTOM_PAGE_ID;
                 redirectDest = REACT_APP + ghlPath;
-            } else if (locId) {
-                // GHL marketplace / welcome-back standalone tab → marketplace location dashboard
-                redirectDest = REACT_APP + '/v2/location/' + encodeURIComponent(GHL_MARKETPLACE_LOC_ID) + '/dashboard';
             } else {
                 // Pure standalone (no location context) → NOLA SMS Pro standalone app
                 redirectDest = STANDALONE_APP;

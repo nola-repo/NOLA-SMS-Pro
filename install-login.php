@@ -617,25 +617,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $userJson = base64_encode(json_encode($result['user'] ?? []));
 
             // Determine the post-login destination:
-            //  • GHL install flow inside iframe (location_id present + iframe context) → deep-link
-            //    into the user's GHL location custom page.
-            //  • GHL marketplace / welcome-back flow (location_id present, standalone tab) → fixed
-            //    marketplace location dashboard so the user lands in the correct GHL sub-account.
+            //  • GHL installation / marketplace / iframe flow (location_id present) → dynamic deep-link
+            //    into the user's exact GHL location subaccount custom page.
             //  • Pure standalone login (no location_id) → NOLA SMS Pro standalone app.
-            $standaloneApp       = 'https://app.nolasmspro.com';
-            $ghlCrm              = 'https://app.nolacrm.io';
-            $ghlMarketplaceLocId = 'ugBqfQsPtGijLjrmLdmA';
-            $ghlCustomPageId     = '69a642aae76974824fd39bb6';
-            $isIframeRequest = (strtolower((string)($_SERVER['HTTP_SEC_FETCH_DEST'] ?? '')) === 'iframe')
-                || !empty($_GET['in_ghl']) || !empty($_POST['in_ghl']) || !empty($_GET['is_iframe']);
+            $standaloneApp   = 'https://app.nolasmspro.com';
+            $ghlCrm          = getenv('GHL_CRM_BASE_URL') ?: 'https://app.nolacrm.io';
+            $ghlCustomPageId = getenv('GHL_CUSTOM_PAGE_ID') ?: '69a642aae76974824fd39bb6A';
 
-            if ($locationIdRaw !== '' && $isIframeRequest) {
-                // Embedded in GHL iframe → deep-link to the user's location custom page
+            if ($locationIdRaw !== '') {
+                // Location ID present → deep-link to the user's exact location custom page link
                 $ghlPath      = '/v2/location/' . rawurlencode($locationIdRaw) . '/custom-page-link/' . $ghlCustomPageId;
-                $redirectDest = $ghlCrm . $ghlPath;
-            } elseif ($locationIdRaw !== '') {
-                // GHL marketplace / welcome-back (standalone tab) → marketplace location dashboard
-                $redirectDest = $ghlCrm . '/v2/location/' . rawurlencode($ghlMarketplaceLocId) . '/dashboard';
+                $redirectDest = rtrim($ghlCrm, '/') . $ghlPath;
             } else {
                 // Pure standalone login → NOLA SMS Pro standalone app
                 $redirectDest = $standaloneApp;
