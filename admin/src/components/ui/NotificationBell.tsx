@@ -169,30 +169,12 @@ export const NotificationBell: React.FC<{ variant?: 'default' | 'light' }> = ({ 
 
     const hasZero = notifications.some(n => !n.read && n.type === 'zero_balance');
 
-    // Sort notifications so that unread & critical ones are always on top
+    // Sort notifications strictly newest to oldest
     const sortedNotifications = useMemo(() => {
         return [...notifications].sort((a, b) => {
-            // 1. Unread first
-            if (a.read !== b.read) {
-                return a.read ? 1 : -1;
-            }
-
-            // 2. Sort by type severity/importance
-            const severity: Record<string, number> = {
-                zero_balance: 0,
-                sender_request: 1,
-                low_balance: 2,
-                new_subaccount: 3,
-                new_agency: 4,
-            };
-            const sevA = severity[a.type] ?? 99;
-            const sevB = severity[b.type] ?? 99;
-            if (sevA !== sevB) {
-                return sevA - sevB;
-            }
-
-            // 3. Newest first
-            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+            const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+            const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+            return timeB - timeA;
         });
     }, [notifications]);
 
