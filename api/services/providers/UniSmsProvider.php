@@ -52,6 +52,7 @@ class UniSmsProvider implements SmsProviderInterface
         ];
 
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
         curl_setopt($ch, CURLOPT_TIMEOUT, max(3, $this->timeoutSeconds));
         curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
         curl_setopt($ch, CURLOPT_USERPWD, $apiKey . ":");
