@@ -33,18 +33,43 @@ class SemaphoreProvider implements SmsProviderInterface
             'sendername' => $senderId
         ];
 
-        $ch = curl_init($this->apiUrl);
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, ["Content-Type: application/json"]);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+        $maxAttempts = 3;
+        $attempt = 0;
+        $response = false;
+        $httpCode = 0;
+        $curlError = '';
 
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $curlError = curl_error($ch);
-        curl_close($ch);
+        while ($attempt < $maxAttempts) {
+            $attempt++;
+            $ch = curl_init($this->apiUrl);
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, ["Content-Type: application/json"]);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+
+            $response = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curlError = curl_error($ch);
+            curl_close($ch);
+
+            // Check if success
+            if ($response !== false && $httpCode >= 200 && $httpCode < 300) {
+                break;
+            }
+
+            // Check if error is transient (cURL timeout/network error or 5xx server error)
+            $isTransient = ($response === false) || ($httpCode >= 500 && $httpCode < 600);
+
+            if ($isTransient && $attempt < $maxAttempts) {
+                error_log("[SemaphoreProvider] Attempt {$attempt} failed with transient error (Code: {$httpCode}, cURL: {$curlError}). Retrying in 500ms...");
+                usleep(500000 * $attempt); // 500ms after attempt 1, 1000ms after attempt 2
+                continue;
+            }
+
+            break;
+        }
 
         if ($response === false) {
             throw new \Exception("Semaphore cURL error: " . $curlError);
