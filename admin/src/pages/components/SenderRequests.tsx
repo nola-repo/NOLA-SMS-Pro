@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { FiUsers, FiSend, FiSettings, FiLogOut, FiLock, FiAlertCircle, FiEye, FiEyeOff, FiCopy, FiCheck, FiX, FiRefreshCw, FiKey, FiHome, FiClock, FiActivity, FiMessageSquare, FiCreditCard, FiShield, FiShieldOff, FiPlus, FiMinus, FiTrash2, FiChevronLeft, FiChevronRight, FiSearch, FiSun, FiMoon, FiMoreVertical, FiToggleLeft, FiFilter } from 'react-icons/fi';
+import { FiUsers, FiSend, FiSettings, FiLogOut, FiLock, FiAlertCircle, FiEye, FiEyeOff, FiCopy, FiCheck, FiX, FiRefreshCw, FiKey, FiHome, FiClock, FiActivity, FiMessageSquare, FiCreditCard, FiShield, FiShieldOff, FiPlus, FiMinus, FiTrash2, FiChevronLeft, FiChevronRight, FiSearch, FiSun, FiMoon, FiMoreVertical, FiToggleLeft, FiFilter, FiPaperclip, FiExternalLink } from 'react-icons/fi';
 import logoUrl from '../../assets/NOLA SMS PRO Logo.png';
 import Antigravity from '../../components/ui/Antigravity';
 import { useToast } from '../../hooks/useToast';
@@ -712,8 +712,81 @@ export const AdminSenderRequests: React.FC = () => {
                                             <div className="rounded-xl border border-[#e5e5e5] dark:border-white/5 bg-white dark:bg-[#111214] p-4">
                                                 <p className="text-[10px] font-black text-[#9aa0a6] uppercase tracking-widest mb-2">Sample Message</p>
                                                 <p className="text-[13px] text-[#111111] dark:text-white italic bg-[#f7f7f7] dark:bg-[#0d0e10] p-3 rounded-lg border border-[#e5e5e5] dark:border-white/5">
-                                                    "{req.sample_message || 'No sample message provided.'}"
+                                                    &ldquo;{req.sample_message || 'No sample message provided.'}&rdquo;
                                                 </p>
+                                            </div>
+
+                                            {/* Supporting Documents */}
+                                            <div className="rounded-xl border border-[#e5e5e5] dark:border-white/5 bg-white dark:bg-[#111214] p-4">
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <p className="text-[10px] font-black text-[#9aa0a6] uppercase tracking-widest flex items-center gap-1.5">
+                                                        <FiPaperclip className="w-3 h-3 text-[#2b83fa]" />
+                                                        Supporting Documents
+                                                    </p>
+                                                    {Array.isArray(req.documents) && req.documents.length > 0 && (
+                                                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#2b83fa]/10 text-[#2b83fa]">
+                                                            {req.documents.length} {req.documents.length === 1 ? 'file' : 'files'} attached
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {Array.isArray(req.documents) && req.documents.length > 0 ? (
+                                                    <div className="space-y-2 mt-1">
+                                                        {req.documents.map((doc, idx) => {
+                                                            const docName = doc.name || `Document_${idx + 1}`;
+                                                            const docSizeLabel = doc.size
+                                                                ? (doc.size < 1024 * 1024 ? `${(doc.size / 1024).toFixed(1)} KB` : `${(doc.size / (1024 * 1024)).toFixed(1)} MB`)
+                                                                : '';
+                                                            const docType = doc.type || 'application/octet-stream';
+                                                            const raw = doc.dataUrl || doc.data || '';
+                                                            const fullDataUrl = raw.startsWith('data:') ? raw : raw ? `data:${docType};base64,${raw}` : '';
+                                                            const isImage = docType.startsWith('image/');
+
+                                                            const handleView = () => {
+                                                                if (!fullDataUrl) return;
+                                                                const win = window.open();
+                                                                if (win) {
+                                                                    win.document.write(
+                                                                        isImage
+                                                                            ? `<title>${docName}</title><body style="margin:0;background:#0d0e10;display:grid;place-items:center;min-height:100vh;"><img src="${fullDataUrl}" style="max-width:95vw;max-height:95vh;object-fit:contain;border-radius:12px;" /></body>`
+                                                                            : `<title>${docName}</title><body style="margin:0;"><iframe src="${fullDataUrl}" style="width:100vw;height:100vh;border:none;"></iframe></body>`
+                                                                    );
+                                                                } else {
+                                                                    const a = document.createElement('a');
+                                                                    a.href = fullDataUrl;
+                                                                    a.download = docName;
+                                                                    a.click();
+                                                                }
+                                                            };
+
+                                                            return (
+                                                                <div key={idx} className="flex items-center justify-between p-2.5 rounded-xl border border-[#e5e5e5] dark:border-white/5 bg-[#f7f7f7] dark:bg-[#0d0e10] hover:border-[#2b83fa]/40 transition-colors">
+                                                                    <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                                                                        <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center text-[15px] flex-shrink-0">
+                                                                            {isImage ? '🖼️' : docType === 'application/pdf' ? '📄' : '📎'}
+                                                                        </div>
+                                                                        <div className="min-w-0">
+                                                                            <p className="text-[12px] font-bold text-[#111111] dark:text-white truncate">{docName}</p>
+                                                                            {docSizeLabel && <p className="text-[10px] text-[#9aa0a6]">{docSizeLabel}</p>}
+                                                                        </div>
+                                                                    </div>
+                                                                    {fullDataUrl ? (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={handleView}
+                                                                            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-[#2b83fa]/10 text-[#2b83fa] hover:bg-[#2b83fa] hover:text-white transition-all flex-shrink-0"
+                                                                        >
+                                                                            <FiExternalLink className="w-3 h-3" /> View
+                                                                        </button>
+                                                                    ) : (
+                                                                        <span className="text-[11px] text-[#9aa0a6] italic flex-shrink-0">No data</span>
+                                                                    )}
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                ) : (
+                                                    <p className="text-[12px] text-[#9aa0a6] italic mt-1">No supporting documents attached.</p>
+                                                )}
                                             </div>
 
                                             {req.admin_notes && (

@@ -25,7 +25,8 @@ const SENDER_COLORS = [
 
 const DEFAULT_REQUEST_PROVIDER = "unisms";
 
-const MAX_FILE_SIZE_MB = 5;
+const MAX_FILE_SIZE_MB = 1;
+const MAX_TOTAL_BYTES = 700 * 1024; // 700 KB max total for Firestore document payload
 const MAX_FILES = 3;
 const ACCEPTED_TYPES = [
     "image/jpeg", "image/png", "image/webp", "image/gif",
@@ -73,7 +74,7 @@ export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, 
     const normalizedSenderName = newId.trim();
 
     useEffect(() => {
-        let timer: ReturnType<typeof setInterval>;
+        let timer: NodeJS.Timeout;
         if (isSubmitted) {
             setCountdown(3);
             timer = setInterval(() => {
@@ -110,13 +111,19 @@ export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, 
         const toProcess = fileArray.slice(0, remaining);
         const newAttachments: AttachedFile[] = [];
 
+        let currentTotal = attachedFiles.reduce((acc, f) => acc + f.size, 0);
+
         for (const file of toProcess) {
             if (!ACCEPTED_TYPES.includes(file.type)) {
                 setFileError(`"${file.name}" is not a supported file type. Use JPG, PNG, PDF, or DOCX.`);
                 continue;
             }
             if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
-                setFileError(`"${file.name}" exceeds the ${MAX_FILE_SIZE_MB}MB limit.`);
+                setFileError(`"${file.name}" exceeds the ${MAX_FILE_SIZE_MB}MB limit per file.`);
+                continue;
+            }
+            if (currentTotal + file.size > MAX_TOTAL_BYTES) {
+                setFileError(`Total size of attached files cannot exceed 700 KB.`);
                 continue;
             }
             // Check for duplicate name
@@ -126,6 +133,7 @@ export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, 
             try {
                 const dataUrl = await readFileAsDataUrl(file);
                 newAttachments.push({ name: file.name, size: file.size, type: file.type, dataUrl });
+                currentTotal += file.size;
             } catch {
                 setFileError(`Failed to read "${file.name}". Please try again.`);
             }
