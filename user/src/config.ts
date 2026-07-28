@@ -23,6 +23,16 @@ export const GHL_BACKEND_ONBOARDING_URL =
 export const GHL_RECONNECT_REQUIRED_STORAGE_KEY = "nola_ghl_reconnect_required";
 export const GHL_OAUTH_RETURN_VIEW_STORAGE_KEY = "nola_ghl_oauth_return_view";
 
+/**
+ * The GoHighLevel Custom Menu Link ID configured in the Marketplace App settings.
+ * This ID appears in the dynamic deep-link URL:
+ *   /v2/location/{locationId}/custom-page-link/{GHL_CUSTOM_MENU_LINK_ID}
+ *
+ * ⚠️ If GHL updates this ID in the Marketplace App settings, update this constant to match.
+ * The current configured ID: 69a642aae76974824fd39bb6A
+ */
+export const GHL_CUSTOM_MENU_LINK_ID = "69a642aae76974824fd39bb6A";
+
 export const API_CONFIG = {
     // Primary API Base
     base: API_BASE,

@@ -10,6 +10,9 @@ import {
 } from '../services/authService';
 import { safeStorage } from '../utils/safeStorage';
 import { sessionSafeStorage } from '../utils/sessionSafeStorage';
+import { persistActiveGhlLocation } from '../utils/ghlLocationStorage';
+import { normalizeLocationCandidate } from '../utils/ghlLocationDetection';
+import { GHL_CUSTOM_MENU_LINK_ID } from '../config';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface AuthContextValue extends Partial<AuthSession> {
@@ -91,6 +94,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         if (pathName.includes('/v2/location/') || pathName.startsWith('/v2/')) {
+          // ── Extract locationId from path BEFORE wiping it ─────────────────
+          // Pattern: /v2/location/{locationId}/custom-page-link/{linkId}
+          // The locationId must be extracted and persisted here because
+          // replaceState('/') runs synchronously, making it unreadable by
+          // ghlLocationDetection later in the bootstrap flow.
+          try {
+            const v2LocationMatch = pathName.match(/\/v2\/location\/([^/]+)/);
+            if (v2LocationMatch) {
+              const rawSegment = decodeURIComponent(v2LocationMatch[1]);
+              // Exclude the custom menu link ID itself from being treated as a location ID
+              if (rawSegment !== GHL_CUSTOM_MENU_LINK_ID) {
+                const extractedLocationId = normalizeLocationCandidate(rawSegment);
+                if (extractedLocationId) {
+                  safeStorage.setItem(SESSION_KEYS.locationId, extractedLocationId);
+                  persistActiveGhlLocation(extractedLocationId);
+                  devLog.log('[AuthContext] Extracted locationId from /v2/location/ path:', extractedLocationId);
+                }
+              }
+            }
+          } catch (extractErr) {
+            devLog.error('[AuthContext] Failed to extract locationId from path:', extractErr);
+          }
+
           pathName = '/';
           urlModified = true;
         }
