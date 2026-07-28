@@ -18,10 +18,11 @@ Recent backend updates have hardened SMS delivery, cURL timeout resilience, cred
 
 ## 2. Frontend Integration Guidance (`sendername` Parameter)
 
-### Issue Identified
-In manual SMS sends, passing `sendername: "NOLASMSPro"` explicitly in the request payload triggers an explicit system sender override on the backend, bypassing the subaccount's approved custom Sender ID (e.g. `JNKRENTAL`).
+### Status Update & Resolved Behavior
+> [!NOTE]
+> **Update (Backend Fix Deployed `f2f7a14`):** The backend `SenderResolver` has been updated so that default `sendername: "NOLASMSPro"` payload parameters no longer override a subaccount's active approved Sender ID (`approved_sender_id`). The backend now automatically uses the approved Sender ID (`JNKRENTAL`) for all subaccount sends regardless of payload defaults. Frontend code changes are **optional / informational only**.
 
-### Recommendations for Frontend Developers
+### Recommendations for Frontend Developers (Optional Clean-up)
 
 #### Option A: Omit or send `null` for `sendername` (Recommended)
 When building payload objects for manual SMS sends, omit `sendername` or set it to `null`/empty string if the user has not explicitly selected a custom sender. The backend will automatically resolve and apply the subaccount's active approved Sender ID (`approved_sender_id`).
