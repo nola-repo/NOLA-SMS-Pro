@@ -27,6 +27,9 @@ const PUBLIC_AUTH_PATHS = [
   '/api/auth/forgot_password_otp.php',
   '/api/auth/reset_password_otp.php',
   '/api/auth/ghl_autologin',
+  '/api/v2/auth/ghl_autologin',
+  '/api/location/bootstrap',
+  '/api/v2/location/bootstrap',
   '/api/auth/me',
 ];
 
