@@ -926,6 +926,75 @@ class CreditManager
         return $this->db->collection('agency_wallet')->document($agency_id);
     }
 
+    /**
+     * Idempotently refunds credits when the SMS provider connection timed out.
+     *
+     * Safe to call only for confirmed TCP/cURL connection timeouts — NOT for
+     * delivery failures (provider accepted the message but later failed delivery).
+     * A timeout means the provider never received the request, so no SMS was sent.
+     *
+     * @param string      $location_id          The subaccount location ID
+     * @param int         $amount               Credits to refund (must match what was deducted)
+     * @param string      $billing_reference_id The original billing reference ID for this send
+     * @param string|null $agency_id            Agency ID if dual-wallet deduction was active
+     * @param bool        $refund_agency_wallet Whether to also refund the agency wallet
+     * @return array{refunded:bool, amount:int, reason?:string}
+     */
+    public function refundOnTimeout(
+        string $location_id,
+        int $amount,
+        string $billing_reference_id,
+        ?string $agency_id = null,
+        bool $refund_agency_wallet = false
+    ): array {
+        if ($amount <= 0 || trim($location_id) === '' || trim($billing_reference_id) === '') {
+            return ['refunded' => false, 'amount' => 0, 'reason' => 'nothing_to_refund'];
+        }
+
+        // Idempotency guard: check if we already issued a timeout refund for this reference
+        $refundRef = 'timeout_refund_' . $billing_reference_id;
+        try {
+            $existing = $this->db->collection('credit_transactions')
+                ->where('reference_id', '=', $refundRef)
+                ->limit(1)
+                ->documents();
+            foreach ($existing as $doc) {
+                if ($doc->exists() && ($doc->data()['type'] ?? '') === 'timeout_refund') {
+                    return ['refunded' => false, 'amount' => 0, 'reason' => 'already_refunded'];
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log('[CreditManager][refundOnTimeout] Idempotency check failed: ' . $e->getMessage());
+        }
+
+        try {
+            $this->add_credits(
+                $location_id,
+                $amount,
+                $refundRef,
+                'Refund — SMS not sent (provider connection timed out)',
+                'timeout_refund'
+            );
+
+            if ($refund_agency_wallet && $agency_id !== null && trim($agency_id) !== '') {
+                $this->add_credits(
+                    $agency_id,
+                    $amount,
+                    $refundRef . '_agency',
+                    'Agency refund — SMS not sent (provider connection timed out)',
+                    'timeout_refund',
+                    'agency'
+                );
+            }
+
+            error_log('[CreditManager][refundOnTimeout] Refunded ' . $amount . ' credits to loc=' . $location_id . ' ref=' . $billing_reference_id);
+            return ['refunded' => true, 'amount' => $amount];
+        } catch (\Throwable $e) {
+            error_log('[CreditManager][refundOnTimeout] Refund failed for loc=' . $location_id . ': ' . $e->getMessage());
+            return ['refunded' => false, 'amount' => 0, 'reason' => 'refund_exception: ' . $e->getMessage()];
+        }
+    }
+
     private function invalidateSubaccountCache(string $locId): void
     {
         try {
