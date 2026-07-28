@@ -4,6 +4,13 @@ import { getAccountSettings } from "../utils/settingsStorage";
 import { apiFetch } from "../utils/apiFetch";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
+
+export interface AttachedDocument {
+    name: string;
+    size: number;
+    type: string;
+    dataUrl: string; // base64 data URL, e.g. "data:application/pdf;base64,..."
+}
 export interface SenderRequest {
     id: string;
     location_id: string;
@@ -79,13 +86,24 @@ export const submitSenderRequest = async (
     requestedId: string,
     purpose: string,
     sampleMessage: string,
-    provider?: SenderProvider
+    provider?: SenderProvider,
+    documents?: AttachedDocument[]
 ): Promise<SenderRequest> => {
     const { headers, locationId } = getLocationHeaders();
     const normalizedId = requestedId.trim();
     if (!locationId) {
         throw new Error(missingLocationMessage);
     }
+
+    // Strip the data URL prefix from each attachment — backend only needs the raw base64.
+    const serializedDocs = documents && documents.length > 0
+        ? documents.map(doc => ({
+            name: doc.name,
+            size: doc.size,
+            type: doc.type,
+            data: doc.dataUrl.split(',')[1] ?? doc.dataUrl,
+        }))
+        : undefined;
 
     const res = await apiFetch(API_CONFIG.sender_requests, {
         method: "POST",
@@ -96,6 +114,7 @@ export const submitSenderRequest = async (
             ...(provider ? { provider } : {}),
             purpose: purpose.trim(),
             sample_message: sampleMessage.trim(),
+            ...(serializedDocs ? { documents: serializedDocs } : {}),
         }),
     });
 
