@@ -97,7 +97,7 @@ class SenderResolver
             $usingCustomKey = false;
             $sender = 'NOLASMSPro';
             $senderSource = 'system_notification_override';
-        } elseif (strcasecmp((string)$requestedSender, 'NOLASMSPro') === 0) {
+        } elseif (strcasecmp((string)$requestedSender, 'NOLASMSPro') === 0 && $approvedSender === '') {
             $selectedProvider = 'semaphore';
             $activeApiKey = $systemSemaphoreKey;
             $apiKeySource = 'config.SEMAPHORE_API_KEY';
