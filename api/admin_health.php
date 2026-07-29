@@ -39,44 +39,59 @@ try {
     error_log("[admin_health.php] Database connection test failed: " . $e->getMessage());
 }
 
-// 2. Load active provider status and balance
-$providerName = 'system';
-$providerStatus = 'unknown';
-$providerBalance = 0;
-$providerConfigured = false;
+// 2. Load BOTH providers' status and balance
+$activeProviderName = 'system';
 $providerDetails = [];
 
 try {
     NolaPerformance::begin('provider_api');
     $gateway = new SmsGatewayService();
-    $providerName = $gateway->getProviderName();
-    $resolvedProvider = ($providerName === 'auto_failover') ? 'semaphore' : $providerName;
-    $providerInstance = $gateway->getProviderInstance($resolvedProvider);
-    
-    // Check account balance via API call to Semaphore or UniSMS
-    $accCheck = $providerInstance->checkAccount();
-    $providerStatus = $accCheck['status'] ?? 'inactive';
-    $providerBalance = $accCheck['credits'] ?? 0;
-    $providerConfigured = ($providerStatus === 'active');
-    
+    $activeProviderName = $gateway->getProviderName();
+
+    $semProvider = $gateway->getProviderInstance('semaphore');
+    $uniProvider = $gateway->getProviderInstance('unisms');
+
+    $semCheck = $semProvider->checkAccount();
+    $uniCheck = $uniProvider->checkAccount();
+
+    $semCredits = (int)($semCheck['credits'] ?? 0);
+    $uniCredits = (int)($uniCheck['credits'] ?? 0);
+
     $providerDetails = [
-        'name' => $providerName,
-        'resolved_provider' => $resolvedProvider,
-        'status' => $providerStatus,
-        'balance' => $providerBalance,
-        'configured' => $providerConfigured,
-        'email' => $accCheck['email'] ?? null,
+        'active_provider' => $activeProviderName,
+        'all_providers' => [
+            'semaphore' => [
+                'name'        => 'Semaphore',
+                'status'      => $semCheck['status'] ?? 'inactive',
+                'credits'     => $semCredits,
+                'configured'  => ($semCheck['status'] ?? '') === 'active',
+                'is_active'   => in_array($activeProviderName, ['semaphore', 'auto_failover'], true),
+                'warning'     => $semCredits < 1000 && $semCredits >= 300 && ($semCheck['status'] ?? '') === 'active',
+                'critical'    => $semCredits < 300 && ($semCheck['status'] ?? '') === 'active',
+                'error'       => null,
+            ],
+            'unisms' => [
+                'name'        => 'UniSMS',
+                'status'      => $uniCheck['status'] ?? 'inactive',
+                'credits'     => $uniCredits,
+                'email'       => $uniCheck['email'] ?? null,
+                'sid_tokens'  => isset($uniCheck['sid_tokens']) ? (int)$uniCheck['sid_tokens'] : null,
+                'configured'  => ($uniCheck['status'] ?? '') === 'active',
+                'is_active'   => $activeProviderName === 'unisms',
+                'warning'     => $uniCredits < 200 && $uniCredits >= 50 && ($uniCheck['status'] ?? '') === 'active',
+                'critical'    => $uniCredits < 50 && ($uniCheck['status'] ?? '') === 'active',
+                'error'       => null,
+            ],
+        ],
     ];
     NolaPerformance::end('provider_api');
 } catch (\Throwable $e) {
     NolaPerformance::end('provider_api');
     error_log("[admin_health.php] Provider health check failed: " . $e->getMessage());
     $providerDetails = [
-        'name' => $providerName,
-        'status' => 'error',
-        'balance' => 0,
-        'configured' => false,
-        'error' => $e->getMessage()
+        'active_provider' => $activeProviderName,
+        'all_providers'   => [],
+        'error'           => $e->getMessage(),
     ];
 }
 

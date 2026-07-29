@@ -35,6 +35,7 @@
     RewriteRule ^api/v2/ghl-contacts/?$ /api/ghl_contacts.php [NC,L,QSA]
     RewriteRule ^api/v2/ghl-conversations/?$ /api/ghl-conversations.php [NC,L,QSA]
     RewriteRule ^api/v2/admin_health/?$ /api/admin_health.php [NC,L,QSA]
+    RewriteRule ^api/admin/provider-balances/?$ /api/admin_provider_balances.php [NC,L,QSA]
     RewriteRule ^api/v2/auth/ghl_autologin/?$ /api/auth/ghl_autologin.php [NC,L,QSA]
     RewriteRule ^api/v2/location/bootstrap/?$ /api/location/bootstrap.php [NC,L,QSA]
 
