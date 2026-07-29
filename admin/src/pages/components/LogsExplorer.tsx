@@ -14,7 +14,6 @@ import {
 import { adminFetch } from '../../utils/adminApi';
 import { getAdminAuthHeaders } from '../../utils/adminAuthHeaders';
 import { ADMIN_API_LOG_EVENT, getStoredAdminApiLogs } from '../../utils/apiFetch';
-import { ProviderBalanceCard, ProviderBalancesResponse } from './ProviderBalanceCard';
 
 const POLL_INTERVAL = 15000;
 const LOG_POLL_INTERVAL = 5000;
@@ -71,35 +70,6 @@ export const LogsExplorer: React.FC = () => {
     const [logSearch, setLogSearch] = useState('');
     const [logTypeFilter, setLogTypeFilter] = useState('ALL');
     const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
-
-    // Provider Balances State
-    const [balanceData, setBalanceData] = useState<ProviderBalancesResponse | null>(null);
-    const [isBalanceLoading, setIsBalanceLoading] = useState(false);
-    const [balanceError, setBalanceError] = useState<string | null>(null);
-
-    const fetchProviderBalances = useCallback(async (isManual = false) => {
-        if (isManual) setIsBalanceLoading(true);
-        setBalanceError(null);
-        try {
-            const res = await adminFetch('/api/admin/provider-balances', { headers: getAdminAuthHeaders() });
-            const json = await res.json().catch(() => ({}));
-            if (res.ok && json.status === 'success') {
-                setBalanceData(json);
-            } else {
-                setBalanceError(json?.message || json?.error || 'Could not fetch provider balances.');
-            }
-        } catch (e) {
-            setBalanceError('Network error. Could not fetch provider balances.');
-        } finally {
-            setIsBalanceLoading(false);
-        }
-    }, []);
-
-    useEffect(() => {
-        fetchProviderBalances(true);
-        const interval = setInterval(() => fetchProviderBalances(false), 5 * 60 * 1000);
-        return () => clearInterval(interval);
-    }, [fetchProviderBalances]);
 
     const fetchLogsOverview = useCallback(async (isInitial = false) => {
         if (isInitial) setLoading(true);
@@ -466,17 +436,6 @@ export const LogsExplorer: React.FC = () => {
                     </div>
                 ))}
             </div>
-
-            {/* Provider Account Balances Card */}
-            <ProviderBalanceCard
-                semaphore={balanceData?.providers?.semaphore}
-                unisms={balanceData?.providers?.unisms}
-                activeProvider={balanceData?.active_provider}
-                fetchedAt={balanceData?.fetched_at}
-                isLoading={isBalanceLoading}
-                error={balanceError}
-                onRefresh={() => fetchProviderBalances(true)}
-            />
 
             <section className="overflow-hidden rounded-2xl border border-[#e5e5e5] bg-white shadow-sm dark:border-white/5 dark:bg-[#1a1b1e]">
                 <div className="flex flex-col gap-3 border-b border-[#e5e5e5] px-5 py-4 dark:border-white/5 lg:flex-row lg:items-center lg:justify-between">

@@ -1,5 +1,5 @@
 import React from 'react';
-import { FiRefreshCw, FiServer, FiAlertTriangle, FiCheckCircle, FiXCircle, FiGlobe, FiRadio, FiMail, FiKey } from 'react-icons/fi';
+import { FiRefreshCw, FiServer, FiAlertTriangle, FiXCircle, FiGlobe, FiRadio, FiMail, FiKey } from 'react-icons/fi';
 
 export interface ProviderBalance {
     name: string;
@@ -45,13 +45,13 @@ export function getProviderStatusColor(provider?: ProviderBalance | null): 'gree
     return 'green';
 }
 
-export function getProviderStatusLabel(provider?: ProviderBalance | null): string {
-    if (!provider) return 'Unknown';
+export function getProviderStatusLabel(provider?: ProviderBalance | null): string | null {
+    if (!provider) return null;
     if (provider.status === 'error') return 'Unreachable';
     if (!provider.configured) return 'Not Configured';
     if (provider.critical) return 'Critical — Top Up Now';
     if (provider.warning) return 'Low Balance';
-    return 'Healthy';
+    return null; // Don't display Healthy badge per design
 }
 
 export function formatLastUpdated(fetchedAt?: string | null): string {
@@ -68,7 +68,6 @@ export function formatLastUpdated(fetchedAt?: string | null): string {
 export const ProviderBalanceCard: React.FC<ProviderBalanceCardProps> = ({
     semaphore,
     unisms,
-    activeProvider,
     fetchedAt,
     isLoading = false,
     error = null,
@@ -78,18 +77,13 @@ export const ProviderBalanceCard: React.FC<ProviderBalanceCardProps> = ({
 
     const renderProviderCol = (
         providerKey: 'semaphore' | 'unisms',
-        providerData?: ProviderBalance | UniSmsBalance | null,
-        networkLabel?: string
+        providerData?: ProviderBalance | UniSmsBalance | null
     ) => {
         if (!providerData && isInitialLoading) {
             return (
-                <div className="p-5 rounded-2xl bg-[#f7f7f7] dark:bg-[#0d0e10] border border-transparent animate-pulse space-y-4 min-h-[180px]">
-                    <div className="flex items-center justify-between">
-                        <div className="h-4 w-28 rounded bg-gray-200 dark:bg-white/10" />
-                        <div className="h-5 w-20 rounded-full bg-gray-200 dark:bg-white/10" />
-                    </div>
+                <div className="p-5 rounded-2xl bg-[#f7f7f7] dark:bg-[#0d0e10] border border-transparent animate-pulse space-y-4 min-h-[160px]">
+                    <div className="h-4 w-28 rounded bg-gray-200 dark:bg-white/10" />
                     <div className="h-8 w-36 rounded bg-gray-200 dark:bg-white/10" />
-                    <div className="h-5 w-24 rounded-full bg-gray-200 dark:bg-white/10" />
                 </div>
             );
         }
@@ -97,7 +91,6 @@ export const ProviderBalanceCard: React.FC<ProviderBalanceCardProps> = ({
         const isSemaphore = providerKey === 'semaphore';
         const name = providerData?.name || (isSemaphore ? 'Semaphore' : 'UniSMS');
         const credits = typeof providerData?.credits === 'number' ? providerData.credits : 0;
-        const isActive = providerData?.is_active ?? (activeProvider === providerKey);
         const statusColor = getProviderStatusColor(providerData);
         const statusLabel = getProviderStatusLabel(providerData);
         const uniData = !isSemaphore ? (providerData as UniSmsBalance | undefined) : undefined;
@@ -112,9 +105,9 @@ export const ProviderBalanceCard: React.FC<ProviderBalanceCardProps> = ({
             containerStyle = 'bg-amber-500/[0.03] border-amber-500/40 dark:border-amber-500/40 shadow-sm shadow-amber-500/10';
         }
 
-        // Status badge style
-        let badgeStyle = 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20';
-        let statusIcon = <FiCheckCircle className="w-3.5 h-3.5 text-emerald-500" />;
+        // Status badge style (for Warning, Critical, Unreachable, Unconfigured)
+        let badgeStyle = '';
+        let statusIcon = null;
         if (statusColor === 'red') {
             badgeStyle = 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/30';
             statusIcon = <FiXCircle className="w-3.5 h-3.5 text-red-500" />;
@@ -127,41 +120,22 @@ export const ProviderBalanceCard: React.FC<ProviderBalanceCardProps> = ({
         }
 
         return (
-            <div className={`p-5 rounded-2xl border transition-all duration-300 flex flex-col justify-between group relative overflow-hidden min-h-[190px] ${containerStyle}`}>
+            <div className={`p-5 rounded-2xl border transition-all duration-300 flex flex-col justify-between group relative overflow-hidden min-h-[160px] ${containerStyle}`}>
                 <div>
-                    {/* Header: Provider Name & Active Pill */}
+                    {/* Header: Provider Name */}
                     <div className="flex items-center justify-between gap-2 mb-3">
                         <div className="flex items-center gap-2">
-                            <div className="w-7 h-7 rounded-lg bg-white dark:bg-white/10 flex items-center justify-center text-xs text-[#2b83fa] shadow-sm border border-black/5 dark:border-white/10">
+                            <div className="w-7 h-7 rounded-lg bg-white dark:bg-white/10 flex items-center justify-center text-xs shadow-sm border border-black/5 dark:border-white/10">
                                 {isSemaphore ? <FiGlobe className="w-4 h-4 text-emerald-500" /> : <FiRadio className="w-4 h-4 text-purple-500" />}
                             </div>
-                            <div>
-                                <h4 className="font-extrabold text-[#111111] dark:text-white text-[14px] tracking-wide uppercase">
-                                    {name}
-                                </h4>
-                                {networkLabel && (
-                                    <span className="text-[10.5px] font-semibold text-gray-500 dark:text-gray-400 block -mt-0.5">
-                                        {networkLabel}
-                                    </span>
-                                )}
-                            </div>
+                            <h4 className="font-extrabold text-[#111111] dark:text-white text-[14.5px] tracking-wide uppercase">
+                                {name}
+                            </h4>
                         </div>
-
-                        {/* Active Gateway Pill */}
-                        {isActive ? (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800/50 shadow-sm">
-                                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-                                ● ACTIVE
-                            </span>
-                        ) : (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-gray-100 text-gray-500 border border-gray-200 dark:bg-white/5 dark:text-gray-400 dark:border-white/10">
-                                ○ Standby
-                            </span>
-                        )}
                     </div>
 
                     {/* Credits Counter */}
-                    <div className="my-3">
+                    <div className="my-2">
                         <div className="flex items-baseline gap-2">
                             <span className="text-3xl sm:text-4xl font-black text-[#111111] dark:text-white tracking-tight leading-none">
                                 {credits.toLocaleString()}
@@ -173,41 +147,45 @@ export const ProviderBalanceCard: React.FC<ProviderBalanceCardProps> = ({
                     </div>
                 </div>
 
-                {/* Health Status & Provider Details */}
-                <div className="mt-2 space-y-2 pt-2 border-t border-black/5 dark:border-white/5">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold border ${badgeStyle}`}>
-                            {statusIcon}
-                            {statusLabel}
-                        </span>
+                {/* Status Callout & Provider Details (Only rendered when relevant) */}
+                {(statusLabel || (uniData && (uniData.email || typeof uniData.sid_tokens === 'number')) || providerData?.error) && (
+                    <div className="mt-2 space-y-2 pt-2 border-t border-black/5 dark:border-white/5">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                            {statusLabel && (
+                                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold border ${badgeStyle}`}>
+                                    {statusIcon}
+                                    {statusLabel}
+                                </span>
+                            )}
 
-                        {/* Extra metadata for UniSMS */}
-                        {uniData && (uniData.email || typeof uniData.sid_tokens === 'number') && (
-                            <div className="flex items-center gap-2 text-[11px] font-medium text-gray-500 dark:text-gray-400">
-                                {uniData.email && (
-                                    <span className="flex items-center gap-1 bg-white/60 dark:bg-white/5 px-2 py-0.5 rounded border border-black/5 dark:border-white/5" title="Billing Email">
-                                        <FiMail className="w-3 h-3 text-purple-400" />
-                                        <span className="truncate max-w-[130px]">{uniData.email}</span>
-                                    </span>
-                                )}
-                                {typeof uniData.sid_tokens === 'number' && (
-                                    <span className="flex items-center gap-1 bg-white/60 dark:bg-white/5 px-2 py-0.5 rounded border border-black/5 dark:border-white/5" title="Sender ID Tokens">
-                                        <FiKey className="w-3 h-3 text-amber-400" />
-                                        <span>SID Tokens: <b>{uniData.sid_tokens}</b></span>
-                                    </span>
-                                )}
+                            {/* Extra metadata for UniSMS */}
+                            {uniData && (uniData.email || typeof uniData.sid_tokens === 'number') && (
+                                <div className="flex items-center gap-2 text-[11px] font-medium text-gray-500 dark:text-gray-400">
+                                    {uniData.email && (
+                                        <span className="flex items-center gap-1 bg-white/60 dark:bg-white/5 px-2 py-0.5 rounded border border-black/5 dark:border-white/5" title="Billing Email">
+                                            <FiMail className="w-3 h-3 text-purple-400" />
+                                            <span className="truncate max-w-[130px]">{uniData.email}</span>
+                                        </span>
+                                    )}
+                                    {typeof uniData.sid_tokens === 'number' && (
+                                        <span className="flex items-center gap-1 bg-white/60 dark:bg-white/5 px-2 py-0.5 rounded border border-black/5 dark:border-white/5" title="Sender ID Tokens">
+                                            <FiKey className="w-3 h-3 text-amber-400" />
+                                            <span>SID Tokens: <b>{uniData.sid_tokens}</b></span>
+                                        </span>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Provider Error Message Callout */}
+                        {providerData?.error && (
+                            <div className="p-2.5 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/40 text-red-600 dark:text-red-400 text-[11.5px] font-semibold flex items-start gap-2">
+                                <FiAlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                                <span className="break-all">{providerData.error}</span>
                             </div>
                         )}
                     </div>
-
-                    {/* Provider Error Message Callout */}
-                    {providerData?.error && (
-                        <div className="p-2.5 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/40 text-red-600 dark:text-red-400 text-[11.5px] font-semibold flex items-start gap-2">
-                            <FiAlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                            <span className="break-all">{providerData.error}</span>
-                        </div>
-                    )}
-                </div>
+                )}
             </div>
         );
     };
@@ -250,8 +228,8 @@ export const ProviderBalanceCard: React.FC<ProviderBalanceCardProps> = ({
 
             {/* Provider Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
-                {renderProviderCol('semaphore', semaphore, 'Globe Gateway')}
-                {renderProviderCol('unisms', unisms, 'Smart Gateway')}
+                {renderProviderCol('semaphore', semaphore)}
+                {renderProviderCol('unisms', unisms)}
             </div>
         </div>
     );
