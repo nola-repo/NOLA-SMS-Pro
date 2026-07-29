@@ -287,7 +287,7 @@ export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, 
                             </p>
                         </div>
                     ) : (
-                        <form onSubmit={handleAdd} className="space-y-4">
+                        <form onSubmit={handleAdd} className="space-y-5">
                             {error && (
                                 <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/20">
                                     <FiAlertCircle className="w-4 h-4 mt-0.5 text-red-600 dark:text-red-400 flex-shrink-0" />
@@ -297,10 +297,10 @@ export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, 
 
                             {/* Sender Name */}
                             <div>
-                                <label className="block text-[11px] font-black text-[#6e6e73] dark:text-[#9aa0a6] uppercase tracking-wider mb-2">
+                                <label className="block text-[11px] font-black text-[#6e6e73] dark:text-[#9aa0a6] uppercase tracking-wider mb-1">
                                     Sender Name <span className="text-red-500">*</span>
                                 </label>
-                                <p className="mt-1.5 text-[11px] text-[#9aa0a6]">Use 3-11 letters or numbers only. No spaces or symbols.</p>
+                                <p className="text-[11px] text-[#9aa0a6] mb-2">Use 3-11 letters or numbers only. No spaces or symbols.</p>
                                 <input
                                     autoFocus
                                     value={newId}
@@ -313,16 +313,16 @@ export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, 
                                     required
                                     aria-required="true"
                                     disabled={isSubmitting}
-                                    className="w-full px-4 py-3 rounded-xl text-[14px] font-bold border bg-[#f7f7f7] dark:bg-[#0d0e10] border-[#e0e0e0] dark:border-[#ffffff0a] text-[#111111] dark:text-[#ececf1] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#2b83fa]/25 disabled:opacity-50 mt-2"
+                                    className="w-full px-4 py-3 rounded-xl text-[14px] font-bold border bg-[#f7f7f7] dark:bg-[#0d0e10] border-[#e0e0e0] dark:border-[#ffffff0a] text-[#111111] dark:text-[#ececf1] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#2b83fa]/25 disabled:opacity-50"
                                 />
                             </div>
 
                             {/* Business Purpose */}
                             <div>
-                                <label className="block text-[11px] font-black text-[#6e6e73] dark:text-[#9aa0a6] uppercase tracking-wider mb-2">
+                                <label className="block text-[11px] font-black text-[#6e6e73] dark:text-[#9aa0a6] uppercase tracking-wider mb-1">
                                     Business Purpose <span className="text-red-500">*</span>
                                 </label>
-                                <p className="mt-1.5 text-[11px] text-[#9aa0a6]">Briefly describe the use case, such as reminders, promos, or updates.</p>
+                                <p className="text-[11px] text-[#9aa0a6] mb-2">Briefly describe the use case, such as reminders, promos, or updates.</p>
                                 <textarea
                                     value={newPurpose}
                                     onChange={e => {
@@ -334,16 +334,16 @@ export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, 
                                     aria-required="true"
                                     rows={2}
                                     disabled={isSubmitting}
-                                    className="w-full px-4 py-3 rounded-xl text-[14px] border bg-[#f7f7f7] dark:bg-[#0d0e10] border-[#e0e0e0] dark:border-[#ffffff0a] text-[#111111] dark:text-[#ececf1] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#2b83fa]/25 resize-none disabled:opacity-50 mt-2"
+                                    className="w-full px-4 py-3 rounded-xl text-[14px] border bg-[#f7f7f7] dark:bg-[#0d0e10] border-[#e0e0e0] dark:border-[#ffffff0a] text-[#111111] dark:text-[#ececf1] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#2b83fa]/25 resize-none disabled:opacity-50"
                                 />
                             </div>
 
                             {/* Sample Message */}
                             <div>
-                                <label className="block text-[11px] font-black text-[#6e6e73] dark:text-[#9aa0a6] uppercase tracking-wider mb-2">
+                                <label className="block text-[11px] font-black text-[#6e6e73] dark:text-[#9aa0a6] uppercase tracking-wider mb-1">
                                     Sample Message <span className="text-red-500">*</span>
                                 </label>
-                                <p className="mt-1.5 text-[11px] text-[#9aa0a6]">Add one real example your customers may receive.</p>
+                                <p className="text-[11px] text-[#9aa0a6] mb-2">Add one real example your customers may receive.</p>
                                 <textarea
                                     value={newSample}
                                     onChange={e => {
@@ -355,7 +355,7 @@ export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, 
                                     aria-required="true"
                                     rows={2}
                                     disabled={isSubmitting}
-                                    className="w-full px-4 py-3 rounded-xl text-[14px] border bg-[#f7f7f7] dark:bg-[#0d0e10] border-[#e0e0e0] dark:border-[#ffffff0a] text-[#111111] dark:text-[#ececf1] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#2b83fa]/25 resize-none disabled:opacity-50 mt-2"
+                                    className="w-full px-4 py-3 rounded-xl text-[14px] border bg-[#f7f7f7] dark:bg-[#0d0e10] border-[#e0e0e0] dark:border-[#ffffff0a] text-[#111111] dark:text-[#ececf1] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#2b83fa]/25 resize-none disabled:opacity-50"
                                 />
                             </div>
 
@@ -365,7 +365,7 @@ export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, 
                                     Supporting Documents
                                     <span className="ml-1.5 text-[10px] font-semibold text-[#9aa0a6] normal-case tracking-normal">(Optional)</span>
                                 </label>
-                                <p className="text-[11px] text-[#9aa0a6] mb-2.5">
+                                <p className="text-[11px] text-[#9aa0a6] mb-2">
                                     Attach up to {MAX_FILES} files (JPG, PNG, PDF, DOCX) — max {MAX_FILE_SIZE_MB}MB each. E.g. business permit, DTI registration, or brand logo.
                                 </p>
 
@@ -461,13 +461,13 @@ export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, 
                             </div>
                             {/* ──────────────────────────────────────────────── */}
 
-                            <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/20">
+                            <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/20">
                                 <p className="text-[11px] text-amber-700 dark:text-amber-400 leading-normal text-center font-medium">
                                     <strong>Note:</strong> You will receive an email when this request is received and when it is approved or needs changes. This usually takes 2-5 business days.
                                 </p>
                             </div>
 
-                            <button type="submit" disabled={isSubmitting} className="w-full flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-[#2b83fa] to-[#1d6bd4] hover:shadow-[0_8px_25px_rgba(43,131,250,0.4)] text-white rounded-xl font-bold text-[13px] transition-all shadow-md shadow-blue-500/20 disabled:opacity-70">
+                            <button type="submit" disabled={isSubmitting} className="w-full flex items-center justify-center gap-2 py-3.5 bg-gradient-to-r from-[#2b83fa] to-[#1d6bd4] hover:shadow-[0_8px_25px_rgba(43,131,250,0.4)] text-white rounded-xl font-bold text-[13px] transition-all shadow-md shadow-blue-500/20 disabled:opacity-70">
                                 {isSubmitting ? (
                                     <>
                                         <FiLoader className="w-4 h-4 animate-spin" />
