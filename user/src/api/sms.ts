@@ -183,7 +183,7 @@ export const interpolateMessage = (text: string, contact: { name?: string, phone
 export const sendSms = async (
   phoneNumber: string,
   message: string,
-  senderName: string = "NOLASMSPro",
+  senderName?: string,
   batchId?: string,
   contactName?: string,
   recipientKey?: string,
@@ -214,11 +214,11 @@ export const sendSms = async (
   const payload = {
     number: formattedNumber,
     message: personalizedMessage,
-    sendername: senderName,
+    ...(senderName ? { sendername: senderName } : {}),
     customData: {
       number: formattedNumber,
       message: personalizedMessage,
-      sendername: senderName,
+      ...(senderName ? { sendername: senderName } : {}),
       batch_id: batchId,
       name: contactName,
       recipient_key: recipientKey,
@@ -360,7 +360,7 @@ export const checkMessageStatus = async (
 export const sendBulkSms = async (
   phoneNumbers: string[],
   message: string,
-  senderName: string = "NOLASMSPro",
+  senderName?: string,
   _contacts: { phone: string, name: string, email?: string, ghl_contact_id?: string }[] = [],
   recipientKey?: string,
   existingBatchId?: string,

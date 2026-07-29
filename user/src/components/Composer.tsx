@@ -208,7 +208,7 @@ export const Composer: React.FC<ComposerProps> = ({
   const [message, setMessage] = useState("");
   const [sendingProgress, setSendingProgress] = useState<{current: number; total: number} | null>(null);
   const { locationId } = useLocationId();
-  const [senderName, setSenderName] = useState<SenderId>("NOLASMSPro");
+  const [senderName, setSenderName] = useState<SenderId>("");
   const [approvedSenderId, setApprovedSenderId] = useState<string | undefined>(undefined);
   const [toggleEnabled, setToggleEnabled] = useState(true);
 
@@ -216,7 +216,7 @@ export const Composer: React.FC<ComposerProps> = ({
     setSenderName(val);
   };
 
-  // NOLASMSPro stays the default; custom approved senders are selected per send.
+  // Default to subaccount's active approved sender if available, else platform default
   useEffect(() => {
     let cancelled = false;
     fetchAccountSenderConfig(locationId || undefined).then(cfg => {
@@ -227,8 +227,8 @@ export const Composer: React.FC<ComposerProps> = ({
         setToggleEnabled(cfg.toggle_enabled);
       }
       
-      const systemSender = cfg.system_default_sender || "NOLASMSPro";
-      setSenderName((current) => current && current !== cfg.approved_sender_id ? current : systemSender);
+      const defaultSender = cfg.approved_sender_id || cfg.system_default_sender || "NOLASMSPro";
+      setSenderName((current) => current || defaultSender);
     });
     return () => { cancelled = true; };
   }, [locationId]);

@@ -422,7 +422,7 @@ export const TemplatesTab: React.FC = () => {
       const result = await sendSms(
         selectedContact.phone,
         resolvedMessage,
-        "NOLASMSPro",
+        undefined,
         undefined,
         selectedContact.name,
         undefined,
