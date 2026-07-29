@@ -8,6 +8,7 @@ import FadeContent from './FadeContent';
 import AnimatedContent from './AnimatedContent';
 import { adminFetch } from '../../utils/adminApi';
 import { getAdminAuthHeaders } from '../../utils/adminAuthHeaders';
+import { ProviderBalanceCard, ProviderBalancesResponse } from './ProviderBalanceCard';
 
 const ADMIN_API = '/api/admin_sender_requests.php';
 const POLL_INTERVAL = 15000; // 15 seconds real-time sync
@@ -145,6 +146,35 @@ export const AdminDashboard: React.FC<{
     const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
     const [searchQuery, setSearchQuery] = useState('');
     const ITEMS_PER_PAGE = 5;
+
+    // Provider Balances State
+    const [balanceData, setBalanceData] = useState<ProviderBalancesResponse | null>(null);
+    const [isBalanceLoading, setIsBalanceLoading] = useState(false);
+    const [balanceError, setBalanceError] = useState<string | null>(null);
+
+    const fetchProviderBalances = useCallback(async (isManual = false) => {
+        if (isManual) setIsBalanceLoading(true);
+        setBalanceError(null);
+        try {
+            const res = await adminFetch('/api/admin/provider-balances', { headers: getAdminAuthHeaders() });
+            const json = await res.json().catch(() => ({}));
+            if (res.ok && json.status === 'success') {
+                setBalanceData(json);
+            } else {
+                setBalanceError(json?.message || json?.error || 'Could not fetch provider balances.');
+            }
+        } catch (e) {
+            setBalanceError('Network error. Could not fetch provider balances.');
+        } finally {
+            setIsBalanceLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        fetchProviderBalances(true);
+        const interval = setInterval(() => fetchProviderBalances(false), 5 * 60 * 1000);
+        return () => clearInterval(interval);
+    }, [fetchProviderBalances]);
 
     const fetchData = useCallback(async (isInitial = false) => {
         if (isInitial) setLoading(true);
@@ -371,6 +401,21 @@ export const AdminDashboard: React.FC<{
                         loading={loading}
                         onClick={() => onNavigate('activity')}
                     />
+                </div>
+
+                {/* SMS Provider Balances Card */}
+                <div className="mb-10">
+                    <AnimatedContent delay={0.35} distance={50} direction="vertical">
+                        <ProviderBalanceCard
+                            semaphore={balanceData?.providers?.semaphore}
+                            unisms={balanceData?.providers?.unisms}
+                            activeProvider={balanceData?.active_provider}
+                            fetchedAt={balanceData?.fetched_at}
+                            isLoading={isBalanceLoading}
+                            error={balanceError}
+                            onRefresh={() => fetchProviderBalances(true)}
+                        />
+                    </AnimatedContent>
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
