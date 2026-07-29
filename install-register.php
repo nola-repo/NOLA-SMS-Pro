@@ -23,7 +23,7 @@ if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
 $apiBase         = 'https://smspro-api.nolacrm.io';
 $reactApp        = getenv('GHL_CRM_BASE_URL') ?: 'https://app.nolacrm.io';
 $marketplace     = 'https://marketplace.leadconnectorhq.com/apps/overview/68118e8f9f1bac2ffc84ed23';
-$ghlCustomPageId = getenv('GHL_CUSTOM_PAGE_ID') ?: '69a642aae76974824fd39bb6A';
+$ghlCustomPageId = getenv('GHL_CUSTOM_PAGE_ID') ?: '69a642aae76974824fd39bb6';
 
 /**
  * Render debug install-token banner only outside production.

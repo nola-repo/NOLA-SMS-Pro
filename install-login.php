@@ -622,7 +622,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             //  • Pure standalone login (no location_id) → NOLA SMS Pro standalone app.
             $standaloneApp   = 'https://app.nolasmspro.com';
             $ghlCrm          = getenv('GHL_CRM_BASE_URL') ?: 'https://app.nolacrm.io';
-            $ghlCustomPageId = getenv('GHL_CUSTOM_PAGE_ID') ?: '69a642aae76974824fd39bb6A';
+            $ghlCustomPageId = getenv('GHL_CUSTOM_PAGE_ID') ?: '69a642aae76974824fd39bb6';
 
             if ($locationIdRaw !== '') {
                 // Location ID present → deep-link to the user's exact location custom page link
