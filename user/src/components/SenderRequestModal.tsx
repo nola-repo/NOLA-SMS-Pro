@@ -251,7 +251,7 @@ export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, 
     return createPortal(
         <div className="fixed inset-0 z-[100] grid place-items-center p-4">
             <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300" onClick={onClose} />
-            <div className="relative w-full max-w-md bg-white dark:bg-[#18191d] rounded-2xl shadow-2xl animate-in zoom-in-95 duration-200 overflow-hidden flex flex-col max-h-[92vh]">
+            <div className="relative w-full max-w-lg bg-white dark:bg-[#18191d] rounded-2xl shadow-2xl animate-in zoom-in-95 duration-200 overflow-hidden flex flex-col max-h-[92vh]">
 
                 {/* Header */}
                 <div className="flex items-start justify-between p-6 pb-4 flex-shrink-0">
@@ -369,7 +369,35 @@ export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, 
                                     Attach up to {MAX_FILES} files (JPG, PNG, PDF, DOCX) — max {MAX_FILE_SIZE_MB}MB each. E.g. business permit, DTI registration, or brand logo.
                                 </p>
 
-                                {/* Drop zone */}
+                                {/* Attached file list (placed ON TOP of drop zone) */}
+                                {attachedFiles.length > 0 && (
+                                    <ul className="mb-2.5 space-y-2">
+                                        {attachedFiles.map((file, idx) => (
+                                            <li
+                                                key={`${file.name}-${idx}`}
+                                                className="flex items-center gap-2.5 p-3 rounded-xl bg-[#f7f7f7] dark:bg-[#0d0e10] border border-[#e5e5e5] dark:border-white/5 group shadow-sm"
+                                            >
+                                                <span className="text-[18px] flex-shrink-0 select-none">{fileIcon(file.type)}</span>
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="text-[12px] font-semibold text-[#111111] dark:text-[#ececf1] truncate leading-tight">{file.name}</p>
+                                                    <p className="text-[10px] text-[#9aa0a6] mt-0.5">{formatBytes(file.size)}</p>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => removeFile(idx)}
+                                                    disabled={isSubmitting}
+                                                    title="Remove file"
+                                                    className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-30 flex-shrink-0"
+                                                    aria-label={`Remove ${file.name}`}
+                                                >
+                                                    <FiTrash2 className="w-4 h-4" />
+                                                </button>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+
+                                {/* Drop zone (placed BELOW uploaded files when files are present) */}
                                 {attachedFiles.length < MAX_FILES && (
                                     <div
                                         ref={dropZoneRef}
@@ -382,7 +410,7 @@ export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, 
                                         onKeyDown={e => e.key === 'Enter' && !isSubmitting && fileInputRef.current?.click()}
                                         aria-label="Upload supporting documents"
                                         className={`
-                                            relative flex flex-col items-center justify-center gap-2 px-4 py-5 rounded-xl border-2 border-dashed transition-all cursor-pointer
+                                            relative flex flex-col items-center justify-center gap-2 px-4 py-4 rounded-xl border-2 border-dashed transition-all cursor-pointer
                                             ${isDragging
                                                 ? "border-[#2b83fa] bg-[#2b83fa]/5 scale-[1.01]"
                                                 : "border-[#e0e0e0] dark:border-[#ffffff15] hover:border-[#2b83fa]/60 hover:bg-[#2b83fa]/3 dark:hover:bg-[#2b83fa]/5"
@@ -421,34 +449,6 @@ export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, 
                                         <FiAlertCircle className="w-3.5 h-3.5 mt-0.5 text-amber-600 dark:text-amber-400 flex-shrink-0" />
                                         <p className="text-[11px] text-amber-700 dark:text-amber-400 font-medium">{fileError}</p>
                                     </div>
-                                )}
-
-                                {/* Attached file list */}
-                                {attachedFiles.length > 0 && (
-                                    <ul className="mt-2.5 space-y-1.5">
-                                        {attachedFiles.map((file, idx) => (
-                                            <li
-                                                key={`${file.name}-${idx}`}
-                                                className="flex items-center gap-2.5 p-2.5 rounded-xl bg-[#f7f7f7] dark:bg-[#0d0e10] border border-[#e5e5e5] dark:border-white/5 group"
-                                            >
-                                                <span className="text-[18px] flex-shrink-0 select-none">{fileIcon(file.type)}</span>
-                                                <div className="flex-1 min-w-0">
-                                                    <p className="text-[12px] font-semibold text-[#111111] dark:text-[#ececf1] truncate leading-tight">{file.name}</p>
-                                                    <p className="text-[10px] text-[#9aa0a6] mt-0.5">{formatBytes(file.size)}</p>
-                                                </div>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => removeFile(idx)}
-                                                    disabled={isSubmitting}
-                                                    title="Remove file"
-                                                    className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity p-1.5 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10 disabled:opacity-30"
-                                                    aria-label={`Remove ${file.name}`}
-                                                >
-                                                    <FiTrash2 className="w-3.5 h-3.5" />
-                                                </button>
-                                            </li>
-                                        ))}
-                                    </ul>
                                 )}
 
                                 {/* Slot indicator when full */}
