@@ -25,7 +25,7 @@ const FadeContent: React.FC<FadeContentProps> = ({
     children,
     container,
     blur = false,
-    duration = 1000,
+    duration = 200,
     ease = 'power2.out',
     delay = 0,
     threshold = 0.1,

@@ -306,11 +306,8 @@ async function buildLocalNotifications(locationId: string, readIds: Set<string>)
       });
     });
 
-  // Sender ID reminder: only shown when onboarding is done but no requests exist at all
-  const onboardingDone =
-    (typeof localStorage !== "undefined" && localStorage.getItem("nola_onboarding_done") === "true") ||
-    (typeof sessionStorage !== "undefined" && sessionStorage.getItem("nola_onboarding_done") === "true");
-  if (onboardingDone && senderRequests.length === 0) {
+  // Sender ID reminder: shown whenever no Sender ID requests exist for this subaccount
+  if (locationId && senderRequests.length === 0) {
     const id = `sender-reminder-${locationId}`;
     notifications.push({
       id,

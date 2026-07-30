@@ -22,6 +22,7 @@ import { useRealtimeCreditStatus } from "../hooks/useRealtimeCreditStatus";
 import { safeStorage } from "../utils/safeStorage";
 import { buildContactNameLookup, isPhoneLike, resolveContactNameByPhone, toProperCase } from "../utils/contactDisplay";
 import type { ViewTab } from "./Sidebar";
+import { SenderIdReminderBanner } from "./ui/SenderIdReminderBanner";
 
 interface HomeProps {
     onTabChange: (tab: ViewTab) => void;
@@ -605,6 +606,11 @@ export const Home: React.FC<HomeProps> = ({ onTabChange, onCreateContact, onSele
                         {topControls}
                     </div>
                 </div>
+
+                {/* Sender ID Reminder Banner */}
+                <SenderIdReminderBanner
+                    onNavigateToSettings={() => window.dispatchEvent(new CustomEvent('navigate-to-settings', { detail: { tab: 'senderIds' } }))}
+                />
 
                 {/* First Row: 3 Main Cards (Credits, Conversations, Contacts) */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 mb-8">

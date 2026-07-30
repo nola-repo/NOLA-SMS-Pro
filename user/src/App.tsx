@@ -15,6 +15,7 @@ import { isAuthenticated } from "./services/authService";
 import { hasGhlLaunchSignalInCurrentUrl } from "./utils/ghlLocationDetection";
 import { FiBookOpen, FiMessageSquare, FiMoon, FiMoreHorizontal, FiSun, FiX } from "react-icons/fi";
 import { UserNotificationBell } from "./components/ui/UserNotificationBell";
+import { AppLoadingScreen } from "./components/ui/AppLoadingScreen";
 import type { ViewTab } from "./components/Sidebar";
 import { TicketsTab } from "./components/TicketsTab";
 
@@ -65,11 +66,7 @@ const RedirectToBackend: React.FC<{ path: string }> = ({ path }) => {
     window.location.replace(`${import.meta.env.VITE_API_BASE || ''}${path}${window.location.search}`);
   }, [path, alreadySignedIn, isGhlRequest, navigate]);
 
-  return (
-    <div className="h-screen w-full flex items-center justify-center bg-[#f7f8fc] dark:bg-[#0a0a0b]">
-      <div className="w-10 h-10 rounded-full border-4 border-[#2b83fa]/20 border-t-[#2b83fa] animate-spin" />
-    </div>
-  );
+  return <AppLoadingScreen message="Redirecting..." subtext="Connecting to authentication provider..." />;
 };
 
 const RedirectInstallRegistration: React.FC = () => {
@@ -80,17 +77,7 @@ const RedirectInstallRegistration: React.FC = () => {
     window.location.replace(target.toString());
   }, []);
 
-  return (
-    <div className="h-screen w-full flex items-center justify-center bg-[#f7f8fc] dark:bg-[#0a0a0b]">
-      <div className="flex flex-col items-center gap-3 text-center">
-        <div className="w-10 h-10 rounded-full border-4 border-[#2b83fa]/20 border-t-[#2b83fa] animate-spin" />
-        <div>
-          <p className="text-[14px] font-bold text-[#111111] dark:text-white">Opening installation setup</p>
-          <p className="text-[12px] font-medium text-[#6e6e73] dark:text-[#9aa0a6]">Redirecting to the secure setup page...</p>
-        </div>
-      </div>
-    </div>
-  );
+  return <AppLoadingScreen message="Opening Installation Setup" subtext="Redirecting to the secure setup page..." />;
 };
 
 const ThemeSwitch: React.FC<{ checked: boolean; onChange: () => void }> = ({ checked, onChange }) => (

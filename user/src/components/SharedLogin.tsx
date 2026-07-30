@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { AppLoadingScreen } from './ui/AppLoadingScreen';
 
 export const SharedLogin: React.FC = () => {
   const { isAuthenticated } = useAuth();
@@ -29,10 +30,6 @@ export const SharedLogin: React.FC = () => {
     params.forEach((value, key) => targetUrl.searchParams.set(key, value));
     window.location.replace(targetUrl.toString());
   }, [isAuthenticated, isGhlFrame, navigate]);
-  return (
-    <div className="h-screen w-full flex items-center justify-center bg-[#f7f8fc] dark:bg-[#0a0a0b]">
-      <div className="w-10 h-10 rounded-full border-4 border-[#2b83fa]/20 border-t-[#2b83fa] animate-spin" />
-    </div>
-  );
+  return <AppLoadingScreen message="Authenticating..." subtext="Connecting to your session..." />;
 };
 export default SharedLogin;

@@ -60,8 +60,7 @@ export const saveCompanyId = (companyId: string): void => {
   safeStorage.setItem('nola_agency_id', companyId);
 };
 
-const getAuthToken = (): string | null =>
-  sessionSafeStorage.getItem(SESSION_KEYS.token) || safeStorage.getItem(SESSION_KEYS.token);
+const getAuthToken = (): string | null => getPersistentAuthToken();
 
 const decodeJwtPayload = (token: string): Record<string, unknown> | null => {
   try {
