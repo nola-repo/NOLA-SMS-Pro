@@ -463,6 +463,23 @@ class NotificationService
                         foreach ($requiredKeys as $rk) {
                             if ($normName === $rk || $normKey === $rk) {
                                 $newMapping[$rk] = $fieldId;
+                                continue;
+                            }
+                            // Match variations without prefix or alternate naming in GHL
+                            if ($rk === 'nola_sms_source_location_name' && in_array($normName, ['source_location_name', 'location_name', 'workspace_name', 'workspace'], true)) {
+                                $newMapping[$rk] = $fieldId;
+                            } elseif ($rk === 'nola_sms_source_location_id' && in_array($normName, ['source_location_id', 'location_id'], true)) {
+                                $newMapping[$rk] = $fieldId;
+                            } elseif ($rk === 'nola_sms_registered_email' && in_array($normName, ['registered_email', 'account_email'], true)) {
+                                $newMapping[$rk] = $fieldId;
+                            } elseif ($rk === 'nola_sms_sender_id' && in_array($normName, ['requested_sender_id', 'sender_id', 'requested_sender'], true)) {
+                                $newMapping[$rk] = $fieldId;
+                            } elseif ($rk === 'nola_sms_purpose' && in_array($normName, ['purpose', 'business_purpose'], true)) {
+                                $newMapping[$rk] = $fieldId;
+                            } elseif ($rk === 'nola_sms_sample_message' && in_array($normName, ['sample_message', 'sample_sms'], true)) {
+                                $newMapping[$rk] = $fieldId;
+                            } elseif ($rk === 'nola_sms_has_documents' && in_array($normName, ['has_documents', 'supporting_documents_attached', 'supporting_documents', 'documents_attached'], true)) {
+                                $newMapping[$rk] = $fieldId;
                             }
                         }
                     }
