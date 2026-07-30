@@ -22,6 +22,7 @@ import {
     saveNotificationSettings as saveNotificationSettingsRemote,
 } from "../api/notificationSettings";
 import { SenderRequestModal } from "../components/SenderRequestModal";
+import { SenderIdReminderBanner } from "../components/ui/SenderIdReminderBanner";
 import { useGhlLocation } from "../hooks/useGhlLocation";
 import { useRealtimeCreditStatus } from "../hooks/useRealtimeCreditStatus";
 import { fetchSenderRequests, fetchAccountSenderConfig, cancelSenderRequest, type SenderRequest, type AccountSenderConfig } from "../api/senderRequests";
@@ -1095,28 +1096,11 @@ const SenderIdsSection: React.FC<{ autoOpenAddModal?: boolean }> = ({ autoOpenAd
         <div className="space-y-5">
             <SectionHeader title="Sender IDs" subtitle="Manage and request sender IDs for your account. Only approved IDs can be used for sending." />
 
-            {!isLoading && senderRequests.length === 0 && !configuredSenderId && (
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4.5 rounded-2xl bg-gradient-to-r from-blue-50/90 to-indigo-50/90 dark:from-blue-950/30 dark:to-indigo-950/30 border border-blue-200 dark:border-blue-800/40 shadow-sm animate-in fade-in slide-in-from-top-2">
-                    <div className="flex items-start gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-[#2b83fa] text-white flex items-center justify-center shrink-0 shadow-md">
-                            <FiSend className="w-5 h-5" />
-                        </div>
-                        <div>
-                            <h4 className="text-[14px] font-extrabold text-[#111111] dark:text-white">
-                                Reminder: Submit Your Sender ID Request
-                            </h4>
-                            <p className="text-[12.5px] font-medium text-[#6e6e73] dark:text-[#9aa0a6] leading-relaxed mt-0.5">
-                                You are currently using system fallback sender ID. Submit an application for your custom branded Sender ID to improve customer trust and delivery.
-                            </p>
-                        </div>
-                    </div>
-                    <button
-                        onClick={() => setIsAdding(true)}
-                        className="shrink-0 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#2b83fa] text-white text-[12.5px] font-bold shadow-md hover:bg-[#1d6bd4] active:scale-95 transition-all"
-                    >
-                        <FiPlus className="w-4 h-4" /> Request Sender ID
-                    </button>
-                </div>
+            {!isLoading && (
+                <SenderIdReminderBanner
+                    onOpenRequestModal={() => setIsAdding(true)}
+                    ignoreDismiss={true}
+                />
             )}
 
             <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">

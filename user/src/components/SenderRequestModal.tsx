@@ -230,6 +230,8 @@ export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, 
             };
 
             if (onSuccess) onSuccess(created);
+            window.dispatchEvent(new Event("nola-sender-requests-changed"));
+            window.dispatchEvent(new Event("nola-notifications-refresh"));
             setIsSubmitted(true);
 
             setTimeout(() => {

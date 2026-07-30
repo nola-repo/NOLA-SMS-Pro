@@ -263,8 +263,9 @@ const NotificationRow: React.FC<{
   const handleClick = () => {
     if (!notification.read) onRead(notification.id);
 
-    // Sender ID reminder: open the request modal directly instead of navigating
+    // Sender ID reminder: navigate to settings sender id and open modal
     if (notification.type === "sender_id_reminder") {
+      openSettingsTab("senderIds");
       window.dispatchEvent(new CustomEvent("open-sender-id-modal"));
       onClose();
       return;

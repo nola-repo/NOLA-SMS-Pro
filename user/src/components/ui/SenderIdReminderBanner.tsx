@@ -1,17 +1,19 @@
 import React, { useState, useEffect } from "react";
 import { FiSend, FiX, FiArrowRight } from "react-icons/fi";
-import { fetchSenderRequests, type SenderRequest } from "../../api/senderRequests";
+import { fetchSenderRequests, fetchAccountSenderConfig, type SenderRequest, type AccountSenderConfig } from "../../api/senderRequests";
 import { useLocationId } from "../../context/LocationContext";
 import { safeStorage } from "../../utils/safeStorage";
 
 interface SenderIdReminderBannerProps {
   onOpenRequestModal?: () => void;
   onNavigateToSettings?: () => void;
+  ignoreDismiss?: boolean;
 }
 
 export const SenderIdReminderBanner: React.FC<SenderIdReminderBannerProps> = ({
   onOpenRequestModal,
   onNavigateToSettings,
+  ignoreDismiss = false,
 }) => {
   const { locationId } = useLocationId();
   const [hasRequest, setHasRequest] = useState<boolean | null>(null);
@@ -26,7 +28,7 @@ export const SenderIdReminderBanner: React.FC<SenderIdReminderBannerProps> = ({
     }
 
     const dismissKey = `nola_sender_reminder_dismissed_${locationId}`;
-    if (safeStorage.getItem(dismissKey) === "true") {
+    if (!ignoreDismiss && safeStorage.getItem(dismissKey) === "true") {
       setDismissed(true);
       setLoading(false);
       return;
@@ -35,11 +37,14 @@ export const SenderIdReminderBanner: React.FC<SenderIdReminderBannerProps> = ({
     let isMounted = true;
     const checkRequests = async () => {
       try {
-        const requests: SenderRequest[] = await fetchSenderRequests(locationId);
+        const [requests, cfg] = await Promise.all([
+          fetchSenderRequests(locationId).catch(() => [] as SenderRequest[]),
+          fetchAccountSenderConfig(locationId).catch(() => null as AccountSenderConfig | null),
+        ]);
         if (isMounted) {
-          // If the user has any request submitted (pending, approved, rejected, etc.), don't show the reminder
-          const exists = Array.isArray(requests) && requests.length > 0;
-          setHasRequest(exists);
+          const hasRequests = Array.isArray(requests) && requests.length > 0;
+          const hasApprovedConfig = Boolean(cfg?.approved_sender_id?.trim());
+          setHasRequest(hasRequests || hasApprovedConfig);
         }
       } catch {
         if (isMounted) setHasRequest(true); // Default to hiding on error
@@ -59,7 +64,7 @@ export const SenderIdReminderBanner: React.FC<SenderIdReminderBannerProps> = ({
       isMounted = false;
       window.removeEventListener("nola-sender-requests-changed", handleRefresh);
     };
-  }, [locationId]);
+  }, [locationId, ignoreDismiss]);
 
   const handleDismiss = () => {
     setDismissed(true);

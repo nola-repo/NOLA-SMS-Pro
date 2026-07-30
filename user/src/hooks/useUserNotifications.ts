@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchCreditStatus, fetchCreditTransactions, type CreditTransaction } from "../api/credits";
-import { fetchSenderRequests } from "../api/senderRequests";
+import { fetchSenderRequests, fetchAccountSenderConfig } from "../api/senderRequests";
 import { API_CONFIG } from "../config";
 import { useLocationId } from "../context/LocationContext";
 import { getSession } from "../services/authService";
@@ -212,10 +212,11 @@ async function buildLocalNotifications(locationId: string, readIds: Set<string>)
   const settings = getNotificationSettings();
   const lowBalanceThreshold = Number(settings.lowBalanceThreshold || 50);
 
-  const [creditStatus, senderRequests, transactions] = await Promise.all([
+  const [creditStatus, senderRequests, transactions, senderConfig] = await Promise.all([
     fetchCreditStatus(locationId),
     fetchSenderRequests(locationId),
     fetchCreditTransactions("default", 25, locationId),
+    fetchAccountSenderConfig(locationId).catch(() => null),
   ]);
 
   const now = new Date().toISOString();
@@ -306,8 +307,9 @@ async function buildLocalNotifications(locationId: string, readIds: Set<string>)
       });
     });
 
-  // Sender ID reminder: shown whenever no Sender ID requests exist for this subaccount
-  if (locationId && senderRequests.length === 0) {
+  // Sender ID reminder: shown whenever no Sender ID requests and no approved sender config exist for this subaccount
+  const hasApprovedSenderConfig = Boolean(senderConfig?.approved_sender_id?.trim());
+  if (locationId && senderRequests.length === 0 && !hasApprovedSenderConfig) {
     const id = `sender-reminder-${locationId}`;
     notifications.push({
       id,
