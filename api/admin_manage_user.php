@@ -194,8 +194,8 @@ try {
 
         echo json_encode([
             'status' => 'success',
-            'monthly_allocation' => $monthlyAllocation,
-            'message' => "Subaccount monthly credits reset to $monthlyAllocation successfully."
+            'monthly_allocation' => $targetAllocation,
+            'message' => "Subaccount monthly credits reset to $targetAllocation successfully."
         ]);
         exit;
     }
