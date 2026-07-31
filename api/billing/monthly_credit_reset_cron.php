@@ -51,8 +51,12 @@ foreach ($usersSnap as $doc) {
     if (!$doc->exists()) continue;
     $d = $doc->data();
 
-    // Skip inactive users
+    // Skip inactive users or accounts with monthly reset disabled
     if (array_key_exists('active', $d) && $d['active'] === false) {
+        $skippedCount++;
+        continue;
+    }
+    if (array_key_exists('monthly_reset_enabled', $d) && $d['monthly_reset_enabled'] === false) {
         $skippedCount++;
         continue;
     }

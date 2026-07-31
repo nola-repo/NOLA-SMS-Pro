@@ -133,29 +133,38 @@ try {
         $locId = $userData['active_location_id'] ?? $userData['location_id'] ?? '';
         $currentBalance = (int)($userData['credit_balance'] ?? 0);
 
-        // Fetch configured monthly allocation
+        // Fetch configured monthly allocation default
         $configSnap = $db->collection('admin_config')->document('monthly_credit_reset')->snapshot();
-        $monthlyAllocation = 500;
+        $defaultAllocation = 500;
         if ($configSnap->exists()) {
-            $monthlyAllocation = max(0, (int)($configSnap->data()['monthly_allocation'] ?? 500));
+            $defaultAllocation = max(0, (int)($configSnap->data()['monthly_allocation'] ?? 500));
         }
+
+        $amountValue = $input['amount'] ?? $input['credit_amount'] ?? $input['monthly_allocation'] ?? null;
+        $targetAllocation = $amountValue !== null ? max(0, (int)$amountValue) : $defaultAllocation;
 
         $now = new \DateTimeImmutable();
         $ts = new \Google\Cloud\Core\Timestamp($now);
 
-        // Update user document
-        $userRef->set([
-            'credit_balance' => $monthlyAllocation,
+        $userUpdate = [
+            'credit_balance' => $targetAllocation,
             'last_monthly_reset_at' => $ts,
             'updated_at' => $ts
-        ], ['merge' => true]);
+        ];
+
+        if (array_key_exists('monthly_reset_enabled', $input)) {
+            $userUpdate['monthly_reset_enabled'] = (bool)$input['monthly_reset_enabled'];
+        }
+
+        // Update user document
+        $userRef->set($userUpdate, ['merge' => true]);
 
         if (!empty($locId)) {
             $intDocId = CreditManager::integration_doc_id_for_location((string)$locId);
             $intRef = $db->collection('integrations')->document($intDocId);
             if ($intRef->snapshot()->exists()) {
                 $intRef->set([
-                    'credit_balance' => $monthlyAllocation,
+                    'credit_balance' => $targetAllocation,
                     'updated_at' => $ts
                 ], ['merge' => true]);
             }
@@ -168,10 +177,10 @@ try {
                 'account_id' => $intDocId,
                 'wallet_scope' => 'subaccount',
                 'type' => 'monthly_reset_manual',
-                'amount' => $monthlyAllocation - $currentBalance,
-                'balance_after' => $monthlyAllocation,
+                'amount' => $targetAllocation - $currentBalance,
+                'balance_after' => $targetAllocation,
                 'reference_id' => 'monthly_reset_admin_' . $now->format('Y_m_d_His'),
-                'description' => "Manual admin monthly credit reset allocation ($monthlyAllocation credits)",
+                'description' => "Manual admin credit reset allocation ($targetAllocation credits)",
                 'created_at' => $ts
             ]);
         }
