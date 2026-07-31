@@ -281,7 +281,7 @@ export const AdminAccounts: React.FC = () => {
     const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
 
     const [profileAccount, setProfileAccount] = useState<Account | null>(null);
-    const [confirmAction, setConfirmAction] = useState<{ type: 'reset' | 'delete'; account: Account } | null>(null);
+    const [confirmAction, setConfirmAction] = useState<{ type: 'reset' | 'delete' | 'monthly_credit_reset'; account: Account } | null>(null);
     const [actionMenuId, setActionMenuId] = useState<string | null>(null);
     const [menuPos, setMenuPos] = useState({ top: 0, right: 0 });
     const menuRef = useRef<HTMLDivElement>(null);
@@ -501,7 +501,7 @@ export const AdminAccounts: React.FC = () => {
         setProfileAccount(prev => prev?.id === accountId ? { ...prev, ...patch } : prev);
     };
 
-    const handleManageUserAction = async (type: 'reset' | 'delete', account: Account) => {
+    const handleManageUserAction = async (type: 'reset' | 'delete' | 'monthly_credit_reset', account: Account) => {
         setActionLoading(`${type}:${account.id}`);
         try {
             const res = await adminFetch(ADMIN_MANAGE_USER_API, {
@@ -514,7 +514,13 @@ export const AdminAccounts: React.FC = () => {
                 throw new Error(json?.message || 'Endpoint unavailable.');
             }
 
-            if (type === 'reset') {
+            if (type === 'monthly_credit_reset') {
+                const targetAmount = json?.monthly_allocation ?? 500;
+                updateAccountLocally(account.id, {
+                    credit_balance: targetAmount,
+                    credits: targetAmount,
+                });
+            } else if (type === 'reset') {
                 updateAccountLocally(account.id, {
                     credit_balance: 0,
                     credits: 0,
@@ -525,9 +531,15 @@ export const AdminAccounts: React.FC = () => {
                 setAccounts(prev => prev.filter(acc => acc.id !== account.id));
                 if (profileAccount?.id === account.id) setProfileAccount(null);
             }
-            showToast(json?.message || `${type === 'reset' ? 'Subaccount reset' : 'Account deleted'} successfully.`, 'success');
+            showToast(json?.message || `${type === 'monthly_credit_reset' ? 'Monthly credits reset' : type === 'reset' ? 'Subaccount reset' : 'Account deleted'} successfully.`, 'success');
         } catch {
-            if (type === 'reset') {
+            if (type === 'monthly_credit_reset') {
+                updateAccountLocally(account.id, {
+                    credit_balance: 500,
+                    credits: 500,
+                });
+                showToast('Monthly credits reset applied locally while the backend endpoint is pending.', 'info');
+            } else if (type === 'reset') {
                 updateAccountLocally(account.id, {
                     credit_balance: 0,
                     credits: 0,
@@ -953,6 +965,15 @@ export const AdminAccounts: React.FC = () => {
                                 <div className="my-1 border-t border-[#e5e5e5] dark:border-white/5" />
                                 <button
                                     onClick={() => {
+                                        setConfirmAction({ type: 'monthly_credit_reset', account });
+                                        setActionMenuId(null);
+                                    }}
+                                    className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[12px] font-bold text-[#2b83fa] hover:bg-blue-50 dark:hover:bg-blue-900/10 transition-colors text-left"
+                                >
+                                    <FiRefreshCw className="w-3.5 h-3.5 text-[#2b83fa]" /> Reset Monthly Credits
+                                </button>
+                                <button
+                                    onClick={() => {
                                         setConfirmAction({ type: 'reset', account });
                                         setActionMenuId(null);
                                     }}
@@ -988,16 +1009,28 @@ export const AdminAccounts: React.FC = () => {
                 <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/50 dark:bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
                     <div className="bg-white dark:bg-[#1a1b1e] border border-[#e5e5e5] dark:border-white/10 rounded-2xl p-6 w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200">
                         <div className="flex items-center justify-center mb-5">
-                            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${confirmAction.type === 'delete' ? 'bg-red-100 dark:bg-red-500/20 text-red-500' : 'bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-300'}`}>
+                            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${
+                                confirmAction.type === 'delete'
+                                    ? 'bg-red-100 dark:bg-red-500/20 text-red-500'
+                                    : confirmAction.type === 'monthly_credit_reset'
+                                    ? 'bg-blue-100 dark:bg-blue-500/20 text-[#2b83fa]'
+                                    : 'bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-300'
+                            }`}>
                                 {confirmAction.type === 'delete' ? <FiTrash2 className="w-7 h-7" /> : <FiRefreshCw className="w-7 h-7" />}
                             </div>
                         </div>
                         <h3 className="text-[18px] font-bold text-[#111111] dark:text-white text-center mb-3">
-                            {confirmAction.type === 'delete' ? 'Delete Account?' : 'Reset Subaccount?'}
+                            {confirmAction.type === 'delete'
+                                ? 'Delete Account?'
+                                : confirmAction.type === 'monthly_credit_reset'
+                                ? 'Reset Monthly Credits?'
+                                : 'Reset Subaccount?'}
                         </h3>
                         <p className="text-[14px] text-[#6e6e73] dark:text-[#9aa0a6] text-center mb-6 leading-relaxed">
                             {confirmAction.type === 'delete'
                                 ? `Permanently delete user profile and account for ${getAccountName(confirmAction.account)}?`
+                                : confirmAction.type === 'monthly_credit_reset'
+                                ? `Reset credit balance for ${getAccountName(confirmAction.account)} to the configured monthly allocation?`
                                 : `Reset credits, free usage, and sender ID for ${getAccountName(confirmAction.account)}?`}
                         </p>
                         <div className="flex items-center gap-3">
@@ -1011,7 +1044,11 @@ export const AdminAccounts: React.FC = () => {
                                 onClick={() => handleManageUserAction(confirmAction.type, confirmAction.account)}
                                 disabled={actionLoading === `${confirmAction.type}:${confirmAction.account.id}`}
                                 className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-white rounded-xl font-bold text-[14px] transition-all disabled:opacity-60 ${
-                                    confirmAction.type === 'delete' ? 'bg-red-600 hover:bg-red-700' : 'bg-amber-500 hover:bg-amber-600'
+                                    confirmAction.type === 'delete'
+                                        ? 'bg-red-600 hover:bg-red-700'
+                                        : confirmAction.type === 'monthly_credit_reset'
+                                        ? 'bg-[#2b83fa] hover:bg-blue-600'
+                                        : 'bg-amber-500 hover:bg-amber-600'
                                 }`}
                             >
                                 {actionLoading === `${confirmAction.type}:${confirmAction.account.id}` ? (

@@ -35,6 +35,12 @@ export const AdminSettings: React.FC = () => {
     const [failoverTimeout, setFailoverTimeout] = useState(localStorage.getItem('admin_setting_failover_timeout') || '8');
     const [failoverLogEnabled, setFailoverLogEnabled] = useState(localStorage.getItem('admin_setting_failover_log') !== 'false');
 
+    // Monthly Credit Reset state
+    const [monthlyResetEnabled, setMonthlyResetEnabled] = useState(localStorage.getItem('admin_setting_monthly_reset_enabled') === 'true');
+    const [monthlyAllocation, setMonthlyAllocation] = useState(localStorage.getItem('admin_setting_monthly_allocation') || '500');
+    const [lastResetAt, setLastResetAt] = useState<string | null>(null);
+    const [lastResetCount, setLastResetCount] = useState<number>(0);
+
     // Load settings from backend on mount
     useEffect(() => {
         const fetchSettings = async () => {
@@ -60,6 +66,13 @@ export const AdminSettings: React.FC = () => {
                             if (provider.unisms_timeout_seconds !== undefined) setUnismsTimeout(String(provider.unisms_timeout_seconds));
                             if (provider.failover_timeout_seconds !== undefined) setFailoverTimeout(String(provider.failover_timeout_seconds));
                             if (provider.failover_log_enabled !== undefined) setFailoverLogEnabled(Boolean(provider.failover_log_enabled));
+                        }
+                        if (d.monthly_credit_reset) {
+                            const mr = d.monthly_credit_reset;
+                            if (mr.enabled !== undefined) setMonthlyResetEnabled(Boolean(mr.enabled));
+                            if (mr.monthly_allocation !== undefined) setMonthlyAllocation(String(mr.monthly_allocation));
+                            if (mr.last_reset_at !== undefined) setLastResetAt(mr.last_reset_at);
+                            if (mr.last_reset_count !== undefined) setLastResetCount(Number(mr.last_reset_count));
                         }
                     }
                 }
@@ -92,6 +105,10 @@ export const AdminSettings: React.FC = () => {
                 failover_log_enabled: failoverLogEnabled,
                 ...(unismsKeyInput.trim() ? { unisms_api_key: unismsKeyInput.trim() } : {}),
             },
+            monthly_credit_reset: {
+                enabled: monthlyResetEnabled,
+                monthly_allocation: parseInt(monthlyAllocation, 10) || 500,
+            },
         };
         try {
             const res = await adminFetch('/api/admin_settings.php', {
@@ -122,6 +139,8 @@ export const AdminSettings: React.FC = () => {
         localStorage.setItem('admin_setting_unisms_timeout', unismsTimeout);
         localStorage.setItem('admin_setting_failover_timeout', failoverTimeout);
         localStorage.setItem('admin_setting_failover_log', String(failoverLogEnabled));
+        localStorage.setItem('admin_setting_monthly_reset_enabled', String(monthlyResetEnabled));
+        localStorage.setItem('admin_setting_monthly_allocation', monthlyAllocation);
         setUnismsKeyInput('');
         setSaving(false);
         setSaved(true);
@@ -308,6 +327,46 @@ export const AdminSettings: React.FC = () => {
                         <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-300 ${failoverLogEnabled ? 'translate-x-6' : 'translate-x-0'}`} />
                     </button>
                 </div>
+            </Section>
+
+            {/* Monthly Credit Reset Settings */}
+            <Section title="Monthly Credit Reset" icon={<FiRefreshCw className="w-4 h-4" />}>
+                <div className="flex items-center justify-between gap-4">
+                    <div>
+                        <p className="text-[14px] font-bold text-[#111111] dark:text-white">Monthly Credit Reset</p>
+                        <p className="text-[12px] text-[#6e6e73] dark:text-[#9aa0a6] mt-0.5">
+                            Automatically resets every eligible subaccount's credits to the monthly allocation on the 1st of every month. Unused credits do not carry over.
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => setMonthlyResetEnabled(v => !v)}
+                        className={`relative flex-shrink-0 w-12 h-6 rounded-full transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#2b83fa]/50 ${monthlyResetEnabled ? 'bg-[#2b83fa]' : 'bg-gray-200 dark:bg-white/10'}`}
+                        aria-label="Toggle monthly credit reset"
+                    >
+                        <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-300 ${monthlyResetEnabled ? 'translate-x-6' : 'translate-x-0'}`} />
+                    </button>
+                </div>
+
+                {monthlyResetEnabled && (
+                    <Field label="Monthly Credit Allocation" help="The credit amount assigned to each active subaccount on the 1st day of every month.">
+                        <ValueAdjuster
+                            value={monthlyAllocation}
+                            onChange={setMonthlyAllocation}
+                            min={0}
+                            max={99999}
+                            step={50}
+                            suffix=" credits"
+                        />
+                    </Field>
+                )}
+
+                {lastResetAt && (
+                    <div className="text-[11px] font-medium text-[#6e6e73] dark:text-[#9aa0a6] pt-3 border-t border-[#e5e5e5] dark:border-white/5 flex items-center justify-between">
+                        <span>Last Automated Reset: <b>{new Date(lastResetAt).toLocaleString()}</b></span>
+                        <span>Subaccounts Reset: <b>{lastResetCount}</b></span>
+                    </div>
+                )}
             </Section>
 
             {/* Platform Settings */}
@@ -874,7 +933,7 @@ export const AdminLogs: React.FC<{ hideHeader?: boolean; onCardClick?: () => voi
                 const ts = log.timestamp || log.date_created || log.created_at;
                 const providerMessageId = log.provider_message_id || log.provider_reference_id;
                 const publicReferenceId = log.message_reference_id || log.transaction_reference_id || log.request_reference_id || log.reference_id;
-                const dtStr = ts ? new Date(ts).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+                const dtStr = ts ? new Date(ts).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'ï¿½';
                 const modalLocationName = getLocationName(log);
                 const modalFailureReason = getFailureReason(log);
                 return (
