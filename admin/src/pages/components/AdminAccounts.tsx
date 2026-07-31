@@ -1085,16 +1085,16 @@ export const AdminAccounts: React.FC = () => {
                                                 </button>
                                             </div>
                                         </div>
-                                        <div className="flex items-center gap-1.5 mt-2">
+                                        <div className="grid grid-cols-4 gap-2 mt-3">
                                             {[0, 100, 500, 1000].map(val => (
                                                 <button
                                                     key={val}
                                                     type="button"
                                                     onClick={() => setResetModalAmount(val)}
-                                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                                                    className={`w-full py-2 rounded-xl text-[13px] font-bold transition-all ${
                                                         resetModalAmount === val
-                                                            ? 'bg-[#2b83fa] text-white shadow-sm'
-                                                            : 'bg-[#f7f7f7] dark:bg-white/5 text-[#6e6e73] dark:text-[#9aa0a6] hover:bg-[#e8e8e8]'
+                                                            ? 'bg-[#2b83fa] text-white shadow-md shadow-blue-500/20'
+                                                            : 'bg-[#f7f7f7] dark:bg-white/5 text-[#6e6e73] dark:text-[#9aa0a6] hover:bg-[#e0e8ff] dark:hover:bg-blue-500/10 hover:text-[#2b83fa] dark:hover:text-[#2b83fa]'
                                                     }`}
                                                 >
                                                     {val}
