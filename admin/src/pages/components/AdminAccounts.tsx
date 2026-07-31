@@ -282,6 +282,8 @@ export const AdminAccounts: React.FC = () => {
 
     const [profileAccount, setProfileAccount] = useState<Account | null>(null);
     const [confirmAction, setConfirmAction] = useState<{ type: 'reset' | 'delete' | 'monthly_credit_reset'; account: Account } | null>(null);
+    const [resetModalAmount, setResetModalAmount] = useState<number>(500);
+    const [resetModalToggle, setResetModalToggle] = useState<boolean>(true);
     const [actionMenuId, setActionMenuId] = useState<string | null>(null);
     const [menuPos, setMenuPos] = useState({ top: 0, right: 0 });
     const menuRef = useRef<HTMLDivElement>(null);
@@ -501,13 +503,23 @@ export const AdminAccounts: React.FC = () => {
         setProfileAccount(prev => prev?.id === accountId ? { ...prev, ...patch } : prev);
     };
 
-    const handleManageUserAction = async (type: 'reset' | 'delete' | 'monthly_credit_reset', account: Account) => {
+    const handleManageUserAction = async (
+        type: 'reset' | 'delete' | 'monthly_credit_reset',
+        account: Account,
+        extraPayload?: { amount?: number; monthly_reset_enabled?: boolean }
+    ) => {
         setActionLoading(`${type}:${account.id}`);
         try {
+            const payloadBody: any = { action: type, user_id: account.id };
+            if (extraPayload) {
+                if (extraPayload.amount !== undefined) payloadBody.amount = extraPayload.amount;
+                if (extraPayload.monthly_reset_enabled !== undefined) payloadBody.monthly_reset_enabled = extraPayload.monthly_reset_enabled;
+            }
+
             const res = await adminFetch(ADMIN_MANAGE_USER_API, {
                 method: 'POST',
                 headers: getAdminAuthHeaders(),
-                body: JSON.stringify({ action: type, user_id: account.id }),
+                body: JSON.stringify(payloadBody),
             });
             const json = await res.json().catch(() => null);
             if (!res.ok || (json?.status && json.status !== 'success')) {
@@ -515,7 +527,7 @@ export const AdminAccounts: React.FC = () => {
             }
 
             if (type === 'monthly_credit_reset') {
-                const targetAmount = json?.monthly_allocation ?? 500;
+                const targetAmount = extraPayload?.amount ?? json?.monthly_allocation ?? 500;
                 updateAccountLocally(account.id, {
                     credit_balance: targetAmount,
                     credits: targetAmount,
@@ -534,11 +546,12 @@ export const AdminAccounts: React.FC = () => {
             showToast(json?.message || `${type === 'monthly_credit_reset' ? 'Monthly credits reset' : type === 'reset' ? 'Subaccount reset' : 'Account deleted'} successfully.`, 'success');
         } catch {
             if (type === 'monthly_credit_reset') {
+                const targetAmount = extraPayload?.amount ?? 500;
                 updateAccountLocally(account.id, {
-                    credit_balance: 500,
-                    credits: 500,
+                    credit_balance: targetAmount,
+                    credits: targetAmount,
                 });
-                showToast('Monthly credits reset applied locally while the backend endpoint is pending.', 'info');
+                showToast('Monthly credits reset applied locally while backend endpoint is pending.', 'info');
             } else if (type === 'reset') {
                 updateAccountLocally(account.id, {
                     credit_balance: 0,
@@ -966,6 +979,8 @@ export const AdminAccounts: React.FC = () => {
                                 <button
                                     onClick={() => {
                                         setConfirmAction({ type: 'monthly_credit_reset', account });
+                                        setResetModalAmount(500);
+                                        setResetModalToggle(account.monthly_reset_enabled !== false);
                                         setActionMenuId(null);
                                     }}
                                     className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[12px] font-bold text-[#2b83fa] hover:bg-blue-50 dark:hover:bg-blue-900/10 transition-colors text-left"
@@ -1008,59 +1023,178 @@ export const AdminAccounts: React.FC = () => {
             {confirmAction && (
                 <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/50 dark:bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
                     <div className="bg-white dark:bg-[#1a1b1e] border border-[#e5e5e5] dark:border-white/10 rounded-2xl p-6 w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200">
-                        <div className="flex items-center justify-center mb-5">
-                            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${
-                                confirmAction.type === 'delete'
-                                    ? 'bg-red-100 dark:bg-red-500/20 text-red-500'
-                                    : confirmAction.type === 'monthly_credit_reset'
-                                    ? 'bg-blue-100 dark:bg-blue-500/20 text-[#2b83fa]'
-                                    : 'bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-300'
-                            }`}>
-                                {confirmAction.type === 'delete' ? <FiTrash2 className="w-7 h-7" /> : <FiRefreshCw className="w-7 h-7" />}
-                            </div>
-                        </div>
-                        <h3 className="text-[18px] font-bold text-[#111111] dark:text-white text-center mb-3">
-                            {confirmAction.type === 'delete'
-                                ? 'Delete Account?'
-                                : confirmAction.type === 'monthly_credit_reset'
-                                ? 'Reset Monthly Credits?'
-                                : 'Reset Subaccount?'}
-                        </h3>
-                        <p className="text-[14px] text-[#6e6e73] dark:text-[#9aa0a6] text-center mb-6 leading-relaxed">
-                            {confirmAction.type === 'delete'
-                                ? `Permanently delete user profile and account for ${getAccountName(confirmAction.account)}?`
-                                : confirmAction.type === 'monthly_credit_reset'
-                                ? `Reset credit balance for ${getAccountName(confirmAction.account)} to the configured monthly allocation?`
-                                : `Reset credits, free usage, and sender ID for ${getAccountName(confirmAction.account)}?`}
-                        </p>
-                        <div className="flex items-center gap-3">
-                            <button
-                                onClick={() => setConfirmAction(null)}
-                                className="flex-1 px-4 py-3 text-[14px] font-bold text-[#6e6e73] dark:text-[#9aa0a6] hover:bg-[#f7f7f7] dark:hover:bg-white/5 rounded-xl transition-colors"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={() => handleManageUserAction(confirmAction.type, confirmAction.account)}
-                                disabled={actionLoading === `${confirmAction.type}:${confirmAction.account.id}`}
-                                className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-white rounded-xl font-bold text-[14px] transition-all disabled:opacity-60 ${
-                                    confirmAction.type === 'delete'
-                                        ? 'bg-red-600 hover:bg-red-700'
-                                        : confirmAction.type === 'monthly_credit_reset'
-                                        ? 'bg-[#2b83fa] hover:bg-blue-600'
-                                        : 'bg-amber-500 hover:bg-amber-600'
-                                }`}
-                            >
-                                {actionLoading === `${confirmAction.type}:${confirmAction.account.id}` ? (
-                                    <FiRefreshCw className="w-4 h-4 animate-spin" />
-                                ) : confirmAction.type === 'delete' ? (
-                                    <FiTrash2 className="w-4 h-4" />
-                                ) : (
-                                    <FiRefreshCw className="w-4 h-4" />
-                                )}
-                                {confirmAction.type === 'delete' ? 'Delete' : 'Reset'}
-                            </button>
-                        </div>
+                        {confirmAction.type === 'monthly_credit_reset' ? (
+                            <>
+                                <div className="flex items-center justify-between pb-4 border-b border-[#e5e5e5] dark:border-white/10 mb-5">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-500/20 text-[#2b83fa] flex items-center justify-center flex-shrink-0">
+                                            <FiRefreshCw className="w-5 h-5" />
+                                        </div>
+                                        <div>
+                                            <h3 className="text-[16px] font-bold text-[#111111] dark:text-white leading-tight">
+                                                Reset Subaccount Credits
+                                            </h3>
+                                            <p className="text-[12px] text-[#6e6e73] dark:text-[#9aa0a6] mt-0.5 font-medium truncate max-w-[240px]">
+                                                {getAccountName(confirmAction.account)}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={() => setConfirmAction(null)}
+                                        className="p-1.5 text-[#6e6e73] hover:text-[#111111] dark:hover:text-white rounded-lg hover:bg-[#f7f7f7] dark:hover:bg-white/5 transition-colors"
+                                    >
+                                        <FiX className="w-4 h-4" />
+                                    </button>
+                                </div>
+
+                                <div className="space-y-5">
+                                    <div className="p-3 bg-[#f7f7f7] dark:bg-[#0d0e10] rounded-xl border border-[#e5e5e5] dark:border-white/5 flex items-center justify-between">
+                                        <span className="text-[12px] font-bold text-[#6e6e73] dark:text-[#9aa0a6]">Current Balance</span>
+                                        <span className="text-[13px] font-extrabold text-[#111111] dark:text-white font-mono">
+                                            {(confirmAction.account.credit_balance ?? confirmAction.account.credits ?? 0).toLocaleString()} credits
+                                        </span>
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-[12px] font-bold text-[#5f6368] dark:text-[#9aa0a6] uppercase tracking-wider mb-2">
+                                            New Reset Balance Amount
+                                        </label>
+                                        <div className="flex items-center gap-2">
+                                            <div className="flex items-center flex-1 bg-[#f7f7f7] dark:bg-[#0d0e10] border border-[#e0e0e0] dark:border-white/10 rounded-xl overflow-hidden shadow-sm">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setResetModalAmount(prev => Math.max(0, prev - 50))}
+                                                    className="px-3 py-2.5 text-[#6e6e73] hover:bg-black/5 dark:hover:bg-white/5 transition-colors border-r border-[#e0e0e0] dark:border-white/10"
+                                                >
+                                                    <FiMinus className="w-4 h-4" />
+                                                </button>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    max="99999"
+                                                    value={resetModalAmount}
+                                                    onChange={e => setResetModalAmount(Math.max(0, parseInt(e.target.value) || 0))}
+                                                    className="w-full text-center text-[15px] font-bold font-mono bg-transparent text-[#111111] dark:text-white focus:outline-none"
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setResetModalAmount(prev => prev + 50)}
+                                                    className="px-3 py-2.5 text-[#6e6e73] hover:bg-black/5 dark:hover:bg-white/5 transition-colors border-l border-[#e0e0e0] dark:border-white/10"
+                                                >
+                                                    <FiPlus className="w-4 h-4" />
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-1.5 mt-2">
+                                            {[0, 100, 500, 1000].map(val => (
+                                                <button
+                                                    key={val}
+                                                    type="button"
+                                                    onClick={() => setResetModalAmount(val)}
+                                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                                                        resetModalAmount === val
+                                                            ? 'bg-[#2b83fa] text-white shadow-sm'
+                                                            : 'bg-[#f7f7f7] dark:bg-white/5 text-[#6e6e73] dark:text-[#9aa0a6] hover:bg-[#e8e8e8]'
+                                                    }`}
+                                                >
+                                                    {val}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div className="pt-2 border-t border-[#e5e5e5] dark:border-white/5 flex items-center justify-between">
+                                        <div>
+                                            <p className="text-[12.5px] font-bold text-[#111111] dark:text-white">Auto Monthly Reset</p>
+                                            <p className="text-[11px] text-[#6e6e73] dark:text-[#9aa0a6]">Include in 1st-of-month reset routine</p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setResetModalToggle(v => !v)}
+                                            className={`relative flex-shrink-0 w-11 h-6 rounded-full transition-colors duration-300 focus:outline-none ${
+                                                resetModalToggle ? 'bg-[#2b83fa]' : 'bg-gray-200 dark:bg-white/10'
+                                            }`}
+                                        >
+                                            <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-300 ${
+                                                resetModalToggle ? 'translate-x-5' : 'translate-x-0'
+                                            }`} />
+                                        </button>
+                                    </div>
+
+                                    <div className="flex items-center gap-3 pt-3">
+                                        <button
+                                            type="button"
+                                            onClick={() => setConfirmAction(null)}
+                                            className="flex-1 px-4 py-3 text-[13px] font-bold text-[#6e6e73] dark:text-[#9aa0a6] hover:bg-[#f7f7f7] dark:hover:bg-white/5 rounded-xl transition-colors"
+                                        >
+                                            Cancel
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleManageUserAction('monthly_credit_reset', confirmAction.account, {
+                                                amount: resetModalAmount,
+                                                monthly_reset_enabled: resetModalToggle
+                                            })}
+                                            disabled={actionLoading === `monthly_credit_reset:${confirmAction.account.id}`}
+                                            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-[#2b83fa] to-[#1d6bd4] hover:shadow-lg text-white rounded-xl font-bold text-[13px] transition-all disabled:opacity-60 shadow-md shadow-blue-500/20 active:scale-95"
+                                        >
+                                            {actionLoading === `monthly_credit_reset:${confirmAction.account.id}` ? (
+                                                <FiRefreshCw className="w-4 h-4 animate-spin" />
+                                            ) : (
+                                                <FiRefreshCw className="w-4 h-4" />
+                                            )}
+                                            Reset to {resetModalAmount}
+                                        </button>
+                                    </div>
+                                </div>
+                            </>
+                        ) : (
+                            <>
+                                <div className="flex items-center justify-center mb-5">
+                                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${
+                                        confirmAction.type === 'delete'
+                                            ? 'bg-red-100 dark:bg-red-500/20 text-red-500'
+                                            : 'bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-300'
+                                    }`}>
+                                        {confirmAction.type === 'delete' ? <FiTrash2 className="w-7 h-7" /> : <FiRefreshCw className="w-7 h-7" />}
+                                    </div>
+                                </div>
+                                <h3 className="text-[18px] font-bold text-[#111111] dark:text-white text-center mb-3">
+                                    {confirmAction.type === 'delete' ? 'Delete Account?' : 'Reset Subaccount?'}
+                                </h3>
+                                <p className="text-[14px] text-[#6e6e73] dark:text-[#9aa0a6] text-center mb-6 leading-relaxed">
+                                    {confirmAction.type === 'delete'
+                                        ? `Permanently delete user profile and account for ${getAccountName(confirmAction.account)}?`
+                                        : `Reset credits, free usage, and sender ID for ${getAccountName(confirmAction.account)}?`}
+                                </p>
+                                <div className="flex items-center gap-3">
+                                    <button
+                                        onClick={() => setConfirmAction(null)}
+                                        className="flex-1 px-4 py-3 text-[14px] font-bold text-[#6e6e73] dark:text-[#9aa0a6] hover:bg-[#f7f7f7] dark:hover:bg-white/5 rounded-xl transition-colors"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        onClick={() => handleManageUserAction(confirmAction.type, confirmAction.account)}
+                                        disabled={actionLoading === `${confirmAction.type}:${confirmAction.account.id}`}
+                                        className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-white rounded-xl font-bold text-[14px] transition-all disabled:opacity-60 ${
+                                            confirmAction.type === 'delete'
+                                                ? 'bg-red-600 hover:bg-red-700'
+                                                : 'bg-amber-500 hover:bg-amber-600'
+                                        }`}
+                                    >
+                                        {actionLoading === `${confirmAction.type}:${confirmAction.account.id}` ? (
+                                            <FiRefreshCw className="w-4 h-4 animate-spin" />
+                                        ) : confirmAction.type === 'delete' ? (
+                                            <FiTrash2 className="w-4 h-4" />
+                                        ) : (
+                                            <FiRefreshCw className="w-4 h-4" />
+                                        )}
+                                        {confirmAction.type === 'delete' ? 'Delete' : 'Reset'}
+                                    </button>
+                                </div>
+                            </>
+                        )}
                     </div>
                 </div>
             )}
