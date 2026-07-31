@@ -14,6 +14,7 @@ $db = get_firestore();
 $configRef = $db->collection('system_settings')->document('core');
 $pricingRef = $db->collection('admin_config')->document('global_pricing');
 $smsProviderRef = $db->collection('admin_config')->document('sms_provider');
+$monthlyResetRef = $db->collection('admin_config')->document('monthly_credit_reset');
 
 function nola_settings_mask_secret(?string $secret): ?string
 {
@@ -36,10 +37,12 @@ if ($method === 'GET') {
         $snapshot = $configRef->snapshot();
         $pricingSnap = $pricingRef->snapshot();
         $providerSnap = $smsProviderRef->snapshot();
+        $monthlyResetSnap = $monthlyResetRef->snapshot();
         
         $raw = $snapshot->exists() ? $snapshot->data() : [];
         $pricing = $pricingSnap->exists() ? $pricingSnap->data() : [];
         $provider = $providerSnap->exists() ? $providerSnap->data() : [];
+        $monthlyReset = $monthlyResetSnap->exists() ? $monthlyResetSnap->data() : [];
 
         // Return only the fields the frontend expects (exclude Firestore metadata)
         $data = [
@@ -58,6 +61,14 @@ if ($method === 'GET') {
                 'unisms_timeout_seconds' => (int)($provider['unisms_timeout_seconds'] ?? 15),
                 'failover_timeout_seconds' => (int)($provider['failover_timeout_seconds'] ?? 8),
                 'failover_log_enabled' => (bool)($provider['failover_log_enabled'] ?? true),
+            ],
+            'monthly_credit_reset' => [
+                'enabled'            => (bool)($monthlyReset['enabled'] ?? false),
+                'monthly_allocation' => (int)($monthlyReset['monthly_allocation'] ?? 500),
+                'last_reset_at'      => isset($monthlyReset['last_reset_at']) && $monthlyReset['last_reset_at'] instanceof \Google\Cloud\Core\Timestamp
+                                        ? $monthlyReset['last_reset_at']->get()->format('Y-m-d\TH:i:s\Z')
+                                        : null,
+                'last_reset_count'   => (int)($monthlyReset['last_reset_count'] ?? 0),
             ],
         ];
 
@@ -111,7 +122,21 @@ if ($method === 'GET') {
     if (isset($providerInput['failover_timeout_seconds'])) $providerData['failover_timeout_seconds'] = max(3, (int)$providerInput['failover_timeout_seconds']);
     if (isset($providerInput['failover_log_enabled'])) $providerData['failover_log_enabled'] = (bool)$providerInput['failover_log_enabled'];
     
-    if (empty($saveData) && empty($pricingData) && empty($providerData)) {
+    $monthlyResetInput = is_array($input['monthly_credit_reset'] ?? null) ? $input['monthly_credit_reset'] : $input;
+    $monthlyResetData = [];
+    if (array_key_exists('enabled', $monthlyResetInput)) {
+        $monthlyResetData['enabled'] = (bool)$monthlyResetInput['enabled'];
+    } elseif (array_key_exists('monthly_reset_enabled', $input)) {
+        $monthlyResetData['enabled'] = (bool)$input['monthly_reset_enabled'];
+    }
+
+    if (array_key_exists('monthly_allocation', $monthlyResetInput)) {
+        $monthlyResetData['monthly_allocation'] = max(0, (int)$monthlyResetInput['monthly_allocation']);
+    } elseif (array_key_exists('monthly_credit_allocation', $input)) {
+        $monthlyResetData['monthly_allocation'] = max(0, (int)$input['monthly_credit_allocation']);
+    }
+
+    if (empty($saveData) && empty($pricingData) && empty($providerData) && empty($monthlyResetData)) {
         http_response_code(400);
         echo json_encode(['status' => 'error', 'message' => 'No valid settings provided']);
         exit;
@@ -127,6 +152,10 @@ if ($method === 'GET') {
         if (!empty($providerData)) {
             $providerData['updated_at'] = new \Google\Cloud\Core\Timestamp(new \DateTime());
             $smsProviderRef->set($providerData, ['merge' => true]);
+        }
+        if (!empty($monthlyResetData)) {
+            $monthlyResetData['updated_at'] = new \Google\Cloud\Core\Timestamp(new \DateTime());
+            $monthlyResetRef->set($monthlyResetData, ['merge' => true]);
         }
         NolaCache::invalidateAdminDashboard();
         echo json_encode(['status' => 'success', 'message' => 'Settings updated.']);

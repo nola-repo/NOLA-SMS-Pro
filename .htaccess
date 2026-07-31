@@ -132,6 +132,7 @@
     RewriteRule ^api/billing/transactions/?$       /api/billing/transactions.php       [NC,L,QSA]
     RewriteRule ^api/billing/credit_requests/?$    /api/billing/credit_requests.php    [NC,L,QSA]
     RewriteRule ^api/billing/auto_recharge_cron/?$ /api/billing/auto_recharge_cron.php [NC,L,QSA]
+    RewriteRule ^api/billing/monthly_credit_reset_cron/?$ /api/billing/monthly_credit_reset_cron.php [NC,L,QSA]
 
     # ── Generic API endpoints ───────────────────────────────────────────
     # /api/messages -> /api/messages.php

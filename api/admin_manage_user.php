@@ -60,9 +60,9 @@ if (empty($userId)) {
     exit;
 }
 
-if (!in_array($action, ['reset', 'delete'], true)) {
+if (!in_array($action, ['reset', 'delete', 'monthly_credit_reset'], true)) {
     http_response_code(400);
-    echo json_encode(['status' => 'error', 'message' => 'action must be reset or delete']);
+    echo json_encode(['status' => 'error', 'message' => 'action must be reset, delete, or monthly_credit_reset']);
     exit;
 }
 
@@ -124,6 +124,69 @@ try {
         echo json_encode([
             'status'  => 'success',
             'message' => 'Subaccount balances and usage reset successfully.'
+        ]);
+        exit;
+    }
+
+    // ── Monthly Credit Reset ──────────────────────────────────────────────────
+    if ($action === 'monthly_credit_reset') {
+        $locId = $userData['active_location_id'] ?? $userData['location_id'] ?? '';
+        $currentBalance = (int)($userData['credit_balance'] ?? 0);
+
+        // Fetch configured monthly allocation
+        $configSnap = $db->collection('admin_config')->document('monthly_credit_reset')->snapshot();
+        $monthlyAllocation = 500;
+        if ($configSnap->exists()) {
+            $monthlyAllocation = max(0, (int)($configSnap->data()['monthly_allocation'] ?? 500));
+        }
+
+        $now = new \DateTimeImmutable();
+        $ts = new \Google\Cloud\Core\Timestamp($now);
+
+        // Update user document
+        $userRef->set([
+            'credit_balance' => $monthlyAllocation,
+            'last_monthly_reset_at' => $ts,
+            'updated_at' => $ts
+        ], ['merge' => true]);
+
+        if (!empty($locId)) {
+            $intDocId = CreditManager::integration_doc_id_for_location((string)$locId);
+            $intRef = $db->collection('integrations')->document($intDocId);
+            if ($intRef->snapshot()->exists()) {
+                $intRef->set([
+                    'credit_balance' => $monthlyAllocation,
+                    'updated_at' => $ts
+                ], ['merge' => true]);
+            }
+
+            // Log transaction
+            $txRef = $db->collection('credit_transactions')->newDocument();
+            $txRef->set([
+                'transaction_id' => $txRef->id(),
+                'transaction_reference_id' => \ReferenceId::generate('TXN'),
+                'account_id' => $intDocId,
+                'wallet_scope' => 'subaccount',
+                'type' => 'monthly_reset_manual',
+                'amount' => $monthlyAllocation - $currentBalance,
+                'balance_after' => $monthlyAllocation,
+                'reference_id' => 'monthly_reset_admin_' . $now->format('Y_m_d_His'),
+                'description' => "Manual admin monthly credit reset allocation ($monthlyAllocation credits)",
+                'created_at' => $ts
+            ]);
+        }
+
+        NolaCache::invalidateAdminDashboard();
+        NolaCache::delete("admin_user_profile_" . $userId);
+        if (!empty($locId)) {
+            NolaCache::delete("account_profile_" . $locId);
+            NolaCache::deleteRegistry("credits_registry_" . $locId);
+        }
+
+        echo json_encode([
+            'status' => 'success',
+            'monthly_allocation' => $monthlyAllocation,
+            'message' => "Subaccount monthly credits reset to $monthlyAllocation successfully."
         ]);
         exit;
     }
