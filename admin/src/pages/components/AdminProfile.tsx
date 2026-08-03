@@ -1,4 +1,3 @@
-// @ts-nocheck
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { FiAlertCircle, FiCheck, FiEdit3, FiEye, FiEyeOff, FiLock, FiMoreVertical, FiRefreshCw, FiSave, FiShield, FiX } from 'react-icons/fi';

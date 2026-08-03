@@ -1,4 +1,3 @@
-// @ts-nocheck
 import React, { useEffect, useState } from 'react';
 import { FiAlertCircle, FiCheck, FiRefreshCw, FiSave, FiUser, FiX } from 'react-icons/fi';
 import { agencyFetch } from '../services/agencyApi';

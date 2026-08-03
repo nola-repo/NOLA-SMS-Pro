@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { adminFetch } from '../utils/adminApi';
 import { getAdminAuthHeaders } from '../utils/adminAuthHeaders';
@@ -55,26 +54,34 @@ export function useAdminNotifications() {
             prev.map(n => (n.id === notificationId ? { ...n, read: true } : n))
         );
         try {
-            await adminFetch(ADMIN_NOTIFICATIONS_API, {
+            const res = await adminFetch(ADMIN_NOTIFICATIONS_API, {
                 method: 'POST',
                 headers: { ...getAdminAuthHeaders(), 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action: 'mark_read', notification_id: notificationId }),
             });
+            if (!res.ok) throw new Error('mark_read failed');
         } catch {
-            // Reverting optimistic update on failure is optional; keep it simple
+            // Revert the optimistic update on failure
+            setNotifications(prev =>
+                prev.map(n => (n.id === notificationId ? { ...n, read: false } : n))
+            );
         }
     }, []);
 
     const markAllRead = useCallback(async () => {
-        setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+        const previous = await new Promise<AdminNotification[]>(resolve =>
+            setNotifications(prev => { resolve(prev); return prev.map(n => ({ ...n, read: true })); })
+        );
         try {
-            await adminFetch(ADMIN_NOTIFICATIONS_API, {
+            const res = await adminFetch(ADMIN_NOTIFICATIONS_API, {
                 method: 'POST',
                 headers: { ...getAdminAuthHeaders(), 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action: 'mark_all_read' }),
             });
+            if (!res.ok) throw new Error('mark_all_read failed');
         } catch {
-            // Silently fail
+            // Revert the optimistic update on failure
+            setNotifications(previous);
         }
     }, []);
 

@@ -1,22 +1,29 @@
-// @ts-nocheck
 import React from 'react';
 import { FiCheckCircle, FiAlertCircle, FiInfo, FiX } from 'react-icons/fi';
 
-const ICONS = {
+export type ToastSeverity = 'success' | 'error' | 'warning' | 'info';
+
+export interface Toast {
+  id: string;
+  type: ToastSeverity;
+  message: string;
+}
+
+const ICONS: Record<ToastSeverity, React.ReactElement> = {
   success: <FiCheckCircle className="w-4 h-4 text-[#22c55e] shrink-0" />,
   error:   <FiAlertCircle className="w-4 h-4 text-[#ef4444] shrink-0" />,
   warning: <FiAlertCircle className="w-4 h-4 text-[#f59e0b] shrink-0" />,
   info:    <FiInfo        className="w-4 h-4 text-[#2b83fa] shrink-0" />,
 };
 
-const BORDERS = {
+const BORDERS: Record<ToastSeverity, string> = {
   success: 'border-[#22c55e]/20',
   error:   'border-[#ef4444]/20 dark:border-[#ef4444]/20',
   warning: 'border-[#f59e0b]/25 dark:border-[#f59e0b]/25',
   info:    'border-[rgba(0,0,0,0.08)] dark:border-white/10',
 };
 
-export const ToastContainer = ({ toasts, onDismiss }) => {
+export const ToastContainer: React.FC<{ toasts: Toast[]; onDismiss: (id: string) => void }> = ({ toasts, onDismiss }) => {
   return (
     <div className="fixed bottom-4 left-1/2 z-[9999] flex w-[calc(100%-2rem)] -translate-x-1/2 flex-col items-center gap-2 pointer-events-none sm:bottom-6 sm:w-auto" role="region" aria-label="Notifications">
       {toasts.map(t => (

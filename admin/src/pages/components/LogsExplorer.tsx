@@ -1,4 +1,3 @@
-// @ts-nocheck
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     FiActivity,
@@ -32,7 +31,7 @@ const iconTone = (state: 'ok' | 'warn' | 'bad') => {
     return 'text-red-500 bg-red-50 dark:bg-red-500/10';
 };
 
-export function getDisplayLogType(log: {
+function getDisplayLogType(log: {
     type?: string;
     source?: string;
     summary?: string;
@@ -156,7 +155,13 @@ export const LogsExplorer: React.FC = () => {
         return { label: 'All Systems Operational', style: 'from-emerald-500/10 to-teal-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400', dot: 'bg-emerald-500' };
     }, [dbConnected, stats]);
 
-    const metricCards = [
+    const metricCards: Array<{
+        label: string;
+        value: string;
+        detail: string;
+        icon: React.ReactNode;
+        state: 'ok' | 'warn' | 'bad';
+    }> = [
         {
             label: 'SMS Success Rate',
             value: `${stats?.delivery_rate ?? 100}%`,

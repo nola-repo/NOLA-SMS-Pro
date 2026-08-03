@@ -1,7 +1,7 @@
-// @ts-nocheck
 import { devLog } from '../../utils/devLog';
 import React, { useState, useEffect, useCallback } from 'react';
 import { FiUsers, FiSend, FiActivity, FiMessageSquare, FiCreditCard, FiPlus, FiChevronLeft, FiChevronRight, FiSearch, FiArrowRight, FiBriefcase } from 'react-icons/fi';
+import type { Account, SenderRequest } from './Types';
 
 import SplitText from './SplitText';
 import FadeContent from './FadeContent';
@@ -132,7 +132,7 @@ const DashboardMetricCard = ({
 );
 
 export const AdminDashboard: React.FC<{
-    onNavigate: (tab: any) => void;
+    onNavigate: (tab: 'accounts' | 'requests' | 'activity' | 'agencies' | 'profile' | 'logs-explorer' | 'admins') => void;
     topControls?: React.ReactNode;
     mobileMenuButton?: React.ReactNode;
 }> = ({ onNavigate, topControls, mobileMenuButton }) => {

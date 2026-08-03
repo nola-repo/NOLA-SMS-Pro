@@ -1,4 +1,3 @@
-// @ts-nocheck
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FiBell, FiAlertTriangle, FiAlertOctagon, FiCheckCircle, FiX, FiSend, FiUserPlus, FiBriefcase } from 'react-icons/fi';
