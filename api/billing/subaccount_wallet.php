@@ -120,19 +120,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         // To submit a request, we need to know the agency_id. Look it up.
-        $agencyDoc = $db->collection('agency_subaccounts')->document($location_id)->snapshot();
-        $agency_id = $agencyDoc->exists() ? ($agencyDoc->data()['agency_id'] ?? null) : null;
-        $location_name = $agencyDoc->exists() ? ($agencyDoc->data()['name'] ?? 'Unnamed Location') : 'Unnamed Location';
-        
+        // Try both the raw location_id and the ghl_-prefixed variant as doc IDs
+        $agencyDocCandidates = array_unique(array_filter([
+            $location_id,
+            (strpos($location_id, 'ghl_') === 0) ? substr($location_id, 4) : 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $location_id),
+        ]));
+        $agencyDoc = null;
+        foreach ($agencyDocCandidates as $candidate) {
+            $snap = $db->collection('agency_subaccounts')->document($candidate)->snapshot();
+            if ($snap->exists()) {
+                $agencyDoc = $snap;
+                break;
+            }
+        }
+        $agency_id = $agencyDoc ? ($agencyDoc->data()['agency_id'] ?? null) : null;
+        $location_name = $agencyDoc ? ($agencyDoc->data()['name'] ?? 'Unnamed Location') : 'Unnamed Location';
+
         if (!$agency_id) {
             http_response_code(400);
             echo json_encode(['error' => 'Could not determine agency_id for this subaccount']);
             exit;
         }
 
+        $requestReferenceId = ReferenceId::generate('CRQ');
         $requestRef = $db->collection('credit_requests')->newDocument();
         $now = new \DateTime();
-        
+
         $requestRef->set([
             'request_id' => $requestRef->id(),
             'reference_id' => $requestReferenceId,
