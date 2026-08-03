@@ -8,6 +8,7 @@ function validate_api_request(): void
 {
     // Try standard PHP server headers first
     $receivedSecret = $_SERVER['HTTP_X_WEBHOOK_SECRET'] ?? '';
+    $usedQuerySecretFallback = false;
 
     if (!$receivedSecret) {
         // Fallback: search all headers for the secret (Apache/Cloud Run compatibility)
@@ -23,6 +24,7 @@ function validate_api_request(): void
     // Fallback: Check Query String for Webhooks that don't support custom headers (e.g Semaphore, CRON)
     if (!$receivedSecret) {
         $receivedSecret = $_GET['secret'] ?? $_GET['token'] ?? '';
+        $usedQuerySecretFallback = $receivedSecret !== '';
     }
 
     $expectedSecret = getenv('WEBHOOK_SECRET');
@@ -42,7 +44,18 @@ function validate_api_request(): void
         exit;
     }
 
-    Logger::auth(true, 'webhook-secret', ['ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown']);
+    if ($usedQuerySecretFallback) {
+        Logger::error('Deprecated query-string webhook secret used', [
+            'method' => 'webhook-secret-query-fallback',
+            'ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown',
+            'uri_hash' => hash('sha256', (string)($_SERVER['REQUEST_URI'] ?? '')),
+        ]);
+    }
+
+    Logger::auth(true, 'webhook-secret', [
+        'ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown',
+        'query_secret_fallback' => $usedQuerySecretFallback,
+    ]);
 }
 
 /**

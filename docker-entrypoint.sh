@@ -8,6 +8,11 @@ set -e
 LARAVEL_DIR="/var/www/html/laravel"
 ENV_FILE="$LARAVEL_DIR/.env"
 
+if [ -z "${LARAVEL_APP_KEY:-}" ] || [ "${LARAVEL_APP_KEY}" = "placeholder" ]; then
+  echo "ERROR: LARAVEL_APP_KEY env var is not set correctly" >&2
+  exit 1
+fi
+
 cat > "$ENV_FILE" <<EOF
 APP_NAME=NolaSMSPro
 APP_ENV=production

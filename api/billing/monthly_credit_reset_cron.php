@@ -80,6 +80,9 @@ $usersSnap = $db->collection('users')->documents();
 $resetCount = 0;
 $skippedCount = 0;
 $resetUsers = [];
+$failedBatches = [];
+$batchNumber = 1;
+$currentBatchUsers = [];
 
 $batch = $db->batch();
 $opsInBatch = 0;
@@ -142,12 +145,14 @@ foreach ($usersSnap as $doc) {
     $opsInBatch++;
 
     $resetCount++;
-    $resetUsers[] = [
+    $resetUser = [
         'user_id'          => $doc->id(),
         'location_id'      => $locId,
         'previous_balance' => $currentBalance,
         'new_balance'      => $monthlyAllocation
     ];
+    $resetUsers[] = $resetUser;
+    $currentBatchUsers[] = $resetUser;
 
     // Invalidate subaccount credit cache
     NolaCache::deleteRegistry("credits_registry_" . $locId);
@@ -159,9 +164,16 @@ foreach ($usersSnap as $doc) {
             $batch->commit();
         } catch (\Throwable $e) {
             error_log("[monthly_credit_reset_cron] Batch commit failed: " . $e->getMessage());
+            $failedBatches[] = [
+                'batch' => $batchNumber,
+                'error' => $e->getMessage(),
+                'accounts' => $currentBatchUsers,
+            ];
         }
         $batch = $db->batch();
         $opsInBatch = 0;
+        $currentBatchUsers = [];
+        $batchNumber++;
     }
 }
 
@@ -171,7 +183,36 @@ if ($opsInBatch > 0) {
         $batch->commit();
     } catch (\Throwable $e) {
         error_log("[monthly_credit_reset_cron] Final batch commit failed: " . $e->getMessage());
+        $failedBatches[] = [
+            'batch' => $batchNumber,
+            'error' => $e->getMessage(),
+            'accounts' => $currentBatchUsers,
+        ];
     }
+}
+
+if (!empty($failedBatches)) {
+    $configRef->set([
+        'last_reset_failed_at' => $ts,
+        'last_reset_failure_count' => count($failedBatches),
+        'last_reset_attempt_count' => $resetCount,
+        'updated_at' => $ts
+    ], ['merge' => true]);
+
+    NolaCache::invalidateAdminDashboard();
+
+    http_response_code(500);
+    echo json_encode([
+        'status' => 'partial_failure',
+        'message' => 'One or more Firestore batches failed; last_reset_at was not updated.',
+        'monthly_allocation' => $monthlyAllocation,
+        'attempted_reset_count' => $resetCount,
+        'skipped_count' => $skippedCount,
+        'failed_batch_count' => count($failedBatches),
+        'failed_batches' => $failedBatches,
+        'timestamp' => $now->format('Y-m-d H:i:s')
+    ], JSON_PRETTY_PRINT);
+    exit;
 }
 
 // Update config status

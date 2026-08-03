@@ -17,7 +17,7 @@ NolaPerformance::end('auth');
 
 $db = get_firestore();
 
-$cacheKey = "admin_system_health_status";
+$cacheKey = "admin_system_health_status_v2";
 NolaPerformance::begin('cache_read');
 $cachedPayload = NolaCache::get($cacheKey);
 NolaPerformance::end('cache_read');
@@ -123,11 +123,20 @@ try {
             
             $totalMessages++;
             
-            $logs[] = array_merge($data, [
+            $logs[] = array_filter([
                 'id' => $doc->id(),
                 'type' => 'message',
-                'timestamp' => $ts
-            ]);
+                'timestamp' => $ts,
+                'status' => $data['status'] ?? ($data['delivery_status'] ?? null),
+                'location_id' => $data['location_id'] ?? null,
+                'provider' => $data['provider'] ?? ($data['source'] ?? null),
+                'provider_status' => $data['provider_status'] ?? null,
+                'provider_error' => $data['provider_error'] ?? null,
+                'direction' => $data['direction'] ?? null,
+                'batch_id' => $data['batch_id'] ?? null,
+                'ghl_sync_success' => $data['ghl_sync_success'] ?? null,
+                'ghl_sync_skipped' => $data['ghl_sync_skipped'] ?? null,
+            ], static fn($v) => $v !== null);
         }
     }
 
@@ -184,56 +193,77 @@ try {
 $accounts = [];
 $totalSubaccounts = 0;
 $lowBalanceCount = 0;
+$subaccountScanLimit = 1000;
+$subaccountStatsTruncated = false;
+$subaccountStatsSource = 'live_scan';
 
 try {
-    $locationToCreditMap = [];
     NolaPerformance::increment('firestore_queries');
-    $users = $db->collection('users')->documents();
-    foreach ($users as $userDoc) {
-        if ($userDoc->exists()) {
-            NolaPerformance::increment('documents_processed');
-            $uData = $userDoc->data();
-            $bal = isset($uData['credit_balance']) ? (int)$uData['credit_balance'] : null;
-            if ($bal !== null) {
-                foreach (['active_location_id', 'location_id'] as $field) {
-                    $loc = trim((string)($uData[$field] ?? ''));
-                    if ($loc !== '') {
-                        $locationToCreditMap[$loc] = $bal;
-                        $locationToCreditMap['ghl_' . $loc] = $bal;
+    $statsSnap = $db->collection('admin_config')->document('dashboard_stats')->snapshot();
+    $statsData = $statsSnap->exists() ? $statsSnap->data() : [];
+    $generatedAt = $statsData['generated_at'] ?? null;
+    $generatedAtUnix = $generatedAt instanceof \Google\Cloud\Core\Timestamp ? $generatedAt->get()->getTimestamp() : 0;
+
+    if ($generatedAtUnix > 0 && (time() - $generatedAtUnix) <= 600) {
+        $accounts = is_array($statsData['accounts'] ?? null) ? $statsData['accounts'] : [];
+        $totalSubaccounts = (int)($statsData['total_subaccounts'] ?? 0);
+        $lowBalanceCount = (int)($statsData['low_balance_subaccounts'] ?? 0);
+        $subaccountStatsSource = 'dashboard_stats';
+    } else {
+        $locationToCreditMap = [];
+        $usersScanned = 0;
+        NolaPerformance::increment('firestore_queries');
+        $users = $db->collection('users')->limit($subaccountScanLimit)->documents();
+        foreach ($users as $userDoc) {
+            $usersScanned++;
+            if ($userDoc->exists()) {
+                NolaPerformance::increment('documents_processed');
+                $uData = $userDoc->data();
+                $bal = isset($uData['credit_balance']) ? (int)$uData['credit_balance'] : null;
+                if ($bal !== null) {
+                    foreach (['active_location_id', 'location_id'] as $field) {
+                        $loc = trim((string)($uData[$field] ?? ''));
+                        if ($loc !== '') {
+                            $locationToCreditMap[$loc] = $bal;
+                            $locationToCreditMap['ghl_' . $loc] = $bal;
+                        }
                     }
                 }
             }
         }
-    }
 
-    NolaPerformance::increment('firestore_queries');
-    $integrations = $db->collection('integrations')->documents();
-    foreach ($integrations as $intDoc) {
-        if ($intDoc->exists()) {
-            NolaPerformance::increment('documents_processed');
-            $intData = $intDoc->data();
-            $intDocId = $intDoc->id();
-            $locId = $intData['location_id'] ?? str_replace('ghl_', '', $intDocId);
-            if ($locId === 'ghl') continue;
-            
-            $totalSubaccounts++;
-            
-            $locationName = $intData['location_name'] ?? 'Unknown Location';
-            $creditBalance = $locationToCreditMap[$locId] ?? $locationToCreditMap['ghl_' . $locId] ?? (int)($intData['credit_balance'] ?? 0);
-            
-            if ($creditBalance <= 10) {
-                $lowBalanceCount++;
+        $integrationsScanned = 0;
+        NolaPerformance::increment('firestore_queries');
+        $integrations = $db->collection('integrations')->limit($subaccountScanLimit)->documents();
+        foreach ($integrations as $intDoc) {
+            $integrationsScanned++;
+            if ($intDoc->exists()) {
+                NolaPerformance::increment('documents_processed');
+                $intData = $intDoc->data();
+                $intDocId = $intDoc->id();
+                $locId = $intData['location_id'] ?? str_replace('ghl_', '', $intDocId);
+                if ($locId === 'ghl') continue;
+
+                $totalSubaccounts++;
+
+                $locationName = $intData['location_name'] ?? 'Unknown Location';
+                $creditBalance = $locationToCreditMap[$locId] ?? $locationToCreditMap['ghl_' . $locId] ?? (int)($intData['credit_balance'] ?? 0);
+
+                if ($creditBalance <= 10) {
+                    $lowBalanceCount++;
+                }
+
+                $accounts[] = [
+                    'id' => $intDocId,
+                    'data' => [
+                        'location_id' => $locId,
+                        'location_name' => $locationName,
+                        'credit_balance' => $creditBalance
+                    ]
+                ];
             }
-            
-            $accounts[] = [
-                'id' => $intDocId,
-                'data' => [
-                    'location_id' => $locId,
-                    'location_name' => $locationName,
-                    'credit_balance' => $creditBalance
-                ]
-            ];
         }
+        $subaccountStatsTruncated = $usersScanned >= $subaccountScanLimit || $integrationsScanned >= $subaccountScanLimit;
     }
 } catch (\Throwable $e) {
     error_log("[admin_health.php] Failed to compute subaccount counts: " . $e->getMessage());
@@ -278,6 +308,8 @@ $responsePayload = [
             'delivery_rate' => $deliveryRate,
             'total_subaccounts' => $totalSubaccounts,
             'low_balance_subaccounts' => $lowBalanceCount,
+            'subaccount_stats_truncated' => $subaccountStatsTruncated,
+            'subaccount_stats_source' => $subaccountStatsSource,
         ],
         'logs' => $logs,
         'accounts' => $accounts,
