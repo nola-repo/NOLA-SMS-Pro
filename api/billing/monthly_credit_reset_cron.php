@@ -81,6 +81,9 @@ $resetCount = 0;
 $skippedCount = 0;
 $resetUsers = [];
 
+$batch = $db->batch();
+$opsInBatch = 0;
+
 foreach ($usersSnap as $doc) {
     if (!$doc->exists()) continue;
     $d = $doc->data();
@@ -105,57 +108,38 @@ foreach ($usersSnap as $doc) {
     $diffAmount     = $monthlyAllocation - $currentBalance;
     $intDocId       = CreditManager::integration_doc_id_for_location((string)$locId);
 
-    // ── Risk 3 Fix: Firestore Transaction per user ────────────────────────────
-    // Atomically reads + writes each user's balance to prevent race conditions
-    // with simultaneous SMS deductions or top-up purchases.
-    try {
-        $db->runTransaction(function (\Google\Cloud\Firestore\Transaction $txn) use (
-            $db, $doc, $intDocId, $monthlyAllocation, $ts
-        ) {
-            // Re-read inside transaction for consistency
-            $freshSnap = $txn->snapshot($doc->reference());
+    // 1. Batch user balance update
+    $batch->update($doc->reference(), [
+        ['path' => 'credit_balance',        'value' => $monthlyAllocation],
+        ['path' => 'last_monthly_reset_at', 'value' => $ts],
+        ['path' => 'updated_at',            'value' => $ts],
+    ]);
+    $opsInBatch++;
 
-            $txn->update($doc->reference(), [
-                ['path' => 'credit_balance',        'value' => $monthlyAllocation],
-                ['path' => 'last_monthly_reset_at', 'value' => $ts],
-                ['path' => 'updated_at',            'value' => $ts],
-            ]);
+    // 2. Batch integration document balance update
+    $intRef = $db->collection('integrations')->document($intDocId);
+    $batch->set($intRef, [
+        'credit_balance' => $monthlyAllocation,
+        'updated_at'     => $ts
+    ], ['merge' => true]);
+    $opsInBatch++;
 
-            $intRef  = $db->collection('integrations')->document($intDocId);
-            $intSnap = $txn->snapshot($intRef);
-            if ($intSnap->exists()) {
-                $txn->update($intRef, [
-                    ['path' => 'credit_balance', 'value' => $monthlyAllocation],
-                    ['path' => 'updated_at',     'value' => $ts],
-                ]);
-            }
-        });
-    } catch (\Throwable $e) {
-        error_log("[monthly_credit_reset_cron] Transaction failed for user {$doc->id()}: " . $e->getMessage());
-        $skippedCount++;
-        continue;
-    }
-
-    // Log transaction (outside transaction since newDocument() uses auto-IDs)
-    try {
-        $txRef = $db->collection('credit_transactions')->newDocument();
-        $txRef->set([
-            'transaction_id'           => $txRef->id(),
-            'transaction_reference_id' => ReferenceId::generate('TXN'),
-            'account_id'               => $intDocId,
-            'wallet_scope'             => 'subaccount',
-            'type'                     => 'monthly_reset',
-            'amount'                   => $diffAmount,
-            'balance_before'           => $currentBalance,
-            'balance_after'            => $monthlyAllocation,
-            'reference_id'             => 'monthly_reset_' . $now->format('Y_m'),
-            'description'              => "Monthly credit reset allocation ($monthlyAllocation credits)",
-            'created_at'               => $ts
-        ]);
-    } catch (\Throwable $e) {
-        // Non-fatal: balance is already updated; log warning and continue
-        error_log("[monthly_credit_reset_cron] Failed to write tx log for {$doc->id()}: " . $e->getMessage());
-    }
+    // 3. Batch credit transaction audit record
+    $txRef = $db->collection('credit_transactions')->newDocument();
+    $batch->set($txRef, [
+        'transaction_id'           => $txRef->id(),
+        'transaction_reference_id' => ReferenceId::generate('TXN'),
+        'account_id'               => $intDocId,
+        'wallet_scope'             => 'subaccount',
+        'type'                     => 'monthly_reset',
+        'amount'                   => $diffAmount,
+        'balance_before'           => $currentBalance,
+        'balance_after'            => $monthlyAllocation,
+        'reference_id'             => 'monthly_reset_' . $now->format('Y_m'),
+        'description'              => "Monthly credit reset allocation ($monthlyAllocation credits)",
+        'created_at'               => $ts
+    ]);
+    $opsInBatch++;
 
     $resetCount++;
     $resetUsers[] = [
@@ -168,6 +152,26 @@ foreach ($usersSnap as $doc) {
     // Invalidate subaccount credit cache
     NolaCache::deleteRegistry("credits_registry_" . $locId);
     NolaCache::delete("credits_data_" . $locId);
+
+    // Commit batch every 450 operations (max limit per Firestore commit is 500)
+    if ($opsInBatch >= 450) {
+        try {
+            $batch->commit();
+        } catch (\Throwable $e) {
+            error_log("[monthly_credit_reset_cron] Batch commit failed: " . $e->getMessage());
+        }
+        $batch = $db->batch();
+        $opsInBatch = 0;
+    }
+}
+
+// Commit remaining queued operations
+if ($opsInBatch > 0) {
+    try {
+        $batch->commit();
+    } catch (\Throwable $e) {
+        error_log("[monthly_credit_reset_cron] Final batch commit failed: " . $e->getMessage());
+    }
 }
 
 // Update config status

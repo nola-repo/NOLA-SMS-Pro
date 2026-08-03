@@ -1,11 +1,14 @@
-﻿<?php
+<?php
 
 ini_set('display_errors', 0);
 ini_set('display_startup_errors', 0);
 error_reporting(E_ALL);
 
 require_once __DIR__ . '/../cors.php';
+require_once __DIR__ . '/../performance_logger.php';
 header('Content-Type: application/json');
+
+NolaPerformance::start('webhook/send_sms');
 
 $config = require __DIR__ . '/config.php';
 require __DIR__ . '/firestore_client.php';

@@ -10,6 +10,10 @@ header('Content-Type: application/json');
 require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
 require_once __DIR__ . '/services/StatusSync.php';
+require_once __DIR__ . '/cache_helper.php';
+require_once __DIR__ . '/performance_logger.php';
+
+NolaPerformance::start('api/messages');
 
 
 $db = get_firestore();
@@ -74,6 +78,7 @@ if ($method === 'PUT') {
     ];
 
     $docRef->update($updateData);
+    NolaCache::deleteRegistry("messages_registry_" . $locId);
 
     echo json_encode(['success' => true]);
     exit;
@@ -94,6 +99,7 @@ if ($method === 'DELETE') {
         // Security: Check ownership
         if (($snap->data()['location_id'] ?? '') === $locId) {
             $docRef->delete();
+            NolaCache::deleteRegistry("messages_registry_" . $locId);
         } else {
             http_response_code(403);
             echo json_encode(['success' => false, 'error' => 'Permission denied']);
@@ -111,6 +117,21 @@ $out = [
     'total' => 0,
     'offset' => $offset,
 ];
+
+$cacheKey = "messages_" . md5((string)$locId . '_' . (string)$direction . '_' . (string)$conversationId . '_' . (string)$batchId . '_' . (string)$recipientKey . '_' . $limit . '_' . $offset . '_' . (string)$status);
+$registryKey = "messages_registry_" . (string)$locId;
+$forceFresh = isset($_GET['fresh']) || isset($_GET['no_cache']);
+
+if ($method === 'GET' && !$forceFresh) {
+    $cachedData = NolaCache::get($cacheKey);
+    if ($cachedData !== null) {
+        NolaPerformance::cache('HIT');
+        NolaCache::sendApiCacheHeaders(30, true);
+        echo json_encode(NolaCache::withCacheMeta($cachedData, 30, true, 'location'), JSON_PRETTY_PRINT);
+        exit;
+    }
+}
+NolaPerformance::cache('MISS');
 
 // Strictly map statuses for the UI as requested
 $mapStatus = function($s) {
@@ -355,6 +376,13 @@ catch (\Throwable $e) {
         'error' => 'Failed to fetch messages',
         'message' => $e->getMessage(),
     ];
+}
+
+if ($method === 'GET' && isset($out['success']) && $out['success'] === true) {
+    NolaCache::setWithRegistry($registryKey, $cacheKey, $out, 30);
+    NolaCache::sendApiCacheHeaders(30, false);
+    echo json_encode(NolaCache::withCacheMeta($out, 30, false, 'location'), JSON_PRETTY_PRINT);
+    exit;
 }
 
 echo json_encode($out, JSON_PRETTY_PRINT);

@@ -268,6 +268,7 @@ $responsePayload = [
     'status' => 'success',
     'data' => [
         'database_connected' => $dbConnected,
+        'cache' => NolaCache::getDiagnostics(),
         'provider' => $providerDetails,
         'stats' => [
             'total_messages' => $totalMessages,

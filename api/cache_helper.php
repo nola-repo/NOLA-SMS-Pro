@@ -295,5 +295,35 @@ class NolaCache
         self::deleteRegistry('agency_transactions_registry_' . $agencyId);
         self::deleteRegistry('credit_requests_registry_' . $agencyId);
     }
+
+    /**
+     * Diagnostic helper for cache status checks (Redis connection, ping latency, driver).
+     */
+    public static function getDiagnostics(): array
+    {
+        self::init();
+        $redisConnected = false;
+        $pingMs = null;
+
+        if (self::$redis) {
+            try {
+                $start = hrtime(true);
+                $pong = self::$redis->ping();
+                $pingMs = round((hrtime(true) - $start) / 1_000_000, 2);
+                $redisConnected = ($pong === true || $pong === '+PONG');
+            } catch (\Throwable $e) {
+                $redisConnected = false;
+            }
+        }
+
+        return [
+            'driver'          => self::$redis ? 'redis' : 'file_fallback',
+            'redis_connected' => $redisConnected,
+            'ping_ms'         => $pingMs,
+            'redis_host'      => getenv('REDIS_HOST') ?: 'not_set',
+            'is_cloud_run'    => !empty(getenv('K_SERVICE')),
+        ];
+    }
 }
+
 
