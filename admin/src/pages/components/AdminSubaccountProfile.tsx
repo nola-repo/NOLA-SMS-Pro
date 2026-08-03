@@ -21,7 +21,12 @@ const formatDate = (value?: string | null) => {
 const displayValue = (value?: string | number | null) =>
     value === undefined || value === null || value === '' ? '—' : String(value);
 
-export const AdminSubaccountProfile = ({ account, onClose, onSaved, onToggleActive }) => {
+export const AdminSubaccountProfile: React.FC<{
+    account: any;
+    onClose: () => void;
+    onSaved?: (account: any) => void;
+    onToggleActive?: (account: any, active: boolean) => void;
+}> = ({ account, onClose, onSaved, onToggleActive }) => {
     const [form, setForm] = useState({
         name: account?.name || account?.full_name || '',
         email: account?.email || '',
@@ -30,7 +35,7 @@ export const AdminSubaccountProfile = ({ account, onClose, onSaved, onToggleActi
     const [active, setActive] = useState(account?.active !== false);
     const [saving, setSaving] = useState(false);
     const [loadingProfile, setLoadingProfile] = useState(false);
-    const [status, setStatus] = useState(null);
+    const [status, setStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
     useEffect(() => {
         if (!account?.id) return;

@@ -61,6 +61,7 @@ type Account = {
     credits?: number;
     free_usage_count?: number;
     free_credits_total?: number;
+    monthly_reset_enabled?: boolean;
 };
 
 const normalizeNumber = (value: unknown, fallback = 0) => {
@@ -105,20 +106,7 @@ const getAccountName = (account: Account) =>
     account.email ||
     'Unnamed User';
 
-const getInitials = (account: Account) => {
-    const source = getAccountName(account);
-    const parts = source.split(/\s+/).filter(Boolean);
-    return (parts[0]?.[0] || account.email?.[0] || '?').toUpperCase() + (parts[1]?.[0] || '').toUpperCase();
-};
 
-const roleBadge = (role?: string) => {
-    const normalized = (role || 'user').replace(/_/g, ' ');
-    return (
-        <span className="inline-flex px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-900/10 dark:text-blue-400 dark:border-blue-800/30 text-[10px] font-black uppercase tracking-wider">
-            {normalized}
-        </span>
-    );
-};
 
 type AccountStatusFilter = 'all' | 'active' | 'inactive' | 'missing_location' | 'low_credit';
 
@@ -133,19 +121,6 @@ const accountStatusFilters: Array<{ id: AccountStatusFilter; label: string }> = 
 const emptyValue = (value?: string | null) => value?.trim() || '-';
 
 const getCreditBalance = (account: Account) => account.credit_balance ?? account.credits ?? 0;
-
-
-
-const parseDateValue = (value: any) => {
-    if (!value) return null;
-    if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
-    if (typeof value === 'object' && value.seconds) {
-        const date = new Date(Number(value.seconds) * 1000);
-        return Number.isNaN(date.getTime()) ? null : date;
-    }
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? null : date;
-};
 
 
 
@@ -188,13 +163,6 @@ const matchesAccountStatusFilter = (account: Account, filter: AccountStatusFilte
     if (filter === 'inactive') return account.active === false || ['inactive', 'disabled', 'suspended'].includes(normalized);
     if (filter === 'active') return hasLocation && account.active !== false && !['inactive', 'disabled', 'suspended'].includes(normalized);
     return true;
-};
-
-const getLocationLine = (account: Account) => {
-    const locationName = account.location_name?.trim();
-    const locationId = (account.location_id || account.active_location_id || '').trim();
-    if (locationName && locationId) return `${locationName} - ${locationId}`;
-    return locationName || locationId || '';
 };
 
 const getAgencyName = (account: Account) =>

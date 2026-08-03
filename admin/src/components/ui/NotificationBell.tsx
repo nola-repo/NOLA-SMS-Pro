@@ -129,7 +129,7 @@ const NotifItem: React.FC<{
                 </p>
                 {notif.email && <p className="text-[10.5px] text-[#9aa0a6] mt-1 font-medium">{notif.email}</p>}
                 <p className="text-[10px] text-[#9aa0a6] mt-0.5 font-medium uppercase tracking-wide">
-                    {timeAgo(notif.created_at)}
+                    {timeAgo(notif.created_at || '')}
                 </p>
             </div>
 

@@ -8,7 +8,7 @@ import { getRecipientKey, saveBulkMessage } from "../utils/storage";
 import type { BulkMessageHistoryItem, Message } from "../types/Sms";
 import type { Contact } from "../types/Contact";
 import type { Template } from "../types/Template";
-import { FiUser, FiUsers, FiMenu, FiMoreHorizontal, FiX, FiCopy, FiRefreshCw } from "react-icons/fi";
+import { FiUser, FiUsers, FiMenu, FiMoreHorizontal, FiCopy, FiRefreshCw } from "react-icons/fi";
 import ShinyText from "./ShinyText";
 import { DotLottieReact } from "@lottiefiles/dotlottie-react";
 import { useConversationMessages } from "../hooks/useConversationMessages";
@@ -38,23 +38,6 @@ interface ComposerProps {
   darkMode?: boolean;
 }
 
-type MessageDetailsSelection =
-  | {
-      kind: "message";
-      message: Message;
-      recipient?: string;
-      conversationId?: string;
-    }
-  | {
-      kind: "bulk";
-      id: string;
-      text: string;
-      timestamp: Date;
-      rows: Message[];
-      stats: { sent: number; sending: number; failed: number; total: number };
-      conversationId?: string;
-    };
-
 type RecipientAnalysis = {
   uniqueRecipients: Contact[];
   invalidRecipients: Contact[];
@@ -62,36 +45,6 @@ type RecipientAnalysis = {
   duplicatePhones: string[];
   totalCount: number;
   uniqueCount: number;
-};
-
-type BulkConfirmationState = {
-  messageText: string;
-  totalCount: number;
-  uniqueCount: number;
-  duplicateCount: number;
-  duplicatePhones: string[];
-  segments: number;
-  estimatedCredits: number;
-};
-
-type BulkSendSummaryState = {
-  total: number;
-  sent: number;
-  failed: number;
-  skipped: number;
-};
-
-const DetailRow: React.FC<{ label: string; value?: string | number | null; mono?: boolean }> = ({ label, value, mono }) => {
-  if (value === undefined || value === null || value === "") return null;
-
-  return (
-    <div className="rounded-xl border border-[#e5ebf3] dark:border-white/10 bg-[#f8fafc] dark:bg-white/[0.04] px-3 py-2">
-      <div className="text-[10px] font-bold uppercase tracking-wide text-[#98a2b3] dark:text-[#7d8491] mb-1">{label}</div>
-      <div className={`text-[13px] font-medium leading-snug text-[#344054] dark:text-[#e4e7ec] break-words ${mono ? "font-mono" : ""}`}>
-        {value}
-      </div>
-    </div>
-  );
 };
 
 
@@ -177,15 +130,7 @@ const analyzeRecipients = (recipients: Contact[]): RecipientAnalysis => {
   };
 };
 
-const stringifyDiagnostic = (value?: unknown): string | undefined => {
-  if (value === undefined || value === null || value === "") return undefined;
-  if (typeof value === "string") return value;
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-};
+
 
 const matchesContactUpdate = (target: Contact, contact: Contact, previous?: Contact | null) => {
   if (target.id === contact.id || (previous && target.id === previous.id)) return true;
@@ -1235,16 +1180,6 @@ export const Composer: React.FC<ComposerProps> = ({
     );
   };
 
-  const formatDetailsTimestamp = (date: Date) =>
-    date.toLocaleString([], {
-      weekday: "long",
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-
   const showMessageDetails = (msg: Message) => {
     setMessageDetails({
       kind: "message",
@@ -1260,13 +1195,6 @@ export const Composer: React.FC<ComposerProps> = ({
       setTimeout(scrollToBottom, 80);
     }
   };
-
-  // const renderSendingStatus = () => (
-  //   <div className="mt-1 flex items-center justify-end gap-1 px-1 text-[10px] font-bold uppercase tracking-wider text-[#2b83fa] dark:text-[#8bbcff]">
-  //     <FiLoader className="h-2.5 w-2.5 animate-spin" />
-  //     Sending
-  //   </div>
-  // );
 
   const showBulkDetails = (
     id: string,
@@ -1291,14 +1219,6 @@ export const Composer: React.FC<ComposerProps> = ({
   const messageContainerClass = "max-w-[78%] sm:max-w-[620px] flex flex-col items-end group mb-0.5 cursor-pointer";
   const outboundBubbleClass = "bg-gradient-to-r from-[#1d6bd4] via-[#2b83fa] to-[#2563eb] text-white px-4 py-3 ring-1 ring-white/25 transition-colors";
   const bubbleOptionsButtonClass = "absolute -left-9 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-[#d6e0eb] dark:border-white/10 bg-white/[0.9] dark:bg-[#17191f]/90 text-[#667085] dark:text-[#a7adba] opacity-0 pointer-events-auto transition-all group-hover:opacity-100 hover:opacity-100 focus-visible:opacity-100 hover:text-[#1d6bd4] dark:hover:text-[#8bbcff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2b83fa]/30";
-  const messageDetailsText = messageDetails
-    ? messageDetails.kind === "bulk"
-      ? messageDetails.text
-      : messageDetails.message.text || messageDetails.message.message || ""
-    : "";
-  const messageDetailsRecipient = messageDetails?.kind === "message"
-    ? messageDetails.recipient || messageDetails.message.number || ""
-    : "";
 
   return (
     <div className="flex flex-col h-full bg-[#f8fafc] dark:bg-[#0c0d10] relative overflow-hidden transition-colors duration-300">

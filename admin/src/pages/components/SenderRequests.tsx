@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { FiUsers, FiSend, FiSettings, FiLogOut, FiLock, FiAlertCircle, FiEye, FiEyeOff, FiCopy, FiCheck, FiX, FiRefreshCw, FiKey, FiHome, FiClock, FiActivity, FiMessageSquare, FiCreditCard, FiShield, FiShieldOff, FiPlus, FiMinus, FiTrash2, FiChevronLeft, FiChevronRight, FiSearch, FiSun, FiMoon, FiMoreVertical, FiToggleLeft, FiFilter, FiPaperclip, FiExternalLink } from 'react-icons/fi';
-import logoUrl from '../../assets/NOLA SMS PRO Logo.png';
-import Antigravity from '../../components/ui/Antigravity';
+import { FiUsers, FiSend, FiX, FiRefreshCw, FiKey, FiClock, FiShield, FiShieldOff, FiTrash2, FiChevronLeft, FiChevronRight, FiSearch, FiMoreVertical, FiFilter, FiCheck, FiEye, FiEyeOff, FiPaperclip, FiExternalLink, FiAlertCircle } from 'react-icons/fi';
 import { useToast } from '../../hooks/useToast';
 import { ToastContainer } from '../../components/ui/ToastContainer';
 import { adminFetch } from '../../utils/adminApi';
 import { getAdminAuthHeaders } from '../../utils/adminAuthHeaders';
+import type { SenderRequest, Account } from './Types';
 
 const ADMIN_API = '/api/admin_sender_requests.php';
 const POLL_INTERVAL = 15000; // 15 seconds real-time sync
@@ -175,8 +174,6 @@ export const AdminSenderRequests: React.FC = () => {
         return () => document.removeEventListener('mousedown', closeMenu);
     }, [openActionMenuId]);
 
-    const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
-
     const fetchRequests = useCallback(async (isInitial = false) => {
         if (isInitial) setLoading(true);
         try {
@@ -201,7 +198,6 @@ export const AdminSenderRequests: React.FC = () => {
                 }).filter((acc: any) => acc.id !== 'ghl' && acc.location_id);
                 setAccounts(mappedAccounts);
             }
-            setLastRefreshed(new Date());
         } catch {
             showToast('Network error. Could not reach the backend.', 'error');
         } finally {
@@ -730,7 +726,7 @@ export const AdminSenderRequests: React.FC = () => {
                                                 </div>
                                                 {Array.isArray(req.documents) && req.documents.length > 0 ? (
                                                     <div className="space-y-2 mt-1">
-                                                        {req.documents.map((doc, idx) => {
+                                                        {req.documents.map((doc: any, idx: number) => {
                                                             const docName = doc.name || `Document_${idx + 1}`;
                                                             const docSizeLabel = doc.size
                                                                 ? (doc.size < 1024 * 1024 ? `${(doc.size / 1024).toFixed(1)} KB` : `${(doc.size / (1024 * 1024)).toFixed(1)} MB`)
@@ -1024,7 +1020,7 @@ export const AdminSenderRequests: React.FC = () => {
                                             provider: approvalProvider,
                                             provider_preference: `${approvalProvider}_custom`,
                                             ...approvalKeyPayload,
-                                        })}
+                                        } as any)}
                                         className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-[13px] font-bold bg-emerald-500 hover:bg-emerald-600 text-white transition-all shadow-sm disabled:opacity-50 disabled:shadow-none"
                                     >
                                         <FiCheck className="w-4 h-4" />

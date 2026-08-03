@@ -7,14 +7,15 @@ const POLL_INTERVAL = 60_000; // 60 seconds
 
 export type AdminNotification = {
     id: string;
-    type: 'low_balance' | 'zero_balance';
-    location_id: string;
-    location_name: string;
-    email: string;
-    balance: number;
-    threshold: number;
-    created_at: string;
-    read: boolean;
+    type: 'low_balance' | 'zero_balance' | 'sender_request' | 'new_subaccount' | 'new_agency' | string;
+    location_id?: string;
+    location_name?: string;
+    email?: string;
+    balance?: number;
+    threshold?: number;
+    created_at?: string;
+    read?: boolean;
+    metadata?: Record<string, any>;
 };
 
 export function useAdminNotifications() {

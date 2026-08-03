@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { FiUsers, FiSend, FiSettings, FiLogOut, FiLock, FiAlertCircle, FiEye, FiEyeOff, FiCopy, FiCheck, FiX, FiRefreshCw, FiKey, FiHome, FiClock, FiActivity, FiMessageSquare, FiCreditCard, FiShield, FiPlus, FiMinus, FiTrash2, FiChevronDown, FiChevronLeft, FiChevronRight, FiSearch, FiSun, FiMoon, FiMoreVertical, FiToggleLeft, FiBriefcase, FiDownload } from 'react-icons/fi';
-import logoUrl from '../../assets/NOLA SMS PRO Logo.png';
-import Antigravity from '../../components/ui/Antigravity';
+import { FiAlertCircle, FiEye, FiX, FiRefreshCw, FiPlus, FiMinus, FiChevronDown, FiChevronLeft, FiChevronRight, FiSearch, FiMoreVertical, FiBriefcase, FiDownload } from 'react-icons/fi';
 import { useToast } from '../../hooks/useToast';
 import { ToastContainer } from '../../components/ui/ToastContainer';
 import { generateMonthlyReport } from '../../utils/pdfGenerator';
@@ -263,16 +261,11 @@ export const AdminAgencies: React.FC = () => {
     const [accounts, setAccounts] = useState<AgencyAccount[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [actionLoading, setActionLoading] = useState<string | null>(null);
+    const [_actionLoading, setActionLoading] = useState<string | null>(null);
+    const [managingAccount, setManagingAccount] = useState<AgencyAccount | null>(null);
     const { toasts, showToast, dismissToast } = useToast();
     
-    // Manage Sender States
     const [searchTerm, setSearchTerm] = useState('');
-    const [managingAccount, setManagingAccount] = useState<AgencyAccount | null>(null);
-    const [manageSenderId, setManageSenderId] = useState('');
-    const [manageCreditBalance, setManageCreditBalance] = useState<number>(0);
-    const [manageFreeCreditsTotal, setManageFreeCreditsTotal] = useState<number>(10);
-    const [copiedKey, setCopiedKey] = useState(false);
 
     const [reportTransactions, setReportTransactions] = useState<any[]>([]);
     const [isLoadingReport, setIsLoadingReport] = useState(false);
@@ -308,8 +301,6 @@ export const AdminAgencies: React.FC = () => {
         setOpenActionMenuId(prev => prev === accId ? null : accId);
     };
 
-    const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
-
     const fetchAccounts = useCallback(async (isInitial = false, bypassCache = false) => {
         if (isInitial) setLoading(true);
         setError(null);
@@ -333,7 +324,6 @@ export const AdminAgencies: React.FC = () => {
                     setError(endpoint.includes('action=agencies')
                         ? 'Agency user endpoint is unavailable. Showing legacy agency records until the backend route is deployed.'
                         : null);
-                    setLastRefreshed(new Date());
                     return;
                 } catch (error) {
                     lastError = error instanceof Error ? error : new Error('Failed to load agencies.');
@@ -426,44 +416,6 @@ export const AdminAgencies: React.FC = () => {
         }
     };
 
-    const submitManageSender = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!managingAccount) return;
-        setActionLoading('managing');
-        try {
-            const res = await adminFetch(ADMIN_API, {
-                method: 'POST',
-                headers: getAdminAuthHeaders(),
-                body: JSON.stringify({
-                    action: 'manage_agency',
-                    user_id: managingAccount.id,
-                    company_id: managingAccount.company_id,
-                    balance: manageCreditBalance,
-                    credit_balance: manageCreditBalance,
-                }),
-            });
-            const json = await res.json();
-            if (json.status === 'success') {
-                const updated = {
-                    ...managingAccount,
-                    balance: manageCreditBalance,
-                    credit_balance: manageCreditBalance,
-                    credits: manageCreditBalance,
-                };
-                setAccounts(prev => prev.map(acc => acc.id === managingAccount.id ? updated : acc));
-                showToast(json.message || 'Agency config updated successfully.', 'success');
-                setManagingAccount(null);
-                void fetchAccounts(false);
-            } else {
-                showToast(json.message || 'Failed to update agency.', 'error');
-            }
-        } catch {
-            showToast('Network error during update.', 'error');
-        } finally {
-            setActionLoading(null);
-        }
-    };
-
     const startEditBalance = (account: AgencyAccount) => {
         setEditingBalanceId(account.id);
         setEditingBalanceValue(String(account.balance ?? account.credit_balance ?? account.credits ?? 0));
@@ -476,7 +428,7 @@ export const AdminAgencies: React.FC = () => {
             credit_balance: balance,
             credits: balance,
         } : acc));
-        setManagingAccount(prev => prev?.id === accountId ? {
+        setManagingAccount((prev: any) => prev?.id === accountId ? {
             ...prev,
             balance,
             credit_balance: balance,

@@ -143,7 +143,6 @@ export const AdminDashboard: React.FC<{
     const [totalMessages, setTotalMessages] = useState(0);
     const [loading, setLoading] = useState(true);
     const [currentPage, setCurrentPage] = useState(1);
-    const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
     const [searchQuery, setSearchQuery] = useState('');
     const ITEMS_PER_PAGE = 5;
 
@@ -227,7 +226,6 @@ export const AdminDashboard: React.FC<{
                     setTotalMessages(logsJson.total_messages ?? sortedLogs.length);
                 }
             }
-            setLastRefreshed(new Date());
         } catch (err) {
             devLog.error("Dashboard poll error:", err);
         } finally {
@@ -428,7 +426,7 @@ export const AdminDashboard: React.FC<{
                             { tab: 'accounts', label: 'View All Subaccounts', desc: `${totalAccounts} total installed subaccounts`, color: 'text-[#2b83fa] bg-blue-50 dark:bg-blue-900/20', icon: <FiUsers className="h-6 w-6" />, badge: 0, hoverBorder: 'hover:border-[#2b83fa]/30 hover:shadow-blue-500/10' },
                             { tab: 'agencies', label: 'View All Agencies', desc: 'Manage agency accounts and balances', color: 'text-emerald-500 bg-emerald-50 dark:bg-emerald-900/20', icon: <FiBriefcase className="h-6 w-6" />, badge: 0, hoverBorder: 'hover:border-emerald-500/30 hover:shadow-emerald-500/10' },
                         ].map(item => (
-                            <button key={item.tab} onClick={() => onNavigate(item.tab)}
+                            <button key={item.tab} onClick={() => onNavigate(item.tab as any)}
                                 className={`w-full p-4 rounded-[20px] bg-white dark:bg-[#1c1e21] border border-white/70 dark:border-white/[0.06] shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-300 text-left flex items-center justify-between group ${item.hoverBorder}`}>
                                 <div className="flex items-center gap-4">
                                     <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${item.color} transition-transform group-hover:scale-110`}>

@@ -1,8 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { FiUsers, FiSend, FiSettings, FiLogOut, FiLock, FiAlertCircle, FiEye, FiEyeOff, FiCopy, FiCheck, FiX, FiRefreshCw, FiKey, FiHome, FiClock, FiActivity, FiMessageSquare, FiCreditCard, FiShield, FiPlus, FiMinus, FiTrash2, FiChevronLeft, FiChevronRight, FiSearch, FiSun, FiMoon, FiMoreVertical, FiToggleLeft, FiDownload, FiFilter } from 'react-icons/fi';
-import logoUrl from '../../assets/NOLA SMS PRO Logo.png';
-import Antigravity from '../../components/ui/Antigravity';
-import { generateMonthlyReport } from '../../utils/pdfGenerator';
+import { FiSend, FiAlertCircle, FiCheck, FiX, FiRefreshCw, FiKey, FiActivity, FiMessageSquare, FiCreditCard, FiShield, FiPlus, FiMinus, FiChevronLeft, FiChevronRight, FiSearch, FiFilter, FiCopy } from 'react-icons/fi';
 import { adminFetch } from '../../utils/adminApi';
 import { getAdminAuthHeaders } from '../../utils/adminAuthHeaders';
 
@@ -420,7 +417,6 @@ export const AdminLogs: React.FC<{ hideHeader?: boolean; onCardClick?: () => voi
     const [selectedLog, setSelectedLog] = useState<any | null>(null);
     const [copiedContent, setCopiedContent] = useState(false);
     const ITEMS_PER_PAGE = 10;
-    const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
     const [selectedMonth, setSelectedMonth] = useState<string>('All');
     const filterMenuRef = useRef<HTMLDivElement>(null);
 
@@ -460,7 +456,6 @@ export const AdminLogs: React.FC<{ hideHeader?: boolean; onCardClick?: () => voi
                 const mapped = (accsData.data || []).map((item: any) => item.data ? { id: item.id, ...item.data } : item);
                 setAccounts(mapped);
             }
-            setLastRefreshed(new Date());
         } catch { setError('Network error. Could not reach the backend.'); }
         finally { if (isInitial) setLoading(false); }
     }, []);

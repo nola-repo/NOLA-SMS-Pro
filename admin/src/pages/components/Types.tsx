@@ -4,13 +4,19 @@ export interface SenderRequest {
     requested_id: string;
     purpose?: string;
     sample_message?: string;
-    status: 'pending' | 'approved' | 'rejected';
+    status: 'pending' | 'approved' | 'rejected' | 'revoked';
     rejection_note?: string;
     provider?: 'system' | 'semaphore' | 'unisms';
     provider_preference?: 'system' | 'semaphore' | 'semaphore_custom' | 'unisms' | 'unisms_custom';
     unisms_sender_id?: string;
     created_at?: string;
+    createdAt?: string;
+    updated_at?: string;
     location_name?: string;
+    admin_notes?: string;
+    agency_name?: string;
+    company_id?: string;
+    documents?: any[];
 }
 
 export interface Account {
@@ -35,10 +41,11 @@ export interface Account {
     credit_balance?: number;
     free_usage_count?: number;
     free_credits_total?: number;
+    active?: boolean;
+    monthly_reset_enabled?: boolean;
 }
 
 export interface AdminLayoutProps {
     darkMode: boolean;
     toggleDarkMode: () => void;
 }
-

@@ -26,55 +26,7 @@ const RECHARGE_AMOUNTS = [100, 250, 500, 1000, 2000, 5000];
 const RECHARGE_THRESHOLDS = [25, 50, 100, 200, 500];
 const TRANSACTIONS_PER_PAGE = 8;
 
-type CreditRequestFilter = 'all' | 'pending' | 'approved' | 'rejected';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-interface AgencyWallet {
-  balance: number;
-  auto_recharge_enabled: boolean;
-  auto_recharge_amount: number;
-  auto_recharge_threshold: number;
-  enforce_master_balance_lock: boolean;
-  updated_at?: string;
-}
-
-interface Transaction {
-  id: string;
-  type: 'top_up' | 'gift_sent' | 'gift_received' | 'auto_recharge' | 'request_approved' | 'credit_distribution';
-  amount: number;
-  balance_after: number;
-  description: string;
-  timestamp: string;
-  reference_id?: string;
-  transaction_reference_id?: string;
-  request_reference_id?: string;
-  transfer_reference_id?: string;
-  location_name?: string;
-}
-
-interface CreditRequest {
-  request_id: string;
-  reference_id?: string;
-  request_reference_id?: string;
-  location_id: string;
-  location_name: string;
-  amount: number;
-  note: string;
-  status: 'pending' | 'approved' | 'denied' | 'rejected';
-  created_at: string;
-}
-
-interface Subaccount {
-  location_id: string;
-  location_name: string;
-  credit_balance: number;
-}
-
-interface CreditPackage {
-  credits: number;
-  price: number;
-  link: string;
-}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function fmtDate(iso: string) {

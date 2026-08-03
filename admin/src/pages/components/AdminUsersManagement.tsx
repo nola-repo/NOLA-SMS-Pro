@@ -1,17 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { FiUsers, FiSend, FiSettings, FiLogOut, FiLock, FiAlertCircle, FiEye, FiEyeOff, FiCopy, FiCheck, FiX, FiRefreshCw, FiKey, FiHome, FiClock, FiActivity, FiMessageSquare, FiCreditCard, FiShield, FiPlus, FiMinus, FiTrash2, FiChevronLeft, FiChevronRight, FiSearch, FiSun, FiMoon, FiMoreVertical, FiToggleLeft, FiEdit2 } from 'react-icons/fi';
-import logoUrl from '../../assets/NOLA SMS PRO Logo.png';
-import Antigravity from '../../components/ui/Antigravity';
+import { FiAlertCircle, FiEye, FiEyeOff, FiCheck, FiX, FiRefreshCw, FiKey, FiShield, FiPlus, FiTrash2, FiSearch, FiMoreVertical, FiToggleLeft, FiEdit2 } from 'react-icons/fi';
 import { useToast } from '../../hooks/useToast';
 import { ToastContainer } from '../../components/ui/ToastContainer';
 import { adminFetch } from '../../utils/adminApi';
 import { getAdminAuthHeaders } from '../../utils/adminAuthHeaders';
 
-const ADMIN_API = '/api/admin_sender_requests.php';
 const USERS_API = '/api/admin_users.php';
 const POLL_INTERVAL = 15000; // 15 seconds real-time sync
-
-
 
 export const AdminTeamManagement: React.FC = () => {
     const [admins, setAdmins] = useState<any[]>([]);
@@ -30,6 +25,7 @@ export const AdminTeamManagement: React.FC = () => {
     const [resetTarget, setResetTarget] = useState<string | null>(null);
     const [resetPassword, setResetPassword] = useState('');
     const [showResetPw, setShowResetPw] = useState(false);
+    const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
 
     const [newEmail, setNewEmail] = useState('');
     const [newName, setNewName] = useState('');
@@ -43,9 +39,7 @@ export const AdminTeamManagement: React.FC = () => {
     const [editRole, setEditRole] = useState('support');
     const [actionLoading, setActionLoading] = useState(false);
     const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
-    const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
 
-    // Close menu on outside click
     useEffect(() => {
         if (!actionMenuId) return;
         const handler = (e: MouseEvent) => {
@@ -63,20 +57,7 @@ export const AdminTeamManagement: React.FC = () => {
         setActionMenuId(prev => prev === email ? null : email);
     };
 
-    const formatLastLogin = (ts: string | null | undefined) => {
-        if (!ts) return <span className="italic opacity-40">Never</span>;
-        const d = new Date(ts);
-        const diffMs = Date.now() - d.getTime();
-        const diffMin = Math.floor(diffMs / 60000);
-        if (diffMin < 1) return 'Just now';
-        if (diffMin < 60) return `${diffMin}m ago`;
-        const diffH = Math.floor(diffMin / 60);
-        if (diffH < 24) return `${diffH}h ago`;
-        return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
-    };
-
     const fetchAdmins = useCallback(async (isInitial = false) => {
-        // Don't fire if there's no active session — avoids 401 spam when logged out
         const token = sessionStorage.getItem('nola_admin_token');
         if (!token) {
             if (isInitial) setLoading(false);
