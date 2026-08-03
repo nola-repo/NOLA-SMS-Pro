@@ -1,7 +1,7 @@
 import { devLog } from '../utils/devLog';
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { FiPlus, FiX, FiCheck, FiLoader, FiAlertCircle, FiUpload, FiFile, FiTrash2 } from "react-icons/fi";
+import { FiPlus, FiX, FiCheck, FiLoader, FiAlertCircle, FiUpload, FiFile, FiTrash2, FiArrowRight, FiSend, FiCheckCircle, FiChevronLeft } from "react-icons/fi";
 import { submitSenderRequest } from "../api/senderRequests";
 import type { StoredSenderId } from "../utils/settingsStorage";
 
@@ -9,6 +9,7 @@ interface SenderRequestModalProps {
     isOpen: boolean;
     onClose: () => void;
     onSuccess?: (newSender: StoredSenderId) => void;
+    initialStep?: 'intro' | 'form';
 }
 
 interface AttachedFile {
@@ -57,7 +58,8 @@ function readFileAsDataUrl(file: File): Promise<string> {
     });
 }
 
-export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, onClose, onSuccess }) => {
+export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, onClose, onSuccess, initialStep = 'intro' }) => {
+    const [step, setStep] = useState<'intro' | 'form'>(initialStep);
     const [newId, setNewId] = useState("");
     const [newPurpose, setNewPurpose] = useState("");
     const [newSample, setNewSample] = useState("");
@@ -89,6 +91,7 @@ export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, 
     // Reset state when modal closes
     useEffect(() => {
         if (!isOpen) {
+            setStep(initialStep);
             setNewId("");
             setNewPurpose("");
             setNewSample("");
@@ -98,7 +101,7 @@ export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, 
             setIsSubmitted(false);
             setIsDragging(false);
         }
-    }, [isOpen]);
+    }, [isOpen, initialStep]);
 
     const processFiles = useCallback(async (rawFiles: FileList | File[]) => {
         setFileError(null);
@@ -255,23 +258,104 @@ export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, 
             <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300" onClick={onClose} />
             <div className="relative w-full max-w-lg bg-white dark:bg-[#18191d] rounded-2xl shadow-2xl animate-in zoom-in-95 duration-200 overflow-hidden flex flex-col max-h-[92vh]">
 
-                {/* Header */}
-                <div className="flex items-start justify-between p-6 pb-4 flex-shrink-0">
-                    <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-lg bg-[#2b83fa]/10 flex items-center justify-center text-[#2b83fa]">
-                            <FiPlus />
+                {step === 'intro' ? (
+                    /* Step 1: Introductory Welcome Modal with CTA */
+                    <div className="p-6 sm:p-8 flex flex-col items-center text-center animate-in fade-in zoom-in-95 duration-200">
+                        {/* Close button top-right */}
+                        <div className="w-full flex justify-end -mt-2 -mr-2 mb-1">
+                            <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 text-gray-500 transition-colors">
+                                <FiX className="w-5 h-5" />
+                            </button>
                         </div>
-                        <div>
-                            <h3 className="text-[17px] font-bold text-[#111111] dark:text-[#ececf1]">Add a Sender Name</h3>
-                            <p className="text-[12px] text-[#6e6e73] dark:text-[#9aa0a6] mt-0.5">
-                                Request a branded SMS sender name for your account.
-                            </p>
+
+                        {/* Icon Badge */}
+                        <div className="relative mb-5 flex items-center justify-center">
+                            <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-[#1d6bd4] to-[#2b83fa] flex items-center justify-center text-white shadow-xl shadow-blue-500/25">
+                                <FiSend className="w-8 h-8 -mr-0.5" />
+                            </div>
+                            <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center border-2 border-white dark:border-[#18191d]">
+                                <FiCheckCircle className="w-3.5 h-3.5" />
+                            </div>
                         </div>
+
+                        {/* Heading & Subtitle */}
+                        <h3 className="text-[20px] sm:text-[22px] font-black tracking-tight text-[#111111] dark:text-[#ececf1] mb-2">
+                            Register Your Branded Sender ID
+                        </h3>
+                        <p className="text-[13px] leading-relaxed text-[#6e6e73] dark:text-[#9aa0a6] max-w-sm mb-6">
+                            Display your official business or brand name on your customers' phones instead of generic fallback numbers.
+                        </p>
+
+                        {/* Benefits Cards */}
+                        <div className="w-full space-y-2.5 mb-6 text-left">
+                            <div className="flex items-start gap-3 p-3 rounded-xl bg-[#f7f7f7] dark:bg-[#0d0e10] border border-[#e5e5e5] dark:border-white/5">
+                                <span className="text-[20px] flex-shrink-0 select-none">🏷️</span>
+                                <div>
+                                    <h4 className="text-[12.5px] font-bold text-[#111111] dark:text-[#ececf1]">Brand Identity</h4>
+                                    <p className="text-[11.5px] text-[#6e6e73] dark:text-[#9aa0a6]">Instantly recognizable brand name on every message.</p>
+                                </div>
+                            </div>
+
+                            <div className="flex items-start gap-3 p-3 rounded-xl bg-[#f7f7f7] dark:bg-[#0d0e10] border border-[#e5e5e5] dark:border-white/5">
+                                <span className="text-[20px] flex-shrink-0 select-none">📈</span>
+                                <div>
+                                    <h4 className="text-[12.5px] font-bold text-[#111111] dark:text-[#ececf1]">Higher Open & Trust Rates</h4>
+                                    <p className="text-[11.5px] text-[#6e6e73] dark:text-[#9aa0a6]">Customers trust and open verified sender IDs faster.</p>
+                                </div>
+                            </div>
+
+                            <div className="flex items-start gap-3 p-3 rounded-xl bg-[#f7f7f7] dark:bg-[#0d0e10] border border-[#e5e5e5] dark:border-white/5">
+                                <span className="text-[20px] flex-shrink-0 select-none">⚡</span>
+                                <div>
+                                    <h4 className="text-[12.5px] font-bold text-[#111111] dark:text-[#ececf1]">Carrier Approved</h4>
+                                    <p className="text-[11.5px] text-[#6e6e73] dark:text-[#9aa0a6]">Direct compliance registration with network carriers.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Call to Action Button */}
+                        <button
+                            onClick={() => setStep('form')}
+                            className="w-full flex items-center justify-center gap-2.5 py-3.5 px-6 bg-gradient-to-r from-[#2b83fa] to-[#1d6bd4] hover:shadow-[0_8px_25px_rgba(43,131,250,0.4)] text-white rounded-xl font-bold text-[14px] transition-all shadow-md shadow-blue-500/20 active:scale-[0.99] mb-3"
+                        >
+                            <span>Request Sender ID</span>
+                            <FiArrowRight className="w-4 h-4" />
+                        </button>
+
+                        <button
+                            onClick={onClose}
+                            className="text-[12.5px] font-semibold text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                        >
+                            Maybe Later
+                        </button>
                     </div>
-                    <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 text-gray-500 transition-colors flex-shrink-0">
-                        <FiX />
-                    </button>
-                </div>
+                ) : (
+                    /* Step 2: Request Form Modal */
+                    <>
+                        {/* Form Header */}
+                        <div className="flex items-start justify-between p-6 pb-4 flex-shrink-0">
+                            <div className="flex items-center gap-2.5">
+                                <button
+                                    onClick={() => setStep('intro')}
+                                    className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 text-gray-500 transition-colors flex items-center justify-center mr-1"
+                                    title="Back to info"
+                                >
+                                    <FiChevronLeft className="w-5 h-5" />
+                                </button>
+                                <div className="w-8 h-8 rounded-lg bg-[#2b83fa]/10 flex items-center justify-center text-[#2b83fa]">
+                                    <FiPlus />
+                                </div>
+                                <div>
+                                    <h3 className="text-[17px] font-bold text-[#111111] dark:text-[#ececf1]">Add a Sender Name</h3>
+                                    <p className="text-[12px] text-[#6e6e73] dark:text-[#9aa0a6] mt-0.5">
+                                        Request a branded SMS sender name for your account.
+                                    </p>
+                                </div>
+                            </div>
+                            <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 text-gray-500 transition-colors flex-shrink-0">
+                                <FiX />
+                            </button>
+                        </div>
 
                 {/* Scrollable body */}
                 <div className="overflow-y-auto flex-1 px-6 pb-6 custom-scrollbar">
@@ -482,8 +566,10 @@ export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, 
                         </form>
                     )}
                 </div>
-            </div>
-        </div>,
+            </>
+        )}
+    </div>
+</div>,
         document.body
     );
 };

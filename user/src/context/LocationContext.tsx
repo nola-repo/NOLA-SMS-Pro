@@ -187,7 +187,9 @@ export const LocationProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
 
     checkForLocation();
-    const pollTimer = window.setInterval(checkForLocation, 200);
+    const fromStorageInit = getStoredLocationId();
+    const fallbackDelay = fromStorageInit ? 300 : 1500;
+    const pollTimer = window.setInterval(checkForLocation, 100);
     const fallbackTimer = window.setTimeout(() => {
       const fromStorage = getStoredLocationId();
       if (fromStorage) {
@@ -195,7 +197,7 @@ export const LocationProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
       setIsLocationResolving(false);
       window.clearInterval(pollTimer);
-    }, 2500);
+    }, fallbackDelay);
 
     window.addEventListener('popstate', checkForLocation);
     window.addEventListener('hashchange', checkForLocation);

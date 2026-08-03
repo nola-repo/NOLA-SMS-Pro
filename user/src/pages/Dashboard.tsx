@@ -407,7 +407,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ isMobileMenuOpen: external
     const handleProfileSyncComplete = () => {
       setWorkspaceProfileSyncComplete(true);
     };
-    const fallbackTimer = window.setTimeout(handleProfileSyncComplete, 8000);
+    const fallbackTimer = window.setTimeout(handleProfileSyncComplete, 1000);
 
     window.addEventListener('nola-profile-sync-complete', handleProfileSyncComplete);
     return () => {

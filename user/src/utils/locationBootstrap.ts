@@ -1,4 +1,5 @@
 import { normalizeLocationCandidate } from './ghlLocationDetection';
+import { safeStorage } from './safeStorage';
 import {
   getCurrentGhlContextLocationId,
   getLastGhlSessionRefreshFailure,
@@ -107,6 +108,13 @@ export const isValidGhlLocationId = (value: unknown): value is string => {
 const publishBootstrapState = (state: LocationBootstrapState): LocationBootstrapState => {
   if (state.locationId) {
     bootstrapStateByLocation.set(state.locationId, state);
+    if (state.status === 'ready') {
+      try {
+        safeStorage.setItem(`nola_bootstrap_state_${state.locationId}`, JSON.stringify(state));
+      } catch {
+        // ignore storage errors
+      }
+    }
   }
 
   if (typeof window !== 'undefined') {
@@ -121,6 +129,7 @@ export const clearLocationBootstrapState = (locationId?: string): void => {
   if (normalized) {
     bootstrapStateByLocation.delete(normalized);
     bootstrapInFlight.delete(normalized);
+    safeStorage.removeItem(`nola_bootstrap_state_${normalized}`);
     return;
   }
 
@@ -131,7 +140,24 @@ export const clearLocationBootstrapState = (locationId?: string): void => {
 export const getCachedLocationBootstrapState = (locationId?: string): LocationBootstrapState => {
   const normalized = normalizeLocationCandidate(locationId);
   if (!normalized) return { status: 'idle' };
-  return bootstrapStateByLocation.get(normalized) || { status: 'idle', locationId: normalized };
+
+  const inMemory = bootstrapStateByLocation.get(normalized);
+  if (inMemory) return inMemory;
+
+  try {
+    const persistedRaw = safeStorage.getItem(`nola_bootstrap_state_${normalized}`);
+    if (persistedRaw) {
+      const parsed = JSON.parse(persistedRaw) as LocationBootstrapState;
+      if (parsed && parsed.status === 'ready' && parsed.locationId === normalized) {
+        bootstrapStateByLocation.set(normalized, parsed);
+        return parsed;
+      }
+    }
+  } catch {
+    // ignore parse errors
+  }
+
+  return { status: 'idle', locationId: normalized };
 };
 
 export const addLocationBootstrapListener = (listener: (state: LocationBootstrapState) => void): (() => void) => {
