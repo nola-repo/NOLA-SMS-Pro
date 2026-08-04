@@ -63,21 +63,21 @@ export interface ProviderBalanceCardProps {
     summary?: ProviderBalancesResponse['summary'];
 }
 
-export function isProviderConfigured(provider?: Partial<ProviderBalance & ProviderSummaryEntry> | null): boolean {
+function isProviderConfigured(provider?: Partial<ProviderBalance & ProviderSummaryEntry> | null): boolean {
     if (!provider) return false;
     if (typeof provider.configured === 'boolean') return provider.configured;
     if (typeof provider.connected_accounts === 'number') return provider.connected_accounts > 0;
     return provider.status === 'active';
 }
 
-export function getProviderStatusColor(provider?: Partial<ProviderBalance & ProviderSummaryEntry> | null): 'green' | 'yellow' | 'red' | 'gray' {
+function getProviderStatusColor(provider?: Partial<ProviderBalance & ProviderSummaryEntry> | null): 'green' | 'yellow' | 'red' | 'gray' {
     if (!provider || provider.status === 'error' || !isProviderConfigured(provider)) return 'gray';
     if (provider.critical) return 'red';
     if (provider.warning) return 'yellow';
     return 'green';
 }
 
-export function getProviderStatusLabel(provider?: Partial<ProviderBalance & ProviderSummaryEntry> | null): string | null {
+function getProviderStatusLabel(provider?: Partial<ProviderBalance & ProviderSummaryEntry> | null): string | null {
     if (!provider) return null;
     if (provider.status === 'error') return 'Unreachable';
     if (!isProviderConfigured(provider)) return 'Not Configured';
@@ -86,7 +86,7 @@ export function getProviderStatusLabel(provider?: Partial<ProviderBalance & Prov
     return null; // Don't display Healthy badge per design
 }
 
-export function formatLastUpdated(fetchedAt?: string | null): string {
+function formatLastUpdated(fetchedAt?: string | null): string {
     if (!fetchedAt) return 'Never';
     const date = new Date(fetchedAt);
     if (Number.isNaN(date.getTime())) return 'Just now';
