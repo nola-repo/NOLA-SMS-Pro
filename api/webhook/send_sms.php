@@ -776,6 +776,62 @@ if ($providerValidation = ProviderResultService::providerMessageValidation($prov
     exit;
 }
 
+// -- Semaphore Emoji Sanitization ---------------------------------------------
+// Semaphore only supports the GSM-7 character set. Emoji characters (and other
+// non-GSM-7 Unicode) are silently truncated at the first occurrence on delivery,
+// causing partial message delivery while charging full Unicode segment credits.
+//
+// When the resolved provider is Semaphore (directly or via master key), strip
+// all characters outside the GSM-7 basic + extended charset, then trim any
+// whitespace left behind. Credits are recalculated on the cleaned message so
+// the user is only charged for what is actually delivered.
+$resolvedForSemaphore = !in_array($providerPreference, ['unisms', 'unisms_custom'], true);
+
+if ($resolvedForSemaphore && $message !== '') {
+    // GSM-7 basic charset (all printable characters Semaphore accepts natively)
+    $gsm7Basic     = "@£\$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,\\-./:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
+    $gsm7Extension = "^{}\\\\[]~|€";
+    $gsm7All       = $gsm7Basic . $gsm7Extension;
+
+    $cleaned = '';
+    $len     = mb_strlen($message, 'UTF-8');
+    for ($i = 0; $i < $len; $i++) {
+        $char = mb_substr($message, $i, 1, 'UTF-8');
+        // Keep character if it is in GSM-7 or is a standard ASCII control (newline/CR/tab)
+        if (mb_strpos($gsm7All, $char, 0, 'UTF-8') !== false
+            || $char === "\n" || $char === "\r" || $char === "\t"
+        ) {
+            $cleaned .= $char;
+        }
+        // Silently drop emoji / non-GSM-7 characters
+    }
+
+    // Collapse any double-spaces that may have appeared where emojis were
+    $cleaned = preg_replace('/[^\S\n]+/', ' ', $cleaned);
+    $cleaned = trim($cleaned);
+
+    if ($cleaned !== $message) {
+        $hadEmojis = true;
+        $originalMessage = $message;
+        $message = $cleaned;
+
+        // Recalculate credits based on cleaned message (GSM-7 segments are cheaper)
+        $required_credits = CreditManager::calculateRequiredCredits($message, $num_recipients);
+
+        Logger::info('Emoji/non-GSM7 characters stripped for Semaphore delivery', [
+            'location_id'             => $locId,
+            'original_char_count'     => mb_strlen($originalMessage, 'UTF-8'),
+            'cleaned_char_count'      => mb_strlen($message, 'UTF-8'),
+            'recalculated_credits'    => $required_credits,
+            'provider'                => $providerPreference,
+        ]);
+        error_log("[send_sms] Emoji stripped for Semaphore. Original length=" . mb_strlen($originalMessage, 'UTF-8')
+            . ", cleaned length=" . mb_strlen($message, 'UTF-8')
+            . ", new required_credits={$required_credits}");
+    }
+    unset($gsm7Basic, $gsm7Extension, $gsm7All, $cleaned, $len, $i, $char);
+}
+
 $sysKey  = trim((string)$SEMAPHORE_API_KEY);
 $userKey = trim((string)($customApiKey ?? ''));
 

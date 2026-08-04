@@ -594,6 +594,37 @@ if ($providerValidation = ProviderResultService::providerMessageValidation($prov
 $sysKey  = trim((string)$SEMAPHORE_API_KEY);
 $userKey = trim((string)($customApiKey ?? ''));
 
+// -- Semaphore Emoji Sanitization ---------------------------------------------
+// Semaphore only supports GSM-7. Emojis/non-GSM-7 characters are silently
+// truncated on delivery. Strip them when routing via Semaphore and recalculate
+// credits so the user is only charged for what is actually delivered.
+if (!in_array($providerPreference, ['unisms', 'unisms_custom'], true) && $message !== '') {
+    $gsm7Basic     = "@£\$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,\\-./:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
+    $gsm7Extension = "^{}\\\\[]~|€";
+    $gsm7All       = $gsm7Basic . $gsm7Extension;
+
+    $cleaned = '';
+    $slen    = mb_strlen($message, 'UTF-8');
+    for ($si = 0; $si < $slen; $si++) {
+        $schar = mb_substr($message, $si, 1, 'UTF-8');
+        if (mb_strpos($gsm7All, $schar, 0, 'UTF-8') !== false
+            || $schar === "\n" || $schar === "\r" || $schar === "\t"
+        ) {
+            $cleaned .= $schar;
+        }
+    }
+    $cleaned = trim(preg_replace('/[^\S\n]+/', ' ', $cleaned));
+
+    if ($cleaned !== $message) {
+        error_log("[ghl_provider] Emoji stripped for Semaphore. loc={$locationId}"
+            . " original_len=" . mb_strlen($message, 'UTF-8')
+            . " cleaned_len=" . mb_strlen($cleaned, 'UTF-8'));
+        $message          = $cleaned;
+        $required_credits = CreditManager::calculateRequiredCredits($message, 1);
+    }
+    unset($gsm7Basic, $gsm7Extension, $gsm7All, $cleaned, $slen, $si, $schar);
+}
+
 if (false && $userKey !== '' && $userKey !== $sysKey) {
     // ── PATH A: External API key ─────────────────────────────────────────────
     $usingOwnApiKey = true;
