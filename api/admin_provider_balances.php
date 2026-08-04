@@ -37,12 +37,15 @@ const UNISMS_CRITICAL    = 50;
 const CACHE_TTL          = 60; // seconds
 
 $cacheKey = 'admin_provider_balances';
+$bypassCache = !empty($_GET['refresh']) || !empty($_GET['bypass_cache']) || !empty($_GET['clear_cache']);
 
 // ── Cache hit ───────────────────────────────────────────────────────────────
-$cached = NolaCache::get($cacheKey);
-if ($cached !== null) {
-    echo json_encode($cached);
-    exit;
+if (!$bypassCache) {
+    $cached = NolaCache::get($cacheKey);
+    if ($cached !== null) {
+        echo json_encode($cached);
+        exit;
+    }
 }
 
 // ── Resolve active provider name ────────────────────────────────────────────
