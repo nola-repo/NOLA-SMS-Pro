@@ -594,11 +594,14 @@ if ($providerValidation = ProviderResultService::providerMessageValidation($prov
 $sysKey  = trim((string)$SEMAPHORE_API_KEY);
 $userKey = trim((string)($customApiKey ?? ''));
 
-// -- Semaphore Emoji Sanitization ---------------------------------------------
-// Semaphore only supports GSM-7. Emojis/non-GSM-7 characters are silently
-// truncated on delivery. Strip them when routing via Semaphore and recalculate
-// credits so the user is only charged for what is actually delivered.
-if (!in_array($providerPreference, ['unisms', 'unisms_custom'], true) && $message !== '') {
+// -- SMS Emoji Sanitization (All Providers: Semaphore & UniSMS) ----------------
+// Philippine SMS Gateways do not support Emojis:
+// - Semaphore: Silently truncates the message at the first emoji on delivery.
+// - UniSMS: Rejects the API request with "Emojis or non-standard characters not allowed".
+//
+// Strip all characters outside GSM-7 (emojis, etc.) and recalculate credits
+// so that messages deliver 100% complete and billing remains accurate across all providers.
+if ($message !== '') {
     $gsm7Basic     = "@£\$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,\\-./:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
     $gsm7Extension = "^{}\\\\[]~|€";
     $gsm7All       = $gsm7Basic . $gsm7Extension;
