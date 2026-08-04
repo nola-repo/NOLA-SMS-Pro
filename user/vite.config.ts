@@ -26,7 +26,7 @@ const smsProxyPlugin = () => ({
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
-                'X-Webhook-Secret': process.env.VITE_WEBHOOK_SECRET || process.env.X_WEBHOOK_SECRET || ''
+                'X-Webhook-Secret': process.env.VITE_WEBHOOK_SECRET || process.env.X_WEBHOOK_SECRET || 'f7RkQ2pL9zV3tX8cB1nS4yW6'
               },
               body: JSON.stringify(payload)
             });
@@ -56,7 +56,7 @@ const smsProxyPlugin = () => ({
         const requestOptions = {
           method,
           headers: {
-            'X-Webhook-Secret': process.env.VITE_WEBHOOK_SECRET || process.env.X_WEBHOOK_SECRET || '',
+            'X-Webhook-Secret': process.env.VITE_WEBHOOK_SECRET || process.env.X_WEBHOOK_SECRET || 'f7RkQ2pL9zV3tX8cB1nS4yW6',
             'Content-Type': 'application/json',
             ...(req.headers['x-ghl-location-id'] ? { 'X-GHL-Location-ID': req.headers['x-ghl-location-id'] as string } : {}),
             ...(req.headers['authorization'] ? { 'Authorization': req.headers['authorization'] as string } : {})
