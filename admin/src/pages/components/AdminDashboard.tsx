@@ -155,7 +155,8 @@ export const AdminDashboard: React.FC<{
         if (isManual) setIsBalanceLoading(true);
         setBalanceError(null);
         try {
-            const res = await adminFetch('/api/admin/provider-balances', { headers: getAdminAuthHeaders() });
+            const endpoint = isManual ? '/api/admin/provider-balances?refresh=1' : '/api/admin/provider-balances';
+            const res = await adminFetch(endpoint, { headers: getAdminAuthHeaders() });
             const json = await res.json().catch(() => ({}));
             if (res.ok && json.status === 'success') {
                 setBalanceData(json);
