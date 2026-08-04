@@ -171,8 +171,13 @@ const matchesAccountStatusFilter = (account: Account, filter: AccountStatusFilte
     return true;
 };
 
-const getAgencyName = (account: Account) =>
-    (account.agency_name || account.company_name || account.company_id || '').trim() || 'Unassigned agency';
+const getAgencyName = (account: Account) => {
+    const raw = (account.agency_name || account.company_name || '').trim();
+    if (raw && raw !== 'Agency name unavailable') {
+        return raw;
+    }
+    return 'Unassigned Agency';
+};
 
 const getTransactionMonth = (tx: any) => {
     const raw = tx?.timestamp || tx?.created_at || tx?.createdAt || tx?.date;
