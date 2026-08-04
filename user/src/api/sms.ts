@@ -67,10 +67,16 @@ const SMS_ERROR_MESSAGES: Record<string, string> = {
   idempotency_key_conflict: "This send request conflicts with a previous request. Please try again.",
   credit_deduction_failed: "Credits could not be deducted. Please try again.",
   provider_unavailable: "The SMS provider is currently unavailable. Please try again shortly.",
+  rate_limit_unavailable: "Unable to verify send limit right now. Please retry shortly.",
+  payload_too_large: "Message request is too large. Reduce recipients or message size and try again.",
+  PAYLOAD_TOO_LARGE: "Message request is too large. Reduce recipients or message size and try again.",
 };
 
 const resolveSmsErrorMessage = (data: any, fallback = "SMS sending failed"): string => {
   const code = String(data?.error || data?.code || "").trim();
+  if (data?.status === 413 || code === "413") {
+    return SMS_ERROR_MESSAGES.payload_too_large;
+  }
   return data?.message || SMS_ERROR_MESSAGES[code] || fallback;
 };
 

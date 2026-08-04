@@ -24,7 +24,10 @@ const smsProxyPlugin = () => ({
             };
             const response = await fetch('https://smspro-api.nolacrm.io/webhook/send_sms', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'X-Webhook-Secret': 'f7RkQ2pL9zV3tX8cB1nS4yW6' },
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Webhook-Secret': process.env.VITE_WEBHOOK_SECRET || process.env.X_WEBHOOK_SECRET || ''
+              },
               body: JSON.stringify(payload)
             });
             const data = await response.json();
@@ -53,7 +56,7 @@ const smsProxyPlugin = () => ({
         const requestOptions = {
           method,
           headers: {
-            'X-Webhook-Secret': 'f7RkQ2pL9zV3tX8cB1nS4yW6',
+            'X-Webhook-Secret': process.env.VITE_WEBHOOK_SECRET || process.env.X_WEBHOOK_SECRET || '',
             'Content-Type': 'application/json',
             ...(req.headers['x-ghl-location-id'] ? { 'X-GHL-Location-ID': req.headers['x-ghl-location-id'] as string } : {}),
             ...(req.headers['authorization'] ? { 'Authorization': req.headers['authorization'] as string } : {})

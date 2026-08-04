@@ -98,6 +98,15 @@ interface DatabaseMessageRow {
     provider_response?: string | Record<string, unknown> | null;
     provider_message_id?: string;
     provider_reference_id?: string;
+    ghl_sync_queued?: boolean;
+    ghl_sync_job_id?: string;
+    ghl_sync_success?: boolean;
+    ghl_sync_skipped?: boolean;
+    ghl_sync_reason?: string;
+    ghl_sync_error?: string;
+    ghl_sync_http_status?: number;
+    ghl_sync_updated_at?: string;
+    ghl_message_id?: string;
 }
 
 /**
@@ -167,6 +176,16 @@ export const useConversationMessages = (conversationId: string | undefined, reci
                 providerResponse: row.provider_response,
                 providerMessageId: row.provider_message_id || row.provider_reference_id,
                 providerReferenceId: row.provider_reference_id,
+
+                ghlSyncQueued: row.ghl_sync_queued,
+                ghlSyncJobId: row.ghl_sync_job_id,
+                ghlSyncSuccess: row.ghl_sync_success,
+                ghlSyncSkipped: row.ghl_sync_skipped,
+                ghlSyncReason: row.ghl_sync_reason,
+                ghlSyncError: row.ghl_sync_error,
+                ghlSyncHttpStatus: row.ghl_sync_http_status,
+                ghlSyncUpdatedAt: row.ghl_sync_updated_at,
+                ghlMessageId: row.ghl_message_id,
             };
         });
 

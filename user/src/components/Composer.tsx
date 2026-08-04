@@ -2054,6 +2054,45 @@ export const Composer: React.FC<ComposerProps> = ({
                               {msg.status === 'sending' ? <FiLoader className="animate-spin inline mb-0.5 mr-1" size={10} /> : msg.status === 'sent' ? <FiCheck className="inline mb-0.5 mr-1" size={10} /> : <FiAlertCircle size={10} className="inline mb-0.5 mr-1 animate-pulse" />}
                               {msg.status === 'sending' ? 'Sending...' : msg.status === 'sent' ? 'Sent' : 'Failed'}
                             </span>
+                            {(() => {
+                              const isSuccess = msg.ghlSyncSuccess ?? msg.ghl_sync_success;
+                              const isSkipped = msg.ghlSyncSkipped ?? msg.ghl_sync_skipped;
+                              const isQueued = msg.ghlSyncQueued ?? msg.ghl_sync_queued ?? !!(msg.ghlSyncJobId || msg.ghl_sync_job_id);
+                              const error = msg.ghlSyncError || msg.ghl_sync_error;
+                              if (isSuccess === true) {
+                                return (
+                                  <>
+                                    <span className="text-[10px] text-gray-400">•</span>
+                                    <span className="text-[10px] font-bold text-emerald-500">CRM synced</span>
+                                  </>
+                                );
+                              }
+                              if (isSkipped === true) {
+                                return (
+                                  <>
+                                    <span className="text-[10px] text-gray-400">•</span>
+                                    <span className="text-[10px] font-semibold text-gray-400">CRM sync skipped</span>
+                                  </>
+                                );
+                              }
+                              if (error || isSuccess === false) {
+                                return (
+                                  <>
+                                    <span className="text-[10px] text-gray-400">•</span>
+                                    <span className="text-[10px] font-bold text-red-500" title={error}>CRM sync failed</span>
+                                  </>
+                                );
+                              }
+                              if (isQueued) {
+                                return (
+                                  <>
+                                    <span className="text-[10px] text-gray-400">•</span>
+                                    <span className="text-[10px] font-bold text-amber-500">CRM sync pending</span>
+                                  </>
+                                );
+                              }
+                              return null;
+                            })()}
                             {msg.status === 'failed' && msg.errorReason && (
                               <span className="text-[10px] text-red-400 font-medium truncate max-w-[160px]" title={msg.errorReason}>
                                 - {msg.errorReason}

@@ -26,6 +26,15 @@ export interface FirestoreMessage {
   provider_response?: string | Record<string, unknown> | null;
   provider_message_id?: string;
   provider_reference_id?: string;
+  ghl_sync_queued?: boolean;
+  ghl_sync_job_id?: string;
+  ghl_sync_success?: boolean;
+  ghl_sync_skipped?: boolean;
+  ghl_sync_reason?: string;
+  ghl_sync_error?: string;
+  ghl_sync_http_status?: number;
+  ghl_sync_updated_at?: string;
+  ghl_message_id?: string;
 }
 
 /** One row from the `conversations` Firestore collection */
@@ -76,6 +85,15 @@ export interface SmsLog {
   provider_response?: string | Record<string, unknown> | null;
   provider_message_id?: string;
   provider_reference_id?: string;
+  ghl_sync_queued?: boolean;
+  ghl_sync_job_id?: string;
+  ghl_sync_success?: boolean;
+  ghl_sync_skipped?: boolean;
+  ghl_sync_reason?: string;
+  ghl_sync_error?: string;
+  ghl_sync_http_status?: number;
+  ghl_sync_updated_at?: string;
+  ghl_message_id?: string;
 }
 
 export interface Message {
@@ -90,6 +108,25 @@ export interface Message {
   providerResponse?: string | Record<string, unknown> | null;
   providerMessageId?: string;
   providerReferenceId?: string;
+  // GHL Sync fields
+  ghlSyncQueued?: boolean;
+  ghlSyncJobId?: string;
+  ghlSyncSuccess?: boolean;
+  ghlSyncSkipped?: boolean;
+  ghlSyncReason?: string;
+  ghlSyncError?: string;
+  ghlSyncHttpStatus?: number;
+  ghlSyncUpdatedAt?: string;
+  ghlMessageId?: string;
+  ghl_sync_queued?: boolean;
+  ghl_sync_job_id?: string;
+  ghl_sync_success?: boolean;
+  ghl_sync_skipped?: boolean;
+  ghl_sync_reason?: string;
+  ghl_sync_error?: string;
+  ghl_sync_http_status?: number;
+  ghl_sync_updated_at?: string;
+  ghl_message_id?: string;
   // Extra fields for compatibility
   batch_id?: string;
   conversation_id?: string;

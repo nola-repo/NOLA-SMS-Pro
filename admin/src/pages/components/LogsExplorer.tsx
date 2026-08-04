@@ -268,9 +268,27 @@ export const LogsExplorer: React.FC = () => {
             }
 
             if (type === 'SMS' || type === 'Send PH SMS' || type === 'Conversation Provider' || type === 'Inbound SMS') {
-                const target = log.number || log.to || log.phone || 'unknown recipient';
-                const body = String(log.message || log.body || 'No message content').replace(/\s+/g, ' ').trim();
-                return `${type} ${status} to ${target} | ${body}`;
+                const target = log.number || log.to || log.phone;
+                const body = log.message || log.body ? String(log.message || log.body).replace(/\s+/g, ' ').trim() : null;
+
+                const parts: string[] = [`${type} ${status}`];
+                if (loc && loc !== 'system') parts.push(`location_id=${loc}`);
+                if (target) parts.push(`to=${target}`);
+                if (body) parts.push(`body=${body}`);
+
+                if (log.provider) parts.push(`provider=${log.provider}`);
+                if (log.provider_status) parts.push(`provider_status=${log.provider_status}`);
+                if (log.message_id) parts.push(`message_id=${log.message_id}`);
+                if (log.ghl_sync_job_id) parts.push(`ghl_sync_job_id=${log.ghl_sync_job_id}`);
+                if (log.ghl_sync_success !== undefined) parts.push(`ghl_sync=${log.ghl_sync_success ? 'success' : 'failed'}`);
+                if (log.ghl_sync_reason) parts.push(`ghl_sync_reason=${log.ghl_sync_reason}`);
+                if (log.ghl_sync_error) parts.push(`ghl_sync_error=${log.ghl_sync_error}`);
+
+                if (!target && !body) {
+                    parts.push(`(Message content hidden for privacy)`);
+                }
+
+                return parts.join(' | ');
             }
 
             if (type === 'Sender Request') {

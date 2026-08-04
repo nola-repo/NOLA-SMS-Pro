@@ -236,7 +236,7 @@ export const MessageDetailsModal: React.FC<{
 
         {messageDetails.kind === "message" ? (
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <DetailRow label="Status" value={messageDetails.message.status} />
+            <DetailRow label="SMS Status" value={messageDetails.message.status} />
             <DetailRow label="Sender" value={messageDetails.message.senderName} />
             <DetailRow label="Sent at" value={formatDetailsTimestamp(messageDetails.message.timestamp)} />
             {messageDetailsRecipient && (
@@ -266,6 +266,28 @@ export const MessageDetailsModal: React.FC<{
             <DetailRow label="Batch ID" value={messageDetails.message.batch_id} mono />
             <DetailRow label="Error code" value={messageDetails.message.errorCode} mono />
             <DetailRow label="Failure reason" value={messageDetails.message.errorReason || (messageDetails.message.status === "failed" ? "Provider rejected or did not confirm delivery." : undefined)} />
+            
+            {/* CRM Sync Details */}
+            <DetailRow
+              label="CRM Sync Status"
+              value={(() => {
+                const m = messageDetails.message;
+                const isSuccess = m.ghlSyncSuccess ?? m.ghl_sync_success;
+                const isSkipped = m.ghlSyncSkipped ?? m.ghl_sync_skipped;
+                const isQueued = m.ghlSyncQueued ?? m.ghl_sync_queued ?? !!(m.ghlSyncJobId || m.ghl_sync_job_id);
+                const error = m.ghlSyncError || m.ghl_sync_error;
+                if (isSuccess === true) return "CRM synced";
+                if (isSkipped === true) return `CRM sync skipped${(m.ghlSyncReason || m.ghl_sync_reason) ? ` (${m.ghlSyncReason || m.ghl_sync_reason})` : ''}`;
+                if (error || isSuccess === false) return `CRM sync failed${error ? `: ${error}` : ''}`;
+                if (isQueued) return "CRM sync pending";
+                return undefined;
+              })()}
+            />
+            <DetailRow label="GHL Sync Job ID" value={messageDetails.message.ghlSyncJobId || messageDetails.message.ghl_sync_job_id} mono />
+            <DetailRow label="GHL Message ID" value={messageDetails.message.ghlMessageId || messageDetails.message.ghl_message_id} mono />
+            <DetailRow label="GHL Sync Reason" value={messageDetails.message.ghlSyncReason || messageDetails.message.ghl_sync_reason} />
+            <DetailRow label="GHL Sync Error" value={messageDetails.message.ghlSyncError || messageDetails.message.ghl_sync_error} />
+
             <DetailRow label="Provider response" value={stringifyDiagnostic(messageDetails.message.providerResponse)} mono />
           </div>
         ) : (

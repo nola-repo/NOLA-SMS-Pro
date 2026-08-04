@@ -175,13 +175,34 @@ export const AdminDashboard: React.FC<{
         return () => clearInterval(interval);
     }, [fetchProviderBalances]);
 
+    // Admin Health Stats State
+    const [healthStats, setHealthStats] = useState<{
+        total_subaccounts?: number;
+        total_messages?: number;
+        subaccount_stats_source?: string;
+        subaccount_stats_truncated?: boolean;
+    } | null>(null);
+
     const fetchData = useCallback(async (isInitial = false) => {
         if (isInitial) setLoading(true);
         try {
-            const [logsRes, reqRes] = await Promise.all([
+            const [logsRes, reqRes, healthRes] = await Promise.all([
                 adminFetch(`${ADMIN_API}?action=logs`, { headers: getAdminAuthHeaders() }).catch(() => null),
-                adminFetch(ADMIN_API, { headers: getAdminAuthHeaders() }).catch(() => null)
+                adminFetch(ADMIN_API, { headers: getAdminAuthHeaders() }).catch(() => null),
+                adminFetch('/api/v2/admin_health', { headers: getAdminAuthHeaders() }).catch(() => null),
             ]);
+
+            if (healthRes && healthRes.ok) {
+                const healthJson = await healthRes.json().catch(() => null);
+                if (healthJson?.status === 'success' && healthJson?.data?.stats) {
+                    setHealthStats({
+                        total_subaccounts: healthJson.data.stats.total_subaccounts,
+                        total_messages: healthJson.data.stats.total_messages,
+                        subaccount_stats_source: healthJson.data.stats.subaccount_stats_source || healthJson.data.subaccount_stats_source,
+                        subaccount_stats_truncated: healthJson.data.stats.subaccount_stats_truncated || healthJson.data.subaccount_stats_truncated,
+                    });
+                }
+            }
 
             // Fetch accurate registered users list
             let accs = [];
@@ -353,11 +374,24 @@ export const AdminDashboard: React.FC<{
                     </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 mb-14">
+                {/* Stats Source / Truncation Indicator */}
+                {healthStats?.subaccount_stats_source && (
+                    <div className="mb-4 flex items-center justify-end gap-2 text-[11px] font-semibold text-gray-500 dark:text-gray-400">
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-3 py-1 text-[#6e6e73] dark:bg-white/5 dark:text-[#9aa0a6] border border-gray-200 dark:border-white/10">
+                            Stats source: <strong className="text-[#111111] dark:text-white">{healthStats.subaccount_stats_source.replace(/_/g, ' ')}</strong>
+                            {healthStats.subaccount_stats_truncated && (
+                                <span className="ml-1 text-amber-600 dark:text-amber-400 font-bold">(truncated)</span>
+                            )}
+                        </span>
+                    </div>
+                )}
+
+                {/* Stat Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
                     <DashboardMetricCard
                         index={0}
                         label="Registered Users"
-                        value={totalAccounts.toLocaleString()}
+                        value={(healthStats?.total_subaccounts ?? totalAccounts).toLocaleString()}
                         note={`${activeAccounts.toLocaleString()} active subaccounts`}
                         icon={<FiUsers className="w-full h-full" />}
                         gradient="bg-gradient-to-br from-[#e0f2fe] via-[#60a5fa] to-[#06b6d4] dark:from-[#3b82f6] dark:via-[#2584d5] dark:to-[#14a3a1] shadow-blue-500/20 hover:shadow-blue-500/30"
@@ -387,7 +421,7 @@ export const AdminDashboard: React.FC<{
                     <DashboardMetricCard
                         index={2}
                         label="Total Messages"
-                        value={totalMessages.toLocaleString()}
+                        value={(healthStats?.total_messages ?? totalMessages).toLocaleString()}
                         note="Platform activity"
                         icon={<FiMessageSquare className="w-full h-full" />}
                         gradient="bg-gradient-to-br from-[#dcfce7] via-[#86efac] to-[#2dd4bf] dark:from-[#10b981] dark:via-[#0ea56f] dark:to-[#0d9488] shadow-emerald-500/20 hover:shadow-emerald-500/30"
