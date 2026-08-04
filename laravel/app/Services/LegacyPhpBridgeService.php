@@ -12,6 +12,12 @@ class LegacyPhpBridgeService
         $queryJson = json_encode($query);
         $headersJson = json_encode($headers);
 
+        $env = array_merge(
+            is_array(getenv()) ? getenv() : [],
+            $_ENV ?? [],
+            $_SERVER ?? []
+        );
+
         $process = new Process([
             PHP_BINARY,
             $bridgeScript,
@@ -19,7 +25,7 @@ class LegacyPhpBridgeService
             strtoupper($method),
             $queryJson === false ? '{}' : $queryJson,
             $headersJson === false ? '{}' : $headersJson,
-        ], base_path('..'));
+        ], base_path('..'), $env);
 
         $process->setInput($rawBody);
         $process->run();
