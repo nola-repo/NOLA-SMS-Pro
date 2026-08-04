@@ -48,6 +48,15 @@ foreach ($headers as $name => $values) {
         $_SERVER['AUTHORIZATION'] = $value;
         $_SERVER['Authorization'] = $value;
     }
+    if ($normalized === 'COOKIE') {
+        foreach (explode(';', $value) as $cookiePair) {
+            $parts = explode('=', trim($cookiePair), 2);
+            if (count($parts) !== 2 || $parts[0] === '') {
+                continue;
+            }
+            $_COOKIE[$parts[0]] = urldecode($parts[1]);
+        }
+    }
 }
 
 register_shutdown_function(static function (): void {

@@ -9,6 +9,10 @@ class LegacyPhpBridgeService
     public function call(string $legacyScriptPath, string $method, array $query = [], string $rawBody = '', array $headers = []): array
     {
         $bridgeScript = base_path('bootstrap/legacy_bridge.php');
+        if ($headers === [] && function_exists('request')) {
+            $headers = request()->headers->all();
+        }
+
         $queryJson = json_encode($query);
         $headersJson = json_encode($headers);
 
