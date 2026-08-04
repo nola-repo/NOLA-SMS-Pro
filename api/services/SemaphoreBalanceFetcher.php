@@ -39,6 +39,12 @@ class SemaphoreBalanceFetcher
                 if (!empty($data['active_provider'])) {
                     $resolved['active_provider'] = $data['active_provider'];
                 }
+                if (!empty($data['semaphore_api_key'])) {
+                    $resolved['SEMAPHORE_API_KEY'] = $data['semaphore_api_key'];
+                }
+                if (!empty($data['nola_pro_api_key'])) {
+                    $resolved['SEMAPHORE_API_KEY'] = $data['nola_pro_api_key'];
+                }
                 if (!empty($data['unisms_api_key'])) {
                     $resolved['UNISMS_API_KEY'] = $data['unisms_api_key'];
                 }
