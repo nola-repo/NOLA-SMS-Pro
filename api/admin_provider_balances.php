@@ -21,6 +21,7 @@ header('Content-Type: application/json');
 require_once __DIR__ . '/webhook/firestore_client.php';
 require_once __DIR__ . '/admin_auth_helper.php';
 require_once __DIR__ . '/services/SmsGatewayService.php';
+require_once __DIR__ . '/services/SemaphoreBalanceFetcher.php';
 require_once __DIR__ . '/cache_helper.php';
 
 // Only super_admin may view raw provider credentials / balances
@@ -53,95 +54,31 @@ try {
     error_log('[admin_provider_balances] SmsGatewayService init failed: ' . $e->getMessage());
 }
 
-// ── Helper: build a provider result array ───────────────────────────────────
-function build_provider_result(
-    string $providerKey,
-    string $providerLabel,
-    bool   $isActive,
-    int    $warnThreshold,
-    int    $criticalThreshold,
-    array  $accCheck,
-    ?string $errorMsg
-): array {
-    $credits = (int)($accCheck['credits'] ?? 0);
-    $status  = (string)($accCheck['status'] ?? ($errorMsg ? 'error' : 'inactive'));
+$db = get_firestore();
+$fetcher = new SemaphoreBalanceFetcher();
+$summary = $fetcher->getDashboardSummary($db);
 
-    $result = [
-        'name'        => $providerLabel,
-        'status'      => $status,
-        'credits'     => $credits,
-        'configured'  => $status === 'active',
-        'is_active'   => $isActive,
-        'warning'     => $credits < $warnThreshold && $credits >= $criticalThreshold && $status === 'active',
-        'critical'    => $credits < $criticalThreshold && $status === 'active',
-        'error'       => $errorMsg,
-    ];
-
-    // UniSMS-specific extras
-    if ($providerKey === 'unisms') {
-        $result['email']      = $accCheck['email'] ?? null;
-        $result['sid_tokens'] = isset($accCheck['sid_tokens']) ? (int)$accCheck['sid_tokens'] : null;
-    }
-
-    return $result;
-}
-
-// ── Fetch Semaphore balance ──────────────────────────────────────────────────
-$semResult = [];
-$semError  = null;
-try {
-    $semProvider = $gateway->getProviderInstance('semaphore');
-    $semCheck    = $semProvider->checkAccount();
-    $semResult   = $semCheck;
-} catch (\Throwable $e) {
-    $semError  = $e->getMessage();
-    $semResult = ['status' => 'error', 'credits' => 0];
-    error_log('[admin_provider_balances] Semaphore checkAccount failed: ' . $semError);
-}
-
-// ── Fetch UniSMS balance ─────────────────────────────────────────────────────
-$uniResult = [];
-$uniError  = null;
-try {
-    $uniProvider = $gateway->getProviderInstance('unisms');
-    $uniCheck    = $uniProvider->checkAccount();
-    $uniResult   = $uniCheck;
-} catch (\Throwable $e) {
-    $uniError  = $e->getMessage();
-    $uniResult = ['status' => 'error', 'credits' => 0];
-    error_log('[admin_provider_balances] UniSMS checkAccount failed: ' . $uniError);
-}
-
-// ── Determine is_active flags ────────────────────────────────────────────────
-// auto_failover uses Semaphore as primary, so treat it as Semaphore-active
 $semIsActive = in_array($activeProviderName, ['semaphore', 'auto_failover'], true);
 $uniIsActive = $activeProviderName === 'unisms';
+
+$semCredits = (int)($summary['semaphore']['total_credits'] ?? 0);
+$uniCredits = (int)($summary['unisms']['total_credits'] ?? 0);
+
+$summary['semaphore']['is_active'] = $semIsActive;
+$summary['semaphore']['warning']   = $semCredits < SEMAPHORE_WARN && $semCredits >= SEMAPHORE_CRITICAL && $summary['semaphore']['status'] === 'active';
+$summary['semaphore']['critical']  = $semCredits < SEMAPHORE_CRITICAL && $summary['semaphore']['status'] === 'active';
+
+$summary['unisms']['is_active']    = $uniIsActive;
+$summary['unisms']['warning']      = $uniCredits < UNISMS_WARN && $uniCredits >= UNISMS_CRITICAL && $summary['unisms']['status'] === 'active';
+$summary['unisms']['critical']     = $uniCredits < UNISMS_CRITICAL && $summary['unisms']['status'] === 'active';
 
 // ── Build response ───────────────────────────────────────────────────────────
 $responsePayload = [
     'status'          => 'success',
     'fetched_at'      => (new \DateTimeImmutable())->format(\DateTimeInterface::ATOM),
     'active_provider' => $activeProviderName,
-    'providers'       => [
-        'semaphore' => build_provider_result(
-            'semaphore',
-            'Semaphore',
-            $semIsActive,
-            SEMAPHORE_WARN,
-            SEMAPHORE_CRITICAL,
-            $semResult,
-            $semError
-        ),
-        'unisms' => build_provider_result(
-            'unisms',
-            'UniSMS',
-            $uniIsActive,
-            UNISMS_WARN,
-            UNISMS_CRITICAL,
-            $uniResult,
-            $uniError
-        ),
-    ],
+    'summary'         => $summary,
+    'providers'       => $summary,
 ];
 
 // ── Cache and respond ────────────────────────────────────────────────────────

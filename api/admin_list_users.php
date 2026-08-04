@@ -3,7 +3,7 @@
  * api/admin_list_users.php
  *
  * Admin List Users API
- * Returns all documents from the `users` Firestore collection, enriched with integration data.
+ * Returns all documents from the `users` Firestore collection, enriched with integration data and provider balance.
  */
 
 require_once __DIR__ . '/cors.php';
@@ -15,6 +15,7 @@ require_once __DIR__ . '/jwt_helper.php';
 require_once __DIR__ . '/admin_auth_helper.php';
 require_once __DIR__ . '/cache_helper.php';
 require_once __DIR__ . '/services/AgencyNameResolver.php';
+require_once __DIR__ . '/services/SemaphoreBalanceFetcher.php';
 require_once __DIR__ . '/performance_logger.php';
 
 NolaPerformance::start('/api/admin_list_users.php');
@@ -22,80 +23,6 @@ NolaPerformance::start('/api/admin_list_users.php');
 // ─── JWT Auth Guard ───────────────────────────────────────────────────────────
 function require_admin_auth(): array {
     return require_secure_admin_auth();
-
-    // 1. Try legacy admin headers first
-    $adminAuth = $_SERVER['HTTP_X_ADMIN_AUTH'] ?? '';
-    $adminUser = $_SERVER['HTTP_X_ADMIN_USER'] ?? '';
-    if (!$adminAuth || !$adminUser) {
-        $headers = function_exists('getallheaders') ? getallheaders() : [];
-        foreach ($headers as $key => $value) {
-            if (strcasecmp($key, 'X-Admin-Auth') === 0) {
-                $adminAuth = $value;
-            }
-            if (strcasecmp($key, 'X-Admin-User') === 0) {
-                $adminUser = $value;
-            }
-        }
-    }
-
-    if (strtolower(trim((string)$adminAuth)) === 'true' && !empty($adminUser)) {
-        return [
-            'username' => $adminUser,
-            'role' => 'super_admin'
-        ];
-    }
-
-    // 2. Fallback to Bearer token
-    $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
-    if (!$authHeader) {
-        $headers = function_exists('getallheaders') ? getallheaders() : [];
-        foreach ($headers as $key => $value) {
-            if (strcasecmp($key, 'Authorization') === 0) {
-                $authHeader = $value;
-                break;
-            }
-        }
-    }
-
-    if (!$authHeader || !str_starts_with($authHeader, 'Bearer ')) {
-        http_response_code(401);
-        echo json_encode(['status' => 'error', 'message' => 'Admin token missing. Please log in again.']);
-        exit;
-    }
-
-    $token  = substr($authHeader, 7);
-    $secret = getenv('JWT_SECRET') ?: '';
-
-    // Verify token validity specifically to return descriptive errors
-    $parts = explode('.', $token);
-    if (count($parts) !== 3) {
-        http_response_code(401);
-        echo json_encode(['status' => 'error', 'message' => 'Admin token invalid. Please log in again.']);
-        exit;
-    }
-
-    [$headerB64, $bodyB64, $sigB64] = $parts;
-    $expected = base64url_encode(hash_hmac('sha256', "$headerB64.$bodyB64", $secret, true));
-    if (!hash_equals($expected, $sigB64)) {
-        http_response_code(401);
-        echo json_encode(['status' => 'error', 'message' => 'Admin token invalid. Please log in again.']);
-        exit;
-    }
-
-    $payload = json_decode(base64url_decode($bodyB64), true);
-    if (!is_array($payload)) {
-        http_response_code(401);
-        echo json_encode(['status' => 'error', 'message' => 'Admin token invalid. Please log in again.']);
-        exit;
-    }
-
-    if (isset($payload['exp']) && $payload['exp'] < time()) {
-        http_response_code(401);
-        echo json_encode(['status' => 'error', 'message' => 'Admin token expired. Please log in again.']);
-        exit;
-    }
-
-    return $payload;
 }
 
 // ─── Helper: format Firestore timestamp ──────────────────────────────────────
@@ -126,7 +53,8 @@ if ($cachedData !== null) {
 }
 NolaPerformance::cache('MISS');
 
-$db     = get_firestore();
+$db             = get_firestore();
+$balanceFetcher = new SemaphoreBalanceFetcher();
 
 try {
     NolaPerformance::begin('data_load');
@@ -190,6 +118,7 @@ try {
         $approvedSenderId = null;
         $freeUsageCount = 0;
         $freeCreditsTotal = 10;
+        $intData = null;
 
         if (!empty($locId)) {
             // Check ghl_tokens first
@@ -223,7 +152,7 @@ try {
         $companyId = $d['company_id'] ?? $d['companyId'] ?? null;
         $agencyName = AgencyNameResolver::forUser($d, $agencyNameMap);
 
-        $usersList[] = [
+        $userItem = [
             'id'                 => $doc->id(),
             'name'               => $fullName,
             'firstName'          => $firstName,
@@ -244,6 +173,8 @@ try {
             'source'             => $d['source'] ?? 'marketplace_install',
             'created_at'         => format_ts($d['created_at'] ?? null)
         ];
+
+        $usersList[] = $balanceFetcher->enrichSubaccount($userItem, $intData);
     }
 
     $responsePayload = [
