@@ -63,17 +63,24 @@ export interface ProviderBalanceCardProps {
     summary?: ProviderBalancesResponse['summary'];
 }
 
-export function getProviderStatusColor(provider?: ProviderBalance | null): 'green' | 'yellow' | 'red' | 'gray' {
-    if (!provider || provider.status === 'error' || !provider.configured) return 'gray';
+export function isProviderConfigured(provider?: Partial<ProviderBalance & ProviderSummaryEntry> | null): boolean {
+    if (!provider) return false;
+    if (typeof provider.configured === 'boolean') return provider.configured;
+    if (typeof provider.connected_accounts === 'number') return provider.connected_accounts > 0;
+    return provider.status === 'active';
+}
+
+export function getProviderStatusColor(provider?: Partial<ProviderBalance & ProviderSummaryEntry> | null): 'green' | 'yellow' | 'red' | 'gray' {
+    if (!provider || provider.status === 'error' || !isProviderConfigured(provider)) return 'gray';
     if (provider.critical) return 'red';
     if (provider.warning) return 'yellow';
     return 'green';
 }
 
-export function getProviderStatusLabel(provider?: ProviderBalance | null): string | null {
+export function getProviderStatusLabel(provider?: Partial<ProviderBalance & ProviderSummaryEntry> | null): string | null {
     if (!provider) return null;
     if (provider.status === 'error') return 'Unreachable';
-    if (!provider.configured) return 'Not Configured';
+    if (!isProviderConfigured(provider)) return 'Not Configured';
     if (provider.critical) return 'Critical — Top Up Now';
     if (provider.warning) return 'Low Balance';
     return null; // Don't display Healthy badge per design
@@ -117,16 +124,21 @@ export const ProviderBalanceCard: React.FC<ProviderBalanceCardProps> = ({
         const isSemaphore = providerKey === 'semaphore';
         const name = providerData?.name || (isSemaphore ? 'Semaphore' : 'UniSMS');
         const summaryEntry = summary?.[providerKey];
+        const mergedProvider: Partial<ProviderBalance & ProviderSummaryEntry> = {
+            ...providerData,
+            ...summaryEntry,
+            configured: providerData?.configured ?? (summaryEntry?.connected_accounts ? summaryEntry.connected_accounts > 0 : summaryEntry?.status === 'active'),
+        };
         // Prefer aggregated total_credits from summary; fall back to per-record credits
         const credits = summaryEntry?.total_credits ?? (typeof providerData?.credits === 'number' ? providerData.credits : 0);
         const connectedAccounts = summaryEntry?.connected_accounts ?? providerData?.connected_accounts;
-        const statusColor = getProviderStatusColor(providerData);
-        const statusLabel = getProviderStatusLabel(providerData);
+        const statusColor = getProviderStatusColor(mergedProvider);
+        const statusLabel = getProviderStatusLabel(mergedProvider);
         const uniData = !isSemaphore ? (providerData as UniSmsBalance | undefined) : undefined;
 
         // Container borders & backgrounds based on health state
         let containerStyle = 'bg-[#f7f7f7] dark:bg-[#0d0e10] border-transparent hover:border-[#e5e5e5] dark:hover:border-white/10';
-        if (providerData?.status === 'error' || !providerData?.configured) {
+        if (mergedProvider.status === 'error' || !isProviderConfigured(mergedProvider)) {
             containerStyle = 'bg-[#f7f7f7]/70 dark:bg-[#0d0e10]/70 border-gray-200 dark:border-white/5 opacity-90';
         } else if (statusColor === 'red') {
             containerStyle = 'bg-red-500/[0.03] border-red-500/40 dark:border-red-500/50 shadow-sm shadow-red-500/10 animate-pulse';
