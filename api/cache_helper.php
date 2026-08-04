@@ -43,7 +43,7 @@ class NolaCache
         // 2. Set up file cache directory as fallback
         self::$fileCacheDir = __DIR__ . '/cache/data';
         if (!is_dir(self::$fileCacheDir)) {
-            @mkdir(self::$fileCacheDir, 0750, true);
+            @mkdir(self::$fileCacheDir, 0777, true);
         }
 
         self::$initialized = true;

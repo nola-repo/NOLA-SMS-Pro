@@ -84,7 +84,7 @@ class ProductV2LegacyBridgeController extends Controller
 
     private function forwardToLegacy(string $script, string $method, array $query = [], string $rawBody = ''): Response
     {
-        $result = $this->bridge->call($script, $method, $query, $rawBody, request()->headers->all());
+        $result = $this->bridge->call($script, $method, $query, $rawBody);
 
         return response($result['body'], $result['status'])
             ->header('Content-Type', 'application/json');

@@ -89,26 +89,6 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    match /admin_config/{doc} {
-      allow read, write: if false;
-    }
-
-    match /idempotency_keys/{doc} {
-      allow read, write: if false;
-    }
-
-    match /credit_transactions/{doc} {
-      allow read, write: if false;
-    }
-
-    match /agency_subaccounts/{doc} {
-      allow read, write: if false;
-    }
-
-    match /ghl_sync_jobs/{doc} {
-      allow read, write: if false;
-    }
-
     match /agency_wallet/{walletId} {
       allow read: if isAuthenticated()
         && request.auth.token.company_id is string

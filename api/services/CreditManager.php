@@ -10,9 +10,9 @@ class CreditManager
     private $db;
     private $globalPricing = null;
 
-    public function __construct($db = null)
+    public function __construct()
     {
-        $this->db = $db ?? get_firestore();
+        $this->db = get_firestore();
     }
 
     public function get_global_pricing(): array
@@ -131,6 +131,17 @@ class CreditManager
         $balance = 0;
         if ($snapshot->exists()) {
             $balance = (int)($snapshot->data()['balance'] ?? 0);
+        }
+
+        $legacySnapshot = $this->db->collection('agency_wallet')->document($agency_id)->snapshot();
+        if ($legacySnapshot->exists()) {
+            $legacyData = [];
+            foreach ($legacySnapshot->data() as $key => $value) {
+                $legacyData[trim((string)$key)] = $value;
+            }
+            if (isset($legacyData['balance']) && is_numeric($legacyData['balance'])) {
+                $balance = max($balance, (int)$legacyData['balance']);
+            }
         }
 
         return $balance;

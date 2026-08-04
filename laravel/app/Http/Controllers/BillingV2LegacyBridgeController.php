@@ -29,7 +29,7 @@ class BillingV2LegacyBridgeController extends Controller
 
     public function report(Request $request): Response
     {
-        $result = $this->bridge->call(base_path('../api/billing/report.php'), $request->method(), $request->all(), (string) $request->getContent(), $request->headers->all());
+        $result = $this->bridge->call(base_path('../api/billing/report.php'), $request->method(), $request->all(), (string) $request->getContent());
         $format = strtolower((string) $request->query('format', 'pdf'));
         $contentType = match ($format) {
             'csv' => 'text/csv',
@@ -53,7 +53,7 @@ class BillingV2LegacyBridgeController extends Controller
 
     private function forwardToLegacy(string $script, string $method, array $query = [], string $rawBody = ''): Response
     {
-        $result = $this->bridge->call($script, $method, $query, $rawBody, request()->headers->all());
+        $result = $this->bridge->call($script, $method, $query, $rawBody);
 
         return response($result['body'], $result['status'])
             ->header('Content-Type', 'application/json');

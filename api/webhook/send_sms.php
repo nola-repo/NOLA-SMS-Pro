@@ -3,9 +3,6 @@
 ini_set('display_errors', 0);
 ini_set('display_startup_errors', 0);
 error_reporting(E_ALL);
-if (function_exists('set_time_limit')) {
-    @set_time_limit(30);
-}
 
 require_once __DIR__ . '/../cors.php';
 require_once __DIR__ . '/../performance_logger.php';
@@ -22,7 +19,6 @@ require_once __DIR__ . '/../services/SenderResolver.php';
 require_once __DIR__ . '/../services/MessageSyncService.php';
 require __DIR__ . '/../services/GhlClient.php';
 require_once __DIR__ . '/../services/GhlSyncService.php';
-require_once __DIR__ . '/../services/GhlSyncJobService.php';
 require_once __DIR__ . '/../services/FirestoreId.php';
 require_once __DIR__ . '/../services/PhoneNormalizer.php';
 require_once __DIR__ . '/../services/ProviderResultService.php';
@@ -261,24 +257,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 }
 
 /* |-------------------------------------------------------------------------- | RECEIVE PAYLOAD |-------------------------------------------------------------------------- */
-$maxPayloadBytes = 512 * 1024;
-$inputStream = fopen('php://input', 'rb');
-$raw = $inputStream ? stream_get_contents($inputStream, $maxPayloadBytes + 1) : '';
-if (is_resource($inputStream)) {
-    fclose($inputStream);
-}
-if ($raw === false) {
-    $raw = '';
-}
-if (strlen($raw) > $maxPayloadBytes) {
-    Logger::error('SMS webhook payload too large', [
-        'content_length' => isset($_SERVER['CONTENT_LENGTH']) ? (int)$_SERVER['CONTENT_LENGTH'] : null,
-        'max_bytes' => $maxPayloadBytes,
-    ]);
-    http_response_code(413);
-    echo json_encode(['status' => 'error', 'message' => 'Payload too large.']);
-    exit;
-}
+$raw = file_get_contents('php://input');
 $payload = json_decode($raw, true);
 if (!is_array($payload)) {
     $payload = $_POST;
@@ -505,6 +484,7 @@ try {
                 'status' => 'error',
                 'error' => 'duplicate_request',
                 'message' => 'This SMS request is already being processed.',
+                'idempotency_key' => $idempotencyKey,
             ]);
             exit;
         }
@@ -623,7 +603,7 @@ if ($centralLocationId !== '') {
     $reqSystemFlag = $customData['is_system_notification'] ?? $payload['is_system_notification'] ?? $data['is_system_notification'] ?? null;
     $flagIsTrue    = ($reqSystemFlag === true || $reqSystemFlag === 'true' || $reqSystemFlag === 1 || $reqSystemFlag === '1');
     $isKnownSystemAlert = $systemAlertType !== '' && in_array($systemAlertType, $knownSystemAlertTypes, true);
-    if ($flagIsTrue && ($locId === $centralLocationId || $triggeringLocationId === $centralLocationId)) {
+    if ($flagIsTrue && ($locId === $centralLocationId || $triggeringLocationId === $centralLocationId || $isKnownSystemAlert)) {
         $isSystemNotification = true;
     }
 }
@@ -696,68 +676,40 @@ if (empty($installGate['allowed'])) {
 }
 
 $today = date('Y-m-d');
-if ($rateLimitEnabled && $rateLimit > 0) {
-    try {
-        $rateLimitReservation = $db->runTransaction(function ($transaction) use ($tokenRef, $today, $rateLimit) {
-            $snap = $transaction->snapshot($tokenRef);
-            $data = $snap->exists() ? $snap->data() : [];
-            $storedLastReset = (string)($data['last_reset_date'] ?? '');
-            $currentCount = $storedLastReset === $today ? (int)($data['attempt_count'] ?? 0) : 0;
-
-            if ($currentCount >= $rateLimit) {
-                return ['allowed' => false, 'attempt_count' => $currentCount];
-            }
-
-            if ($storedLastReset !== $today) {
-                $transaction->set($tokenRef, [
-                    'attempt_count' => 1,
-                    'last_reset_date' => $today,
-                ], ['merge' => true]);
-            } else {
-                $transaction->set($tokenRef, [
-                    'attempt_count' => \Google\Cloud\Firestore\FieldValue::increment(1),
-                ], ['merge' => true]);
-            }
-
-            return ['allowed' => true, 'attempt_count' => $currentCount + 1];
-        });
-
-        $attemptCount = (int)($rateLimitReservation['attempt_count'] ?? $attemptCount);
-        if (empty($rateLimitReservation['allowed'])) {
-            Logger::error('Rate limit reached', ['location_id' => $locId, 'rate_limit' => $rateLimit, 'attempt_count' => $attemptCount]);
-            Logger::response(403, ['status' => 'error', 'error' => 'rate_limit_reached']);
-            $blockedMessageId = record_workflow_sms_block($db, (string)$locId, $validNumbers, $message, 'rate_limit_reached', [
-                'rate_limit' => $rateLimit,
-                'attempt_count' => $attemptCount,
-                'contact_id' => $contactId,
-                'idempotency_key' => $idempotencyKey ?? null,
-            ]);
-            $markIdempotencyFailed('rate_limit_reached', "Agency subaccount credit limit exceeded ($rateLimit).", 403);
-            http_response_code(403);
-            echo json_encode([
-                "status" => "error",
-                "error"  => "rate_limit_reached",
-                "message" => "Agency subaccount credit limit exceeded ($rateLimit).",
-                "message_id" => $blockedMessageId ?? null
-            ]);
-            exit;
-        }
-    } catch (\Throwable $e) {
-        Logger::error('Rate limit reservation failed', ['location_id' => $locId, 'error' => $e->getMessage()]);
-        $markIdempotencyFailed('rate_limit_unavailable', 'SMS rate limit could not be verified. Please retry shortly.', 503);
-        http_response_code(503);
-        echo json_encode([
-            'status' => 'error',
-            'error' => 'rate_limit_unavailable',
-            'message' => 'SMS rate limit could not be verified. Please retry shortly.',
-        ]);
-        exit;
-    }
-} elseif ($lastReset !== $today) {
+// Daily Reset Logic applied to ghl_tokens
+if ($lastReset !== $today) {
     $attemptCount = 0;
     $tokenRef->set([
         'attempt_count' => 0,
         'last_reset_date' => $today
+    ], ['merge' => true]);
+}
+
+// Block if limit reached
+if ($rateLimitEnabled && $rateLimit > 0 && $attemptCount >= $rateLimit) {
+    Logger::error('Rate limit reached', ['location_id' => $locId, 'rate_limit' => $rateLimit, 'attempt_count' => $attemptCount]);
+    Logger::response(403, ['status' => 'error', 'error' => 'rate_limit_reached']);
+    $blockedMessageId = record_workflow_sms_block($db, (string)$locId, $validNumbers, $message, 'rate_limit_reached', [
+        'rate_limit' => $rateLimit,
+        'attempt_count' => $attemptCount,
+        'contact_id' => $contactId,
+        'idempotency_key' => $idempotencyKey ?? null,
+    ]);
+    $markIdempotencyFailed('rate_limit_reached', "Agency subaccount credit limit exceeded ($rateLimit).", 403);
+    http_response_code(403);
+    echo json_encode([
+        "status" => "error", 
+        "error"  => "rate_limit_reached",
+        "message" => "Agency subaccount credit limit exceeded ($rateLimit).",
+        "message_id" => $blockedMessageId ?? null
+    ]);
+    exit;
+}
+
+// Atomically reserve an attempt
+if ($rateLimitEnabled && $rateLimit > 0) {
+    $tokenRef->set([
+        'attempt_count' => \Google\Cloud\Firestore\FieldValue::increment(1)
     ], ['merge' => true]);
 }
 
@@ -1376,27 +1328,38 @@ if (!empty($message_results)) {
     $msgSyncResp = ['success' => true, 'skipped' => true, 'reason' => 'not_single_recipient_or_failed'];
     if (count($validNumbers) === 1 && $locId && !empty($messageId) && $initialStatus !== 'Failed') {
         try {
-            $tagsToApply = $customData['tagsToApply'] ?? [];
-            $jobService = new \Nola\Services\GhlSyncJobService($db);
-            $msgSyncResp = $jobService->enqueueOutboundMessage([
-                'location_id' => $locId,
-                'token_registry_id' => $ghlTokenRegistryId,
-                'message_id' => $messageId,
-                'phone' => $validNumbers[0],
-                'message' => $message,
-                'contact_id' => $contactId,
-                'tags' => is_array($tagsToApply) ? $tagsToApply : [],
-            ]);
+            $ghlSync = new \Nola\Services\GhlSyncService($db, $locId, $ghlTokenRegistryId);
+            $syncRes = $ghlSync->syncOutboundMessage($validNumbers[0], $message, $contactId);
+            $msgSyncResp = $syncRes;
 
             $syncUpdate = array_filter([
-                'ghl_sync_success' => false,
-                'ghl_sync_skipped' => false,
-                'ghl_sync_queued' => true,
-                'ghl_sync_job_id' => $msgSyncResp['job_id'] ?? null,
+                'ghl_sync_success' => (bool)($syncRes['success'] ?? false),
+                'ghl_sync_skipped' => (bool)($syncRes['skipped'] ?? false),
+                'ghl_sync_reason' => $syncRes['reason'] ?? null,
+                'ghl_sync_error' => $syncRes['error'] ?? null,
+                'ghl_sync_http_status' => $syncRes['ghl_response']['status'] ?? null,
                 'ghl_sync_updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
             ], static fn($v) => $v !== null);
             $db->collection('messages')->document($messageId)->set($syncUpdate, ['merge' => true]);
             $db->collection('sms_logs')->document($messageId)->set($syncUpdate, ['merge' => true]);
+
+            if (!empty($syncRes['ghl_message_id'])) {
+                $ghlMessageId = $syncRes['ghl_message_id'];
+                
+                // Update Firestore messages and sms_logs with GHL Message ID
+                $db->collection('messages')->document($messageId)->update([
+                    ['path' => 'ghl_message_id', 'value' => $ghlMessageId]
+                ]);
+                $db->collection('sms_logs')->document($messageId)->update([
+                    ['path' => 'ghl_message_id', 'value' => $ghlMessageId]
+                ]);
+            } else {
+                error_log('[GHL Sync] Outbound sync completed without GHL message id: ' . json_encode([
+                    'location_id' => $locId,
+                    'local_message_id' => $messageId,
+                    'sync_result' => $syncRes,
+                ]));
+            }
         } catch (\Throwable $e) {
             $msgSyncResp = ['success' => false, 'error' => $e->getMessage()];
             try {
@@ -1411,6 +1374,25 @@ if (!empty($message_results)) {
                 error_log('[GHL Sync] Failed to persist sync error: ' . $writeEx->getMessage());
             }
             error_log('[GHL Sync] Failed (non-fatal): ' . $e->getMessage());
+        }
+        // -- Apply Tags to GHL Contact --------------------------------------------
+        // If the frontend passed tags (via the "Apply Tags" button in the Composer),
+        // post them to the GHL Contacts API. Requires a resolved GHL contact ID.
+        // This is non-fatal � a tagging failure will never block SMS delivery.
+        $tagsToApply = $customData['tagsToApply'] ?? [];
+        if (!empty($tagsToApply) && is_array($tagsToApply) && $contactId) {
+            try {
+                $ghlClient = new GhlClient($db, $locId, $ghlTokenRegistryId);
+                $tagsResp  = $ghlClient->request(
+                    'POST',
+                    "/contacts/{$contactId}/tags",
+                    json_encode(['tags' => $tagsToApply]),
+                    '2021-07-28'
+                );
+                error_log("[GHL Sync] Applied " . count($tagsToApply) . " tags to contact {$contactId}: " . json_encode($tagsToApply));
+            } catch (\Throwable $e) {
+                error_log('[GHL Sync] Failed to apply tags (non-fatal): ' . $e->getMessage());
+            }
         }
     }
 

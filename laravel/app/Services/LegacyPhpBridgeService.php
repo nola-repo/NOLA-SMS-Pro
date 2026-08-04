@@ -9,18 +9,8 @@ class LegacyPhpBridgeService
     public function call(string $legacyScriptPath, string $method, array $query = [], string $rawBody = '', array $headers = []): array
     {
         $bridgeScript = base_path('bootstrap/legacy_bridge.php');
-        if ($headers === [] && function_exists('request')) {
-            $headers = request()->headers->all();
-        }
-
         $queryJson = json_encode($query);
         $headersJson = json_encode($headers);
-
-        $env = array_merge(
-            is_array(getenv()) ? getenv() : [],
-            $_ENV ?? [],
-            $_SERVER ?? []
-        );
 
         $process = new Process([
             PHP_BINARY,
@@ -29,7 +19,7 @@ class LegacyPhpBridgeService
             strtoupper($method),
             $queryJson === false ? '{}' : $queryJson,
             $headersJson === false ? '{}' : $headersJson,
-        ], base_path('..'), $env);
+        ], base_path('..'));
 
         $process->setInput($rawBody);
         $process->run();
