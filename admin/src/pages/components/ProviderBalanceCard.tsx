@@ -1,10 +1,16 @@
 import React from 'react';
-import { FiRefreshCw, FiServer, FiAlertTriangle, FiXCircle, FiGlobe, FiRadio, FiMail, FiKey } from 'react-icons/fi';
+import { FiRefreshCw, FiServer, FiAlertTriangle, FiXCircle, FiGlobe, FiRadio, FiMail, FiKey, FiLink } from 'react-icons/fi';
 
 export interface ProviderBalance {
     name: string;
     status: 'active' | 'inactive' | 'error';
     credits: number;
+    /** Aggregated total credits across all connected API keys for this provider */
+    total_credits?: number;
+    /** Number of connected API key accounts */
+    connected_accounts?: number;
+    /** Total API key accounts discovered (connected + unconfigured) */
+    total_accounts?: number;
     configured: boolean;
     is_active: boolean;
     warning: boolean;
@@ -18,6 +24,18 @@ export interface UniSmsBalance extends ProviderBalance {
     sid_tokens: number | null;
 }
 
+export interface ProviderSummaryEntry {
+    name: string;
+    status: 'active' | 'inactive' | 'error';
+    credits?: number;
+    total_credits?: number;
+    connected_accounts?: number;
+    total_accounts?: number;
+    is_active: boolean;
+    warning: boolean;
+    critical: boolean;
+}
+
 export interface ProviderBalancesResponse {
     status: 'success';
     fetched_at: string;
@@ -25,6 +43,11 @@ export interface ProviderBalancesResponse {
     providers: {
         semaphore: ProviderBalance;
         unisms: UniSmsBalance;
+    };
+    /** Aggregated summary across all connected API keys per provider */
+    summary?: {
+        semaphore?: ProviderSummaryEntry;
+        unisms?: ProviderSummaryEntry;
     };
 }
 
@@ -36,6 +59,8 @@ export interface ProviderBalanceCardProps {
     isLoading?: boolean;
     error?: string | null;
     onRefresh?: () => void;
+    /** Aggregated summary from /api/admin/provider-balances response */
+    summary?: ProviderBalancesResponse['summary'];
 }
 
 export function getProviderStatusColor(provider?: ProviderBalance | null): 'green' | 'yellow' | 'red' | 'gray' {
@@ -72,6 +97,7 @@ export const ProviderBalanceCard: React.FC<ProviderBalanceCardProps> = ({
     isLoading = false,
     error = null,
     onRefresh,
+    summary,
 }) => {
     const isInitialLoading = isLoading && !semaphore && !unisms;
 
@@ -90,7 +116,10 @@ export const ProviderBalanceCard: React.FC<ProviderBalanceCardProps> = ({
 
         const isSemaphore = providerKey === 'semaphore';
         const name = providerData?.name || (isSemaphore ? 'Semaphore' : 'UniSMS');
-        const credits = typeof providerData?.credits === 'number' ? providerData.credits : 0;
+        const summaryEntry = summary?.[providerKey];
+        // Prefer aggregated total_credits from summary; fall back to per-record credits
+        const credits = summaryEntry?.total_credits ?? (typeof providerData?.credits === 'number' ? providerData.credits : 0);
+        const connectedAccounts = summaryEntry?.connected_accounts ?? providerData?.connected_accounts;
         const statusColor = getProviderStatusColor(providerData);
         const statusLabel = getProviderStatusLabel(providerData);
         const uniData = !isSemaphore ? (providerData as UniSmsBalance | undefined) : undefined;
@@ -144,6 +173,12 @@ export const ProviderBalanceCard: React.FC<ProviderBalanceCardProps> = ({
                                 credits
                             </span>
                         </div>
+                        {typeof connectedAccounts === 'number' && (
+                            <div className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-gray-400 dark:text-gray-500">
+                                <FiLink className="w-3 h-3" />
+                                {connectedAccounts} connected account{connectedAccounts !== 1 ? 's' : ''}
+                            </div>
+                        )}
                     </div>
                 </div>
 

@@ -410,6 +410,7 @@ export const AdminDashboard: React.FC<{
                         fetchedAt={balanceData?.fetched_at}
                         isLoading={isBalanceLoading}
                         error={balanceError}
+                        summary={balanceData?.summary}
                         onRefresh={() => fetchProviderBalances(true)}
                     />
                 </div>

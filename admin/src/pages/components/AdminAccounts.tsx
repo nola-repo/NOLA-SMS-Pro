@@ -62,6 +62,10 @@ type Account = {
     free_usage_count?: number;
     free_credits_total?: number;
     monthly_reset_enabled?: boolean;
+    /** Display name of the resolved SMS provider e.g. "Semaphore" or "UniSMS" */
+    sms_provider?: string;
+    /** Live available credit balance from the SMS provider API */
+    provider_credit_balance?: number;
 };
 
 const normalizeNumber = (value: unknown, fallback = 0) => {
@@ -96,6 +100,8 @@ const normalizeAccount = (item: any): Account => {
         approved_sender_id: raw.approved_sender_id || null,
         provider: raw.provider || null,
         approved_provider: raw.approved_provider || raw.provider || null,
+        sms_provider: raw.sms_provider || null,
+        provider_credit_balance: typeof raw.provider_credit_balance === 'number' ? raw.provider_credit_balance : null,
     };
 };
 
@@ -809,6 +815,9 @@ export const AdminAccounts: React.FC = () => {
                                                 FREE USED
                                             </th>
                                             <th className="pb-3 pr-4 text-[11px] font-bold text-[#5f6368] dark:text-[#9aa0a6] uppercase tracking-wider whitespace-nowrap">
+                                                SMS PROVIDER
+                                            </th>
+                                            <th className="pb-3 pr-4 text-[11px] font-bold text-[#5f6368] dark:text-[#9aa0a6] uppercase tracking-wider whitespace-nowrap">
                                                 ACTIONS
                                             </th>
                                         </tr>
@@ -884,6 +893,26 @@ export const AdminAccounts: React.FC = () => {
                                                     )}
                                                 </td>
                                                 <td className="py-4 pr-4">{renderFreeUsage(account)}</td>
+                                                <td className="py-4 pr-4 min-w-[130px]">
+                                                    {account.sms_provider ? (
+                                                        <div className="flex flex-col gap-0.5">
+                                                            <span className="text-[12px] font-bold text-[#111111] dark:text-white">
+                                                                {account.sms_provider}
+                                                            </span>
+                                                            <span className={`text-[11px] font-semibold ${
+                                                                account.provider_credit_balance !== null && account.provider_credit_balance !== undefined && account.provider_credit_balance > 0
+                                                                    ? 'text-emerald-600 dark:text-emerald-400'
+                                                                    : 'text-[#9aa0a6]'
+                                                            }`}>
+                                                                {account.provider_credit_balance !== null && account.provider_credit_balance !== undefined
+                                                                    ? `${account.provider_credit_balance.toLocaleString()} credits`
+                                                                    : '—'}
+                                                            </span>
+                                                        </div>
+                                                    ) : (
+                                                        <span className="text-[12px] text-[#9aa0a6]">—</span>
+                                                    )}
+                                                </td>
                                                 <td className="py-4 pr-2 text-right min-w-[60px]">
                                                     <button
                                                         onClick={(event) => openActionMenu(account.id, event.currentTarget)}

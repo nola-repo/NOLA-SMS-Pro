@@ -216,6 +216,19 @@ export const AdminSubaccountProfile: React.FC<{
                                 <p className="text-[13px] font-semibold text-[#111111] dark:text-white break-words">{value}</p>
                             </div>
                         ))}
+
+                        {/* SMS Provider Balance — read-only, enriched by backend */}
+                        {account?.sms_provider && (
+                            <div className="rounded-xl bg-[#f7f7f7] dark:bg-[#0d0e10] border border-[#e5e5e5] dark:border-white/5 px-4 py-3">
+                                <p className="text-[10px] font-black uppercase tracking-wider text-[#9aa0a6] mb-1">SMS Provider</p>
+                                <p className="text-[13px] font-semibold text-[#111111] dark:text-white">{account.sms_provider}</p>
+                                {account?.provider_credit_balance !== null && account?.provider_credit_balance !== undefined && (
+                                    <p className={`text-[12px] font-bold mt-0.5 ${account.provider_credit_balance > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-[#9aa0a6]'}`}>
+                                        {account.provider_credit_balance.toLocaleString()} credits (live)
+                                    </p>
+                                )}
+                            </div>
+                        )}
                     </div>
 
                     <div className="flex items-center justify-between gap-4 rounded-xl bg-[#f7f7f7] dark:bg-[#0d0e10] border border-[#e5e5e5] dark:border-white/5 px-4 py-3">

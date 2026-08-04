@@ -41,6 +41,10 @@ export interface Account {
     credit_balance?: number;
     free_usage_count?: number;
     free_credits_total?: number;
+    /** Display name of the resolved SMS provider e.g. "Semaphore" or "UniSMS" */
+    sms_provider?: string;
+    /** Live available credit balance from the SMS provider API */
+    provider_credit_balance?: number;
     active?: boolean;
     monthly_reset_enabled?: boolean;
 }
