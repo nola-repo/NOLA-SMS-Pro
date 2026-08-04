@@ -437,7 +437,7 @@ export const AdminDashboard: React.FC<{
                 </div>
 
                 {/* SMS Provider Balances Card */}
-                <div className="mb-10">
+                <div className="mt-8 sm:mt-10 mb-10">
                     <ProviderBalanceCard
                         semaphore={balanceData?.providers?.semaphore}
                         unisms={balanceData?.providers?.unisms}
