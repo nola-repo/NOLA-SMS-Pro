@@ -23,3 +23,9 @@ dist-ssr
 *.sln
 *.sw?
 NOLA-SMS-Pro-Backend/
+
+# Build artifacts & logs
+*_build_log.txt
+*.diff
+.backend-patch/
+
