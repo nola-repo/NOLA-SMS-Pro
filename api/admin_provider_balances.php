@@ -67,13 +67,19 @@ $uniIsActive = $activeProviderName === 'unisms';
 $semCredits = (int)($summary['semaphore']['total_credits'] ?? 0);
 $uniCredits = (int)($summary['unisms']['total_credits'] ?? 0);
 
-$summary['semaphore']['is_active'] = $semIsActive;
-$summary['semaphore']['warning']   = $semCredits < SEMAPHORE_WARN && $semCredits >= SEMAPHORE_CRITICAL && $summary['semaphore']['status'] === 'active';
-$summary['semaphore']['critical']  = $semCredits < SEMAPHORE_CRITICAL && $summary['semaphore']['status'] === 'active';
+$summary['semaphore']['is_active']  = $semIsActive;
+$summary['semaphore']['warning']    = $semCredits < SEMAPHORE_WARN && $semCredits >= SEMAPHORE_CRITICAL && $summary['semaphore']['status'] === 'active';
+$summary['semaphore']['critical']   = $semCredits < SEMAPHORE_CRITICAL && $summary['semaphore']['status'] === 'active';
+// configured + error are required by the ProviderBalance TypeScript interface;
+// without them the frontend card renders as "Not Configured" (gray/dimmed).
+$summary['semaphore']['configured'] = $summary['semaphore']['status'] === 'active';
+$summary['semaphore']['error']      = null;
 
 $summary['unisms']['is_active']    = $uniIsActive;
 $summary['unisms']['warning']      = $uniCredits < UNISMS_WARN && $uniCredits >= UNISMS_CRITICAL && $summary['unisms']['status'] === 'active';
 $summary['unisms']['critical']     = $uniCredits < UNISMS_CRITICAL && $summary['unisms']['status'] === 'active';
+$summary['unisms']['configured']   = $summary['unisms']['status'] === 'active';
+$summary['unisms']['error']        = null;
 
 // ── Build response ───────────────────────────────────────────────────────────
 $responsePayload = [
@@ -85,6 +91,13 @@ $responsePayload = [
 ];
 
 // ── Cache and respond ────────────────────────────────────────────────────────
-NolaCache::set($cacheKey, $responsePayload, CACHE_TTL);
+// Guard against stale Redis cache poisoning: if both providers returned 0 credits,
+// the Semaphore/UniSMS API call likely failed silently (cold-start timeout, network
+// hiccup). Caching that result for the full 60 s causes every visitor in the next
+// minute to see 0 credits — the root cause of the "0 on direct visit, correct
+// after re-login" bug. Use a 5-second TTL instead so the next request gets a
+// fresh attempt almost immediately.
+$hasValidData = ($semCredits > 0 || $uniCredits > 0);
+NolaCache::set($cacheKey, $responsePayload, $hasValidData ? CACHE_TTL : 5);
 echo json_encode($responsePayload);
 exit;

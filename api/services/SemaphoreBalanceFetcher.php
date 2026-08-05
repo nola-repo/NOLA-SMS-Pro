@@ -227,7 +227,9 @@ class SemaphoreBalanceFetcher
                 'status'             => $semConnectedAccs > 0 ? 'active' : 'inactive',
                 'credits'            => $semTotalCredits,
                 'total_credits'      => $semTotalCredits,
-                'total_accounts'     => $semConnectedAccs,
+                // total_accounts = all unique Semaphore keys discovered (system + custom)
+                // connected_accounts = only those whose API call returned a live balance
+                'total_accounts'     => count($semKeys),
                 'connected_accounts' => $semConnectedAccs,
             ],
             'unisms' => [
@@ -235,7 +237,7 @@ class SemaphoreBalanceFetcher
                 'status'             => $uniConnectedAccs > 0 ? 'active' : 'inactive',
                 'credits'            => $uniTotalCredits,
                 'total_credits'      => $uniTotalCredits,
-                'total_accounts'     => $uniConnectedAccs,
+                'total_accounts'     => count($uniKeys),
                 'connected_accounts' => $uniConnectedAccs,
             ]
         ];
@@ -254,6 +256,10 @@ class SemaphoreBalanceFetcher
         $userRecord['provider_credit_balance'] = (int)($balanceInfo['credits'] ?? 0);
         $userRecord['provider_balance']        = (int)($balanceInfo['credits'] ?? 0);
         $userRecord['provider_status']         = $balanceInfo['status'] ?? 'inactive';
+        // Indicates whether the balance was fetched from the account's own custom API key
+        // or the platform-wide system default key. Used by the frontend to label
+        // "Custom Key" vs "System Key" in the All Subaccounts table.
+        $userRecord['provider_balance_source'] = !empty($resolved['is_custom_key']) ? 'custom' : 'system';
 
         return $userRecord;
     }
