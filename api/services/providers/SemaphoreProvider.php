@@ -66,13 +66,15 @@ class SemaphoreProvider implements SmsProviderInterface
         $payload,
         array  $headers,
         int    $connectTimeout = 8,
-        int    $totalTimeout   = 15
+        int    $totalTimeout   = 15,
+        int    $maxAttempts    = self::MAX_ATTEMPTS,
+        bool   $sleepOnRateLimit = true
     ): array {
         $lastResponse  = false;
         $lastHttpCode  = 0;
         $lastCurlError = '';
 
-        for ($attempt = 1; $attempt <= self::MAX_ATTEMPTS; $attempt++) {
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
 
             $ch = curl_init($url);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -111,14 +113,17 @@ class SemaphoreProvider implements SmsProviderInterface
             $isRateLimit       = ($lastHttpCode === 429);
             $isTransient       = $isConnectionError || $isServerError || $isRateLimit;
 
-            if ($isTransient && $attempt < self::MAX_ATTEMPTS) {
+            if ($isTransient && $attempt < $maxAttempts) {
                 if ($isRateLimit) {
+                    if (!$sleepOnRateLimit) {
+                        break;
+                    }
                     // Respect Semaphore's Retry-After header; default to 10 s if not provided
                     $retryAfterSec = (int)($responseHeaders['retry-after'] ?? 10);
                     $retryAfterSec = max(1, min($retryAfterSec, 60)); // clamp 1–60 s
                     error_log(sprintf(
                         '[SemaphoreProvider] Attempt %d/%d — HTTP 429 Rate Limited. Waiting %d s (Retry-After)…',
-                        $attempt, self::MAX_ATTEMPTS, $retryAfterSec
+                        $attempt, $maxAttempts, $retryAfterSec
                     ));
                     sleep($retryAfterSec);
                 } else {
@@ -126,7 +131,7 @@ class SemaphoreProvider implements SmsProviderInterface
                     error_log(sprintf(
                         '[SemaphoreProvider] Attempt %d/%d failed — %s. Retrying in %d ms…',
                         $attempt,
-                        self::MAX_ATTEMPTS,
+                        $maxAttempts,
                         $isConnectionError
                             ? 'cURL error: ' . $lastCurlError
                             : 'HTTP ' . $lastHttpCode,
@@ -257,9 +262,13 @@ class SemaphoreProvider implements SmsProviderInterface
         $resolvedKey = $this->getApiKey($apiKey);
         $url = "https://api.semaphore.co/api/v4/account?apikey=" . urlencode($resolvedKey);
 
-        $result   = $this->curlWithRetry($url, 'GET', null, [], 8, 10);
+        $result   = $this->curlWithRetry($url, 'GET', null, [], 2, 4, 1, false);
         $httpCode = $result['httpCode'];
         $response = $result['response'];
+
+        if ($httpCode === 429) {
+            return ['status' => 'error', 'credits' => 0, 'error' => 'HTTP 429 Rate Limited'];
+        }
 
         if ($response === false || $httpCode < 200 || $httpCode >= 300) {
             return ['status' => 'inactive', 'credits' => 0];

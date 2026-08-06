@@ -82,8 +82,15 @@ class UniSmsProvider implements SmsProviderInterface
      * @return array{code:int, body:array, raw:string}
      * @throws \Exception  Only when all retry attempts are exhausted (connection-level error)
      */
-    private function executeRequest(string $path, string $method, $payload, string $apiKey): array
-    {
+    private function executeRequest(
+        string $path,
+        string $method,
+        $payload,
+        string $apiKey,
+        int    $maxAttempts = self::MAX_ATTEMPTS,
+        ?int   $timeoutOverride = null,
+        bool   $sleepOnRateLimit = true
+    ): array {
         $url = rtrim($this->endpoint, '/') . '/' . ltrim($path, '/');
 
         $headers = [
@@ -94,14 +101,15 @@ class UniSmsProvider implements SmsProviderInterface
         $lastCurlError = '';
         $lastHttpCode  = 0;
         $lastResponse  = false;
+        $effectiveTimeout = $timeoutOverride !== null ? max(1, $timeoutOverride) : max(3, $this->timeoutSeconds);
 
-        for ($attempt = 1; $attempt <= self::MAX_ATTEMPTS; $attempt++) {
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
 
             $ch = curl_init($url);
 
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 8);
-            curl_setopt($ch, CURLOPT_TIMEOUT, max(3, $this->timeoutSeconds));
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, min(4, $effectiveTimeout));
+            curl_setopt($ch, CURLOPT_TIMEOUT, $effectiveTimeout);
             curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
             curl_setopt($ch, CURLOPT_USERPWD, $apiKey . ":");
             curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
@@ -139,14 +147,17 @@ class UniSmsProvider implements SmsProviderInterface
             $isRateLimit       = ($lastHttpCode === 429);
             $isTransient       = $isConnectionError || $isServerError || $isRateLimit;
 
-            if ($isTransient && $attempt < self::MAX_ATTEMPTS) {
+            if ($isTransient && $attempt < $maxAttempts) {
                 if ($isRateLimit) {
+                    if (!$sleepOnRateLimit) {
+                        break;
+                    }
                     // Respect UniSMS's Retry-After header; default to 10 s if not provided
                     $retryAfterSec = (int)($responseHeaders['retry-after'] ?? 10);
                     $retryAfterSec = max(1, min($retryAfterSec, 60)); // clamp 1–60 s
                     error_log(sprintf(
                         '[UniSmsProvider] Attempt %d/%d — HTTP 429 Rate Limited. Waiting %d s (Retry-After)…',
-                        $attempt, self::MAX_ATTEMPTS, $retryAfterSec
+                        $attempt, $maxAttempts, $retryAfterSec
                     ));
                     sleep($retryAfterSec);
                 } else {
@@ -154,7 +165,7 @@ class UniSmsProvider implements SmsProviderInterface
                     error_log(sprintf(
                         '[UniSmsProvider] Attempt %d/%d failed — %s. Retrying in %d ms…',
                         $attempt,
-                        self::MAX_ATTEMPTS,
+                        $maxAttempts,
                         $isConnectionError
                             ? 'cURL error: ' . $lastCurlError
                             : 'HTTP ' . $lastHttpCode,
@@ -315,7 +326,10 @@ class UniSmsProvider implements SmsProviderInterface
     {
         $resolvedKey = $this->getApiKey($apiKey);
         try {
-            $res = $this->executeRequest('account', 'GET', null, $resolvedKey);
+            $res = $this->executeRequest('account', 'GET', null, $resolvedKey, 1, 4, false);
+            if ($res['code'] === 429) {
+                return ['status' => 'error', 'credits' => 0, 'error' => 'HTTP 429 Rate Limited'];
+            }
             if ($res['code'] < 200 || $res['code'] >= 300) {
                 return ['status' => 'inactive', 'credits' => 0];
             }

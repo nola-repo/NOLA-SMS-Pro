@@ -112,9 +112,9 @@ class SemaphoreBalanceFetcher
     }
 
     /**
-     * Fetch balance for a provider and API key with deduplication / memoization.
+     * Fetch balance for a provider and API key with deduplication / memoization and persistent fallback.
      */
-    public function fetchBalance(string $provider, ?string $apiKey): array
+    public function fetchBalance(string $provider, ?string $apiKey, ?array $fallbackData = null): array
     {
         $providerKey = self::normalizeProvider($provider);
         $cleanApiKey = trim((string)($apiKey ?? ''));
@@ -132,23 +132,70 @@ class SemaphoreBalanceFetcher
             return $this->balanceCache[$cacheId];
         }
 
+        $persistentCacheKey = "prov_bal_" . $providerKey . "_" . md5($cleanApiKey);
+        $cachedResult = NolaCache::get($persistentCacheKey);
+
         $result = ['status' => 'inactive', 'credits' => 0, 'error' => null];
 
         try {
             if ($providerKey === 'unisms') {
                 $uni = new UniSmsProvider(array_merge($this->config, ['UNISMS_API_KEY' => $cleanApiKey]));
                 $check = $uni->checkAccount();
-                $result['status']  = $check['status'] ?? 'active';
-                $result['credits'] = (int)($check['credits'] ?? 0);
+                if (($check['status'] ?? '') === 'active') {
+                    $result['status']  = 'active';
+                    $result['credits'] = (int)($check['credits'] ?? 0);
+                    NolaCache::set($persistentCacheKey, $result, 900); // 15 minutes cache
+                } elseif ($cachedResult !== null) {
+                    $result = $cachedResult;
+                } elseif (!empty($fallbackData['provider_credit_balance'])) {
+                    $result = [
+                        'status'  => 'active',
+                        'credits' => (int)$fallbackData['provider_credit_balance'],
+                        'error'   => null,
+                    ];
+                    NolaCache::set($persistentCacheKey, $result, 900);
+                } else {
+                    $result['status']  = $check['status'] ?? 'inactive';
+                    $result['credits'] = (int)($check['credits'] ?? 0);
+                    $result['error']   = $check['error'] ?? null;
+                }
             } else {
                 $sem = new SemaphoreProvider(array_merge($this->config, ['SEMAPHORE_API_KEY' => $cleanApiKey]));
                 $check = $sem->checkAccount();
-                $result['status']  = $check['status'] ?? 'active';
-                $result['credits'] = (int)($check['credits'] ?? 0);
+                if (($check['status'] ?? '') === 'active') {
+                    $result['status']  = 'active';
+                    $result['credits'] = (int)($check['credits'] ?? 0);
+                    NolaCache::set($persistentCacheKey, $result, 900); // 15 minutes cache
+                } elseif ($cachedResult !== null) {
+                    // Return last known valid cached balance on HTTP 429 rate limit or error
+                    $result = $cachedResult;
+                } elseif (!empty($fallbackData['provider_credit_balance'])) {
+                    // Use stored Firestore provider_credit_balance if Redis cache is cold during 429
+                    $result = [
+                        'status'  => 'active',
+                        'credits' => (int)$fallbackData['provider_credit_balance'],
+                        'error'   => null,
+                    ];
+                    NolaCache::set($persistentCacheKey, $result, 900);
+                } else {
+                    $result['status']  = $check['status'] ?? 'inactive';
+                    $result['credits'] = (int)($check['credits'] ?? 0);
+                    $result['error']   = $check['error'] ?? null;
+                }
             }
         } catch (\Throwable $e) {
-            $result['status'] = 'error';
-            $result['error']  = $e->getMessage();
+            if ($cachedResult !== null) {
+                $result = $cachedResult;
+            } elseif (!empty($fallbackData['provider_credit_balance'])) {
+                $result = [
+                    'status'  => 'active',
+                    'credits' => (int)$fallbackData['provider_credit_balance'],
+                    'error'   => null,
+                ];
+            } else {
+                $result['status'] = 'error';
+                $result['error']  = $e->getMessage();
+            }
             error_log("[SemaphoreBalanceFetcher] Balance check failed ({$providerKey}): " . $e->getMessage());
         }
 
@@ -249,7 +296,7 @@ class SemaphoreBalanceFetcher
     public function enrichSubaccount(array $userRecord, ?array $intData): array
     {
         $resolved = $this->resolveProviderAndKey($intData);
-        $balanceInfo = $this->fetchBalance($resolved['provider'], $resolved['api_key']);
+        $balanceInfo = $this->fetchBalance($resolved['provider'], $resolved['api_key'], $intData);
 
         $userRecord['sms_provider']            = $resolved['provider_label'];
         $userRecord['provider']                = $resolved['provider'];
