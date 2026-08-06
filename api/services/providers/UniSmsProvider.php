@@ -86,13 +86,21 @@ class UniSmsProvider implements SmsProviderInterface
             $ch = curl_init($url);
 
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 8);   // slightly more generous than 5 s
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 8);
             curl_setopt($ch, CURLOPT_TIMEOUT, max(3, $this->timeoutSeconds));
             curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
             curl_setopt($ch, CURLOPT_USERPWD, $apiKey . ":");
-            // Follow redirects (some hosting environments have HTTPS redirect)
             curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
             curl_setopt($ch, CURLOPT_MAXREDIRS, 3);
+            // Capture response headers so we can read Retry-After on 429
+            $responseHeaders = [];
+            curl_setopt($ch, CURLOPT_HEADERFUNCTION, function ($ch, $header) use (&$responseHeaders) {
+                $parts = explode(':', $header, 2);
+                if (count($parts) === 2) {
+                    $responseHeaders[strtolower(trim($parts[0]))] = trim($parts[1]);
+                }
+                return strlen($header);
+            });
 
             if ($method === 'POST') {
                 curl_setopt($ch, CURLOPT_POST, true);
@@ -114,24 +122,36 @@ class UniSmsProvider implements SmsProviderInterface
             // --- Is the error transient? ---
             $isConnectionError = ($lastResponse === false);
             $isServerError     = ($lastHttpCode >= 500 && $lastHttpCode < 600);
-            $isTransient       = $isConnectionError || $isServerError;
+            $isRateLimit       = ($lastHttpCode === 429);
+            $isTransient       = $isConnectionError || $isServerError || $isRateLimit;
 
             if ($isTransient && $attempt < self::MAX_ATTEMPTS) {
-                $delayMs = $this->retryDelayMs($attempt);
-                error_log(sprintf(
-                    '[UniSmsProvider] Attempt %d/%d failed — %s. Retrying in %d ms…',
-                    $attempt,
-                    self::MAX_ATTEMPTS,
-                    $isConnectionError
-                        ? 'cURL error: ' . $lastCurlError
-                        : 'HTTP ' . $lastHttpCode,
-                    $delayMs
-                ));
-                usleep($delayMs * 1000);
+                if ($isRateLimit) {
+                    // Respect UniSMS's Retry-After header; default to 10 s if not provided
+                    $retryAfterSec = (int)($responseHeaders['retry-after'] ?? 10);
+                    $retryAfterSec = max(1, min($retryAfterSec, 60)); // clamp 1–60 s
+                    error_log(sprintf(
+                        '[UniSmsProvider] Attempt %d/%d — HTTP 429 Rate Limited. Waiting %d s (Retry-After)…',
+                        $attempt, self::MAX_ATTEMPTS, $retryAfterSec
+                    ));
+                    sleep($retryAfterSec);
+                } else {
+                    $delayMs = $this->retryDelayMs($attempt);
+                    error_log(sprintf(
+                        '[UniSmsProvider] Attempt %d/%d failed — %s. Retrying in %d ms…',
+                        $attempt,
+                        self::MAX_ATTEMPTS,
+                        $isConnectionError
+                            ? 'cURL error: ' . $lastCurlError
+                            : 'HTTP ' . $lastHttpCode,
+                        $delayMs
+                    ));
+                    usleep($delayMs * 1000);
+                }
                 continue;
             }
 
-            // Non-transient error (4xx) or last attempt — fall through
+            // Non-transient error (other 4xx) or last attempt — fall through
             break;
         }
 

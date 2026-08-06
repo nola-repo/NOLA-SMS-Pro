@@ -66,6 +66,15 @@ class SemaphoreProvider implements SmsProviderInterface
             curl_setopt($ch, CURLOPT_TIMEOUT, $totalTimeout);
             curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
             curl_setopt($ch, CURLOPT_MAXREDIRS, 3);
+            // Capture response headers so we can read Retry-After on 429
+            $responseHeaders = [];
+            curl_setopt($ch, CURLOPT_HEADERFUNCTION, function ($ch, $header) use (&$responseHeaders) {
+                $parts = explode(':', $header, 2);
+                if (count($parts) === 2) {
+                    $responseHeaders[strtolower(trim($parts[0]))] = trim($parts[1]);
+                }
+                return strlen($header);
+            });
 
             if ($method === 'POST') {
                 curl_setopt($ch, CURLOPT_POST, true);
@@ -84,24 +93,36 @@ class SemaphoreProvider implements SmsProviderInterface
 
             $isConnectionError = ($lastResponse === false);
             $isServerError     = ($lastHttpCode >= 500 && $lastHttpCode < 600);
-            $isTransient       = $isConnectionError || $isServerError;
+            $isRateLimit       = ($lastHttpCode === 429);
+            $isTransient       = $isConnectionError || $isServerError || $isRateLimit;
 
             if ($isTransient && $attempt < self::MAX_ATTEMPTS) {
-                $delayMs = $this->retryDelayMs($attempt);
-                error_log(sprintf(
-                    '[SemaphoreProvider] Attempt %d/%d failed — %s. Retrying in %d ms…',
-                    $attempt,
-                    self::MAX_ATTEMPTS,
-                    $isConnectionError
-                        ? 'cURL error: ' . $lastCurlError
-                        : 'HTTP ' . $lastHttpCode,
-                    $delayMs
-                ));
-                usleep($delayMs * 1000);
+                if ($isRateLimit) {
+                    // Respect Semaphore's Retry-After header; default to 10 s if not provided
+                    $retryAfterSec = (int)($responseHeaders['retry-after'] ?? 10);
+                    $retryAfterSec = max(1, min($retryAfterSec, 60)); // clamp 1–60 s
+                    error_log(sprintf(
+                        '[SemaphoreProvider] Attempt %d/%d — HTTP 429 Rate Limited. Waiting %d s (Retry-After)…',
+                        $attempt, self::MAX_ATTEMPTS, $retryAfterSec
+                    ));
+                    sleep($retryAfterSec);
+                } else {
+                    $delayMs = $this->retryDelayMs($attempt);
+                    error_log(sprintf(
+                        '[SemaphoreProvider] Attempt %d/%d failed — %s. Retrying in %d ms…',
+                        $attempt,
+                        self::MAX_ATTEMPTS,
+                        $isConnectionError
+                            ? 'cURL error: ' . $lastCurlError
+                            : 'HTTP ' . $lastHttpCode,
+                        $delayMs
+                    ));
+                    usleep($delayMs * 1000);
+                }
                 continue;
             }
 
-            // Non-transient (4xx) or last attempt — stop retrying
+            // Non-transient (other 4xx) or last attempt — stop retrying
             break;
         }
 
