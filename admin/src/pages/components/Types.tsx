@@ -45,6 +45,8 @@ export interface Account {
     sms_provider?: string;
     /** Live available credit balance from the SMS provider API */
     provider_credit_balance?: number;
+    /** Whether the provider balance came from the account's own custom API key or the shared system key */
+    provider_balance_source?: 'custom' | 'system';
     active?: boolean;
     monthly_reset_enabled?: boolean;
 }

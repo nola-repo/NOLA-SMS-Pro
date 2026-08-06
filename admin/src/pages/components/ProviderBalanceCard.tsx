@@ -132,6 +132,7 @@ export const ProviderBalanceCard: React.FC<ProviderBalanceCardProps> = ({
         // Prefer aggregated total_credits from summary; fall back to per-record credits
         const credits = summaryEntry?.total_credits ?? (typeof providerData?.credits === 'number' ? providerData.credits : 0);
         const connectedAccounts = summaryEntry?.connected_accounts ?? providerData?.connected_accounts;
+        const totalAccounts = summaryEntry?.total_accounts ?? providerData?.total_accounts;
         const statusColor = getProviderStatusColor(mergedProvider);
         const statusLabel = getProviderStatusLabel(mergedProvider);
         const uniData = !isSemaphore ? (providerData as UniSmsBalance | undefined) : undefined;
@@ -188,7 +189,10 @@ export const ProviderBalanceCard: React.FC<ProviderBalanceCardProps> = ({
                         {typeof connectedAccounts === 'number' && (
                             <div className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-gray-400 dark:text-gray-500">
                                 <FiLink className="w-3 h-3" />
-                                {connectedAccounts} connected account{connectedAccounts !== 1 ? 's' : ''}
+                                {typeof totalAccounts === 'number' && totalAccounts > connectedAccounts
+                                    ? `${connectedAccounts} of ${totalAccounts} accounts connected`
+                                    : `${connectedAccounts} connected account${connectedAccounts !== 1 ? 's' : ''}`
+                                }
                             </div>
                         )}
                     </div>

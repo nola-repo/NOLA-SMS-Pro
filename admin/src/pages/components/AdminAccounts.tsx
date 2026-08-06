@@ -66,6 +66,8 @@ type Account = {
     sms_provider?: string;
     /** Live available credit balance from the SMS provider API */
     provider_credit_balance?: number;
+    /** Whether the provider balance came from custom key or system key */
+    provider_balance_source?: 'custom' | 'system';
 };
 
 const normalizeNumber = (value: unknown, fallback = 0) => {
@@ -102,6 +104,7 @@ const normalizeAccount = (item: any): Account => {
         approved_provider: raw.approved_provider || raw.provider || null,
         sms_provider: raw.sms_provider || null,
         provider_credit_balance: typeof raw.provider_credit_balance === 'number' ? raw.provider_credit_balance : null,
+        provider_balance_source: raw.provider_balance_source || null,
     };
 };
 
@@ -901,13 +904,26 @@ export const AdminAccounts: React.FC = () => {
                                                 <td className="py-4 pr-4 min-w-[130px]">
                                                     {account.sms_provider ? (
                                                         <div className="flex flex-col gap-0.5">
-                                                            <span className="text-[12px] font-bold text-[#111111] dark:text-white">
-                                                                {account.sms_provider}
-                                                            </span>
+                                                            <div className="flex items-center gap-1.5">
+                                                                <span className="text-[12px] font-bold text-[#111111] dark:text-white">
+                                                                    {account.sms_provider}
+                                                                </span>
+                                                                {account.provider_balance_source && (
+                                                                    <span className={`text-[8.5px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-md ${
+                                                                        account.provider_balance_source === 'custom'
+                                                                            ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-500 dark:text-blue-400'
+                                                                            : 'bg-[#f0f0f0] dark:bg-white/5 text-[#9aa0a6]'
+                                                                    }`}>
+                                                                        {account.provider_balance_source === 'custom' ? 'Custom' : 'System'}
+                                                                    </span>
+                                                                )}
+                                                            </div>
                                                             <span className={`text-[11px] font-semibold ${
-                                                                account.provider_credit_balance !== null && account.provider_credit_balance !== undefined && account.provider_credit_balance > 0
-                                                                    ? 'text-emerald-600 dark:text-emerald-400'
-                                                                    : 'text-[#9aa0a6]'
+                                                                account.provider_credit_balance === null || account.provider_credit_balance === undefined
+                                                                    ? 'text-[#9aa0a6]'
+                                                                    : account.provider_credit_balance > 0
+                                                                        ? 'text-emerald-600 dark:text-emerald-400'
+                                                                        : 'text-red-500 dark:text-red-400'
                                                             }`}>
                                                                 {account.provider_credit_balance !== null && account.provider_credit_balance !== undefined
                                                                     ? `${account.provider_credit_balance.toLocaleString()} credits`
