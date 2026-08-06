@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/SmsProviderInterface.php';
+require_once __DIR__ . '/../ConnectivityMonitor.php';
 
 class SemaphoreProvider implements SmsProviderInterface
 {
@@ -11,6 +12,20 @@ class SemaphoreProvider implements SmsProviderInterface
     private const MAX_ATTEMPTS  = 3;
     private const BASE_DELAY_MS = 500;  // 500 ms after attempt 1
     private const MAX_DELAY_MS  = 3000; // cap at 3 s
+
+    /**
+     * Fire-and-forget diagnostics — runs in the same process but after the
+     * exception is thrown, so it never blocks or delays the error response.
+     * Saves an incident report to Firestore → connectivity_incidents.
+     */
+    private static function triggerDiagnostics(string $provider, string $error, string $context): void
+    {
+        try {
+            ConnectivityMonitor::runAndSave($provider, $error, $context);
+        } catch (\Throwable $e) {
+            error_log('[SemaphoreProvider] ConnectivityMonitor failed: ' . $e->getMessage());
+        }
+    }
 
     public function __construct(array $config = [])
     {
@@ -156,6 +171,8 @@ class SemaphoreProvider implements SmsProviderInterface
         );
 
         if ($result['response'] === false) {
+            // Final failure after all retries — auto-run diagnostics in background
+            self::triggerDiagnostics('semaphore', 'cURL error: ' . $result['curlError'], 'send');
             throw new \Exception("Semaphore cURL error: " . $result['curlError']);
         }
 

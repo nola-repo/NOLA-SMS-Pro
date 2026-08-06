@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/SmsProviderInterface.php';
+require_once __DIR__ . '/../ConnectivityMonitor.php';
 
 class UniSmsProvider implements SmsProviderInterface
 {
@@ -13,6 +14,19 @@ class UniSmsProvider implements SmsProviderInterface
     private const MAX_ATTEMPTS    = 3;
     private const BASE_DELAY_MS   = 500;  // 500 ms after attempt 1
     private const MAX_DELAY_MS    = 3000; // cap at 3 s
+
+    /**
+     * Fire-and-forget diagnostics — saves an incident to Firestore when
+     * all retry attempts are exhausted on a provider call.
+     */
+    private static function triggerDiagnostics(string $provider, string $error, string $context): void
+    {
+        try {
+            ConnectivityMonitor::runAndSave($provider, $error, $context);
+        } catch (\Throwable $e) {
+            error_log('[UniSmsProvider] ConnectivityMonitor failed: ' . $e->getMessage());
+        }
+    }
 
     public function __construct(array $config = [])
     {
@@ -156,6 +170,8 @@ class UniSmsProvider implements SmsProviderInterface
         }
 
         if ($lastResponse === false) {
+            // Final failure after all retries — auto-run diagnostics
+            self::triggerDiagnostics('unisms', 'cURL error: ' . $lastCurlError, 'send');
             throw new \Exception("UniSMS cURL error: " . $lastCurlError);
         }
 
