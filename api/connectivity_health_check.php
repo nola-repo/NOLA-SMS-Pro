@@ -11,7 +11,7 @@
  * Security: requires the same X-Diag-Key header or ?key= query param.
  * Recommended Cloud Scheduler setup:
  *   Target: https://smspro-api.nolacrm.io/api/connectivity-health-check
- *   Schedule: every 30 minutes  →  */30 * * * *
+ *   Schedule: every 30 minutes  →  30 * * * *
  *   Header: X-Diag-Key: nola_diag_2026
  */
 
@@ -23,9 +23,11 @@ require_once __DIR__ . '/services/ConnectivityMonitor.php';
 
 // ── Auth ───────────────────────────────────────────────────────────────────────
 $ACCESS_KEY   = 'nola_diag_2026';
-$providedKey  = $_GET['key'] ?? ($_SERVER['HTTP_X_DIAG_KEY'] ?? '');
-// Also allow Google Cloud Scheduler's OIDC service account header
-$isCloudScheduler = !empty($_SERVER['HTTP_X_CLOUDSCHEDULER_SCHEDULENAME']);
+$headers      = function_exists('getallheaders') ? getallheaders() : [];
+$headerKey    = $_SERVER['HTTP_X_DIAG_KEY'] ?? ($headers['X-Diag-Key'] ?? ($headers['x-diag-key'] ?? ''));
+$providedKey  = $_GET['key'] ?? $headerKey;
+$userAgent    = $_SERVER['HTTP_USER_AGENT'] ?? ($headers['User-Agent'] ?? ($headers['user-agent'] ?? ''));
+$isCloudScheduler = !empty($_SERVER['HTTP_X_CLOUDSCHEDULER_SCHEDULENAME']) || (stripos($userAgent, 'Cloud-Scheduler') !== false);
 
 if ($providedKey !== $ACCESS_KEY && !$isCloudScheduler) {
     http_response_code(403);
