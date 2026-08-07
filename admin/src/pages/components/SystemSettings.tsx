@@ -489,26 +489,25 @@ export const AdminLogs: React.FC<{ hideHeader?: boolean; onCardClick?: () => voi
         return status ? 'pending' : 'successful';
     };
 
+    // Always extract month in LOCAL timezone so the filter matches the displayed date
     const toMonthString = (raw: any): string | null => {
         if (!raw) return null;
+        let d: Date | null = null;
         if (typeof raw === 'string') {
-            const trimmed = raw.trim();
-            return trimmed.length >= 7 ? trimmed.substring(0, 7) : null;
-        }
-        if (typeof raw === 'number') {
+            const parsed = new Date(raw);
+            d = !isNaN(parsed.getTime()) ? parsed : null;
+        } else if (typeof raw === 'number') {
             const ms = raw < 10000000000 ? raw * 1000 : raw;
-            const d = new Date(ms);
-            return !isNaN(d.getTime()) ? d.toISOString().substring(0, 7) : null;
-        }
-        if (typeof raw === 'object' && raw !== null) {
+            d = new Date(ms);
+        } else if (typeof raw === 'object' && raw !== null) {
             const sec = (raw as any)._seconds ?? (raw as any).seconds;
-            if (typeof sec === 'number') {
-                const d = new Date(sec * 1000);
-                return !isNaN(d.getTime()) ? d.toISOString().substring(0, 7) : null;
-            }
+            if (typeof sec === 'number') d = new Date(sec * 1000);
         }
-        const str = String(raw);
-        return str.length >= 7 ? str.substring(0, 7) : null;
+        if (!d || isNaN(d.getTime())) return null;
+        // Use local year/month — matches toLocaleDateString() used in the rows
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        return `${yyyy}-${mm}`;
     };
 
     const filtered = useMemo(() => logs.filter(log => {
