@@ -159,94 +159,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
     $unifiedLogs = [];
     $seenDocIds = [];
 
-    // 1. Fetch messages collection
-    try {
-        $messages = $db->collection('messages')->limit(1000)->documents();
-        foreach ($messages as $doc) {
-            if ($doc->exists()) {
-                $docId = $doc->id();
-                $data = $doc->data();
-                $ts = nola_extract_log_timestamp($data);
-                $seenDocIds[$docId] = true;
-                $unifiedLogs[] = array_merge($data, [
-                    'id' => $docId,
-                    'type' => $data['type'] ?? 'message',
-                    'timestamp' => $ts
-                ]);
-            }
-        }
-    } catch (\Throwable $e) {
-        error_log('[admin_logs] Failed reading messages: ' . $e->getMessage());
-    }
-
-    // 2. Fetch sms_logs collection (captures historical outbound/inbound SMS from June, July, etc.)
-    try {
-        $smsLogs = $db->collection('sms_logs')->limit(1000)->documents();
-        foreach ($smsLogs as $doc) {
-            if ($doc->exists()) {
-                $docId = $doc->id();
-                if (isset($seenDocIds[$docId])) {
-                    continue; // Skip duplicate if already loaded from messages
+    // Helper: collect docs from a query into $unifiedLogs
+    $collectDocs = function($query, string $defaultType) use (&$unifiedLogs, &$seenDocIds) {
+        try {
+            $docs = $query->documents();
+            foreach ($docs as $doc) {
+                if ($doc->exists()) {
+                    $docId = $doc->id();
+                    if (isset($seenDocIds[$docId])) continue;
+                    $data = $doc->data();
+                    $ts = nola_extract_log_timestamp($data);
+                    $seenDocIds[$docId] = true;
+                    $unifiedLogs[] = array_merge($data, [
+                        'id'        => $docId,
+                        'type'      => $data['type'] ?? $defaultType,
+                        'timestamp' => $ts
+                    ]);
                 }
-                $data = $doc->data();
-                $ts = nola_extract_log_timestamp($data);
-                $seenDocIds[$docId] = true;
-                $unifiedLogs[] = array_merge($data, [
-                    'id' => $docId,
-                    'type' => 'message',
-                    'timestamp' => $ts
-                ]);
             }
+        } catch (\Throwable $e) {
+            error_log('[admin_logs] Query error: ' . $e->getMessage());
         }
-    } catch (\Throwable $e) {
-        error_log('[admin_logs] Failed reading sms_logs: ' . $e->getMessage());
-    }
+    };
 
-    // 3. Fetch sender requests
-    try {
-        $requests = $db->collection('sender_id_requests')->limit(500)->documents();
-        foreach ($requests as $doc) {
-            if ($doc->exists()) {
-                $docId = $doc->id();
-                if (isset($seenDocIds[$docId])) {
-                    continue;
-                }
-                $data = $doc->data();
-                $ts = nola_extract_log_timestamp($data);
-                $seenDocIds[$docId] = true;
-                $unifiedLogs[] = array_merge($data, [
-                    'id' => $docId,
-                    'type' => 'sender_request',
-                    'timestamp' => $ts
-                ]);
-            }
-        }
-    } catch (\Throwable $e) {
-        error_log('[admin_logs] Failed reading sender_id_requests: ' . $e->getMessage());
-    }
+    // 1. messages — newest 500 DESC + oldest 500 ASC to cover all months
+    $collectDocs($db->collection('messages')->orderBy('date_created', 'DESC')->limit(500), 'message');
+    $collectDocs($db->collection('messages')->orderBy('date_created', 'ASC')->limit(500), 'message');
 
-    // 4. Fetch credit transactions
-    try {
-        $purchases = $db->collection('credit_transactions')->limit(1000)->documents();
-        foreach ($purchases as $doc) {
-            if ($doc->exists()) {
-                $docId = $doc->id();
-                if (isset($seenDocIds[$docId])) {
-                    continue;
-                }
-                $data = $doc->data();
-                $ts = nola_extract_log_timestamp($data);
-                $seenDocIds[$docId] = true;
-                $unifiedLogs[] = array_merge($data, [
-                    'id' => $docId,
-                    'type' => $data['type'] ?? 'credit_purchase',
-                    'timestamp' => $ts
-                ]);
-            }
-        }
-    } catch (\Throwable $e) {
-        error_log('[admin_logs] Failed reading credit_transactions: ' . $e->getMessage());
-    }
+    // 2. sms_logs — same strategy (historical SMS from June, July, etc.)
+    $collectDocs($db->collection('sms_logs')->orderBy('date_created', 'DESC')->limit(500), 'message');
+    $collectDocs($db->collection('sms_logs')->orderBy('date_created', 'ASC')->limit(500), 'message');
+
+    // 3. sender_id_requests
+    $collectDocs($db->collection('sender_id_requests')->orderBy('created_at', 'DESC')->limit(300), 'sender_request');
+    $collectDocs($db->collection('sender_id_requests')->orderBy('created_at', 'ASC')->limit(300), 'sender_request');
+
+    // 4. credit_transactions
+    $collectDocs($db->collection('credit_transactions')->orderBy('created_at', 'DESC')->limit(500), 'credit_purchase');
+    $collectDocs($db->collection('credit_transactions')->orderBy('created_at', 'ASC')->limit(500), 'credit_purchase');
 
     // Sort combined array by timestamp descending
     usort($unifiedLogs, function($a, $b) {
