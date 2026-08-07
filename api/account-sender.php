@@ -162,6 +162,9 @@ try {
         $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string) $locId);
         $db->collection('integrations')->document($intDocId)->set($updateData, ['merge' => true]);
 
+        require_once __DIR__ . '/cache_helper.php';
+        NolaCache::delete('admin_users_list');
+
         echo json_encode(['status' => 'success', 'message' => 'Account sender configuration updated']);
         exit;
     }
