@@ -511,16 +511,16 @@ export const AdminLogs: React.FC<{ hideHeader?: boolean; onCardClick?: () => voi
         return str.length >= 7 ? str.substring(0, 7) : null;
     };
 
-    const filtered = logs.filter(log => {
+    const filtered = useMemo(() => logs.filter(log => {
         const type = getType(log);
         if (filterType !== 'all' && type !== filterType) return false;
         if (statusFilter !== 'all' && getStatusGroup(log) !== statusFilter) return false;
         
-        // Month Filter
+        // Month Filter — compare YYYY-MM prefix
         if (selectedMonth !== 'All') {
             const rawDate = log.timestamp || log.date_created || log.created_at;
             const m = toMonthString(rawDate);
-            if (m !== selectedMonth) return false;
+            if (!m || !m.startsWith(selectedMonth)) return false;
         }
 
         if (debouncedSearch) {
@@ -540,23 +540,25 @@ export const AdminLogs: React.FC<{ hideHeader?: boolean; onCardClick?: () => voi
             if (!s.includes(q)) return false;
         }
         return true;
-    });
+    }), [logs, filterType, statusFilter, selectedMonth, debouncedSearch]);
 
+    // Stats cards reflect the currently filtered (month-scoped) data
     const activityStats = useMemo(() => {
-        const counts = logs.reduce((acc: Record<string, number>, log: any) => {
+        const source = filtered;
+        const counts = source.reduce((acc: Record<string, number>, log: any) => {
             const type = getType(log);
             acc[type] = (acc[type] || 0) + 1;
             acc[getStatusGroup(log)] = (acc[getStatusGroup(log)] || 0) + 1;
             return acc;
         }, {});
         return {
-            total: logs.length,
+            total: source.length,
             messages: counts.message || 0,
             credits: (counts.credit_purchase || 0) + (counts.credit_usage || 0),
             senderRequests: counts.sender_request || 0,
             needsAttention: (counts.pending || 0) + (counts.failed || 0),
         };
-    }, [logs]);
+    }, [filtered]);
 
     const totalPages = Math.ceil(filtered.length / ITEMS_PER_PAGE);
     const currentLogs = filtered.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
