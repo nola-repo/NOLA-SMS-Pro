@@ -64,10 +64,10 @@ class SemaphoreProvider implements SmsProviderInterface
         string $url,
         string $method,
         $payload,
-        array  $headers,
-        int    $connectTimeout = 8,
-        int    $totalTimeout   = 15,
-        int    $maxAttempts    = self::MAX_ATTEMPTS,
+        array  $headers = [],
+        int    $connectTimeout = 5,
+        int    $totalTimeout   = 10,
+        int    $maxAttempts    = 2,
         bool   $sleepOnRateLimit = true
     ): array {
         $lastResponse  = false;
@@ -78,11 +78,27 @@ class SemaphoreProvider implements SmsProviderInterface
 
             $ch = curl_init($url);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
             curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $connectTimeout);
             curl_setopt($ch, CURLOPT_TIMEOUT, $totalTimeout);
+            curl_setopt($ch, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
+            curl_setopt($ch, CURLOPT_ENCODING, '');
             curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
             curl_setopt($ch, CURLOPT_MAXREDIRS, 3);
+
+            // Determine content type and body encoding
+            $isJson = false;
+            foreach ($headers as $h) {
+                if (stripos($h, 'application/json') !== false) {
+                    $isJson = true;
+                    break;
+                }
+            }
+
+            if (empty($headers) && $method === 'POST') {
+                $headers = ["Content-Type: application/x-www-form-urlencoded"];
+            }
+            curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+
             // Capture response headers so we can read Retry-After on 429
             $responseHeaders = [];
             curl_setopt($ch, CURLOPT_HEADERFUNCTION, function ($ch, $header) use (&$responseHeaders) {
@@ -95,7 +111,11 @@ class SemaphoreProvider implements SmsProviderInterface
 
             if ($method === 'POST') {
                 curl_setopt($ch, CURLOPT_POST, true);
-                curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+                if (is_array($payload)) {
+                    curl_setopt($ch, CURLOPT_POSTFIELDS, $isJson ? json_encode($payload) : http_build_query($payload));
+                } else {
+                    curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+                }
             }
 
             $lastResponse  = curl_exec($ch);
@@ -118,14 +138,14 @@ class SemaphoreProvider implements SmsProviderInterface
                     if (!$sleepOnRateLimit) {
                         break;
                     }
-                    // Respect Semaphore's Retry-After header; default to 10 s if not provided
-                    $retryAfterSec = (int)($responseHeaders['retry-after'] ?? 10);
-                    $retryAfterSec = max(1, min($retryAfterSec, 60)); // clamp 1–60 s
+                    // Instead of sleeping for 10-40s (which causes 19s cURL timeouts),
+                    // use smart micro-jitter (400-800ms) so retry hits right after token bucket resets per sec.
+                    $jitterMs = random_int(400, 800);
                     error_log(sprintf(
-                        '[SemaphoreProvider] Attempt %d/%d — HTTP 429 Rate Limited. Waiting %d s (Retry-After)…',
-                        $attempt, $maxAttempts, $retryAfterSec
+                        '[SemaphoreProvider] Attempt %d/%d — HTTP 429 Rate Limited. Retrying in %d ms (micro-jitter)…',
+                        $attempt, $maxAttempts, $jitterMs
                     ));
-                    sleep($retryAfterSec);
+                    usleep($jitterMs * 1000);
                 } else {
                     $delayMs = $this->retryDelayMs($attempt);
                     error_log(sprintf(
@@ -172,7 +192,10 @@ class SemaphoreProvider implements SmsProviderInterface
             $this->apiUrl,
             'POST',
             $payload,
-            ["Content-Type: application/json"]
+            ["Content-Type: application/x-www-form-urlencoded"],
+            5,
+            10,
+            2
         );
 
         if ($result['response'] === false) {

@@ -940,6 +940,9 @@ $gatewayAccepted = false;
 $smsStatus = 502;
 $gateway_error = 'Unknown gateway error';
 
+// Micro-pacing jitter (50ms - 150ms) to smooth out simultaneous sign-up webhook bursts
+usleep(random_int(50000, 150000));
+
 try {
     $res = $gateway->send([$normalizedPhone], $message, $sender, $usingOwnApiKey ? $activeApiKey : null, $providerPreference);
     $chosenProvider = $res['provider'];
