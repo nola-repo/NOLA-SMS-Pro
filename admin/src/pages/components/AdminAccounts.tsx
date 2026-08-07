@@ -103,7 +103,7 @@ const normalizeAccount = (item: any): Account => {
         provider: raw.provider || null,
         approved_provider: raw.approved_provider || raw.provider || null,
         sms_provider: raw.sms_provider || null,
-        provider_credit_balance: typeof raw.provider_credit_balance === 'number' ? raw.provider_credit_balance : null,
+        provider_credit_balance: typeof raw.provider_credit_balance === 'number' ? raw.provider_credit_balance : (typeof raw.provider_balance === 'number' ? raw.provider_balance : null),
         provider_balance_source: raw.provider_balance_source || null,
     };
 };
@@ -909,26 +909,26 @@ export const AdminAccounts: React.FC = () => {
                                                                     {account.sms_provider}
                                                                 </span>
                                                                 {account.provider_balance_source && (
-                                                                    <span className={`text-[8.5px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-md ${
+                                                                    <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${
                                                                         account.provider_balance_source === 'custom'
-                                                                            ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-500 dark:text-blue-400'
-                                                                            : 'bg-[#f0f0f0] dark:bg-white/5 text-[#9aa0a6]'
+                                                                            ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300'
+                                                                            : 'bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-gray-400'
                                                                     }`}>
-                                                                        {account.provider_balance_source === 'custom' ? 'Custom' : 'System'}
+                                                                        {account.provider_balance_source === 'custom' ? 'Custom Key' : 'System Key'}
                                                                     </span>
                                                                 )}
                                                             </div>
-                                                            <span className={`text-[11px] font-semibold ${
-                                                                account.provider_credit_balance === null || account.provider_credit_balance === undefined
-                                                                    ? 'text-[#9aa0a6]'
-                                                                    : account.provider_credit_balance > 0
+                                                            {account.provider_credit_balance === null || account.provider_credit_balance === undefined ? (
+                                                                <span className="text-[11px] font-semibold text-[#9aa0a6]">—</span>
+                                                            ) : (
+                                                                <span className={`text-[11px] font-semibold ${
+                                                                    account.provider_credit_balance > 0
                                                                         ? 'text-emerald-600 dark:text-emerald-400'
-                                                                        : 'text-red-500 dark:text-red-400'
-                                                            }`}>
-                                                                {account.provider_credit_balance !== null && account.provider_credit_balance !== undefined
-                                                                    ? `${account.provider_credit_balance.toLocaleString()} credits`
-                                                                    : '—'}
-                                                            </span>
+                                                                        : 'text-[#9aa0a6]'
+                                                                }`}>
+                                                                    {account.provider_credit_balance.toLocaleString()} credits
+                                                                </span>
+                                                            )}
                                                         </div>
                                                     ) : (
                                                         <span className="text-[12px] text-[#9aa0a6]">—</span>

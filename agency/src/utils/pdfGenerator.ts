@@ -123,10 +123,27 @@ const normalizeType = (tx: ReportTransaction): string => {
   return (type || 'TRANSACTION').toUpperCase();
 };
 
+const stripHtml = (str: string): string => {
+  if (!str) return '';
+  return str
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n\s*\n/g, '\n')
+    .trim();
+};
+
 const normalizeMessage = (tx: ReportTransaction): string => {
   const explicit = pickString(tx.message_body, tx.message, tx.body, tx.content);
   const description = pickString(tx.description, tx.note, tx.memo, tx.reason);
-  const message = explicit || description || 'No message preview available';
+  const rawMessage = explicit || description || 'No message preview available';
+  const message = stripHtml(rawMessage);
   const chars = toNumber(tx.chars, message.length);
   return chars > 0 ? `${message}\n[${chars} chars]` : message;
 };
