@@ -127,91 +127,147 @@ function nola_remove_master_sender_if_unused($db, string $senderId, ?string $exc
     ], ['merge' => true]);
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'logs') {
-    $cacheKey = "admin_dashboard_logs";
-    $cachedData = NolaCache::get($cacheKey);
-    if ($cachedData !== null) {
-        echo json_encode($cachedData);
-        exit;
+function nola_extract_log_timestamp(array $data): ?string
+{
+    $candidates = [
+        $data['date_created'] ?? null,
+        $data['created_at'] ?? null,
+        $data['timestamp'] ?? null,
+        $data['date'] ?? null,
+        $data['updated_at'] ?? null,
+    ];
+    foreach ($candidates as $val) {
+        if ($val instanceof \Google\Cloud\Core\Timestamp) {
+            return $val->get()->format('c');
+        }
+        if ($val instanceof \DateTimeInterface) {
+            return $val->format('c');
+        }
+        if (is_string($val) && trim($val) !== '') {
+            $t = strtotime($val);
+            if ($t !== false && $t > 0) {
+                return date('c', $t);
+            }
+        }
     }
+    return null;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'logs') {
+    $requestedMonth = trim((string)($_GET['month'] ?? ''));
 
     $unifiedLogs = [];
+    $seenDocIds = [];
 
-    // 1. Fetch recent messages
-    $messages = $db->collection('messages')->orderBy('date_created', 'DESC')->limit(30)->documents();
-    foreach ($messages as $doc) {
-        if ($doc->exists()) {
-            $data = $doc->data();
-            $ts = isset($data['date_created']) && $data['date_created'] instanceof \Google\Cloud\Core\Timestamp 
-                  ? $data['date_created']->get()->format('c') : null;
-            
-            $unifiedLogs[] = array_merge($data, [
-                'id' => $doc->id(),
-                'type' => 'message',
-                'timestamp' => $ts
-            ]);
+    // 1. Fetch messages collection
+    try {
+        $messages = $db->collection('messages')->limit(1000)->documents();
+        foreach ($messages as $doc) {
+            if ($doc->exists()) {
+                $docId = $doc->id();
+                $data = $doc->data();
+                $ts = nola_extract_log_timestamp($data);
+                $seenDocIds[$docId] = true;
+                $unifiedLogs[] = array_merge($data, [
+                    'id' => $docId,
+                    'type' => $data['type'] ?? 'message',
+                    'timestamp' => $ts
+                ]);
+            }
         }
+    } catch (\Throwable $e) {
+        error_log('[admin_logs] Failed reading messages: ' . $e->getMessage());
     }
 
-    // 2. Fetch sender requests
-    $requests = $db->collection('sender_id_requests')->orderBy('created_at', 'DESC')->limit(20)->documents();
-    foreach ($requests as $doc) {
-        if ($doc->exists()) {
-            $data = $doc->data();
-            $ts = isset($data['created_at']) && $data['created_at'] instanceof \Google\Cloud\Core\Timestamp 
-                  ? $data['created_at']->get()->format('c') : null;
-            
-            $unifiedLogs[] = array_merge($data, [
-                'id' => $doc->id(),
-                'type' => 'sender_request',
-                'timestamp' => $ts
-            ]);
+    // 2. Fetch sms_logs collection (captures historical outbound/inbound SMS from June, July, etc.)
+    try {
+        $smsLogs = $db->collection('sms_logs')->limit(1000)->documents();
+        foreach ($smsLogs as $doc) {
+            if ($doc->exists()) {
+                $docId = $doc->id();
+                if (isset($seenDocIds[$docId])) {
+                    continue; // Skip duplicate if already loaded from messages
+                }
+                $data = $doc->data();
+                $ts = nola_extract_log_timestamp($data);
+                $seenDocIds[$docId] = true;
+                $unifiedLogs[] = array_merge($data, [
+                    'id' => $docId,
+                    'type' => 'message',
+                    'timestamp' => $ts
+                ]);
+            }
         }
+    } catch (\Throwable $e) {
+        error_log('[admin_logs] Failed reading sms_logs: ' . $e->getMessage());
     }
 
-    // 3. Fetch credit transactions
-    $purchases = $db->collection('credit_transactions')->orderBy('created_at', 'DESC')->limit(20)->documents();
-    foreach ($purchases as $doc) {
-        if ($doc->exists()) {
-            $data = $doc->data();
-            $ts = isset($data['created_at']) && $data['created_at'] instanceof \Google\Cloud\Core\Timestamp 
-                  ? $data['created_at']->get()->format('c') : null;
-            
-            $unifiedLogs[] = array_merge($data, [
-                'id' => $doc->id(),
-                'type' => 'credit_purchase',
-                'timestamp' => $ts
-            ]);
+    // 3. Fetch sender requests
+    try {
+        $requests = $db->collection('sender_id_requests')->limit(500)->documents();
+        foreach ($requests as $doc) {
+            if ($doc->exists()) {
+                $docId = $doc->id();
+                if (isset($seenDocIds[$docId])) {
+                    continue;
+                }
+                $data = $doc->data();
+                $ts = nola_extract_log_timestamp($data);
+                $seenDocIds[$docId] = true;
+                $unifiedLogs[] = array_merge($data, [
+                    'id' => $docId,
+                    'type' => 'sender_request',
+                    'timestamp' => $ts
+                ]);
+            }
         }
+    } catch (\Throwable $e) {
+        error_log('[admin_logs] Failed reading sender_id_requests: ' . $e->getMessage());
+    }
+
+    // 4. Fetch credit transactions
+    try {
+        $purchases = $db->collection('credit_transactions')->limit(1000)->documents();
+        foreach ($purchases as $doc) {
+            if ($doc->exists()) {
+                $docId = $doc->id();
+                if (isset($seenDocIds[$docId])) {
+                    continue;
+                }
+                $data = $doc->data();
+                $ts = nola_extract_log_timestamp($data);
+                $seenDocIds[$docId] = true;
+                $unifiedLogs[] = array_merge($data, [
+                    'id' => $docId,
+                    'type' => $data['type'] ?? 'credit_purchase',
+                    'timestamp' => $ts
+                ]);
+            }
+        }
+    } catch (\Throwable $e) {
+        error_log('[admin_logs] Failed reading credit_transactions: ' . $e->getMessage());
     }
 
     // Sort combined array by timestamp descending
     usort($unifiedLogs, function($a, $b) {
-        $timeA = strtotime($a['timestamp'] ?? '1970-01-01');
-        $timeB = strtotime($b['timestamp'] ?? '1970-01-01');
+        $timeA = isset($a['timestamp']) ? strtotime($a['timestamp']) : 0;
+        $timeB = isset($b['timestamp']) ? strtotime($b['timestamp']) : 0;
         return $timeB - $timeA;
     });
 
-    // Return the top 50
-    $finalLogs = array_slice($unifiedLogs, 0, 50);
-
-    $totalMessages = 0;
-    try {
-        $totalMessages = $db->collection('messages')->count()->get()->get('count');
-    } catch (\Throwable $e) {
-        try {
-            $totalMessages = iterator_count($db->collection('messages')->documents());
-        } catch (\Throwable $e2) {
-            $totalMessages = 0;
-        }
+    // Filter by month if requested
+    if ($requestedMonth !== '' && strtolower($requestedMonth) !== 'all') {
+        $unifiedLogs = array_values(array_filter($unifiedLogs, function($log) use ($requestedMonth) {
+            $rawDate = $log['timestamp'] ?? '';
+            return str_starts_with($rawDate, $requestedMonth);
+        }));
     }
 
     $responsePayload = [
         'status' => 'success',
-        'data' => $finalLogs,
-        'total_messages' => $totalMessages
+        'data' => $unifiedLogs,
+        'total_messages' => count($unifiedLogs)
     ];
-    NolaCache::set($cacheKey, $responsePayload, 60); // 60 seconds TTL
     echo json_encode($responsePayload);
     exit;
 }

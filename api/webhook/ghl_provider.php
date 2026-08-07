@@ -301,6 +301,18 @@ if (!$message && !empty($messageNode)) {
         ['message', 'content'],
     ]);
 }
+if ($message && preg_match('/<[a-zA-Z][^>]*>/', $message)) {
+    $message = preg_replace('/<\/(p|div|br|li|tr|h[1-6])>/i', "\n", $message);
+    $message = strip_tags($message);
+    $message = html_entity_decode($message, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $message = str_replace(
+        ['‘', '’', '“', '”', '–', '—', '…', '`', '´'],
+        ["'", "'", '"', '"', '-', '-', '...', "'", "'"],
+        $message
+    );
+    $message = trim(preg_replace('/[^\S\n]+/', ' ', $message));
+}
+
 $messageId = provider_first_scalar($payload, [
     'messageId',
     'message_id',
