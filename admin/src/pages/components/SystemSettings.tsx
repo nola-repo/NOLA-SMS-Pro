@@ -487,6 +487,28 @@ export const AdminLogs: React.FC<{ hideHeader?: boolean; onCardClick?: () => voi
         return status ? 'pending' : 'successful';
     };
 
+    const toMonthString = (raw: any): string | null => {
+        if (!raw) return null;
+        if (typeof raw === 'string') {
+            const trimmed = raw.trim();
+            return trimmed.length >= 7 ? trimmed.substring(0, 7) : null;
+        }
+        if (typeof raw === 'number') {
+            const ms = raw < 10000000000 ? raw * 1000 : raw;
+            const d = new Date(ms);
+            return !isNaN(d.getTime()) ? d.toISOString().substring(0, 7) : null;
+        }
+        if (typeof raw === 'object' && raw !== null) {
+            const sec = (raw as any)._seconds ?? (raw as any).seconds;
+            if (typeof sec === 'number') {
+                const d = new Date(sec * 1000);
+                return !isNaN(d.getTime()) ? d.toISOString().substring(0, 7) : null;
+            }
+        }
+        const str = String(raw);
+        return str.length >= 7 ? str.substring(0, 7) : null;
+    };
+
     const filtered = logs.filter(log => {
         const type = getType(log);
         if (filterType !== 'all' && type !== filterType) return false;
@@ -494,8 +516,9 @@ export const AdminLogs: React.FC<{ hideHeader?: boolean; onCardClick?: () => voi
         
         // Month Filter
         if (selectedMonth !== 'All') {
-            const rawDate = log.timestamp || log.date_created || log.created_at || '';
-            if (!rawDate.startsWith(selectedMonth)) return false;
+            const rawDate = log.timestamp || log.date_created || log.created_at;
+            const m = toMonthString(rawDate);
+            if (m !== selectedMonth) return false;
         }
 
         if (debouncedSearch) {
@@ -538,8 +561,8 @@ export const AdminLogs: React.FC<{ hideHeader?: boolean; onCardClick?: () => voi
 
     const availableMonths = useMemo(() => {
         const fromLogs = logs.map(log => {
-            const dateStr = log.timestamp || log.date_created || log.created_at;
-            return dateStr ? dateStr.substring(0, 7) : null;
+            const rawDate = log.timestamp || log.date_created || log.created_at;
+            return toMonthString(rawDate);
         }).filter(Boolean) as string[];
         return Array.from(new Set(fromLogs)).sort().reverse();
     }, [logs]);
@@ -629,8 +652,21 @@ export const AdminLogs: React.FC<{ hideHeader?: boolean; onCardClick?: () => voi
         const type = getType(log);
         const isFreeTrial = log.amount === 0;
         const ts = log.timestamp || log.date_created || log.created_at;
-        const date = ts ? new Date(ts).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : '';
-        const time = ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+        const parseLogDate = (val: any) => {
+            if (!val) return null;
+            if (typeof val === 'number') {
+                return new Date(val < 10000000000 ? val * 1000 : val);
+            }
+            if (typeof val === 'object' && val !== null) {
+                const sec = (val as any)._seconds ?? (val as any).seconds;
+                if (typeof sec === 'number') return new Date(sec * 1000);
+            }
+            const d = new Date(val);
+            return !isNaN(d.getTime()) ? d : null;
+        };
+        const parsedDate = parseLogDate(ts);
+        const date = parsedDate ? parsedDate.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+        const time = parsedDate ? parsedDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
         const publicReferenceId = log.message_reference_id || log.transaction_reference_id || log.request_reference_id || log.reference_id;
         const failureReason = getFailureReason(log);
         const locationName = getLocationName(log);
