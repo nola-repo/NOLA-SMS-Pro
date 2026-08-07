@@ -419,6 +419,7 @@ export const AdminLogs: React.FC<{ hideHeader?: boolean; onCardClick?: () => voi
     const ITEMS_PER_PAGE = 10;
     const [selectedMonth, setSelectedMonth] = useState<string>('All');
     const filterMenuRef = useRef<HTMLDivElement>(null);
+    const seenMonthsRef = useRef<Set<string>>(new Set());
 
     useEffect(() => {
         const t = setTimeout(() => setDebouncedSearch(searchTerm), 300);
@@ -442,9 +443,10 @@ export const AdminLogs: React.FC<{ hideHeader?: boolean; onCardClick?: () => voi
         if (isInitial) setLoading(true);
         setError(null);
         try {
-            const monthParam = selectedMonth !== 'All' ? `&month=${encodeURIComponent(selectedMonth)}` : '';
+            // Always fetch all logs; month filtering is done client-side
+            // so the month dropdown never loses its options on selection
             const [logsRes, accsRes] = await Promise.all([
-                adminFetch(`${ADMIN_API}?action=logs${monthParam}`, { headers: getAdminAuthHeaders() }),
+                adminFetch(`${ADMIN_API}?action=logs`, { headers: getAdminAuthHeaders() }),
                 adminFetch(`${ADMIN_API}?action=accounts`, { headers: getAdminAuthHeaders() })
             ]);
             const logsData = await logsRes.json();
@@ -459,7 +461,7 @@ export const AdminLogs: React.FC<{ hideHeader?: boolean; onCardClick?: () => voi
             }
         } catch { setError('Network error. Could not reach the backend.'); }
         finally { if (isInitial) setLoading(false); }
-    }, [selectedMonth]);
+    }, []);
 
     useEffect(() => {
         fetchLogs(true);
@@ -560,11 +562,13 @@ export const AdminLogs: React.FC<{ hideHeader?: boolean; onCardClick?: () => voi
     const currentLogs = filtered.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
 
     const availableMonths = useMemo(() => {
-        const fromLogs = logs.map(log => {
+        // Accumulate months into the stable ref — never shrinks on refetch
+        logs.forEach(log => {
             const rawDate = log.timestamp || log.date_created || log.created_at;
-            return toMonthString(rawDate);
-        }).filter(Boolean) as string[];
-        return Array.from(new Set(fromLogs)).sort().reverse();
+            const m = toMonthString(rawDate);
+            if (m) seenMonthsRef.current.add(m);
+        });
+        return Array.from(seenMonthsRef.current).sort().reverse();
     }, [logs]);
 
     const pills = [
