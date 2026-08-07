@@ -144,7 +144,7 @@ const normalizeMessage = (tx: ReportTransaction): string => {
   const description = pickString(tx.description, tx.note, tx.memo, tx.reason);
   const rawMessage = explicit || description || 'No message preview available';
   const message = stripHtml(rawMessage);
-  const chars = toNumber(tx.chars, message.length);
+  const chars = message && message !== 'No message preview available' ? message.length : toNumber(tx.chars, 0);
   return chars > 0 ? `${message}\n[${chars} chars]` : message;
 };
 

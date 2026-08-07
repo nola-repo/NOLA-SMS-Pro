@@ -442,8 +442,9 @@ export const AdminLogs: React.FC<{ hideHeader?: boolean; onCardClick?: () => voi
         if (isInitial) setLoading(true);
         setError(null);
         try {
+            const monthParam = selectedMonth !== 'All' ? `&month=${encodeURIComponent(selectedMonth)}` : '';
             const [logsRes, accsRes] = await Promise.all([
-                adminFetch(`${ADMIN_API}?action=logs`, { headers: getAdminAuthHeaders() }),
+                adminFetch(`${ADMIN_API}?action=logs${monthParam}`, { headers: getAdminAuthHeaders() }),
                 adminFetch(`${ADMIN_API}?action=accounts`, { headers: getAdminAuthHeaders() })
             ]);
             const logsData = await logsRes.json();
@@ -458,7 +459,7 @@ export const AdminLogs: React.FC<{ hideHeader?: boolean; onCardClick?: () => voi
             }
         } catch { setError('Network error. Could not reach the backend.'); }
         finally { if (isInitial) setLoading(false); }
-    }, []);
+    }, [selectedMonth]);
 
     useEffect(() => {
         fetchLogs(true);
@@ -535,10 +536,26 @@ export const AdminLogs: React.FC<{ hideHeader?: boolean; onCardClick?: () => voi
     const totalPages = Math.ceil(filtered.length / ITEMS_PER_PAGE);
     const currentLogs = filtered.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
 
-    const availableMonths = Array.from(new Set(logs.map(log => {
-        const dateStr = log.timestamp || log.date_created || log.created_at;
-        return dateStr ? dateStr.substring(0, 7) : null;
-    }).filter(Boolean))).sort().reverse() as string[];
+    const generatedPastMonths = useMemo(() => {
+        const months: string[] = [];
+        const now = new Date();
+        for (let i = 0; i < 18; i++) {
+            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            const yyyy = d.getFullYear();
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            months.push(`${yyyy}-${mm}`);
+        }
+        return months;
+    }, []);
+
+    const availableMonths = useMemo(() => {
+        const fromLogs = logs.map(log => {
+            const dateStr = log.timestamp || log.date_created || log.created_at;
+            return dateStr ? dateStr.substring(0, 7) : null;
+        }).filter(Boolean) as string[];
+        const set = new Set([...fromLogs, ...generatedPastMonths]);
+        return Array.from(set).sort().reverse();
+    }, [logs, generatedPastMonths]);
 
     const pills = [
         { id: 'all', label: 'All' },

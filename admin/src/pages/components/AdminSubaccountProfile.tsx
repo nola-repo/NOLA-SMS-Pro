@@ -205,7 +205,6 @@ export const AdminSubaccountProfile: React.FC<{
                             ['Role', displayValue(account?.role || 'user')],
                             ['Location Name', displayValue(account?.location_name)],
                             ['Location ID', displayValue(account?.location_id || account?.active_location_id)],
-                            ['Provider', displayValue(account?.approved_provider || account?.provider)],
                             ['Source', displayValue(account?.source)],
                             ['Created At', formatDate(account?.created_at)],
                             ['Last Active', formatDate(account?.last_active_at || account?.last_active || account?.last_login_at || account?.last_login || account?.updated_at)],
@@ -217,18 +216,41 @@ export const AdminSubaccountProfile: React.FC<{
                             </div>
                         ))}
 
-                        {/* SMS Provider Balance — read-only, enriched by backend */}
-                        {account?.sms_provider && (
-                            <div className="rounded-xl bg-[#f7f7f7] dark:bg-[#0d0e10] border border-[#e5e5e5] dark:border-white/5 px-4 py-3">
-                                <p className="text-[10px] font-black uppercase tracking-wider text-[#9aa0a6] mb-1">SMS Provider</p>
-                                <p className="text-[13px] font-semibold text-[#111111] dark:text-white">{account.sms_provider}</p>
-                                {account?.provider_credit_balance !== null && account?.provider_credit_balance !== undefined && (
-                                    <p className={`text-[12px] font-bold mt-0.5 ${account.provider_credit_balance > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-[#9aa0a6]'}`}>
-                                        {account.provider_credit_balance.toLocaleString()} credits (live)
-                                    </p>
-                                )}
-                            </div>
-                        )}
+                        {/* SMS Provider & Live Credits */}
+                        <div className="rounded-xl bg-[#f7f7f7] dark:bg-[#0d0e10] border border-[#e5e5e5] dark:border-white/5 px-4 py-3 sm:col-span-2">
+                            <p className="text-[10px] font-black uppercase tracking-wider text-[#9aa0a6] mb-1.5">SMS Provider</p>
+                            {account?.sms_provider || account?.approved_provider ? (
+                                <div className="flex flex-col gap-1">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-[14px] font-bold text-[#111111] dark:text-white">
+                                            {account.sms_provider || account.approved_provider}
+                                        </span>
+                                        {account?.provider_balance_source && (
+                                            <span className={`text-[9px] px-2 py-0.5 rounded font-bold uppercase tracking-wider ${
+                                                account.provider_balance_source === 'custom'
+                                                    ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300'
+                                                    : 'bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-gray-400'
+                                            }`}>
+                                                {account.provider_balance_source === 'custom' ? 'Custom Key' : 'System Key'}
+                                            </span>
+                                        )}
+                                    </div>
+                                    {account?.provider_credit_balance === null || account?.provider_credit_balance === undefined ? (
+                                        <span className="text-[12px] font-semibold text-[#9aa0a6]">—</span>
+                                    ) : (
+                                        <span className={`text-[13px] font-bold ${
+                                            account.provider_credit_balance > 0
+                                                ? 'text-emerald-600 dark:text-emerald-400'
+                                                : 'text-[#9aa0a6]'
+                                        }`}>
+                                            {account.provider_credit_balance.toLocaleString()} credits
+                                        </span>
+                                    )}
+                                </div>
+                            ) : (
+                                <span className="text-[13px] font-medium text-[#9aa0a6]">—</span>
+                            )}
+                        </div>
                     </div>
 
                     <div className="flex items-center justify-between gap-4 rounded-xl bg-[#f7f7f7] dark:bg-[#0d0e10] border border-[#e5e5e5] dark:border-white/5 px-4 py-3">

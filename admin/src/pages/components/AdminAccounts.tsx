@@ -823,9 +823,6 @@ export const AdminAccounts: React.FC = () => {
                                                 FREE USED
                                             </th>
                                             <th className="pb-3 pr-4 text-[11px] font-bold text-[#5f6368] dark:text-[#9aa0a6] uppercase tracking-wider whitespace-nowrap">
-                                                SMS PROVIDER
-                                            </th>
-                                            <th className="pb-3 pr-4 text-[11px] font-bold text-[#5f6368] dark:text-[#9aa0a6] uppercase tracking-wider whitespace-nowrap">
                                                 ACTIONS
                                             </th>
                                         </tr>
@@ -901,39 +898,6 @@ export const AdminAccounts: React.FC = () => {
                                                     )}
                                                 </td>
                                                 <td className="py-4 pr-4">{renderFreeUsage(account)}</td>
-                                                <td className="py-4 pr-4 min-w-[130px]">
-                                                    {account.sms_provider ? (
-                                                        <div className="flex flex-col gap-0.5">
-                                                            <div className="flex items-center gap-1.5">
-                                                                <span className="text-[12px] font-bold text-[#111111] dark:text-white">
-                                                                    {account.sms_provider}
-                                                                </span>
-                                                                {account.provider_balance_source && (
-                                                                    <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${
-                                                                        account.provider_balance_source === 'custom'
-                                                                            ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300'
-                                                                            : 'bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-gray-400'
-                                                                    }`}>
-                                                                        {account.provider_balance_source === 'custom' ? 'Custom Key' : 'System Key'}
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                            {account.provider_credit_balance === null || account.provider_credit_balance === undefined ? (
-                                                                <span className="text-[11px] font-semibold text-[#9aa0a6]">—</span>
-                                                            ) : (
-                                                                <span className={`text-[11px] font-semibold ${
-                                                                    account.provider_credit_balance > 0
-                                                                        ? 'text-emerald-600 dark:text-emerald-400'
-                                                                        : 'text-[#9aa0a6]'
-                                                                }`}>
-                                                                    {account.provider_credit_balance.toLocaleString()} credits
-                                                                </span>
-                                                            )}
-                                                        </div>
-                                                    ) : (
-                                                        <span className="text-[12px] text-[#9aa0a6]">—</span>
-                                                    )}
-                                                </td>
                                                 <td className="py-4 pr-2 text-right min-w-[60px]">
                                                     <button
                                                         onClick={(event) => openActionMenu(account.id, event.currentTarget)}
