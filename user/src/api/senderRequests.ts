@@ -194,6 +194,10 @@ export const cancelSenderRequest = async (requestId: string, explicitLocationId?
     return true;
 };
 
+// In-memory cache for fast UI resolution
+const configCache = new Map<string, { config: AccountSenderConfig; time: number }>();
+const CACHE_TTL_MS = 30000; // 30 seconds
+
 /**
  * Fetch the account's sender configuration (approved sender, API key, free usage).
  */
@@ -204,6 +208,10 @@ export const fetchAccountSenderConfig = async (explicitLocationId?: string): Pro
         return DEFAULT_CONFIG;
     }
 
+    const cached = configCache.get(locationId);
+    if (cached && Date.now() - cached.time < CACHE_TTL_MS) {
+        return cached.config;
+    }
 
     let url = API_CONFIG.account_sender;
     if (locationId) {
@@ -220,25 +228,7 @@ export const fetchAccountSenderConfig = async (explicitLocationId?: string): Pro
         const inner = raw.data || raw;
         const config: AccountSenderConfig = { ...DEFAULT_CONFIG, ...inner };
 
-        if (config.approved_sender_id) {
-            const requests = await fetchSenderRequests(locationId);
-            const approvedId = config.approved_sender_id.trim().toLowerCase();
-            const stillApproved = requests.some(req =>
-                req.status === "approved" &&
-                req.requested_id.trim().toLowerCase() === approvedId
-            );
-
-            if (!stillApproved) {
-            return {
-                    ...config,
-                    approved_sender_id: null,
-                    nola_pro_api_key: null,
-                    semaphore_api_key: null,
-                    unisms_api_key: null,
-                };
-            }
-        }
-
+        configCache.set(locationId, { config, time: Date.now() });
         return config;
     } catch (error) {
         devLog.error("[fetchAccountSenderConfig] Network error:", error);

@@ -131,6 +131,7 @@ export const SenderSelector: React.FC<SenderSelectorProps> = ({
                 {/* Trigger Button */}
                 <button
                     onClick={() => setIsOpen(!isOpen)}
+                    disabled={configLoading}
                     className={`
             flex items-center justify-between gap-2.5 font-bold transition-all duration-200
             border rounded-xl focus:outline-none focus:ring-2
@@ -141,18 +142,23 @@ export const SenderSelector: React.FC<SenderSelectorProps> = ({
             ${isOpen ? (isOnBlue ? "ring-2 ring-white/30 border-white/50" : "ring-2 ring-[#2b83fa]/20 border-[#2b83fa]/30") : ""}
           `}
                 >
-                    <div className="flex items-center gap-2 min-w-0">
-                        <div className={`flex-shrink-0 flex items-center justify-center rounded-lg text-white shadow-sm ${size === "sm" ? "w-5 h-5 text-[10px]" : "w-6 h-6 text-[12px]"} ${isOnBlue ? "bg-white/[0.20]" : selectedOption.color}`}>
-                            {configLoading ? <FiLoader className="animate-spin" /> : selectedOption.icon}
+                    {configLoading ? (
+                        <div className="flex items-center gap-2 min-w-0">
+                            <div className={`flex-shrink-0 flex items-center justify-center rounded-lg ${size === "sm" ? "w-5 h-5" : "w-6 h-6"} ${isOnBlue ? "bg-white/20 text-white" : "bg-blue-500/20 text-[#2b83fa]"} animate-pulse`}>
+                                <FiLoader className="animate-spin text-[11px]" />
+                            </div>
+                            <div className={`h-3.5 w-16 rounded-md animate-pulse ${isOnBlue ? "bg-white/30" : "bg-gray-300/60 dark:bg-white/20"}`} />
                         </div>
-                        <span className={`${isOnBlue ? "text-white" : "text-[#37352f] dark:text-[#ececf1]"} truncate max-w-[80px] sm:max-w-[120px]`}>{selectedOption.name}</span>
-                    </div>
+                    ) : (
+                        <div className="flex items-center gap-2 min-w-0">
+                            <div className={`flex-shrink-0 flex items-center justify-center rounded-lg text-white shadow-sm ${size === "sm" ? "w-5 h-5 text-[10px]" : "w-6 h-6 text-[12px]"} ${isOnBlue ? "bg-white/[0.20]" : selectedOption.color}`}>
+                                {selectedOption.icon}
+                            </div>
+                            <span className={`${isOnBlue ? "text-white" : "text-[#37352f] dark:text-[#ececf1]"} truncate max-w-[80px] sm:max-w-[120px]`}>{selectedOption.name}</span>
+                        </div>
+                    )}
                     <FiChevronDown className={`flex-shrink-0 transition-transform duration-200 ${isOnBlue ? "text-white/75" : "text-gray-400"} ${isOpen ? (isOnBlue ? "rotate-180 text-white" : "rotate-180 text-[#2b83fa]") : ""}`} />
                 </button>
-
-                {/* Floating Menu */}
-                {isOpen && (
-                    <div className={`
             absolute top-full z-[60] mt-2 
             w-64 max-w-[calc(100vw-2rem)] p-1.5
             bg-white/95 dark:bg-[#1a1b1e]/95 backdrop-blur-2xl
