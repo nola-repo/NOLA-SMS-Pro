@@ -63,12 +63,88 @@ class SmsGatewayService
                 }
                 $resolvedConfig['failover_timeout_seconds'] = (int)($data['failover_timeout_seconds'] ?? 8);
                 $resolvedConfig['failover_log_enabled'] = (bool)($data['failover_log_enabled'] ?? true);
+                $resolvedConfig['resilience_engine_enabled'] = (bool)($data['resilience_engine_enabled'] ?? true);
+                $resolvedConfig['resilience_circuit_breaker_enabled'] = (bool)($data['resilience_circuit_breaker_enabled'] ?? true);
             }
         } catch (\Throwable $e) {
             error_log("[SmsGatewayService] Config load error, using config.php fallbacks: " . $e->getMessage());
         }
 
         return $resolvedConfig;
+    }
+
+    /**
+     * Checks sliding 60-second window in cache for provider failure rate.
+     * If failure rate > 50% (min 5 requests), returns true (Circuit Breaker OPEN).
+     */
+    private function isCircuitBreakerOpen(string $provider): bool
+    {
+        if (!($this->config['resilience_circuit_breaker_enabled'] ?? true)) {
+            return false;
+        }
+
+        require_once __DIR__ . '/../cache_helper.php';
+        $key = "cb_metrics_" . strtolower($provider);
+        $metrics = NolaCache::get($key) ?: ['total' => 0, 'fails' => 0, 'ts' => time()];
+
+        // Reset metrics window every 60 seconds
+        if ((time() - ($metrics['ts'] ?? 0)) > 60) {
+            return false;
+        }
+
+        $total = $metrics['total'] ?? 0;
+        $fails = $metrics['fails'] ?? 0;
+
+        if ($total >= 5 && ($fails / $total) > 0.5) {
+            error_log(json_encode([
+                'event'                  => 'circuit_breaker_triggered',
+                'provider'               => $provider,
+                'total_requests_60s'     => $total,
+                'failed_requests_60s'    => $fails,
+                'failure_rate_percentage'=> round(($fails / $total) * 100, 1),
+                'circuit_status'         => 'OPEN'
+            ]));
+            return true;
+        }
+
+        return false;
+    }
+
+    private function recordProviderMetric(string $provider, bool $isFailure): void
+    {
+        try {
+            require_once __DIR__ . '/../cache_helper.php';
+            $key = "cb_metrics_" . strtolower($provider);
+            $metrics = NolaCache::get($key) ?: ['total' => 0, 'fails' => 0, 'ts' => time()];
+            if ((time() - ($metrics['ts'] ?? 0)) > 60) {
+                $metrics = ['total' => 0, 'fails' => 0, 'ts' => time()];
+            }
+            $metrics['total'] = ($metrics['total'] ?? 0) + 1;
+            if ($isFailure) {
+                $metrics['fails'] = ($metrics['fails'] ?? 0) + 1;
+            }
+            NolaCache::set($key, $metrics, 60);
+        } catch (\Throwable $e) {
+            // Ignore cache metric write errors
+        }
+    }
+
+    /**
+     * Checks whether a sender ID is compatible with UniSMS.
+     * Custom Semaphore-only sender IDs (e.g. JNKRENTAL) return false to prevent brand override ("NOLA").
+     */
+    private function isSenderCompatibleWithUniSms(string $senderId): bool
+    {
+        $unismsSender = trim((string)($this->config['UNISMS_SENDER_ID'] ?? ''));
+        $senderId     = trim($senderId);
+
+        if ($senderId === '' || strcasecmp($senderId, 'NOLA') === 0 || strcasecmp($senderId, 'NOLASMSPro') === 0) {
+            return true;
+        }
+        if ($unismsSender !== '' && strcasecmp($senderId, $unismsSender) === 0) {
+            return true;
+        }
+        return false;
     }
 
     public function getProviderName(): string
@@ -86,7 +162,7 @@ class SmsGatewayService
     }
 
     /**
-     * Sends messages through the active provider, handling auto-failover if enabled.
+     * Sends messages through the active provider, handling auto-failover and Sender-ID Guard.
      *
      * @return array Standardized result items: [['message_id' => '...', 'status' => '...', 'recipient' => '...'], ...]
      */
@@ -100,7 +176,6 @@ class SmsGatewayService
 
         // 2. Dynamic Routing Override
         if ($customApiKey !== null) {
-            // Path A: Subaccount custom API key determines provider
             if (in_array($providerName, ['unisms', 'unisms_custom'], true)) {
                 $providerName = 'unisms';
             } elseif (in_array($providerName, ['semaphore', 'semaphore_custom'], true)) {
@@ -109,13 +184,10 @@ class SmsGatewayService
                 $providerName = str_starts_with(trim($customApiKey), 'sk_') ? 'unisms' : 'semaphore';
             }
         } else {
-            // Path B: Master gateway sender ID determines provider
             $unismsSender = trim($this->config['UNISMS_SENDER_ID'] ?? '');
             if ($providerName === 'unisms' || ($unismsSender !== '' && strcasecmp(trim($senderId), $unismsSender) === 0)) {
                 $providerName = 'unisms';
             } else {
-                // If the selected sender is not the dedicated UniSMS sender, assume Semaphore
-                // (or allow auto_failover to run its course if that's the active provider)
                 if ($providerName !== 'auto_failover') {
                     $providerName = 'semaphore';
                 }
@@ -124,29 +196,49 @@ class SmsGatewayService
 
         if ($providerName !== 'auto_failover') {
             $prov = $this->getProviderInstance($providerName);
-            $results = $prov->sendBulk($numbers, $message, $senderId, $customApiKey);
-            return [
-                'provider' => $providerName,
-                'results' => $results
-            ];
+            try {
+                $results = $prov->sendBulk($numbers, $message, $senderId, $customApiKey);
+                $this->recordProviderMetric($providerName, false);
+                return [
+                    'provider' => $providerName,
+                    'results'  => $results
+                ];
+            } catch (\Throwable $e) {
+                $this->recordProviderMetric($providerName, true);
+                throw $e;
+            }
         }
 
-        // 2. Handle Auto-Failover Flow
-        // Primary: Semaphore with timeout
-        $primary = new SemaphoreProvider($this->config);
+        // 3. Handle Auto-Failover Flow with Circuit Breaker & Sender-ID Guard
+        $primary  = new SemaphoreProvider($this->config);
         $fallback = new UniSmsProvider($this->config);
 
+        $cbOpen = $this->isCircuitBreakerOpen('semaphore');
+        $senderCompatible = $this->isSenderCompatibleWithUniSms($senderId);
+
+        if ($cbOpen && !$senderCompatible) {
+            // Circuit Breaker OPEN and sender is custom to Semaphore (e.g., JNKRENTAL).
+            // Do NOT swap sender ID to "NOLA" on UniSMS! Log guard event and throw structured queue exception.
+            error_log(json_encode([
+                'event'               => 'sender_id_guard_triggered',
+                'provider'            => 'semaphore',
+                'sender_id'           => $senderId,
+                'circuit_breaker'     => 'OPEN',
+                'guard_action'        => 'blocked_unisms_swap_queued_for_retry',
+                'reason'              => 'Semaphore degraded, custom sender_id preserved without provider overwrite'
+            ]));
+            throw new \Exception("Semaphore network degraded (Circuit Breaker OPEN). Message queued for delayed retry under Sender ID {$senderId}.");
+        }
+
         try {
-            // Set dynamic timeout config on primary for cURL
-            // Since SemaphoreProvider doesn't support timeout configs in interface, we check via a manual try/catch.
-            // SemaphoreProvider defaults to 15s, but we will run standard sendBulk.
             $results = $primary->sendBulk($numbers, $message, $senderId, $customApiKey);
+            $this->recordProviderMetric('semaphore', false);
             return [
                 'provider' => 'semaphore',
-                'results' => $results
+                'results'  => $results
             ];
         } catch (\Throwable $e) {
-            // Check if failure is timeout/5xx or general endpoint down
+            $this->recordProviderMetric('semaphore', true);
             $errMessage = $e->getMessage();
             $isNetworkError = (
                 strpos(strtolower($errMessage), 'timeout') !== false ||
@@ -155,6 +247,18 @@ class SmsGatewayService
             );
 
             if ($isNetworkError) {
+                // Sender-ID Guard Check: If sender is NOT compatible with UniSMS, do NOT swap sender ID!
+                if (!$senderCompatible) {
+                    error_log(json_encode([
+                        'event'           => 'sender_id_guard_triggered',
+                        'provider'        => 'semaphore',
+                        'sender_id'       => $senderId,
+                        'guard_action'    => 'prevented_unisms_failover',
+                        'reason'          => 'Custom Semaphore sender ID cannot be substituted with default UniSMS sender'
+                    ]));
+                    throw new \Exception("Semaphore transient network error ({$errMessage}). Preserved custom Sender ID {$senderId} without UniSMS substitution.");
+                }
+
                 // Log incident to Firestore
                 if ($this->config['failover_log_enabled']) {
                     try {
@@ -162,30 +266,29 @@ class SmsGatewayService
                         $ts = new Timestamp($now);
                         $this->db->collection('admin_logs')->document('failover_incidents')->collection('logs')->newDocument()->set([
                             'attempted_provider' => 'semaphore',
-                            'reason' => $errMessage,
-                            'fallback' => 'unisms',
-                            'message_count' => count($numbers),
-                            'timestamp' => $ts
+                            'reason'             => $errMessage,
+                            'fallback'           => 'unisms',
+                            'message_count'      => count($numbers),
+                            'timestamp'          => $ts
                         ]);
                     } catch (\Throwable $logEx) {
                         error_log("[SmsGatewayService] Failover log write failed: " . $logEx->getMessage());
                     }
                 }
 
-                // Attempt sending via fallback (UniSMS)
-                // Note: If using custom keys, we assume custom key belongs to the fallback if it starts with 'sk_' or similar,
-                // otherwise fallback to system key. Let's send using fallback.
+                // Attempt sending via fallback (UniSMS) only when sender ID is compatible
                 try {
                     $results = $fallback->sendBulk($numbers, $message, $senderId, $customApiKey);
+                    $this->recordProviderMetric('unisms', false);
                     return [
                         'provider' => 'unisms',
-                        'results' => $results
+                        'results'  => $results
                     ];
                 } catch (\Throwable $fbEx) {
+                    $this->recordProviderMetric('unisms', true);
                     throw new \Exception("Primary send failed ({$errMessage}) and fallback send failed: " . $fbEx->getMessage());
                 }
             } else {
-                // If it is a user input error (e.g. invalid sender name, wrong key), do NOT failover to prevent duplicate billing
                 throw $e;
             }
         }

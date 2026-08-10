@@ -127,7 +127,9 @@ try {
         if (!empty($apiKey)) {
             $ch = curl_init('https://api.semaphore.co/api/v4/account?apikey=' . urlencode($apiKey));
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 6);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 8);
+            curl_setopt($ch, CURLOPT_TCP_NODELAY, 1);
             curl_exec($ch);
             $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             curl_close($ch);
@@ -172,9 +174,6 @@ try {
 
         $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string) $locId);
         $db->collection('integrations')->document($intDocId)->set($updateData, ['merge' => true]);
-
-        require_once __DIR__ . '/cache_helper.php';
-        NolaCache::delete('admin_users_list');
 
         echo json_encode(['status' => 'success', 'message' => 'Account sender configuration updated']);
         exit;

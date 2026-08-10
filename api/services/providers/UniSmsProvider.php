@@ -101,15 +101,18 @@ class UniSmsProvider implements SmsProviderInterface
         $lastCurlError = '';
         $lastHttpCode  = 0;
         $lastResponse  = false;
-        $effectiveTimeout = $timeoutOverride !== null ? max(1, $timeoutOverride) : max(3, $this->timeoutSeconds);
+        $lastErrNo     = 0;
+        $effectiveTimeout = $timeoutOverride !== null ? max(1, $timeoutOverride) : max(8, $this->timeoutSeconds);
 
         for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
-
+            $startTime = microtime(true);
             $ch = curl_init($url);
 
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, min(4, $effectiveTimeout));
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, min(6, $effectiveTimeout));
             curl_setopt($ch, CURLOPT_TIMEOUT, $effectiveTimeout);
+            curl_setopt($ch, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
+            curl_setopt($ch, CURLOPT_TCP_NODELAY, 1); // Disable Nagle's algorithm for instant packet dispatch
             curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
             curl_setopt($ch, CURLOPT_USERPWD, $apiKey . ":");
             curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
@@ -134,18 +137,47 @@ class UniSmsProvider implements SmsProviderInterface
             $lastResponse  = curl_exec($ch);
             $lastHttpCode  = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             $lastCurlError = curl_error($ch);
+            $lastErrNo     = curl_errno($ch);
             curl_close($ch);
+
+            $latencyMs = round((microtime(true) - $startTime) * 1000, 1);
 
             // --- Success ---
             if ($lastResponse !== false && $lastHttpCode >= 200 && $lastHttpCode < 300) {
+                if ($attempt > 1) {
+                    error_log(json_encode([
+                        'event'          => 'sms_retry_attempt',
+                        'provider'       => 'unisms',
+                        'attempt_number' => $attempt,
+                        'max_attempts'   => $maxAttempts,
+                        'latency_ms'     => $latencyMs,
+                        'http_code'      => $lastHttpCode,
+                        'outcome'        => 'success_on_retry'
+                    ]));
+                }
                 break;
             }
 
-            // --- Is the error transient? ---
             $isConnectionError = ($lastResponse === false);
             $isServerError     = ($lastHttpCode >= 500 && $lastHttpCode < 600);
             $isRateLimit       = ($lastHttpCode === 429);
             $isTransient       = $isConnectionError || $isServerError || $isRateLimit;
+
+            // Fail-Fast check for hard socket errors
+            $isHardSocketError = $isConnectionError && $latencyMs < 1000 && in_array($lastErrNo, [6, 7, 35], true);
+            if ($isHardSocketError && $attempt >= 2) {
+                error_log(json_encode([
+                    'event'          => 'sms_retry_attempt',
+                    'provider'       => 'unisms',
+                    'attempt_number' => $attempt,
+                    'max_attempts'   => $maxAttempts,
+                    'latency_ms'     => $latencyMs,
+                    'curl_errno'     => $lastErrNo,
+                    'curl_error'     => $lastCurlError,
+                    'outcome'        => 'fail_fast_aborted'
+                ]));
+                break;
+            }
 
             if ($isTransient && $attempt < $maxAttempts) {
                 if ($isRateLimit) {
