@@ -276,6 +276,7 @@ class NolaCache
         self::delete('admin_admins_list');
         self::delete('admin_settings');
         self::delete('admin_provider_balances');
+        self::delete('admin_activity_logs_all');
     }
 
     /**
