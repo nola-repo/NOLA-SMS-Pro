@@ -39,12 +39,28 @@ function nola_mask_secret(?string $secret): ?string
 
 try {
     if ($method === 'GET') {
-        // 3. Database Query (Source: integrations collection)
+        // 3. Database Query — fetch integration doc + admin_settings + ghl_token in parallel
         $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string) $locId);
-        $intRef = $db->collection('integrations')->document($intDocId);
-        $intSnap = $intRef->snapshot();
 
+        // Read integration doc
+        $intSnap = $db->collection('integrations')->document($intDocId)->snapshot();
         $data = $intSnap->exists() ? $intSnap->data() : [];
+
+        // Read admin settings doc to get the real system-level sender name (e.g. "NOLA")
+        $adminSettingsSnap = $db->collection('admin_config')->document('admin_settings')->snapshot();
+        $adminSettings = $adminSettingsSnap->exists() ? $adminSettingsSnap->data() : [];
+        // sms_provider.unisms_sender_id is where the admin configures the master sender name
+        $systemDefaultSender = trim((string)(
+            $adminSettings['sms_provider']['unisms_sender_id']
+            ?? $adminSettings['sender_default']
+            ?? 'NOLASMSPro'
+        ));
+        if ($systemDefaultSender === '') $systemDefaultSender = 'NOLASMSPro';
+
+        // Read toggle status from ghl_tokens
+        $tokenSnap = $db->collection('ghl_tokens')->document($locId)->snapshot();
+        $tokenData = $tokenSnap->exists() ? $tokenSnap->data() : [];
+        $toggleEnabled = isset($tokenData['toggle_enabled']) ? (bool)$tokenData['toggle_enabled'] : true;
 
         $approvedSenderId = $data['approved_sender_id'] ?? null;
 
@@ -72,26 +88,21 @@ try {
         echo json_encode([
             'status' => 'success',
             'data' => [
-                'sender_id' => $approvedSenderId,
-                'verified' => !empty($approvedSenderId),
-                'approved_sender_id' => $approvedSenderId,
-                'nola_pro_api_key' => null,
-                'nola_pro_api_key_masked' => nola_mask_secret($data['nola_pro_api_key'] ?? ($data['semaphore_api_key'] ?? null)),
+                'sender_id'                   => $approvedSenderId,
+                'verified'                    => !empty($approvedSenderId),
+                'approved_sender_id'          => $approvedSenderId,
+                'nola_pro_api_key'            => null,
+                'nola_pro_api_key_masked'     => nola_mask_secret($data['nola_pro_api_key'] ?? ($data['semaphore_api_key'] ?? null)),
                 'nola_pro_api_key_configured' => !empty($data['nola_pro_api_key'] ?? ($data['semaphore_api_key'] ?? null)),
-                'unisms_api_key' => null,
-                'unisms_api_key_masked' => nola_mask_secret($data['unisms_api_key'] ?? null),
-                'unisms_api_key_configured' => !empty($data['unisms_api_key'] ?? null),
-                'unisms_sender_id' => $data['unisms_sender_id'] ?? null,
-                'provider_preference' => $data['provider_preference'] ?? 'system',
-                'free_usage_count' => $data['free_usage_count'] ?? 0,
-                'free_credits_total' => $data['free_credits_total'] ?? 10,
-                'system_default_sender' => 'NOLASMSPro',
-                'toggle_enabled' => (function() use ($db, $locId) {
-                    $tokenRef = $db->collection('ghl_tokens')->document($locId);
-                    $tokenSnap = $tokenRef->snapshot();
-                    $tokenData = $tokenSnap->exists() ? $tokenSnap->data() : [];
-                    return isset($tokenData['toggle_enabled']) ? (bool)$tokenData['toggle_enabled'] : true;
-                })()
+                'unisms_api_key'              => null,
+                'unisms_api_key_masked'       => nola_mask_secret($data['unisms_api_key'] ?? null),
+                'unisms_api_key_configured'   => !empty($data['unisms_api_key'] ?? null),
+                'unisms_sender_id'            => $data['unisms_sender_id'] ?? null,
+                'provider_preference'         => $data['provider_preference'] ?? 'system',
+                'free_usage_count'            => $data['free_usage_count'] ?? 0,
+                'free_credits_total'          => $data['free_credits_total'] ?? 10,
+                'system_default_sender'       => $systemDefaultSender,
+                'toggle_enabled'              => $toggleEnabled,
             ]
         ]);
         exit;

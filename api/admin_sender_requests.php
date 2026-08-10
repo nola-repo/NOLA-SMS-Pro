@@ -156,58 +156,72 @@ function nola_extract_log_timestamp(array $data): ?string
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'logs') {
     $requestedMonth = trim((string)($_GET['month'] ?? ''));
 
-    $unifiedLogs = [];
-    $seenDocIds = [];
+    // Cache the full unfiltered log set for 60 seconds to dramatically speed up
+    // the first-load and subsequent 15-second poll cycles in the Activity page.
+    $logsCacheKey = 'admin_activity_logs_all';
+    $cachedLogs = NolaCache::get($logsCacheKey);
 
-    // Helper: collect docs from a query into $unifiedLogs
-    $collectDocs = function($query, string $defaultType) use (&$unifiedLogs, &$seenDocIds) {
-        try {
-            $docs = $query->documents();
-            foreach ($docs as $doc) {
-                if ($doc->exists()) {
-                    $docId = $doc->id();
-                    if (isset($seenDocIds[$docId])) continue;
-                    $data = $doc->data();
-                    $ts = nola_extract_log_timestamp($data);
-                    $seenDocIds[$docId] = true;
-                    $unifiedLogs[] = array_merge($data, [
-                        'id'        => $docId,
-                        'type'      => $data['type'] ?? $defaultType,
-                        'timestamp' => $ts
-                    ]);
+    if ($cachedLogs !== null) {
+        $unifiedLogs = $cachedLogs;
+    } else {
+        $unifiedLogs = [];
+        $seenDocIds = [];
+
+        // Helper: collect docs from a query into $unifiedLogs
+        $collectDocs = function($query, string $defaultType) use (&$unifiedLogs, &$seenDocIds) {
+            try {
+                $docs = $query->documents();
+                foreach ($docs as $doc) {
+                    if ($doc->exists()) {
+                        $docId = $doc->id();
+                        if (isset($seenDocIds[$docId])) continue;
+                        $data = $doc->data();
+                        $ts = nola_extract_log_timestamp($data);
+                        $seenDocIds[$docId] = true;
+                        $unifiedLogs[] = array_merge($data, [
+                            'id'        => $docId,
+                            'type'      => $data['type'] ?? $defaultType,
+                            'timestamp' => $ts
+                        ]);
+                    }
                 }
+            } catch (\Throwable $e) {
+                error_log('[admin_logs] Query error: ' . $e->getMessage());
             }
-        } catch (\Throwable $e) {
-            error_log('[admin_logs] Query error: ' . $e->getMessage());
-        }
-    };
+        };
 
-    // 1. messages — newest 500 DESC + oldest 500 ASC to cover all months
-    $collectDocs($db->collection('messages')->orderBy('date_created', 'DESC')->limit(500), 'message');
-    $collectDocs($db->collection('messages')->orderBy('date_created', 'ASC')->limit(500), 'message');
+        // 1. messages — newest 500 DESC + oldest 500 ASC to cover all months
+        $collectDocs($db->collection('messages')->orderBy('date_created', 'DESC')->limit(500), 'message');
+        $collectDocs($db->collection('messages')->orderBy('date_created', 'ASC')->limit(500), 'message');
 
-    // 2. sms_logs — same strategy (historical SMS from June, July, etc.)
-    $collectDocs($db->collection('sms_logs')->orderBy('date_created', 'DESC')->limit(500), 'message');
-    $collectDocs($db->collection('sms_logs')->orderBy('date_created', 'ASC')->limit(500), 'message');
+        // 2. sms_logs — same strategy (historical SMS from June, July, etc.)
+        $collectDocs($db->collection('sms_logs')->orderBy('date_created', 'DESC')->limit(500), 'message');
+        $collectDocs($db->collection('sms_logs')->orderBy('date_created', 'ASC')->limit(500), 'message');
 
-    // 3. sender_id_requests
-    $collectDocs($db->collection('sender_id_requests')->orderBy('created_at', 'DESC')->limit(300), 'sender_request');
-    $collectDocs($db->collection('sender_id_requests')->orderBy('created_at', 'ASC')->limit(300), 'sender_request');
+        // 3. sender_id_requests
+        $collectDocs($db->collection('sender_id_requests')->orderBy('created_at', 'DESC')->limit(300), 'sender_request');
+        $collectDocs($db->collection('sender_id_requests')->orderBy('created_at', 'ASC')->limit(300), 'sender_request');
 
-    // 4. credit_transactions
-    $collectDocs($db->collection('credit_transactions')->orderBy('created_at', 'DESC')->limit(500), 'credit_purchase');
-    $collectDocs($db->collection('credit_transactions')->orderBy('created_at', 'ASC')->limit(500), 'credit_purchase');
+        // 4. credit_transactions
+        $collectDocs($db->collection('credit_transactions')->orderBy('created_at', 'DESC')->limit(500), 'credit_purchase');
+        $collectDocs($db->collection('credit_transactions')->orderBy('created_at', 'ASC')->limit(500), 'credit_purchase');
 
-    // Sort combined array by timestamp descending
-    usort($unifiedLogs, function($a, $b) {
-        $timeA = isset($a['timestamp']) ? strtotime($a['timestamp']) : 0;
-        $timeB = isset($b['timestamp']) ? strtotime($b['timestamp']) : 0;
-        return $timeB - $timeA;
-    });
+        // Sort combined array by timestamp descending
+        usort($unifiedLogs, function($a, $b) {
+            $timeA = isset($a['timestamp']) ? strtotime($a['timestamp']) : 0;
+            $timeB = isset($b['timestamp']) ? strtotime($b['timestamp']) : 0;
+            return $timeB - $timeA;
+        });
 
-    // Filter by month if requested
+        // Cache for 60 seconds — short enough to feel live, long enough to skip
+        // the 8-query Firestore round-trip on every 15-second poll tick.
+        NolaCache::set($logsCacheKey, $unifiedLogs, 60);
+    }
+
+    // Filter by month if requested (client-side filtering, cache is always all-months)
+    $filteredLogs = $unifiedLogs;
     if ($requestedMonth !== '' && strtolower($requestedMonth) !== 'all') {
-        $unifiedLogs = array_values(array_filter($unifiedLogs, function($log) use ($requestedMonth) {
+        $filteredLogs = array_values(array_filter($unifiedLogs, function($log) use ($requestedMonth) {
             $rawDate = $log['timestamp'] ?? '';
             return str_starts_with($rawDate, $requestedMonth);
         }));
@@ -215,8 +229,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
 
     $responsePayload = [
         'status' => 'success',
-        'data' => $unifiedLogs,
-        'total_messages' => count($unifiedLogs)
+        'data' => $filteredLogs,
+        'total_messages' => count($filteredLogs)
     ];
     echo json_encode($responsePayload);
     exit;
