@@ -443,22 +443,26 @@ export const AdminLogs: React.FC<{ hideHeader?: boolean; onCardClick?: () => voi
         if (isInitial) setLoading(true);
         setError(null);
         try {
-            // Always fetch all logs; month filtering is done client-side
-            // so the month dropdown never loses its options on selection
-            const [logsRes, accsRes] = await Promise.all([
-                adminFetch(`${ADMIN_API}?action=logs`, { headers: getAdminAuthHeaders() }),
-                adminFetch(`${ADMIN_API}?action=accounts`, { headers: getAdminAuthHeaders() })
-            ]);
+            // Kick off both requests in parallel, but resolve them independently
+            // so the fast `accounts` response updates the UI without waiting for
+            // the slower `logs` response (which hits 8 Firestore queries on cache miss).
+            const logsPromise = adminFetch(`${ADMIN_API}?action=logs`, { headers: getAdminAuthHeaders() });
+            const accsPromise = adminFetch(`${ADMIN_API}?action=accounts`, { headers: getAdminAuthHeaders() })
+                .then(r => r.json())
+                .then(accsData => {
+                    if (accsData.status === 'success') {
+                        const mapped = (accsData.data || []).map((item: any) => item.data ? { id: item.id, ...item.data } : item);
+                        setAccounts(mapped);
+                    }
+                })
+                .catch(() => { /* accounts load failure is non-fatal */ });
+
+            const logsRes = await logsPromise;
             const logsData = await logsRes.json();
-            const accsData = await accsRes.json();
-            
             if (logsData.status === 'success') setLogs(logsData.data || []);
             else setError(logsData.message || 'Failed to load logs.');
-            
-            if (accsData.status === 'success') {
-                const mapped = (accsData.data || []).map((item: any) => item.data ? { id: item.id, ...item.data } : item);
-                setAccounts(mapped);
-            }
+
+            await accsPromise;
         } catch { setError('Network error. Could not reach the backend.'); }
         finally { if (isInitial) setLoading(false); }
     }, []);
@@ -468,6 +472,7 @@ export const AdminLogs: React.FC<{ hideHeader?: boolean; onCardClick?: () => voi
         const t = setInterval(() => fetchLogs(false), POLL_INTERVAL);
         return () => clearInterval(t);
     }, [fetchLogs]);
+
 
     const getType = (log: any) => {
         if (log.type === 'message' && (log.amount === undefined || log.amount === null)) return 'message';
@@ -936,7 +941,24 @@ export const AdminLogs: React.FC<{ hideHeader?: boolean; onCardClick?: () => voi
                 {error && <div className="mb-4 flex items-center gap-2 px-4 py-3 rounded-xl bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/20 text-red-600 dark:text-red-400 text-[13px] font-medium"><FiAlertCircle className="w-4 h-4 flex-shrink-0" /> {error}</div>}
 
                 {loading ? (
-                    <div className="space-y-3">{[...Array(8)].map((_, i) => <div key={i} className="h-[76px] rounded-xl bg-[#f7f7f7] dark:bg-[#0d0e10] animate-pulse" />)}</div>
+                    <div className="space-y-2.5">
+                        {[...Array(7)].map((_, i) => (
+                            <div key={i} className="flex items-center gap-3 p-3 rounded-xl border border-[#e5e5e5] dark:border-white/10 bg-white dark:bg-[#1a1b1e] animate-pulse" style={{ animationDelay: `${i * 60}ms` }}>
+                                <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-[#f0f0f0] dark:bg-white/5" />
+                                <div className="flex-1 min-w-0 space-y-2">
+                                    <div className="flex items-center gap-2">
+                                        <div className="h-3 w-32 rounded-full bg-[#f0f0f0] dark:bg-white/5" />
+                                        <div className="h-4 w-12 rounded-md bg-[#f0f0f0] dark:bg-white/5" />
+                                    </div>
+                                    <div className="h-2.5 w-48 rounded-full bg-[#f5f5f5] dark:bg-white/[0.03]" />
+                                </div>
+                                <div className="flex-shrink-0 space-y-1.5 text-right">
+                                    <div className="h-2.5 w-16 rounded-full bg-[#f0f0f0] dark:bg-white/5 ml-auto" />
+                                    <div className="h-2 w-10 rounded-full bg-[#f5f5f5] dark:bg-white/[0.03] ml-auto" />
+                                </div>
+                            </div>
+                        ))}
+                    </div>
                 ) : filtered.length === 0 ? (
                     <div className="py-20 text-center">
                         <FiActivity className="w-12 h-12 mx-auto mb-4 text-[#d0d0d0] dark:text-[#3a3b3f]" />
