@@ -614,7 +614,7 @@ $userKey = trim((string)($customApiKey ?? ''));
 // Strip all characters outside GSM-7 (emojis, etc.) and recalculate credits
 // so that messages deliver 100% complete and billing remains accurate across all providers.
 if ($message !== '') {
-    $gsm7Basic     = "@£\$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,\\-./:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
+    $gsm7Basic     = "@£\$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
     $gsm7Extension = "^{}\\\\[]~|€";
     $gsm7All       = $gsm7Basic . $gsm7Extension;
 

@@ -208,7 +208,7 @@ class UniSmsProvider implements SmsProviderInterface
         $formattedNum = $this->formatNumber($number);
 
         // Fail-safe emoji sanitization: UniSMS API rejects non-GSM-7/emoji characters with HTTP 422/500
-        $gsm7Basic     = "@£\$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,\\-./:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
+        $gsm7Basic     = "@£\$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
         $gsm7Extension = "^{}\\\[]~|€";
         $gsm7All       = $gsm7Basic . $gsm7Extension;
 

@@ -785,7 +785,7 @@ if ($providerValidation = ProviderResultService::providerMessageValidation($prov
 // so that messages deliver 100% complete and billing remains accurate across all providers.
 if ($message !== '') {
     // GSM-7 basic charset (all printable characters Semaphore accepts natively)
-    $gsm7Basic     = "@£\$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,\\-./:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
+    $gsm7Basic     = "@£\$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
     $gsm7Extension = "^{}\\\\[]~|€";
     $gsm7All       = $gsm7Basic . $gsm7Extension;
 
