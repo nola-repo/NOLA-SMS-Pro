@@ -159,12 +159,15 @@ export const SenderSelector: React.FC<SenderSelectorProps> = ({
                     )}
                     <FiChevronDown className={`flex-shrink-0 transition-transform duration-200 ${isOnBlue ? "text-white/75" : "text-gray-400"} ${isOpen ? (isOnBlue ? "rotate-180 text-white" : "rotate-180 text-[#2b83fa]") : ""}`} />
                 </button>
-            absolute top-full z-[60] mt-2 
+
+                {isOpen && (
+                    <div className={`
+            absolute top-full z-[60] mt-2
             w-64 max-w-[calc(100vw-2rem)] p-1.5
             bg-white/95 dark:bg-[#1a1b1e]/95 backdrop-blur-2xl
             border border-gray-200/80 dark:border-white/10
             rounded-2xl shadow-2xl shadow-black/10 dark:shadow-black/40
-            animate-in fade-in zoom-in-95 duration-200 
+            animate-in fade-in zoom-in-95 duration-200
             ${align === "left" ? "left-0 origin-top-left" : "left-auto right-0 origin-top-right"}
           `}>
                         <div className="max-h-60 overflow-y-auto custom-scrollbar p-0.5">
