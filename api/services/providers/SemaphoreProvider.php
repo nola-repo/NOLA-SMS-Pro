@@ -39,6 +39,55 @@ class SemaphoreProvider implements SmsProviderInterface
     }
 
     /**
+     * Acquire a lightweight atomic file lock per API key to space out
+     * outbound Semaphore API requests by ~150ms during rapid concurrent bursts.
+     *
+     * @return mixed File pointer handle or null
+     */
+    private function acquirePacingLock(string $apiKey)
+    {
+        try {
+            $hash = md5($apiKey);
+            $lockPath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'nola_semaphore_pacing_' . $hash . '.lock';
+            $fp = @fopen($lockPath, 'c+');
+            if ($fp && @flock($fp, LOCK_EX)) {
+                $lastMicroTime = (float)@stream_get_contents($fp);
+                $now = microtime(true);
+                $elapsedMs = ($now - $lastMicroTime) * 1000;
+                
+                $minIntervalMs = 150;
+                if ($elapsedMs < $minIntervalMs && $lastMicroTime > 0) {
+                    $sleepUs = (int)(($minIntervalMs - $elapsedMs) * 1000);
+                    if ($sleepUs > 0 && $sleepUs < 500000) {
+                        usleep($sleepUs);
+                    }
+                }
+                
+                ftruncate($fp, 0);
+                rewind($fp);
+                fwrite($fp, (string)microtime(true));
+                fflush($fp);
+                return $fp;
+            }
+        } catch (\Throwable $e) {
+            // Fallback gracefully to direct execution if OS temp lock fails
+        }
+        return null;
+    }
+
+    private function releasePacingLock($fp): void
+    {
+        if ($fp) {
+            try {
+                @flock($fp, LOCK_UN);
+                @fclose($fp);
+            } catch (\Throwable $e) {
+                // Ignore lock release cleanup errors
+            }
+        }
+    }
+
+    /**
      * Compute retry delay with exponential backoff + jitter.
      * attempt 1 → ~500 ms, attempt 2 → ~1 000 ms, capped at MAX_DELAY_MS.
      */
@@ -54,9 +103,8 @@ class SemaphoreProvider implements SmsProviderInterface
      *
      * Empirical Latency Rationale (from connectivity_incidents & logs):
      * - p50: ~80 ms | p95: ~655 ms | p99: ~4,200 ms
-     * - Default connectTimeout = 6s (p99 4.2s + 1.8s buffer)
-     * - Default totalTimeout   = 8s
-     * - Total retry cap        = ~6.5s overhead
+     * - Attempt 1 connectTimeout = 10s, totalTimeout = 12s
+     * - Attempt 2+ adaptive totalTimeout = 18s
      *
      * @param  string $url
      * @param  string $method   'GET' or 'POST'
@@ -72,8 +120,8 @@ class SemaphoreProvider implements SmsProviderInterface
         string $method,
         $payload,
         array  $headers = [],
-        int    $connectTimeout = 6,
-        int    $totalTimeout   = 8,
+        int    $connectTimeout = 10,
+        int    $totalTimeout   = 12,
         int    $maxAttempts    = 3,
         bool   $sleepOnRateLimit = true
     ): array {
@@ -85,14 +133,19 @@ class SemaphoreProvider implements SmsProviderInterface
         for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
             $startTime = microtime(true);
             $ch = curl_init($url);
+            
+            // Adaptive total timeout: Attempt 1 uses $totalTimeout (12s), Attempt 2+ extends to 18s
+            $attemptTotalTimeout = ($attempt === 1) ? $totalTimeout : min($totalTimeout + 6, 20);
+
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $connectTimeout);
-            curl_setopt($ch, CURLOPT_TIMEOUT, $totalTimeout);
+            curl_setopt($ch, CURLOPT_TIMEOUT, $attemptTotalTimeout);
             curl_setopt($ch, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
             curl_setopt($ch, CURLOPT_TCP_NODELAY, 1); // Disable Nagle's algorithm for instant packet dispatch
             curl_setopt($ch, CURLOPT_ENCODING, '');
             curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
             curl_setopt($ch, CURLOPT_MAXREDIRS, 3);
+
 
             // Determine content type and body encoding
             $isJson = false;
@@ -219,16 +272,23 @@ class SemaphoreProvider implements SmsProviderInterface
             'sendername' => $senderId,
         ];
 
-        // Empirically derived: connectTimeout = 6s, totalTimeout = 8s, maxAttempts = 3
-        $result = $this->curlWithRetry(
-            $this->apiUrl,
-            'POST',
-            $payload,
-            ["Content-Type: application/x-www-form-urlencoded"],
-            6,
-            8,
-            3
-        );
+        // Micro-pacing lock: spaces rapid concurrent bursts by ~150ms to prevent socket throttling
+        $lockFp = $this->acquirePacingLock($resolvedKey);
+
+        try {
+            // Adaptive timeouts: connectTimeout = 10s, totalTimeout = 12s (Attempt 2+ up to 18s)
+            $result = $this->curlWithRetry(
+                $this->apiUrl,
+                'POST',
+                $payload,
+                ["Content-Type: application/x-www-form-urlencoded"],
+                10,
+                12,
+                3
+            );
+        } finally {
+            $this->releasePacingLock($lockFp);
+        }
 
         if ($result['response'] === false) {
             // Final failure after all retries — auto-run diagnostics in background
