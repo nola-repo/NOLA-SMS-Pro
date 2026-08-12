@@ -4,8 +4,8 @@
  * TextNormalizer — Normalizes non-standard Unicode digits, dashes, quotes, spaces, and symbols
  * into standard GSM-7 / ASCII SMS equivalents.
  *
- * Prevents dates, times, numbers, dashes, and punctuation from being silently stripped out
- * when message text contains fancy fonts (e.g., from Canva, Notion, Facebook, Word) or special Unicode characters.
+ * Uses 100% deterministic strtr() character mapping (no PCRE regex byte ranges) to guarantee
+ * identical execution across Windows, Linux, Docker, and Apache Cloud Run environments.
  */
 class TextNormalizer
 {
@@ -18,26 +18,27 @@ class TextNormalizer
             return '';
         }
 
-        // 1. Convert Unicode Mathematical Digits (Bold, Double-struck, Sans, Monospace U+1D7CE..U+1D7FF) to 0-9
-        $text = preg_replace_callback('/[\x{1D7CE}-\x{1D7FF}]/u', static function ($match) {
-            $code = mb_ord($match[0], 'UTF-8');
-            return (string)(($code - 0x1D7CE) % 10);
-        }, $text);
-
-        // 2. Convert Fullwidth Digits (U+FF10..U+FF19) to 0-9
-        $text = preg_replace_callback('/[\x{FF10}-\x{FF19}]/u', static function ($match) {
-            $code = mb_ord($match[0], 'UTF-8');
-            return (string)($code - 0xFF10);
-        }, $text);
-
-        // 3. Convert Superscript / Subscript digits to 0-9
-        $superSubMap = [
+        // 1. Direct UTF-8 Character Mapping for Unicode Mathematical, Fullwidth, Superscript & Subscript Digits
+        $digitMap = [
+            // Mathematical Bold Digits (U+1D7CE - U+1D7D7)
+            '𝟎'=>'0', '𝟏'=>'1', '𝟐'=>'2', '𝟑'=>'3', '𝟒'=>'4', '𝟓'=>'5', '𝟔'=>'6', '𝟕'=>'7', '𝟖'=>'8', '𝟗'=>'9',
+            // Mathematical Double-Struck Digits (U+1D7D8 - U+1D7E1)
+            '𝟘'=>'0', '𝟙'=>'1', '𝟚'=>'2', '𝟛'=>'3', '𝟜'=>'4', '𝟝'=>'5', '𝟞'=>'6', '𝟟'=>'7', '𝟠'=>'8', '𝟡'=>'9',
+            // Mathematical Sans-Serif Digits (U+1D7E2 - U+1D7EB)
+            '𝟢'=>'0', '𝟣'=>'1', '𝟤'=>'2', '𝟥'=>'3', '𝟦'=>'4', '𝟧'=>'5', '𝟨'=>'6', '𝟩'=>'7', '𝟪'=>'8', '𝟫'=>'9',
+            // Mathematical Sans-Serif Bold Digits (U+1D7EC - U+1D7F5)
+            '𝟬'=>'0', '𝟭'=>'1', '𝟮'=>'2', '𝟯'=>'3', '𝟰'=>'4', '𝟱'=>'5', '𝟲'=>'6', '𝟳'=>'7', '𝟴'=>'8', '𝟵'=>'9',
+            // Mathematical Monospace Digits (U+1D7F6 - U+1D7FF)
+            '𝟶'=>'0', '𝟷'=>'1', '𝟸'=>'2', '𝟹'=>'3', '𝟺'=>'4', '𝟻'=>'5', '𝟼'=>'6', '𝟽'=>'7', '𝟾'=>'8', '𝟿'=>'9',
+            // Fullwidth Digits (U+FF10 - U+FF19)
+            '０'=>'0', '１'=>'1', '２'=>'2', '３'=>'3', '４'=>'4', '５'=>'5', '６'=>'6', '７'=>'7', '８'=>'8', '９'=>'9',
+            // Superscript / Subscript Digits
             '⁰'=>'0', '¹'=>'1', '²'=>'2', '³'=>'3', '⁴'=>'4', '⁵'=>'5', '⁶'=>'6', '⁷'=>'7', '⁸'=>'8', '⁹'=>'9',
             '₀'=>'0', '₁'=>'1', '₂'=>'2', '₃'=>'3', '₄'=>'4', '₅'=>'5', '₆'=>'6', '₇'=>'7', '₈'=>'8', '₉'=>'9'
         ];
-        $text = strtr($text, $superSubMap);
+        $text = strtr($text, $digitMap);
 
-        // 4. Convert En-dash, Em-dash, figure dash, minus sign, etc. to standard hyphen '-'
+        // 2. Direct UTF-8 Mapping for Unicode Dashes & Hyphens
         $dashesMap = [
             "\u{2010}" => '-', // Hyphen
             "\u{2011}" => '-', // Non-breaking hyphen
@@ -51,22 +52,42 @@ class TextNormalizer
         ];
         $text = strtr($text, $dashesMap);
 
-        // 5. Convert smart quotes, apostrophes, backticks, acute accents
+        // 3. Direct UTF-8 Mapping for Smart Quotes & Apostrophes
         $quotesMap = [
             '‘' => "'", '’' => "'", '‚' => "'", '‛' => "'", '`' => "'", '´' => "'",
             '“' => '"', '”' => '"', '„' => '"', '‟' => '"'
         ];
         $text = strtr($text, $quotesMap);
 
-        // 6. Convert multiplication sign × to 'x' and ellipsis … to '...'
+        // 4. Direct UTF-8 Mapping for Symbols (Multiplication sign, Ellipsis, bullets)
         $symbolMap = [
             '×' => 'x',
             '…' => '...',
+            '•' => '*',
+            '·' => '*',
         ];
         $text = strtr($text, $symbolMap);
 
-        // 7. Convert non-breaking spaces and unicode spaces to standard ASCII space
-        $text = preg_replace('/[\x{00A0}\x{2000}-\x{200B}\x{202F}\x{205F}\x{3000}]/u', ' ', $text);
+        // 5. Direct UTF-8 Mapping for Unicode Spaces (Non-breaking space, En/Em space, Zero-width space)
+        $spaceMap = [
+            "\u{00A0}" => ' ', // Non-breaking space
+            "\u{2000}" => ' ', // En quad
+            "\u{2001}" => ' ', // Em quad
+            "\u{2002}" => ' ', // En space
+            "\u{2003}" => ' ', // Em space
+            "\u{2004}" => ' ', // Three-per-em space
+            "\u{2005}" => ' ', // Four-per-em space
+            "\u{2006}" => ' ', // Six-per-em space
+            "\u{2007}" => ' ', // Figure space
+            "\u{2008}" => ' ', // Punctuation space
+            "\u{2009}" => ' ', // Thin space
+            "\u{200A}" => ' ', // Hair space
+            "\u{200B}" => '',  // Zero-width space
+            "\u{202F}" => ' ', // Narrow non-breaking space
+            "\u{205F}" => ' ', // Medium mathematical space
+            "\u{3000}" => ' ', // Ideographic space
+        ];
+        $text = strtr($text, $spaceMap);
 
         return $text;
     }
