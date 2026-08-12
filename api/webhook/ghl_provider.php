@@ -302,7 +302,6 @@ if (!$message && !empty($messageNode)) {
         ['message', 'content'],
     ], true);
 }
-error_log('[ghl_provider][DEBUG_1] extracted: ' . var_export($message, true));
 if ($message) {
     if (preg_match('/<[a-zA-Z][^>]*>/', $message)) {
         $message = preg_replace('/<\/(p|div|br|li|tr|h[1-6])>/i', "\n", $message);
@@ -312,7 +311,6 @@ if ($message) {
     $message = TextNormalizer::normalize($message);
     $message = trim(preg_replace('/[^\S\n]+/', ' ', $message));
 }
-error_log('[ghl_provider][DEBUG_2] normalized: ' . var_export($message, true));
 
 $messageId = provider_first_scalar($payload, [
     'messageId',
@@ -590,6 +588,12 @@ $billingMasterLock = false;
 
 if ($providerValidation = ProviderResultService::providerMessageValidation($providerPreference, (string)$message)) {
     $validationMessage = $providerValidation['message'];
+    provider_record_blocked_message($db, (string)$locationId, (string)$phone, (string)$message, (string)$providerValidation['error'], $contactId ? (string)$contactId : null, $messageId ? (string)$messageId : null, [
+        'req_id' => $providerReqId,
+        'provider' => $providerValidation['provider'] ?? $providerPreference,
+        'sender' => $sender,
+        'characters' => $providerValidation['characters'] ?? null,
+    ]);
     error_log('[ghl_provider][REJECT] ' . json_encode([
         'req_id' => $providerReqId,
         'reason' => $providerValidation['error'],
@@ -626,7 +630,6 @@ if ($message !== '') {
     }
     unset($cleaned);
 }
-error_log('[ghl_provider][DEBUG_3] sanitized: ' . var_export($message, true));
 
 if (false && $userKey !== '' && $userKey !== $sysKey) {
     // ── PATH A: External API key ─────────────────────────────────────────────

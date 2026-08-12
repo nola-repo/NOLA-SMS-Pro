@@ -6,6 +6,7 @@ header('Content-Type: application/json');
 require __DIR__ . '/webhook/firestore_client.php';
 require __DIR__ . '/auth_helpers.php';
 require_once __DIR__ . '/services/CreditManager.php';
+require_once __DIR__ . '/services/ActivityErrorClassifier.php';
 require_once __DIR__ . '/cache_helper.php';
 require_once __DIR__ . '/performance_logger.php';
 
@@ -153,6 +154,86 @@ function nola_extract_log_timestamp(array $data): ?string
     return null;
 }
 
+function nola_admin_first_error_text(array $data): ?string
+{
+    foreach (['provider_error', 'error_reason', 'failed_reason', 'failure_reason', 'error_message', 'error', 'reason', 'status_message'] as $field) {
+        if (isset($data[$field]) && trim((string)$data[$field]) !== '') {
+            return (string)$data[$field];
+        }
+    }
+
+    $providerResponse = $data['provider_response'] ?? null;
+    if (is_array($providerResponse)) {
+        foreach (['error', 'message', 'description', 'status'] as $field) {
+            if (isset($providerResponse[$field]) && trim((string)$providerResponse[$field]) !== '') {
+                return (string)$providerResponse[$field];
+            }
+        }
+    }
+
+    return null;
+}
+
+function nola_admin_activity_meta(array $data): array
+{
+    if (isset($data['status_group']) || isset($data['error_category']) || isset($data['severity'])) {
+        return array_filter([
+            'status_group' => $data['status_group'] ?? null,
+            'error_category' => $data['error_category'] ?? null,
+            'severity' => $data['severity'] ?? null,
+            'is_platform_error' => $data['is_platform_error'] ?? null,
+            'is_retryable' => $data['is_retryable'] ?? null,
+            'failure_summary' => $data['failure_summary'] ?? null,
+        ], static fn($value) => $value !== null);
+    }
+
+    return ActivityErrorClassifier::fromStatus(
+        $data['status'] ?? ($data['delivery_status'] ?? null),
+        isset($data['provider']) ? (string)$data['provider'] : null,
+        nola_admin_first_error_text($data),
+        $data['provider_response'] ?? null
+    );
+}
+
+function nola_admin_activity_summary(array $logs): array
+{
+    $summary = [
+        'total' => count($logs),
+        'successful' => 0,
+        'pending' => 0,
+        'failed' => 0,
+        'provider_errors' => 0,
+        'validation_errors' => 0,
+        'platform_errors' => 0,
+        'warnings' => 0,
+        'errors' => 0,
+    ];
+
+    foreach ($logs as $log) {
+        $statusGroup = strtolower((string)($log['status_group'] ?? 'other'));
+        if (isset($summary[$statusGroup])) {
+            $summary[$statusGroup]++;
+        }
+        if ($statusGroup === 'provider_error') {
+            $summary['provider_errors']++;
+        }
+        if ($statusGroup === 'validation') {
+            $summary['validation_errors']++;
+        }
+        if (!empty($log['is_platform_error'])) {
+            $summary['platform_errors']++;
+        }
+        if (($log['severity'] ?? null) === 'warning') {
+            $summary['warnings']++;
+        }
+        if (($log['severity'] ?? null) === 'error') {
+            $summary['errors']++;
+        }
+    }
+
+    return $summary;
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'logs') {
     $requestedMonth = trim((string)($_GET['month'] ?? ''));
 
@@ -177,6 +258,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
                         if (isset($seenDocIds[$docId])) continue;
                         $data = $doc->data();
                         $ts = nola_extract_log_timestamp($data);
+                        $data = array_merge(nola_admin_activity_meta($data), $data);
                         $seenDocIds[$docId] = true;
                         $unifiedLogs[] = array_merge($data, [
                             'id'        => $docId,
@@ -225,6 +307,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
     $responsePayload = [
         'status' => 'success',
         'data' => $filteredLogs,
+        'summary' => nola_admin_activity_summary($filteredLogs),
         'total_messages' => count($filteredLogs)
     ];
     echo json_encode($responsePayload);

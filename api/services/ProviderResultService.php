@@ -10,6 +10,7 @@ class ProviderResultService
             return null;
         }
 
+        $characters = mb_strlen(trim($message), 'UTF-8');
         $normalized = strtolower(trim((string)preg_replace('/[^a-z0-9]+/i', ' ', $message)));
         $knownGenericTestPhrases = [
             'test',
@@ -28,7 +29,7 @@ class ProviderResultService
                 'error' => 'unisms_likely_spam',
                 'message' => "UniSMS commonly rejects generic test phrases as spam. Use a natural sentence, such as: 'Hi, this is a delivery test from NOLA SMS Pro.'",
                 'provider' => 'unisms',
-                'characters' => mb_strlen($message, 'UTF-8'),
+                'characters' => $characters,
             ];
         }
 

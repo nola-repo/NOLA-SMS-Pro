@@ -5,6 +5,7 @@ require_once __DIR__ . '/FirestoreId.php';
 require_once __DIR__ . '/PhoneNormalizer.php';
 require_once __DIR__ . '/ProviderResultService.php';
 require_once __DIR__ . '/ReferenceId.php';
+require_once __DIR__ . '/ActivityErrorClassifier.php';
 
 class MessageSyncService
 {
@@ -26,6 +27,7 @@ class MessageSyncService
         $members = $event['conversation_members'] ?? ($recipient !== '' ? [$recipient] : []);
         $messageText = (string)($event['message'] ?? '');
         $status = self::normalizeStatus($event['status'] ?? null, $direction);
+        $activityMeta = self::activityMeta($event, $status);
         $providerReferenceId = self::firstNonEmpty([
             $event['provider_reference_id'] ?? null,
             $event['provider_message_id'] ?? null,
@@ -62,6 +64,15 @@ class MessageSyncService
             'provider_status' => $event['provider_status'] ?? null,
             'provider_response' => $event['provider_response'] ?? null,
             'provider_error' => $event['provider_error'] ?? null,
+            'status_group' => $activityMeta['status_group'] ?? null,
+            'error_category' => $activityMeta['error_category'] ?? null,
+            'severity' => $activityMeta['severity'] ?? null,
+            'is_platform_error' => $activityMeta['is_platform_error'] ?? null,
+            'is_retryable' => $activityMeta['is_retryable'] ?? null,
+            'failure_summary' => $activityMeta['failure_summary'] ?? null,
+            'retry_count' => $event['retry_count'] ?? null,
+            'last_retry_at' => $event['last_retry_at'] ?? null,
+            'finalized_at' => $event['finalized_at'] ?? null,
             'ghl_message_id' => $event['ghl_message_id'] ?? null,
             'ghl_conversation_id' => $event['ghl_conversation_id'] ?? null,
             'ghl_contact_id' => $event['ghl_contact_id'] ?? null,
@@ -93,6 +104,15 @@ class MessageSyncService
                 'provider_status' => $event['provider_status'] ?? null,
                 'provider_error' => $event['provider_error'] ?? null,
                 'provider_response' => $event['provider_response'] ?? null,
+                'status_group' => $activityMeta['status_group'] ?? null,
+                'error_category' => $activityMeta['error_category'] ?? null,
+                'severity' => $activityMeta['severity'] ?? null,
+                'is_platform_error' => $activityMeta['is_platform_error'] ?? null,
+                'is_retryable' => $activityMeta['is_retryable'] ?? null,
+                'failure_summary' => $activityMeta['failure_summary'] ?? null,
+                'retry_count' => $event['retry_count'] ?? null,
+                'last_retry_at' => $event['last_retry_at'] ?? null,
+                'finalized_at' => $event['finalized_at'] ?? null,
                 'ghl_message_id' => $event['ghl_message_id'] ?? null,
                 'ghl_contact_id' => $event['ghl_contact_id'] ?? null,
                 'idempotency_key' => $event['idempotency_key'] ?? null,
@@ -186,6 +206,27 @@ class MessageSyncService
             return 'Failed';
         }
         return 'Sending';
+    }
+
+    private static function activityMeta(array $event, string $normalizedStatus): array
+    {
+        if (isset($event['status_group']) || isset($event['error_category']) || isset($event['severity'])) {
+            return array_filter([
+                'status_group' => $event['status_group'] ?? null,
+                'error_category' => $event['error_category'] ?? null,
+                'severity' => $event['severity'] ?? null,
+                'is_platform_error' => $event['is_platform_error'] ?? null,
+                'is_retryable' => $event['is_retryable'] ?? null,
+                'failure_summary' => $event['failure_summary'] ?? null,
+            ], static fn($value) => $value !== null);
+        }
+
+        return ActivityErrorClassifier::fromStatus(
+            $normalizedStatus,
+            isset($event['provider']) ? (string)$event['provider'] : null,
+            isset($event['provider_error']) ? (string)$event['provider_error'] : null,
+            $event['provider_response'] ?? null
+        );
     }
 
     private static function resolveMessageId(array $event): string

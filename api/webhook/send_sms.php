@@ -22,6 +22,7 @@ require_once __DIR__ . '/../services/GhlSyncService.php';
 require_once __DIR__ . '/../services/FirestoreId.php';
 require_once __DIR__ . '/../services/PhoneNormalizer.php';
 require_once __DIR__ . '/../services/ProviderResultService.php';
+require_once __DIR__ . '/../services/TextNormalizer.php';
 
 
 $SEMAPHORE_API_KEY = $config['SEMAPHORE_API_KEY'];
@@ -322,6 +323,7 @@ if ($message) {
 
     // Decode any remaining HTML entities (e.g. &amp; &quot; &#39;) to their UTF-8 characters.
     $message = html_entity_decode($message, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $message = TextNormalizer::normalize($message);
 
     // Sanitize smart unicode punctuation to GSM-7 equivalents to prevent UCS-2 segment limits
     $message = str_replace(
@@ -762,6 +764,12 @@ $billingReferenceId = null;
 
 if ($providerValidation = ProviderResultService::providerMessageValidation($providerPreference, $message)) {
     $validationMessage = $providerValidation['message'];
+    record_workflow_sms_block($db, (string)$locId, $validNumbers, $message, (string)$providerValidation['error'], [
+        'provider' => $providerValidation['provider'] ?? $providerPreference,
+        'sender' => $sender,
+        'characters' => $providerValidation['characters'] ?? null,
+        'idempotency_key' => $idempotencyKey ?? null,
+    ]);
     Logger::error('UniSMS message content below provider minimum', [
         'location_id' => $locId,
         'chars' => $providerValidation['characters'],

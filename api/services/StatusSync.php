@@ -2,6 +2,9 @@
 
 namespace Nola\Services;
 
+require_once __DIR__ . '/../cache_helper.php';
+require_once __DIR__ . '/ActivityErrorClassifier.php';
+
 class StatusSync
 {
     /**
@@ -318,6 +321,15 @@ class StatusSync
         $updates = [['path' => 'status', 'value' => $status], ['path' => 'updated_at', 'value' => $ts]];
         if ($reason) $updates[] = ['path' => 'error_reason', 'value' => $reason];
         if ($providerStatus !== null) $updates[] = ['path' => 'provider_status', 'value' => $providerStatus];
+        $activityMeta = \ActivityErrorClassifier::fromStatus($status, null, $reason, null);
+        foreach (['status_group', 'error_category', 'severity', 'is_platform_error', 'is_retryable', 'failure_summary'] as $field) {
+            if (array_key_exists($field, $activityMeta)) {
+                $updates[] = ['path' => $field, 'value' => $activityMeta[$field]];
+            }
+        }
+        if ($status === 'Sent' || $status === 'Failed') {
+            $updates[] = ['path' => 'finalized_at', 'value' => $ts];
+        }
         
         $data = null;
         if ($doc instanceof \Google\Cloud\Firestore\DocumentSnapshot) {
@@ -339,6 +351,12 @@ class StatusSync
         try {
             $db->collection('messages')->document($messageId)->update($updates);
         } catch (\Exception $e) {}
+
+        if ($status === 'Sent' || $status === 'Failed') {
+            try {
+                \NolaCache::invalidateAdminDashboard();
+            } catch (\Throwable $e) {}
+        }
 
         if ($status === 'Sent' || $status === 'Failed') {
             try {
