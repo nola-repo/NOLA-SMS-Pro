@@ -372,32 +372,93 @@ class SemaphoreProvider implements SmsProviderInterface
         return ['status' => 'sending'];
     }
 
+    /**
+     * Check this Semaphore account's live credit balance.
+     *
+     * Design contract (v2 — 2026-08-12):
+     *  - Uses monitoring-appropriate timeouts (5 s connect / 10 s total) rather
+     *    than the aggressive 2 s / 4 s budget that was silently timing out on
+     *    cold-start requests (p99 latency observed at ~4.2 s in logs).
+     *  - Allows one retry (maxAttempts=2) before giving up, so a single TCP
+     *    hiccup does not propagate as a false "inactive / 0 credits" result.
+     *  - Distinguishes between a genuine API failure and a transient timeout
+     *    by returning `timeout_failure: true` in the latter case.
+     *    Callers (SemaphoreBalanceFetcher::fetchBalance) use this flag to
+     *    decide whether to use the Redis / Firestore last-known-good fallback
+     *    vs accepting the result as truth.
+     *
+     * @param string|null $apiKey  Override key (uses default if null).
+     * @return array{
+     *   status: 'active'|'inactive'|'error',
+     *   credits: int,
+     *   error?: string|null,
+     *   timeout_failure?: bool
+     * }
+     */
     public function checkAccount(?string $apiKey = null): array
     {
         $resolvedKey = $this->getApiKey($apiKey);
+
+        if ($resolvedKey === '') {
+            return ['status' => 'inactive', 'credits' => 0, 'error' => 'Missing API key'];
+        }
+
         $url = "https://api.semaphore.co/api/v4/account?apikey=" . urlencode($resolvedKey);
 
-        $result   = $this->curlWithRetry($url, 'GET', null, [], 2, 4, 1, false);
+        // Monitoring-grade timeouts: 5 s connect / 10 s total / 2 attempts.
+        // Rationale: p99 Semaphore API latency is ~4.2 s (connectivity_incidents
+        // data). The previous 2 s / 4 s / 1-attempt budget meant cold-start
+        // requests reliably timed out and were silently returned as 0 credits.
+        $result   = $this->curlWithRetry($url, 'GET', null, [], 5, 10, 2, false);
         $httpCode = $result['httpCode'];
         $response = $result['response'];
 
+        // ── Rate-limited ─────────────────────────────────────────────────────
         if ($httpCode === 429) {
-            return ['status' => 'error', 'credits' => 0, 'error' => 'HTTP 429 Rate Limited'];
-        }
-
-        if ($response === false || $httpCode < 200 || $httpCode >= 300) {
-            return ['status' => 'inactive', 'credits' => 0];
-        }
-
-        $decoded = json_decode($response, true);
-        if (is_array($decoded) && isset($decoded['credit_balance'])) {
             return [
-                'status'  => 'active',
-                'credits' => (int)$decoded['credit_balance'],
+                'status'          => 'error',
+                'credits'         => 0,
+                'error'           => 'HTTP 429 Rate Limited',
+                'timeout_failure' => false,
             ];
         }
 
-        return ['status' => 'inactive', 'credits' => 0];
+        // ── Transport failure or non-2xx (timeout, DNS, 5xx, …) ─────────────
+        // `timeout_failure: true` tells the caller this is a transient error,
+        // NOT a confirmed "inactive" state — so it should prefer its fallback
+        // value over showing 0 credits to the admin.
+        if ($response === false || $httpCode < 200 || $httpCode >= 300) {
+            $curlErr = $result['curlError'] ?? '';
+            error_log('[SemaphoreProvider] checkAccount transport failure'
+                . ' http=' . $httpCode
+                . ' curl_err=' . $curlErr
+                . ' key_hash=' . md5($resolvedKey));
+            return [
+                'status'          => 'inactive',
+                'credits'         => 0,
+                'error'           => $curlErr ?: ('HTTP ' . $httpCode),
+                'timeout_failure' => true,
+            ];
+        }
+
+        // ── Successful response ───────────────────────────────────────────────
+        $decoded = json_decode($response, true);
+        if (is_array($decoded) && isset($decoded['credit_balance'])) {
+            return [
+                'status'          => 'active',
+                'credits'         => (int) $decoded['credit_balance'],
+                'timeout_failure' => false,
+            ];
+        }
+
+        // Unexpected payload shape — treat as inactive but NOT a timeout
+        error_log('[SemaphoreProvider] checkAccount unexpected payload: ' . substr((string)$response, 0, 200));
+        return [
+            'status'          => 'inactive',
+            'credits'         => 0,
+            'error'           => 'Unexpected API response format',
+            'timeout_failure' => false,
+        ];
     }
 
     public function normalizeStatus(string $rawStatus): string

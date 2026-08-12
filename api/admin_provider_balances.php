@@ -10,9 +10,14 @@
  * Purpose: Admin monitoring of SMS gateway credits to prevent silent delivery failures.
  *
  * Auth:  super_admin only
- * Cache: 60-second TTL via NolaCache
+ * Cache: 60-second TTL via NolaCache (only when live API data is confirmed)
  * Note:  Always returns HTTP 200. Individual provider errors are embedded in the
  *        response body so the frontend can show partial data gracefully.
+ *
+ * Response envelope additions (v2 — 2026-08-12):
+ *   is_stale       bool   — true when any provider value came from cache/LKG rather than live API
+ *   data_quality   array  — per-provider { fetched_via: string, is_live: bool }
+ *   Frontend teams: display a "Last known value" chip when is_stale === true.
  */
 
 require_once __DIR__ . '/cors.php';
@@ -34,9 +39,9 @@ const SEMAPHORE_WARN     = 1000;
 const SEMAPHORE_CRITICAL = 300;
 const UNISMS_WARN        = 200;
 const UNISMS_CRITICAL    = 50;
-const CACHE_TTL          = 60; // seconds
+const CACHE_TTL          = 60; // seconds — only applied when data is confirmed live
 
-$cacheKey = 'admin_provider_balances';
+$cacheKey    = 'admin_provider_balances';
 $bypassCache = !empty($_GET['refresh']) || !empty($_GET['bypass_cache']) || !empty($_GET['clear_cache']);
 
 // ── Cache hit ───────────────────────────────────────────────────────────────
@@ -57,15 +62,17 @@ try {
     error_log('[admin_provider_balances] SmsGatewayService init failed: ' . $e->getMessage());
 }
 
-$db = get_firestore();
+$db      = get_firestore();
 $fetcher = new SemaphoreBalanceFetcher();
 $summary = $fetcher->getDashboardSummary($db);
 
 $semIsActive = in_array($activeProviderName, ['semaphore', 'auto_failover'], true);
 $uniIsActive = $activeProviderName === 'unisms';
 
-$semCredits = (int)($summary['semaphore']['total_credits'] ?? 0);
-$uniCredits = (int)($summary['unisms']['total_credits'] ?? 0);
+$semCredits    = (int)($summary['semaphore']['total_credits'] ?? 0);
+$uniCredits    = (int)($summary['unisms']['total_credits'] ?? 0);
+$semFetchedVia = (string)($summary['semaphore']['fetched_via'] ?? 'none');
+$uniFetchedVia = (string)($summary['unisms']['fetched_via'] ?? 'none');
 
 $summary['semaphore']['is_active']  = $semIsActive;
 $summary['semaphore']['warning']    = $semCredits < SEMAPHORE_WARN && $semCredits >= SEMAPHORE_CRITICAL && $summary['semaphore']['status'] === 'active';
@@ -81,23 +88,42 @@ $summary['unisms']['critical']     = $uniCredits < UNISMS_CRITICAL && $summary['
 $summary['unisms']['configured']   = $summary['unisms']['status'] === 'active';
 $summary['unisms']['error']        = null;
 
+// ── Data quality assessment ─────────────────────────────────────────────────
+// A value is "live" only when it came directly from the provider API.
+// Any other source (Redis cache, Firestore LKG, subaccount field) is stale.
+$semIsLive = ($semFetchedVia === 'live_api');
+$uniIsLive = ($uniFetchedVia === 'live_api');
+$isStale   = !$semIsLive || !$uniIsLive;
+
+$dataQuality = [
+    'semaphore' => ['fetched_via' => $semFetchedVia, 'is_live' => $semIsLive],
+    'unisms'    => ['fetched_via' => $uniFetchedVia, 'is_live' => $uniIsLive],
+];
+
 // ── Build response ───────────────────────────────────────────────────────────
 $responsePayload = [
     'status'          => 'success',
     'fetched_at'      => (new \DateTimeImmutable())->format(\DateTimeInterface::ATOM),
     'active_provider' => $activeProviderName,
+    'is_stale'        => $isStale,
+    'data_quality'    => $dataQuality,
     'summary'         => $summary,
     'providers'       => $summary,
 ];
 
-// ── Cache and respond ────────────────────────────────────────────────────────
-// Guard against stale Redis cache poisoning: if both providers returned 0 credits,
-// the Semaphore/UniSMS API call likely failed silently (cold-start timeout, network
-// hiccup). Caching that result for the full 60 s causes every visitor in the next
-// minute to see 0 credits — the root cause of the "0 on direct visit, correct
-// after re-login" bug. Use a 5-second TTL instead so the next request gets a
-// fresh attempt almost immediately.
-$hasValidData = ($semCredits > 0 || $uniCredits > 0);
-NolaCache::set($cacheKey, $responsePayload, $hasValidData ? CACHE_TTL : 5);
+// ── Cache strategy ───────────────────────────────────────────────────────────
+// Only cache when at least one provider returned live API data.
+// Never cache a pure timeout result — the next poll should always retry the API.
+// If data came from Redis/Firestore fallback, use a 30-second TTL so we retry
+// the live API soon without hammering it on every single request.
+if ($semIsLive || $uniIsLive) {
+    // Confirmed live — safe to cache for the full interval
+    NolaCache::set($cacheKey, $responsePayload, CACHE_TTL);
+} elseif ($semCredits > 0 || $uniCredits > 0) {
+    // Stale but non-zero fallback data — short TTL, retry live soon
+    NolaCache::set($cacheKey, $responsePayload, 30);
+}
+// else: timeout with no fallback data at all — do NOT cache; every request retries
+
 echo json_encode($responsePayload);
 exit;
