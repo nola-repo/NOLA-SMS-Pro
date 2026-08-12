@@ -1,4 +1,4 @@
-# Google Cloud Build: build, push and deploy the SMS API image to Cloud Run services
+# Google Cloud Build: build, push and deploy the SMS API image to Cloud Run
 # Run from project root: gcloud builds submit --config=cloudbuild.yaml .
 
 steps:
@@ -16,51 +16,7 @@ steps:
       - 'push'
       - 'gcr.io/$PROJECT_ID/sms-api:latest'
 
-  # Deploy to Cloud Run service: nola-sms-pro-admin (admin.nolasmspro.com)
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    entrypoint: gcloud
-    args:
-      - 'run'
-      - 'deploy'
-      - 'nola-sms-pro-admin'
-      - '--image'
-      - 'gcr.io/$PROJECT_ID/sms-api:latest'
-      - '--region'
-      - 'asia-southeast1'
-      - '--platform'
-      - 'managed'
-      - '--min-instances'
-      - '1'
-      - '--max-instances'
-      - '20'
-      - '--concurrency'
-      - '30'
-      - '--memory'
-      - '2Gi'
-
-  # Deploy to Cloud Run service: nola-sms-pro
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    entrypoint: gcloud
-    args:
-      - 'run'
-      - 'deploy'
-      - 'nola-sms-pro'
-      - '--image'
-      - 'gcr.io/$PROJECT_ID/sms-api:latest'
-      - '--region'
-      - 'asia-southeast1'
-      - '--platform'
-      - 'managed'
-      - '--min-instances'
-      - '1'
-      - '--max-instances'
-      - '20'
-      - '--concurrency'
-      - '30'
-      - '--memory'
-      - '2Gi'
-
-  # Deploy to Cloud Run service: sms-api
+  # Deploy to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
