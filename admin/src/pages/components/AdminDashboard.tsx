@@ -150,16 +150,30 @@ export const AdminDashboard: React.FC<{
     const [balanceData, setBalanceData] = useState<ProviderBalancesResponse | null>(null);
     const [isBalanceLoading, setIsBalanceLoading] = useState(false);
     const [balanceError, setBalanceError] = useState<string | null>(null);
+    const retryTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    const fetchProviderBalances = useCallback(async (isManual = false) => {
+    const fetchProviderBalances = useCallback(async (isManual = false, bypassCache = false) => {
         if (isManual) setIsBalanceLoading(true);
         setBalanceError(null);
         try {
-            const endpoint = isManual ? '/api/admin/provider-balances?refresh=1' : '/api/admin/provider-balances';
+            const endpoint = (isManual || bypassCache)
+                ? '/api/admin/provider-balances?bypass_cache=1'
+                : '/api/admin/provider-balances';
             const res = await adminFetch(endpoint, { headers: getAdminAuthHeaders() });
             const json = await res.json().catch(() => ({}));
             if (res.ok && json.status === 'success') {
                 setBalanceData(json);
+
+                // Option C: Auto-retry on stale — schedule silent retry with bypass_cache=1 after 15s
+                if (json.is_stale) {
+                    if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
+                    retryTimeoutRef.current = setTimeout(() => {
+                        fetchProviderBalances(false, true);
+                    }, 15_000);
+                } else if (retryTimeoutRef.current) {
+                    clearTimeout(retryTimeoutRef.current);
+                    retryTimeoutRef.current = null;
+                }
             } else {
                 setBalanceError(json?.message || json?.error || 'Could not fetch provider balances.');
             }
@@ -173,7 +187,10 @@ export const AdminDashboard: React.FC<{
     useEffect(() => {
         fetchProviderBalances(true);
         const interval = setInterval(() => fetchProviderBalances(false), 5 * 60 * 1000);
-        return () => clearInterval(interval);
+        return () => {
+            clearInterval(interval);
+            if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
+        };
     }, [fetchProviderBalances]);
 
     // Admin Health Stats State
@@ -446,7 +463,9 @@ export const AdminDashboard: React.FC<{
                         isLoading={isBalanceLoading}
                         error={balanceError}
                         summary={balanceData?.summary}
-                        onRefresh={() => fetchProviderBalances(true)}
+                        isStale={balanceData?.is_stale}
+                        dataQuality={balanceData?.data_quality}
+                        onRefresh={() => fetchProviderBalances(true, true)}
                     />
                 </div>
 

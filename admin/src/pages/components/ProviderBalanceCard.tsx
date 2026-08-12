@@ -1,6 +1,11 @@
 import React from 'react';
 import { FiRefreshCw, FiServer, FiAlertTriangle, FiXCircle, FiGlobe, FiRadio, FiMail, FiKey, FiLink } from 'react-icons/fi';
 
+export interface ProviderDataQualityEntry {
+    fetched_via: string;
+    is_live: boolean;
+}
+
 export interface ProviderBalance {
     name: string;
     status: 'active' | 'inactive' | 'error';
@@ -40,6 +45,13 @@ export interface ProviderBalancesResponse {
     status: 'success';
     fetched_at: string;
     active_provider: 'semaphore' | 'unisms' | 'auto_failover';
+    /** true when any provider balance is from cache/LKG rather than a live API call */
+    is_stale?: boolean;
+    /** Per-provider data quality metadata */
+    data_quality?: {
+        semaphore?: ProviderDataQualityEntry;
+        unisms?: ProviderDataQualityEntry;
+    };
     providers: {
         semaphore: ProviderBalance;
         unisms: UniSmsBalance;
@@ -61,6 +73,10 @@ export interface ProviderBalanceCardProps {
     onRefresh?: () => void;
     /** Aggregated summary from /api/admin/provider-balances response */
     summary?: ProviderBalancesResponse['summary'];
+    /** Whether any provider balance is from cache/LKG rather than live API */
+    isStale?: boolean;
+    /** Per-provider data quality metadata */
+    dataQuality?: ProviderBalancesResponse['data_quality'];
 }
 
 function isProviderConfigured(provider?: Partial<ProviderBalance & ProviderSummaryEntry> | null): boolean {
@@ -86,6 +102,39 @@ function getProviderStatusLabel(provider?: Partial<ProviderBalance & ProviderSum
     return null; // Don't display Healthy badge per design
 }
 
+function formatFetchedViaLabel(via?: string): string {
+    switch (via) {
+        case 'live_api':
+            return 'Live API';
+        case 'redis_cache_after_timeout':
+            return 'Redis Cache (Timeout Fallback)';
+        case 'firestore_lkg':
+            return 'Firestore Last-Known-Good';
+        case 'subaccount_firestore_field':
+            return 'Account Stored Balance';
+        case 'redis_cache':
+            return 'Redis Cache';
+        default:
+            return via ? via.replace(/_/g, ' ') : 'Cached';
+    }
+}
+
+function formatFetchedViaTooltip(via?: string, isLive?: boolean): string {
+    if (isLive) return 'Balance confirmed fresh from provider live API';
+    switch (via) {
+        case 'firestore_lkg':
+            return 'Balance from Firestore last-known-good (Redis was cold) — live refresh in progress';
+        case 'redis_cache_after_timeout':
+            return 'Provider API timed out; retrieved from Redis cache — live retry in progress';
+        case 'subaccount_firestore_field':
+            return 'Balance from account record — live API check pending';
+        case 'redis_cache':
+            return 'Balance from short-term cache — live refresh in progress';
+        default:
+            return 'Balance from cached data — live refresh in progress';
+    }
+}
+
 function formatLastUpdated(fetchedAt?: string | null): string {
     if (!fetchedAt) return 'Never';
     const date = new Date(fetchedAt);
@@ -105,6 +154,8 @@ export const ProviderBalanceCard: React.FC<ProviderBalanceCardProps> = ({
     error = null,
     onRefresh,
     summary,
+    isStale = false,
+    dataQuality,
 }) => {
     const isInitialLoading = isLoading && !semaphore && !unisms;
 
@@ -124,11 +175,16 @@ export const ProviderBalanceCard: React.FC<ProviderBalanceCardProps> = ({
         const isSemaphore = providerKey === 'semaphore';
         const name = providerData?.name || (isSemaphore ? 'Semaphore' : 'UniSMS');
         const summaryEntry = summary?.[providerKey];
+        const quality = dataQuality?.[providerKey];
         const mergedProvider: Partial<ProviderBalance & ProviderSummaryEntry> = {
             ...providerData,
             ...summaryEntry,
             configured: providerData?.configured ?? (summaryEntry?.connected_accounts ? summaryEntry.connected_accounts > 0 : summaryEntry?.status === 'active'),
         };
+        const isConfigured = isProviderConfigured(mergedProvider);
+        const isCachedOrFallback = isConfigured && (quality ? !quality.is_live : isStale);
+        const fetchedVia = quality?.fetched_via;
+
         // Prefer aggregated total_credits from summary; fall back to per-record credits
         const credits = summaryEntry?.total_credits ?? (typeof providerData?.credits === 'number' ? providerData.credits : 0);
         const connectedAccounts = summaryEntry?.connected_accounts ?? providerData?.connected_accounts;
@@ -139,7 +195,7 @@ export const ProviderBalanceCard: React.FC<ProviderBalanceCardProps> = ({
 
         // Container borders & backgrounds based on health state
         let containerStyle = 'bg-[#f7f7f7] dark:bg-[#0d0e10] border-transparent hover:border-[#e5e5e5] dark:hover:border-white/10';
-        if (mergedProvider.status === 'error' || !isProviderConfigured(mergedProvider)) {
+        if (mergedProvider.status === 'error' || !isConfigured) {
             containerStyle = 'bg-[#f7f7f7]/70 dark:bg-[#0d0e10]/70 border-gray-200 dark:border-white/5 opacity-90';
         } else if (statusColor === 'red') {
             containerStyle = 'bg-red-500/[0.03] border-red-500/40 dark:border-red-500/50 shadow-sm shadow-red-500/10 animate-pulse';
@@ -164,7 +220,7 @@ export const ProviderBalanceCard: React.FC<ProviderBalanceCardProps> = ({
         return (
             <div className={`p-5 rounded-2xl border transition-all duration-300 flex flex-col justify-between group relative overflow-hidden min-h-[160px] ${containerStyle}`}>
                 <div>
-                    {/* Header: Provider Name */}
+                    {/* Header: Provider Name & Live/Stale Quality Badge */}
                     <div className="flex items-center justify-between gap-2 mb-3">
                         <div className="flex items-center gap-2">
                             <div className="w-7 h-7 rounded-lg bg-white dark:bg-white/10 flex items-center justify-center text-xs shadow-sm border border-black/5 dark:border-white/10">
@@ -174,6 +230,27 @@ export const ProviderBalanceCard: React.FC<ProviderBalanceCardProps> = ({
                                 {name}
                             </h4>
                         </div>
+
+                        {/* Quality Badge (Option A & B): Shows "Last known" on stale or "Live" when confirmed */}
+                        {isConfigured && (
+                            isCachedOrFallback ? (
+                                <span
+                                    className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/30 shadow-sm"
+                                    title={formatFetchedViaTooltip(fetchedVia, false)}
+                                >
+                                    <FiAlertTriangle className="w-3 h-3 text-amber-500 flex-shrink-0" />
+                                    Last known
+                                </span>
+                            ) : (
+                                <span
+                                    className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10.5px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 shadow-sm"
+                                    title={formatFetchedViaTooltip(fetchedVia, true)}
+                                >
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                    Live
+                                </span>
+                            )
+                        )}
                     </div>
 
                     {/* Credits Counter */}
@@ -193,6 +270,12 @@ export const ProviderBalanceCard: React.FC<ProviderBalanceCardProps> = ({
                                     ? `${connectedAccounts} of ${totalAccounts} accounts connected`
                                     : `${connectedAccounts} connected account${connectedAccounts !== 1 ? 's' : ''}`
                                 }
+                            </div>
+                        )}
+                        {/* Fallback source detail */}
+                        {isCachedOrFallback && fetchedVia && fetchedVia !== 'live_api' && (
+                            <div className="mt-1 flex items-center gap-1 text-[11px] font-medium text-amber-600 dark:text-amber-400" title={formatFetchedViaTooltip(fetchedVia, false)}>
+                                <span>Source: <b>{formatFetchedViaLabel(fetchedVia)}</b></span>
                             </div>
                         )}
                     </div>
@@ -245,10 +328,21 @@ export const ProviderBalanceCard: React.FC<ProviderBalanceCardProps> = ({
         <div className="bg-white dark:bg-[#1c1e21] border border-white/70 dark:border-white/[0.06] rounded-[24px] p-5 sm:p-6 shadow-sm flex flex-col">
             {/* Header matching Recent Activity */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
-                <h3 className="text-[14px] font-bold text-[#111111] dark:text-white uppercase tracking-wider flex items-center gap-2">
-                    <FiServer className="w-4 h-4 text-[#2b83fa]" />
-                    SMS Provider Balances
-                </h3>
+                <div className="flex items-center gap-2.5 flex-wrap">
+                    <h3 className="text-[14px] font-bold text-[#111111] dark:text-white uppercase tracking-wider flex items-center gap-2">
+                        <FiServer className="w-4 h-4 text-[#2b83fa]" />
+                        SMS Provider Balances
+                    </h3>
+                    {isStale && (
+                        <span
+                            className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/30 text-[11px] font-bold"
+                            title="Showing cached / last-known balance while live sync attempts continue"
+                        >
+                            <FiAlertTriangle className="w-3 h-3 text-amber-500" />
+                            Cached Fallback
+                        </span>
+                    )}
+                </div>
 
                 <div className="flex items-center gap-3">
                     <span className="text-[11.5px] font-semibold text-[#6e6e73] dark:text-[#9aa0a6]">
@@ -260,7 +354,7 @@ export const ProviderBalanceCard: React.FC<ProviderBalanceCardProps> = ({
                             onClick={onRefresh}
                             disabled={isLoading}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[#e5e5e5] dark:border-white/10 bg-[#f7f7f7] dark:bg-[#0d0e10] text-[12px] font-bold text-[#6e6e73] dark:text-[#9aa0a6] hover:text-[#111111] dark:hover:text-white transition-all hover:bg-white dark:hover:bg-white/5 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
-                            title="Refresh Provider Balances"
+                            title="Refresh Provider Balances (Bypass Cache)"
                         >
                             <FiRefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin text-[#2b83fa]' : ''}`} />
                             Refresh

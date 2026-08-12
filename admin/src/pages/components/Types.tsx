@@ -55,3 +55,74 @@ export interface AdminLayoutProps {
     darkMode: boolean;
     toggleDarkMode: () => void;
 }
+
+export type ProviderFetchedVia =
+    | 'live_api'
+    | 'redis_cache_after_timeout'
+    | 'firestore_lkg'
+    | 'subaccount_firestore_field'
+    | 'redis_cache'
+    | 'none'
+    | string;
+
+export interface ProviderDataQualityEntry {
+    fetched_via: ProviderFetchedVia;
+    is_live: boolean;
+}
+
+export interface ProviderBalance {
+    name: string;
+    status: 'active' | 'inactive' | 'error';
+    credits: number;
+    /** Aggregated total credits across all connected API keys for this provider */
+    total_credits?: number;
+    /** Number of connected API key accounts */
+    connected_accounts?: number;
+    /** Total API key accounts discovered (connected + unconfigured) */
+    total_accounts?: number;
+    configured: boolean;
+    is_active: boolean;
+    warning: boolean;
+    critical: boolean;
+    error: string | null;
+}
+
+export interface UniSmsBalance extends ProviderBalance {
+    name: 'UniSMS';
+    email: string | null;
+    sid_tokens: number | null;
+}
+
+export interface ProviderSummaryEntry {
+    name: string;
+    status: 'active' | 'inactive' | 'error';
+    credits?: number;
+    total_credits?: number;
+    connected_accounts?: number;
+    total_accounts?: number;
+    is_active: boolean;
+    warning: boolean;
+    critical: boolean;
+}
+
+export interface ProviderBalancesResponse {
+    status: 'success';
+    fetched_at: string;
+    active_provider: 'semaphore' | 'unisms' | 'auto_failover';
+    /** true when any provider balance is from cache/LKG rather than a live API call */
+    is_stale?: boolean;
+    /** Per-provider data quality metadata */
+    data_quality?: {
+        semaphore?: ProviderDataQualityEntry;
+        unisms?: ProviderDataQualityEntry;
+    };
+    providers: {
+        semaphore: ProviderBalance;
+        unisms: UniSmsBalance;
+    };
+    /** Aggregated summary across all connected API keys per provider */
+    summary?: {
+        semaphore?: ProviderSummaryEntry;
+        unisms?: ProviderSummaryEntry;
+    };
+}
