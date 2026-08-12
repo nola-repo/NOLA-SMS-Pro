@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/SmsProviderInterface.php';
 require_once __DIR__ . '/../ConnectivityMonitor.php';
+require_once __DIR__ . '/../TextNormalizer.php';
 
 class SemaphoreProvider implements SmsProviderInterface
 {
@@ -264,6 +265,7 @@ class SemaphoreProvider implements SmsProviderInterface
 
     public function sendBulk(array $numbers, string $message, string $senderId, ?string $apiKey = null): array
     {
+        $message = TextNormalizer::sanitizeGsm7($message);
         $resolvedKey = $this->getApiKey($apiKey);
         $payload = [
             'apikey'     => $resolvedKey,

@@ -55,6 +55,7 @@ require_once __DIR__ . '/../services/GhlClient.php';
 require_once __DIR__ . '/../services/SmsGatewayService.php';
 require_once __DIR__ . '/../services/FirestoreId.php';
 require_once __DIR__ . '/../services/ProviderResultService.php';
+require_once __DIR__ . '/../services/TextNormalizer.php';
 $gateway = new SmsGatewayService();
 
 $SEMAPHORE_API_KEY      = $config['SEMAPHORE_API_KEY'];
@@ -194,13 +195,13 @@ function provider_nested_value(array $payload, array $path)
     return $current;
 }
 
-function provider_first_scalar(array $payload, array $paths): ?string
+function provider_first_scalar(array $payload, array $paths, bool $allowBraces = false): ?string
 {
     foreach ($paths as $path) {
         $value = is_array($path) ? provider_nested_value($payload, $path) : ($payload[$path] ?? null);
         if ($value !== null && !is_array($value) && !is_object($value) && trim((string)$value) !== '') {
             $value = trim((string)$value);
-            if (strpos($value, '{{') === false) {
+            if ($allowBraces || strpos($value, '{{') === false) {
                 return $value;
             }
         }
@@ -292,24 +293,22 @@ $message = provider_first_scalar($payload, [
     ['message', 'message'],
     ['message', 'body'],
     ['message', 'text'],
-]);
+], true);
 if (!$message && !empty($messageNode)) {
     $message = provider_first_scalar(['message' => $messageNode], [
         ['message', 'message'],
         ['message', 'body'],
         ['message', 'text'],
         ['message', 'content'],
-    ]);
+    ], true);
 }
-if ($message && preg_match('/<[a-zA-Z][^>]*>/', $message)) {
-    $message = preg_replace('/<\/(p|div|br|li|tr|h[1-6])>/i', "\n", $message);
-    $message = strip_tags($message);
-    $message = html_entity_decode($message, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-    $message = str_replace(
-        ['‘', '’', '“', '”', '–', '—', '…', '`', '´'],
-        ["'", "'", '"', '"', '-', '-', '...', "'", "'"],
-        $message
-    );
+if ($message) {
+    if (preg_match('/<[a-zA-Z][^>]*>/', $message)) {
+        $message = preg_replace('/<\/(p|div|br|li|tr|h[1-6])>/i', "\n", $message);
+        $message = strip_tags($message);
+        $message = html_entity_decode($message, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    }
+    $message = TextNormalizer::normalize($message);
     $message = trim(preg_replace('/[^\S\n]+/', ' ', $message));
 }
 
@@ -611,33 +610,19 @@ $userKey = trim((string)($customApiKey ?? ''));
 // - Semaphore: Silently truncates the message at the first emoji on delivery.
 // - UniSMS: Rejects the API request with "Emojis or non-standard characters not allowed".
 //
-// Strip all characters outside GSM-7 (emojis, etc.) and recalculate credits
+// Strip all characters outside GSM-7 (emojis, etc.) while normalizing Unicode digits, dashes & spaces
 // so that messages deliver 100% complete and billing remains accurate across all providers.
 if ($message !== '') {
-    $gsm7Basic     = "@£\$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
-    $gsm7Extension = "^{}\\\\[]~|€";
-    $gsm7All       = $gsm7Basic . $gsm7Extension;
-
-    $cleaned = '';
-    $slen    = mb_strlen($message, 'UTF-8');
-    for ($si = 0; $si < $slen; $si++) {
-        $schar = mb_substr($message, $si, 1, 'UTF-8');
-        if (mb_strpos($gsm7All, $schar, 0, 'UTF-8') !== false
-            || $schar === "\n" || $schar === "\r" || $schar === "\t"
-        ) {
-            $cleaned .= $schar;
-        }
-    }
-    $cleaned = trim(preg_replace('/[^\S\n]+/', ' ', $cleaned));
+    $cleaned = TextNormalizer::sanitizeGsm7($message);
 
     if ($cleaned !== $message) {
-        error_log("[ghl_provider] Emoji stripped for Semaphore. loc={$locationId}"
+        error_log("[ghl_provider] Emoji/Unicode normalized & stripped. loc={$locationId}"
             . " original_len=" . mb_strlen($message, 'UTF-8')
             . " cleaned_len=" . mb_strlen($cleaned, 'UTF-8'));
         $message          = $cleaned;
         $required_credits = CreditManager::calculateRequiredCredits($message, 1);
     }
-    unset($gsm7Basic, $gsm7Extension, $gsm7All, $cleaned, $slen, $si, $schar);
+    unset($cleaned);
 }
 
 if (false && $userKey !== '' && $userKey !== $sysKey) {

@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/SmsProviderInterface.php';
 require_once __DIR__ . '/../ConnectivityMonitor.php';
+require_once __DIR__ . '/../TextNormalizer.php';
 
 class UniSmsProvider implements SmsProviderInterface
 {
@@ -240,21 +241,7 @@ class UniSmsProvider implements SmsProviderInterface
         $formattedNum = $this->formatNumber($number);
 
         // Fail-safe emoji sanitization: UniSMS API rejects non-GSM-7/emoji characters with HTTP 422/500
-        $gsm7Basic     = "@£\$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
-        $gsm7Extension = "^{}\\\[]~|€";
-        $gsm7All       = $gsm7Basic . $gsm7Extension;
-
-        $cleaned = '';
-        $len     = mb_strlen($message, 'UTF-8');
-        for ($i = 0; $i < $len; $i++) {
-            $char = mb_substr($message, $i, 1, 'UTF-8');
-            if (mb_strpos($gsm7All, $char, 0, 'UTF-8') !== false
-                || $char === "\n" || $char === "\r" || $char === "\t"
-            ) {
-                $cleaned .= $char;
-            }
-        }
-        $message = trim(preg_replace('/[^\S\n]+/', ' ', $cleaned));
+        $message = TextNormalizer::sanitizeGsm7($message);
 
         $payload = [
             'recipient' => $formattedNum,
