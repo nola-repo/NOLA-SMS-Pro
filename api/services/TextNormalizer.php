@@ -4,8 +4,8 @@
  * TextNormalizer — Normalizes non-standard Unicode digits, dashes, quotes, spaces, and symbols
  * into standard GSM-7 / ASCII SMS equivalents.
  *
- * Uses 100% deterministic strtr() character mapping (no PCRE regex byte ranges) to guarantee
- * identical execution across Windows, Linux, Docker, and Apache Cloud Run environments.
+ * Uses 100% deterministic character mapping and standard ASCII range sanitization
+ * to guarantee complete message delivery across Windows, Linux, Docker, and Apache Cloud Run.
  */
 class TextNormalizer
 {
@@ -93,7 +93,7 @@ class TextNormalizer
     }
 
     /**
-     * Normalizes text and strips remaining non-GSM-7 characters (emojis, etc.)
+     * Normalizes text and strips remaining non-GSM-7 / non-ASCII characters (emojis, etc.)
      * ensuring 100% complete message delivery without dropping dates, times, or digits.
      */
     public static function sanitizeGsm7(string $message): string
@@ -102,23 +102,11 @@ class TextNormalizer
             return '';
         }
 
-        // First normalize fancy Unicode digits/dashes/spaces to GSM-7 safe ASCII characters
+        // First normalize fancy Unicode digits/dashes/spaces to standard ASCII characters
         $normalized = self::normalize($message);
 
-        $gsm7Basic     = "@£\$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
-        $gsm7Extension = "^{}\\\\[]~|€";
-        $gsm7All       = $gsm7Basic . $gsm7Extension;
-
-        $cleaned = '';
-        $slen    = mb_strlen($normalized, 'UTF-8');
-        for ($si = 0; $si < $slen; $si++) {
-            $schar = mb_substr($normalized, $si, 1, 'UTF-8');
-            if (mb_strpos($gsm7All, $schar, 0, 'UTF-8') !== false
-                || $schar === "\n" || $schar === "\r" || $schar === "\t"
-            ) {
-                $cleaned .= $schar;
-            }
-        }
+        // Strip non-printable ASCII / non-GSM characters (emojis, etc.) while preserving 0-9, A-Z, a-z, punctuation, spaces, and newlines
+        $cleaned = preg_replace('/[^\x20-\x7E\r\n\t]/', '', $normalized);
 
         return trim(preg_replace('/[^\S\n]+/', ' ', $cleaned));
     }
