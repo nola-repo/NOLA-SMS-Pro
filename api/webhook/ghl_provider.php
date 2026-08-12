@@ -302,6 +302,7 @@ if (!$message && !empty($messageNode)) {
         ['message', 'content'],
     ], true);
 }
+error_log('[ghl_provider][DEBUG_1] extracted: ' . var_export($message, true));
 if ($message) {
     if (preg_match('/<[a-zA-Z][^>]*>/', $message)) {
         $message = preg_replace('/<\/(p|div|br|li|tr|h[1-6])>/i', "\n", $message);
@@ -311,6 +312,7 @@ if ($message) {
     $message = TextNormalizer::normalize($message);
     $message = trim(preg_replace('/[^\S\n]+/', ' ', $message));
 }
+error_log('[ghl_provider][DEBUG_2] normalized: ' . var_export($message, true));
 
 $messageId = provider_first_scalar($payload, [
     'messageId',
@@ -624,6 +626,7 @@ if ($message !== '') {
     }
     unset($cleaned);
 }
+error_log('[ghl_provider][DEBUG_3] sanitized: ' . var_export($message, true));
 
 if (false && $userKey !== '' && $userKey !== $sysKey) {
     // ── PATH A: External API key ─────────────────────────────────────────────
