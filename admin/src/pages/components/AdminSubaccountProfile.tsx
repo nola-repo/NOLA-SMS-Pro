@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { FiAlertCircle, FiCheck, FiRefreshCw, FiSave, FiUser, FiX } from 'react-icons/fi';
 import { adminFetch } from '../../utils/adminApi';
 import { getAdminAuthHeaders } from '../../utils/adminAuthHeaders';
@@ -32,10 +32,18 @@ export const AdminSubaccountProfile: React.FC<{
         email: account?.email || '',
         phone: account?.phone || '',
     });
-    const [active, setActive] = useState(account?.active !== false);
+    const [active, setActive] = useState(account?.active !== false && account?.toggle_enabled !== false);
     const [saving, setSaving] = useState(false);
     const [loadingProfile, setLoadingProfile] = useState(false);
     const [status, setStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+    const userToggledRef = useRef(false);
+
+    useEffect(() => {
+        if (!userToggledRef.current && account) {
+            const isAccActive = account.active !== false && account.toggle_enabled !== false;
+            setActive(isAccActive);
+        }
+    }, [account?.active, account?.toggle_enabled]);
 
     useEffect(() => {
         if (!account?.id) return;
@@ -57,7 +65,9 @@ export const AdminSubaccountProfile: React.FC<{
                     email: profile.email || form.email,
                     phone: profile.phone || form.phone,
                 });
-                if (profile.active !== undefined) setActive(profile.active !== false);
+                if (!userToggledRef.current && profile.active !== undefined) {
+                    setActive(profile.active !== false && profile.toggle_enabled !== false);
+                }
                 onSaved?.({ ...account, ...profile });
             })
             .catch(() => {
@@ -117,14 +127,18 @@ export const AdminSubaccountProfile: React.FC<{
 
     const handleToggleActive = async () => {
         const nextActive = !active;
+        userToggledRef.current = true;
         setActive(nextActive);
         setStatus(null);
         try {
-            await onToggleActive?.(account, nextActive);
+            if (onToggleActive) {
+                await onToggleActive(account, nextActive);
+            }
             setStatus({ type: 'success', message: `Account marked ${nextActive ? 'active' : 'inactive'}.` });
-        } catch {
+        } catch (err: any) {
+            userToggledRef.current = false;
             setActive(!nextActive);
-            setStatus({ type: 'error', message: 'Could not update active status.' });
+            setStatus({ type: 'error', message: err?.message || 'Could not update active status.' });
         }
     };
 

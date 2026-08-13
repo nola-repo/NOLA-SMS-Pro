@@ -40,6 +40,7 @@ type Account = {
     phone?: string;
     role?: string;
     active?: boolean;
+    toggle_enabled?: boolean;
     status?: string;
     last_active_at?: any;
     last_active?: any;
@@ -560,7 +561,11 @@ export const AdminAccounts: React.FC = () => {
     };
 
     const handleToggleActive = async (account: Account, active: boolean) => {
-        updateAccountLocally(account.id, { active });
+        updateAccountLocally(account.id, {
+            active,
+            toggle_enabled: active,
+            status: active ? 'active' : 'inactive',
+        });
         try {
             const res = await adminFetch(ADMIN_MANAGE_USER_API, {
                 method: 'POST',
@@ -568,13 +573,18 @@ export const AdminAccounts: React.FC = () => {
                 body: JSON.stringify({ action: 'toggle_active', user_id: account.id, active }),
             });
             const json = await res.json().catch(() => null);
-            if (res.ok && json?.status === 'success') {
-                showToast(`Account marked ${active ? 'active' : 'inactive'}.`, 'success');
-            } else {
-                showToast('Status updated locally while the backend endpoint is pending.', 'info');
+            if (!res.ok || (json?.status && json.status !== 'success')) {
+                throw new Error(json?.message || 'Could not update active status on server.');
             }
-        } catch {
-            showToast('Status updated locally while the backend endpoint is pending.', 'info');
+            showToast(json?.message || `Account marked ${active ? 'active' : 'inactive'}.`, 'success');
+        } catch (err) {
+            updateAccountLocally(account.id, {
+                active: !active,
+                toggle_enabled: !active,
+                status: !active ? 'active' : 'inactive',
+            });
+            showToast('Failed to update account status. Reverted.', 'error');
+            throw err;
         }
     };
 
