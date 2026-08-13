@@ -92,8 +92,11 @@ if ($http_status == 200 && is_array($result) && isset($result['access_token'])) 
     try {
         $docId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string) $locationId);
         
-        // --- New: Fetch Location Name from GHL API ---
+        // --- New: Fetch Location Name and Agency/Company Name from GHL API ---
         $locationName = '';
+        $companyName = '';
+        $companyId = trim((string)($result['companyId'] ?? $result['company_id'] ?? ''));
+
         try {
             $locationUrl = 'https://services.leadconnectorhq.com/locations/' . $locationId;
             $ch = curl_init($locationUrl);
@@ -110,44 +113,109 @@ if ($http_status == 200 && is_array($result) && isset($result['access_token'])) 
             if ($locHttpCode === 200) {
                 $locData = json_decode($locResponse, true);
                 $locationName = $locData['location']['name'] ?? '';
+                if ($companyId === '') {
+                    $companyId = trim((string)($locData['location']['companyId'] ?? ''));
+                }
             }
         } catch (Exception $e) {
-            // Log error but proceed
             error_log("Failed to fetch location name: " . $e->getMessage());
         }
 
+        // Fetch / resolve Agency Company Name from existing registry or GHL API
+        if ($companyId !== '') {
+            try {
+                $agSnap = $db->collection('agencies')->document($companyId)->snapshot();
+                if ($agSnap->exists()) {
+                    $companyName = trim((string)($agSnap->data()['company_name'] ?? ''));
+                }
+                if ($companyName === '') {
+                    $coTokenSnap = $db->collection('ghl_tokens')->document($companyId)->snapshot();
+                    if ($coTokenSnap->exists()) {
+                        $coData = $coTokenSnap->data();
+                        $companyName = trim((string)($coData['company_name'] ?? $coData['companyName'] ?? $coData['agency_name'] ?? $coData['location_name'] ?? ''));
+                    }
+                }
+                if ($companyName === '' && !empty($result['access_token'])) {
+                    require_once __DIR__ . '/install_helpers.php';
+                    $companyName = install_fetch_company_name_from_ghl($companyId, $result['access_token']);
+                }
+                if ($companyName !== '') {
+                    $db->collection('agencies')->document($companyId)->set([
+                        'company_id' => $companyId,
+                        'company_name' => $companyName,
+                        'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+                    ], ['merge' => true]);
+                }
+            } catch (Exception $e) {
+                error_log("Failed to resolve agency company name for {$companyId}: " . $e->getMessage());
+            }
+        }
+
         // PRIMARY WRITE: ghl_tokens/{locationId} — canonical store that GhlClient reads
+        $tokenDocData = [
+            'access_token'   => $result['access_token'],
+            'refresh_token'  => $result['refresh_token'],
+            'expires_at'     => new \Google\Cloud\Core\Timestamp($expiresAt),
+            'scope'          => $result['scope'] ?? '',
+            'location_id'    => $locationId,
+            'location_name'  => $locationName,
+            'companyId'      => $companyId,
+            'userType'       => $result['userType'] ?? 'Location',
+            'client_id'      => $clientId,
+            'is_live'        => true,
+            'toggle_enabled' => true,
+            'updated_at'     => new \Google\Cloud\Core\Timestamp($now),
+        ];
+        if ($companyName !== '') {
+            $tokenDocData['company_name'] = $companyName;
+            $tokenDocData['agency_name'] = $companyName;
+        }
+
         $db->collection('ghl_tokens')
             ->document($locationId)
-            ->set([
-                'access_token'  => $result['access_token'],
-                'refresh_token' => $result['refresh_token'],
-                'expires_at'    => new \Google\Cloud\Core\Timestamp($expiresAt),
-                'scope'         => $result['scope'] ?? '',
-                'location_id'   => $locationId,
-                'location_name' => $locationName,
-                'companyId'     => $result['companyId'] ?? '',
-                'userType'      => $result['userType'] ?? 'Location',
-                'client_id'     => $clientId,
-                'is_live'       => true,
-                'toggle_enabled' => true,
-                'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
-            ], ['merge' => true]);
+            ->set($tokenDocData, ['merge' => true]);
 
         // LEGACY WRITE: integrations/{docId} — kept for any legacy code paths still reading it
-        $db->collection('integrations')
-            ->document($docId)
-            ->set([
+        $integrationDocData = [
             'access_token'  => $result['access_token'],
             'refresh_token' => $result['refresh_token'],
             'expires_at'    => new \Google\Cloud\Core\Timestamp($expiresAt),
             'scope'         => $result['scope'] ?? '',
             'location_id'   => $locationId,
             'location_name' => $locationName,
+            'company_id'    => $companyId,
+            'companyId'     => $companyId,
             'client_id'     => $clientId,
             'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
             'created_at'    => new \Google\Cloud\Core\Timestamp($now)
-        ], ['merge' => true]);
+        ];
+        if ($companyName !== '') {
+            $integrationDocData['company_name'] = $companyName;
+            $integrationDocData['agency_name'] = $companyName;
+        }
+
+        $db->collection('integrations')
+            ->document($docId)
+            ->set($integrationDocData, ['merge' => true]);
+
+        // Also update matching user record if already registered
+        if ($companyName !== '') {
+            try {
+                $userMatches = $db->collection('users')->where('location_id', '=', $locationId)->limit(1)->documents();
+                foreach ($userMatches as $uDoc) {
+                    if ($uDoc->exists()) {
+                        $db->collection('users')->document($uDoc->id())->set([
+                            'company_name' => $companyName,
+                            'agency_name'  => $companyName,
+                            'company_id'   => $companyId,
+                            'updated_at'   => new \Google\Cloud\Core\Timestamp($now),
+                        ], ['merge' => true]);
+                    }
+                }
+            } catch (\Throwable $e) {
+                // Non-fatal
+            }
+        }
 
         // Write admin_notifications entry for new_subaccount connection
         try {

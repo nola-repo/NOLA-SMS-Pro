@@ -80,7 +80,23 @@ try {
     }
 
     $agencyNameMap = [];
-    foreach (['agency_users', 'agencies'] as $agencyCollection) {
+
+    // Pre-populate agency map from ghl_tokens in-memory map
+    foreach ($ghlTokenMap as $docId => $tData) {
+        $comp = trim((string)($tData['companyId'] ?? $tData['company_id'] ?? $docId));
+        $aname = trim((string)($tData['company_name'] ?? $tData['companyName'] ?? $tData['agency_name'] ?? ''));
+        if ($comp !== '' && $aname !== '' && !isset($agencyNameMap[$comp])) {
+            $agencyNameMap[$comp] = $aname;
+        }
+        if (($tData['appType'] ?? '') === 'agency' || ($tData['userType'] ?? '') === 'Company') {
+            $locName = trim((string)($tData['location_name'] ?? ''));
+            if ($comp !== '' && $locName !== '' && !isset($agencyNameMap[$comp])) {
+                $agencyNameMap[$comp] = $locName;
+            }
+        }
+    }
+
+    foreach (['agencies', 'agency_users', 'ghl_agency_tokens', 'agency_subaccounts'] as $agencyCollection) {
         try {
             NolaPerformance::increment('firestore_queries');
             $agencySnap = $db->collection($agencyCollection)->limit(500)->documents();
@@ -89,13 +105,16 @@ try {
                 NolaPerformance::increment('documents_processed');
 
                 $agencyData = $agencyDoc->data();
-                $companyId = AgencyNameResolver::companyId($agencyData, $agencyDoc->id());
-                $agencyName = $agencyCollection === 'agencies'
-                    ? AgencyNameResolver::agencyName($agencyData)
-                    : AgencyNameResolver::agencyUserCompanyName($agencyData);
+                $comp = trim((string)($agencyData['company_id'] ?? $agencyData['companyId'] ?? $agencyData['agency_id'] ?? $agencyDoc->id()));
+                $agencyName = trim((string)(
+                    $agencyData['company_name']
+                    ?? $agencyData['companyName']
+                    ?? $agencyData['agency_name']
+                    ?? ($agencyCollection === 'agencies' ? ($agencyData['name'] ?? '') : '')
+                ));
 
-                if ($companyId !== '' && $agencyName !== '') {
-                    $agencyNameMap[$companyId] = $agencyName;
+                if ($comp !== '' && $agencyName !== '' && !isset($agencyNameMap[$comp])) {
+                    $agencyNameMap[$comp] = $agencyName;
                 }
             }
         } catch (Exception $e) {
@@ -150,7 +169,23 @@ try {
         }
 
         $companyId = $d['company_id'] ?? $d['companyId'] ?? null;
+        if (!$companyId && !empty($locId) && isset($ghlTokenMap[$locId])) {
+            $companyId = $ghlTokenMap[$locId]['companyId'] ?? $ghlTokenMap[$locId]['company_id'] ?? null;
+        }
+        if (!$companyId && $intData) {
+            $companyId = $intData['companyId'] ?? $intData['company_id'] ?? null;
+        }
+
         $agencyName = AgencyNameResolver::forUser($d, $agencyNameMap);
+        if ($agencyName === '' && !empty($locId) && isset($ghlTokenMap[$locId])) {
+            $agencyName = trim((string)($ghlTokenMap[$locId]['company_name'] ?? $ghlTokenMap[$locId]['companyName'] ?? $ghlTokenMap[$locId]['agency_name'] ?? ''));
+        }
+        if ($agencyName === '' && $intData) {
+            $agencyName = trim((string)($intData['company_name'] ?? $intData['companyName'] ?? $intData['agency_name'] ?? ''));
+        }
+        if ($agencyName === '' && !empty($companyId) && isset($agencyNameMap[$companyId])) {
+            $agencyName = $agencyNameMap[$companyId];
+        }
 
         $userItem = [
             'id'                 => $doc->id(),
@@ -164,8 +199,8 @@ try {
             'location_id'        => !empty($locId) ? $locId : null,
             'location_name'      => $locationName,
             'company_id'         => $companyId,
-            'company_name'       => $agencyName !== '' ? $agencyName : 'Agency name unavailable',
-            'agency_name'        => $agencyName !== '' ? $agencyName : 'Agency name unavailable',
+            'company_name'       => $agencyName !== '' ? $agencyName : ($companyId ? 'Agency Account' : 'Direct Subaccount'),
+            'agency_name'        => $agencyName !== '' ? $agencyName : ($companyId ? 'Agency Account' : 'Direct Subaccount'),
             'credit_balance'     => (int)($d['credit_balance'] ?? 0),
             'free_usage_count'   => $freeUsageCount,
             'free_credits_total' => $freeCreditsTotal,

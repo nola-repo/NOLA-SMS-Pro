@@ -508,11 +508,17 @@ try {
         }
         if (!$newCompanyName && $companyId) {
             try {
-                $companySnap = $db->collection('ghl_tokens')->document((string)$companyId)->snapshot();
-                if ($companySnap->exists()) {
-                    $companyData = $companySnap->data();
-                    $newCompanyName = install_extract_company_name($companyData)
-                        ?: (trim((string)($companyData['location_name'] ?? '')) ?: $newCompanyName);
+                $agSnap = $db->collection('agencies')->document((string)$companyId)->snapshot();
+                if ($agSnap->exists()) {
+                    $newCompanyName = trim((string)($agSnap->data()['company_name'] ?? ''));
+                }
+                if (!$newCompanyName) {
+                    $companySnap = $db->collection('ghl_tokens')->document((string)$companyId)->snapshot();
+                    if ($companySnap->exists()) {
+                        $companyData = $companySnap->data();
+                        $newCompanyName = install_extract_company_name($companyData)
+                            ?: (trim((string)($companyData['location_name'] ?? '')) ?: $newCompanyName);
+                    }
                 }
             } catch (Exception $ignored) {
             }
@@ -685,11 +691,17 @@ try {
     }
     if (!$companyName && $companyId) {
         try {
-            $companySnap = $db->collection('ghl_tokens')->document((string)$companyId)->snapshot();
-            if ($companySnap->exists()) {
-                $companyData = $companySnap->data();
-                $companyName = install_extract_company_name($companyData)
-                    ?: (trim((string)($companyData['location_name'] ?? '')) ?: $companyName);
+            $agSnap = $db->collection('agencies')->document((string)$companyId)->snapshot();
+            if ($agSnap->exists()) {
+                $companyName = trim((string)($agSnap->data()['company_name'] ?? ''));
+            }
+            if (!$companyName) {
+                $companySnap = $db->collection('ghl_tokens')->document((string)$companyId)->snapshot();
+                if ($companySnap->exists()) {
+                    $companyData = $companySnap->data();
+                    $companyName = install_extract_company_name($companyData)
+                        ?: (trim((string)($companyData['location_name'] ?? '')) ?: $companyName);
+                }
             }
         } catch (Exception $ignored) {
         }

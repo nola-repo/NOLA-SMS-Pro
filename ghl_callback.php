@@ -1803,6 +1803,28 @@ $expiresAtUnix = time() + (int)($data['expires_in'] ?? 0);
 $tokenExistedBeforeDirect = install_token_doc_exists($db, (string)$locationId);
 $companyIdForDirect = (string)($data['companyId'] ?? '');
 $companyNameDirect = install_extract_company_name($data);
+
+if ($companyNameDirect === '' && $companyIdForDirect !== '') {
+    try {
+        $agSnap = $db->collection('agencies')->document($companyIdForDirect)->snapshot();
+        if ($agSnap->exists()) {
+            $companyNameDirect = trim((string)($agSnap->data()['company_name'] ?? ''));
+        }
+        if ($companyNameDirect === '') {
+            $coTokenSnap = $db->collection('ghl_tokens')->document($companyIdForDirect)->snapshot();
+            if ($coTokenSnap->exists()) {
+                $coData = $coTokenSnap->data();
+                $companyNameDirect = trim((string)($coData['company_name'] ?? $coData['companyName'] ?? $coData['agency_name'] ?? $coData['location_name'] ?? ''));
+            }
+        }
+        if ($companyNameDirect === '' && !empty($data['access_token'])) {
+            $companyNameDirect = install_fetch_company_name_from_ghl($companyIdForDirect, (string)$data['access_token']);
+        }
+    } catch (Exception $e) {
+        error_log('[GHL_CALLBACK] Direct location company name resolution failed: ' . $e->getMessage());
+    }
+}
+
 install_upsert_agency_registry(
     $db,
     (string)($data['companyId'] ?? ''),
@@ -1840,6 +1862,11 @@ try {
         'updated_at' => new \Google\Cloud\Core\Timestamp($now),
     ];
 
+    if ($companyNameDirect !== '') {
+        $tokenPayload['company_name'] = $companyNameDirect;
+        $tokenPayload['agency_name'] = $companyNameDirect;
+    }
+
     if ($userType === 'Location') {
         $tokenPayload['location_id'] = $id;
         $tokenPayload['location_name'] = $displayName;
@@ -1850,16 +1877,21 @@ try {
 
     $db->collection('ghl_tokens')->document((string)$id)->set($tokenPayload, ['merge' => true]);
 
-    // 3. Update matching user docs with company_id and company_name
-    if ($userType === 'Company' && $id) {
+    // Update matching user docs with company_id and company_name
+    if ($companyNameDirect !== '' && $id) {
         try {
+            $userQueryField = $userType === 'Company' ? 'agency_id' : 'location_id';
             $userQuery = $db->collection('users')
-                ->where('agency_id', '=', (string)$id)
+                ->where($userQueryField, '=', (string)$id)
                 ->documents();
 
-            $updateFields = ['company_id' => (string)$id, 'updated_at' => new \Google\Cloud\Core\Timestamp($now)];
-            if ($companyNameDirect !== '') {
-                $updateFields['company_name'] = $companyNameDirect;
+            $updateFields = [
+                'company_name' => $companyNameDirect,
+                'agency_name'  => $companyNameDirect,
+                'updated_at'   => new \Google\Cloud\Core\Timestamp($now)
+            ];
+            if ($companyIdForDirect !== '') {
+                $updateFields['company_id'] = $companyIdForDirect;
             }
 
             foreach ($userQuery as $uDoc) {
@@ -1868,7 +1900,7 @@ try {
                 }
             }
 
-            error_log(sprintf('[GHL_CALLBACK] Updated users collection with company_id=%s company_name="%s"', $id, $companyNameDirect ?: '(empty)'));
+            error_log(sprintf('[GHL_CALLBACK] Updated users collection with company_id=%s company_name="%s"', $companyIdForDirect, $companyNameDirect));
         }
         catch (Exception $ue) {
             error_log('GHL Callback - failed to update user docs: ' . $ue->getMessage());
