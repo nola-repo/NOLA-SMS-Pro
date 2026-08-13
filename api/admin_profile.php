@@ -123,6 +123,11 @@ if ($method === 'GET') {
             $lastName  = count($parts) > 1 ? implode(' ', array_slice($parts, 1)) : '';
         }
 
+        $isDocActive = !array_key_exists('active', $d) || (bool)$d['active'];
+        $isDocToggle = !array_key_exists('toggle_enabled', $d) || (bool)$d['toggle_enabled'];
+        $isTokToggle = !isset($tokData) || !array_key_exists('toggle_enabled', $tokData) || (bool)$tokData['toggle_enabled'];
+        $isActive = $isDocActive && $isDocToggle && $isTokToggle;
+
         $profileData = [
             'id'                 => $userId,
             'name'               => $fullName,
@@ -131,7 +136,8 @@ if ($method === 'GET') {
             'email'              => $d['email'] ?? '',
             'phone'              => $d['phone'] ?? '',
             'role'               => $d['role'] ?? 'user',
-            'active'             => !array_key_exists('active', $d) || !empty($d['active']),
+            'active'             => $isActive,
+            'toggle_enabled'     => $isActive,
             'location_id'        => !empty($locId) ? $locId : null,
             'location_name'      => $locationName,
             'company_id'         => $d['company_id'] ?? null,
