@@ -97,7 +97,20 @@ class SenderResolver
             $usingCustomKey = false;
             $sender = 'NOLASMSPro';
             $senderSource = 'system_notification_override';
-        } elseif (strcasecmp((string)$requestedSender, 'NOLASMSPro') === 0 && $approvedSender === '') {
+        } elseif ($approvedSender !== '') {
+            // PRIORITY: If the location has an explicit approved sender, always use it —
+            // even when the automation template has hardcoded "NOLASMSPro" as the sendername.
+            // This fixes the bug where automation payloads could bypass the registered sender ID.
+            if ($selectedProvider === 'unisms' && $unismsSender !== '') {
+                $sender = $unismsSender;
+                $senderSource = 'integration.unisms_sender_id';
+            } else {
+                $sender = $approvedSender;
+                $senderSource = 'integration.approved_sender_id';
+            }
+        } elseif (strcasecmp((string)$requestedSender, 'NOLASMSPro') === 0) {
+            // No approved sender on this location + automation/user explicitly requested the
+            // system default — honour it and route via the NOLA master key.
             $selectedProvider = 'semaphore';
             $activeApiKey = $systemSemaphoreKey;
             $apiKeySource = 'config.SEMAPHORE_API_KEY';
@@ -108,28 +121,17 @@ class SenderResolver
             if ($unismsSender !== '') {
                 $sender = $unismsSender;
                 $senderSource = 'integration.unisms_sender_id';
-            } elseif ($approvedSender !== '') {
-                $sender = $approvedSender;
-                $senderSource = 'integration.approved_sender_id';
             } elseif (trim((string)$requestedSender) !== '') {
                 $sender = trim((string)$requestedSender);
                 $senderSource = 'request.sender';
             }
         } elseif ($usingCustomKey) {
-            // PATH A: subaccount has their own API key — use approved or requested sender freely
-            if ($approvedSender !== '') {
-                $sender = $approvedSender;
-                $senderSource = 'integration.approved_sender_id';
-            } elseif (trim((string)$requestedSender) !== '') {
+            // PATH A: subaccount has their own API key — no approved sender set,
+            // fall back to whatever the request specified.
+            if (trim((string)$requestedSender) !== '') {
                 $sender = trim((string)$requestedSender);
                 $senderSource = 'request.sender';
             }
-        } elseif ($approvedSender !== '') {
-            // PATH B: subaccount on NOLA master key but has an approved sender ID —
-            // always honour it. No master_senders check needed here because the
-            // admin already approved this sender explicitly for this location.
-            $sender = $approvedSender;
-            $senderSource = 'integration.approved_sender_id';
         } elseif (trim((string)$requestedSender) !== '' && in_array((string)$requestedSender, $masterSenders, true)) {
             // PATH C: no approved sender — only allow the requested sender if it is
             // on the global master whitelist (prevents arbitrary sender spoofing)

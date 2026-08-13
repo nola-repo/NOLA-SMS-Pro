@@ -308,17 +308,40 @@ try {
             $intRef = $db->collection('integrations')->document($intDocId);
             $intSnap = $intRef->snapshot();
             if (!$intSnap->exists()) {
-                $intRef->set([
-                    'location_id' => (string)$locId,
-                    'location_name' => $locName,
-                    'companyId' => $companyId,
-                    'free_credits_total' => 10,
-                    'free_usage_count' => 0,
-                    'credit_balance' => 0,
+                // Restore approved sender ID if a request was previously approved —
+                // prevents a hard reinstall / re-provision from losing the registered sender.
+                $restoredSenderFields = [];
+                try {
+                    foreach ($db->collection('sender_id_requests')
+                        ->where('location_id', '==', (string)$locId)
+                        ->where('status', '==', 'approved')
+                        ->limit(1)->documents() as $sreq) {
+                        if (!$sreq->exists()) continue;
+                        $sd = $sreq->data();
+                        $rs = trim((string)($sd['requested_id'] ?? ''));
+                        $rp = trim((string)($sd['provider_preference'] ?? $sd['provider'] ?? 'semaphore'));
+                        if ($rs !== '') {
+                            $restoredSenderFields = ['approved_sender_id' => $rs, 'provider_preference' => $rp, 'approved_provider' => $rp];
+                            if (in_array($rp, ['unisms', 'unisms_custom'], true)) {
+                                $restoredSenderFields['unisms_sender_id'] = $rs;
+                            }
+                            error_log('[install_provision] Restored sender="' . $rs . '" for re-provisioned loc=' . $locId);
+                        }
+                    }
+                } catch (\Throwable $sErr) {
+                    error_log('[install_provision] sender restore lookup failed for ' . $locId . ': ' . $sErr->getMessage());
+                }
+                $intRef->set(array_merge([
+                    'location_id'           => (string)$locId,
+                    'location_name'         => $locName,
+                    'companyId'             => $companyId,
+                    'free_credits_total'    => 10,
+                    'free_usage_count'      => 0,
+                    'credit_balance'        => 0,
                     'system_default_sender' => 'NOLASMSPro',
-                    'installed_at' => new \Google\Cloud\Core\Timestamp($ts),
-                    'updated_at' => new \Google\Cloud\Core\Timestamp($ts),
-                ]);
+                    'installed_at'          => new \Google\Cloud\Core\Timestamp($ts),
+                    'updated_at'            => new \Google\Cloud\Core\Timestamp($ts),
+                ], $restoredSenderFields));
             } else {
                 $intRef->set([
                     'access_token' => $ltToken,
