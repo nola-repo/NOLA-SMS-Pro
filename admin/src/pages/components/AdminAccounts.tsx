@@ -177,10 +177,13 @@ const matchesAccountStatusFilter = (account: Account, filter: AccountStatusFilte
 
 const getAgencyName = (account: Account) => {
     const raw = (account.agency_name || account.company_name || '').trim();
-    if (raw && raw !== 'Agency name unavailable') {
+    if (raw && raw !== 'Agency name unavailable' && raw !== 'No Agency' && raw !== 'Unknown Agency') {
         return raw;
     }
-    return 'Unassigned Agency';
+    if (account.company_id) {
+        return 'Agency Account';
+    }
+    return 'Direct Subaccount';
 };
 
 const getTransactionMonth = (tx: any) => {
