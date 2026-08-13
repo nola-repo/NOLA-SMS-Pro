@@ -479,6 +479,69 @@ if ($dedupSnap->exists()) {
     }
 }
 
+// ── System Notification Detection --------------------------------------------
+// Identifies requests originating from central admin workflows or system alerts
+$centralLocationId = trim((string)(getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: ''));
+if ($centralLocationId === '') {
+    try {
+        $sysConfig = $db->collection('admin_config')->document('system_alerts')->snapshot();
+        if ($sysConfig->exists()) {
+            $centralLocationId = trim((string)($sysConfig->data()['central_location_id'] ?? ''));
+        }
+    } catch (\Throwable $ignored) {}
+}
+
+$systemAlertTypeRaw = $payload['customData']['nola_sms_alert_type']
+    ?? $payload['customData']['alert_type']
+    ?? $payload['data']['nola_sms_alert_type']
+    ?? $payload['data']['alert_type']
+    ?? $payload['nola_sms_alert_type']
+    ?? $payload['alert_type']
+    ?? null;
+$systemAlertType = strtolower(trim((string)($systemAlertTypeRaw ?? '')));
+$knownSystemAlertTypes = [
+    'welcome',
+    'welcome_alert',
+    'low_balance',
+    'top_up_success',
+    'sender_id_pending',
+    'sender_id_approved',
+    'sender_id_rejected',
+    'sender_id_alert',
+    'sender_id_reminder',
+    'sender_id_activation',
+    'onboarding_reminder',
+    'support_ticket',
+    'support_ticket_submission',
+    'support_ticket_submitted',
+    'delivery_failure',
+    'delivery_status',
+    'forgot_password_otp',
+    'system_alert',
+    'payment_failed',
+    'subscription_past_due',
+    'account_paused',
+];
+
+$reqSystemFlag = $payload['customData']['is_system_notification']
+    ?? $payload['data']['is_system_notification']
+    ?? $payload['is_system_notification']
+    ?? null;
+$flagIsTrue = ($reqSystemFlag === true || $reqSystemFlag === 'true' || $reqSystemFlag === 1 || $reqSystemFlag === '1' || $reqSystemFlag === 'yes');
+$isKnownSystemAlert = $systemAlertType !== '' && in_array($systemAlertType, $knownSystemAlertTypes, true);
+
+$isSystemNotification = false;
+if ($centralLocationId !== '' && $locationId === $centralLocationId) {
+    $isSystemNotification = true;
+} elseif ($flagIsTrue || $isKnownSystemAlert) {
+    $isSystemNotification = true;
+}
+
+error_log('[ghl_provider] System notification check: isSystemNotification=' . ($isSystemNotification ? 'true' : 'false')
+    . ' locationId=' . $locationId
+    . ' centralLoc=' . ($centralLocationId ?: '(not set)')
+    . ' alertType=' . ($systemAlertType ?: '(none)'));
+
 // ── Check Agency Toggle ─────────────────────────────────────────────────────
 if (!isset($db)) {
     $db = get_firestore();
@@ -488,7 +551,7 @@ $tokenSnap = $tokenRef->snapshot();
 $tokenData = $tokenSnap->exists() ? $tokenSnap->data() : [];
 
 $installGate = install_location_sms_gate($db, (string)$locationId);
-if (empty($installGate['allowed'])) {
+if (empty($installGate['allowed']) && !$isSystemNotification) {
     error_log('[ghl_provider][REJECT] ' . json_encode([
         'req_id' => $providerReqId,
         'reason' => $installGate['code'] ?? 'install_blocked',
@@ -505,7 +568,7 @@ if (empty($installGate['allowed'])) {
 
 $toggleEnabled = isset($tokenData['toggle_enabled']) ? (bool)$tokenData['toggle_enabled'] : true;
 
-if (!$toggleEnabled) {
+if (!$toggleEnabled && !$isSystemNotification) {
     error_log('[ghl_provider][REJECT] ' . json_encode([
         'req_id' => $providerReqId,
         'reason' => 'toggle_disabled',
@@ -534,6 +597,26 @@ $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
 $intRef = $db->collection('integrations')->document($intDocId);
 $intSnap = $intRef->snapshot();
 $intData = $intSnap->exists() ? $intSnap->data() : [];
+
+// Check Subscription / Payment Status (Non-system messages only)
+if (!$isSystemNotification) {
+    $subscriptionStatus = strtolower(trim((string)($tokenData['subscription_status'] ?? $intData['subscription_status'] ?? 'active')));
+    if (in_array($subscriptionStatus, ['past_due', 'unpaid', 'expired', 'canceled'], true)) {
+        error_log('[ghl_provider][REJECT] ' . json_encode([
+            'req_id' => $providerReqId,
+            'reason' => 'subscription_past_due',
+            'locationId' => $locationId,
+            'status' => $subscriptionStatus,
+        ]));
+        http_response_code(402);
+        echo json_encode([
+            'success' => false,
+            'error'   => 'subscription_past_due',
+            'message' => 'SMS sending is paused due to an unpaid or past-due subscription. Please update your billing details to resume.'
+        ]);
+        exit;
+    }
+}
 
 $approvedSenderId = $intData['approved_sender_id'] ?? null;
 $providerPreference = $intData['provider_preference'] ?? 'system';
@@ -573,7 +656,7 @@ $senderResolution = SenderResolver::resolve(
     $config,
     $intData,
     null,
-    false,
+    $isSystemNotification,
     'ghl_provider'
 );
 
@@ -688,8 +771,9 @@ error_log("[ghl_provider] BILLING DECISION for loc={$locationId}: " . json_encod
 // ── Pre-flight Credit Balance Check (must happen BEFORE early response) ────
 // We need to know if the account has enough credits before we tell GHL "success".
 // We don't deduct yet — that happens after the early response flush.
+// System notifications bypass balance checks completely.
 $preflightSubBalance = null;
-if (!$usingFreeCredits) {
+if (!$usingFreeCredits && !$isSystemNotification) {
     try {
         $preflightSubBalance = $creditManager->get_balance($account_id);
         if ($preflightSubBalance <= 0) {
@@ -730,6 +814,7 @@ $localProviderMessageId = build_local_sms_doc_id(
     $messageId ? (string)$messageId : null
 );
 $providerPreflightTs = new \Google\Cloud\Core\Timestamp(new \DateTime());
+$creditsToCharge = $isSystemNotification ? 0 : $required_credits;
 
 try {
     MessageSyncService::recordMessageEvent($db, [
@@ -749,8 +834,8 @@ try {
         'created_at' => $providerPreflightTs,
         'date_created' => $providerPreflightTs,
         'timestamp' => $providerPreflightTs,
-        'segments' => $required_credits,
-        'credits_used' => $required_credits,
+        'segments' => $creditsToCharge,
+        'credits_used' => $creditsToCharge,
         'source' => 'ghl_provider',
         'type' => 'Conversation Provider',
         'provider' => 'ghl_provider',
@@ -760,6 +845,7 @@ try {
         'name' => $displayName,
         'conversation_name' => $displayName,
         'message_id' => $localProviderMessageId,
+        'is_system' => $isSystemNotification,
     ]);
 } catch (\Throwable $e) {
     error_log('[ghl_provider][PREFLIGHT_LOCAL_WRITE_FAILED] ' . json_encode([
@@ -776,13 +862,13 @@ $earlyResponseBody = json_encode([
     'messageId'            => $messageId,
     'status'               => 'success',
     'message'              => "SMS queued for {$normalizedPhone}",
-    'execution_log'        => "NOLA Provider: SMS accepted for $normalizedPhone via $sender. Credits: $required_credits.",
+    'execution_log'        => "NOLA Provider: SMS accepted for $normalizedPhone via $sender. Credits: $creditsToCharge.",
     'action_executed_from' => 'Nola Web',
     'event_details'        => [
         'Status'       => 'Success',
         'Recipient'    => $normalizedPhone,
         'SMS Message'  => $message,
-        'Credits Used' => $required_credits,
+        'Credits Used' => $creditsToCharge,
         'Sender ID'    => $sender,
         'Location ID'  => $locationId,
         'Timestamp'    => date('Y-m-d H:i:s'),
@@ -790,7 +876,7 @@ $earlyResponseBody = json_encode([
     'data' => [
         'messageId'    => $messageId,
         'number'       => $normalizedPhone,
-        'credits_used' => $required_credits,
+        'credits_used' => $creditsToCharge,
         'location_id'  => $locationId,
         'sender'       => $sender,
     ],
@@ -818,7 +904,9 @@ error_log('[ghl_provider][EARLY_RESPONSE_FLUSHED] ' . json_encode([
 // ── BACKGROUND PROCESSING (after HTTP 200 has been flushed to GHL) ───────────
 
 // ── Credit Deduction & Trial Logging ─────────────────────────────────────────
-if ($usingFreeCredits) {
+if ($isSystemNotification) {
+    error_log("[ghl_provider] BILLING BYPASS: System notification for loc={$locationId}. Skipping credit deduction.");
+} elseif ($usingFreeCredits) {
     error_log("[ghl_provider] BILLING PATH: FreeTrial for loc={$locationId}");
     $intRef->set([
         'free_usage_count' => $freeUsageCount + $required_credits,

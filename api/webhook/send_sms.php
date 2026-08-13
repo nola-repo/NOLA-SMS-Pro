@@ -568,13 +568,18 @@ $markIdempotencyFailed = function (string $error, string $message, int $httpStat
 };
 
 // -- System Notification Detection --------------------------------------------
-// Identifies webhooks originating from the central NOLA admin location that are
-// authorized to send free system notifications (welcome, low-balance, top-up, etc.).
-// Security: the bypass is granted when the triggering GHL location matches the
-// central location env var, or when an explicit is_system_notification flag is
-// paired with a known NOLA alert type. The latter covers central workflows that
-// pass the customer/source location_id for conversation/contact attribution.
+// Identifies webhooks originating from the central NOLA admin location or system workflows
+// that are authorized to send free system notifications (welcome, onboarding, low-balance, top-up, OTPs, etc.).
 $centralLocationId    = trim((string)(getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: ''));
+if ($centralLocationId === '') {
+    try {
+        $sysConfig = $db->collection('admin_config')->document('system_alerts')->snapshot();
+        if ($sysConfig->exists()) {
+            $centralLocationId = trim((string)($sysConfig->data()['central_location_id'] ?? ''));
+        }
+    } catch (\Throwable $ignored) {}
+}
+
 $triggeringLocationId = trim((string)($payload['location']['id'] ?? $payload['location_id'] ?? ''));
 $systemAlertTypeRaw   = $customData['nola_sms_alert_type']
     ?? $customData['alert_type']
@@ -585,29 +590,38 @@ $systemAlertTypeRaw   = $customData['nola_sms_alert_type']
     ?? null;
 $systemAlertType = strtolower(trim((string)($systemAlertTypeRaw ?? '')));
 $knownSystemAlertTypes = [
+    'welcome',
+    'welcome_alert',
     'low_balance',
     'top_up_success',
-    'welcome',
     'sender_id_pending',
     'sender_id_approved',
     'sender_id_rejected',
+    'sender_id_alert',
+    'sender_id_reminder',
+    'sender_id_activation',
+    'onboarding_reminder',
+    'support_ticket',
+    'support_ticket_submission',
+    'support_ticket_submitted',
+    'delivery_failure',
+    'delivery_status',
     'forgot_password_otp',
+    'system_alert',
+    'payment_failed',
+    'subscription_past_due',
+    'account_paused',
 ];
 
-$isSystemNotification = false;
-if ($centralLocationId !== '') {
-    // Direct match: the webhook was fired from within the central location
-    if ($triggeringLocationId === $centralLocationId) {
-        $isSystemNotification = true;
-    }
+$reqSystemFlag = $customData['is_system_notification'] ?? $payload['is_system_notification'] ?? $data['is_system_notification'] ?? null;
+$flagIsTrue    = ($reqSystemFlag === true || $reqSystemFlag === 'true' || $reqSystemFlag === 1 || $reqSystemFlag === '1' || $reqSystemFlag === 'yes');
+$isKnownSystemAlert = $systemAlertType !== '' && in_array($systemAlertType, $knownSystemAlertTypes, true);
 
-    // Explicit flag in customData � trusted only when central location is involved
-    $reqSystemFlag = $customData['is_system_notification'] ?? $payload['is_system_notification'] ?? $data['is_system_notification'] ?? null;
-    $flagIsTrue    = ($reqSystemFlag === true || $reqSystemFlag === 'true' || $reqSystemFlag === 1 || $reqSystemFlag === '1');
-    $isKnownSystemAlert = $systemAlertType !== '' && in_array($systemAlertType, $knownSystemAlertTypes, true);
-    if ($flagIsTrue && ($locId === $centralLocationId || $triggeringLocationId === $centralLocationId || $isKnownSystemAlert)) {
-        $isSystemNotification = true;
-    }
+$isSystemNotification = false;
+if ($centralLocationId !== '' && ($triggeringLocationId === $centralLocationId || $locId === $centralLocationId)) {
+    $isSystemNotification = true;
+} elseif ($flagIsTrue || $isKnownSystemAlert) {
+    $isSystemNotification = true;
 }
 
 error_log('[send_sms] System notification check: isSystemNotification=' . ($isSystemNotification ? 'true' : 'false')
@@ -642,7 +656,29 @@ $rateLimitEnabled = isset($tokenData['rate_limit_enabled'])
 $attemptCount = isset($tokenData['attempt_count']) ? (int)$tokenData['attempt_count'] : 0;
 $lastReset = $tokenData['last_reset_date'] ?? '';
 
-if (!$toggleEnabled) {
+// Check Subscription / Payment Status (Non-system messages only)
+if (!$isSystemNotification) {
+    $subscriptionStatus = strtolower(trim((string)($tokenData['subscription_status'] ?? $intData['subscription_status'] ?? 'active')));
+    if (in_array($subscriptionStatus, ['past_due', 'unpaid', 'expired', 'canceled'], true)) {
+        Logger::error('SMS sending blocked: subscription past due / unpaid', ['location_id' => $locId, 'status' => $subscriptionStatus]);
+        $blockedMessageId = record_workflow_sms_block($db, (string)$locId, $validNumbers, $message, 'subscription_past_due', [
+            'contact_id' => $contactId,
+            'idempotency_key' => $idempotencyKey ?? null,
+            'subscription_status' => $subscriptionStatus,
+        ]);
+        $markIdempotencyFailed('subscription_past_due', 'SMS sending is paused due to an unpaid or past-due subscription. Please update billing.', 402);
+        http_response_code(402);
+        echo json_encode([
+            'status' => 'error',
+            'error' => 'subscription_past_due',
+            'message' => 'SMS sending is paused due to an unpaid or past-due subscription. Please update your billing details to resume.',
+            'message_id' => $blockedMessageId ?? null,
+        ]);
+        exit;
+    }
+}
+
+if (!$toggleEnabled && !$isSystemNotification) {
     Logger::error('SMS toggle disabled for location', ['location_id' => $locId]);
     Logger::response(403, ['status' => 'error', 'message' => 'SMS sending is currently disabled.']);
     $blockedMessageId = record_workflow_sms_block($db, (string)$locId, $validNumbers, $message, 'sms_disabled', [
@@ -660,7 +696,7 @@ if (!$toggleEnabled) {
 }
 
 $installGate = install_location_sms_gate($db, (string)$locId);
-if (empty($installGate['allowed'])) {
+if (empty($installGate['allowed']) && !$isSystemNotification) {
     $blockedMessageId = record_workflow_sms_block($db, (string)$locId, $validNumbers, $message, (string)($installGate['code'] ?? 'install_blocked'), [
         'install_reason' => $installGate['reason'] ?? null,
         'contact_id' => $contactId,
@@ -688,7 +724,7 @@ if ($lastReset !== $today) {
 }
 
 // Block if limit reached
-if ($rateLimitEnabled && $rateLimit > 0 && $attemptCount >= $rateLimit) {
+if ($rateLimitEnabled && $rateLimit > 0 && $attemptCount >= $rateLimit && !$isSystemNotification) {
     Logger::error('Rate limit reached', ['location_id' => $locId, 'rate_limit' => $rateLimit, 'attempt_count' => $attemptCount]);
     Logger::response(403, ['status' => 'error', 'error' => 'rate_limit_reached']);
     $blockedMessageId = record_workflow_sms_block($db, (string)$locId, $validNumbers, $message, 'rate_limit_reached', [
@@ -709,7 +745,7 @@ if ($rateLimitEnabled && $rateLimit > 0 && $attemptCount >= $rateLimit) {
 }
 
 // Atomically reserve an attempt
-if ($rateLimitEnabled && $rateLimit > 0) {
+if ($rateLimitEnabled && $rateLimit > 0 && !$isSystemNotification) {
     $tokenRef->set([
         'attempt_count' => \Google\Cloud\Firestore\FieldValue::increment(1)
     ], ['merge' => true]);

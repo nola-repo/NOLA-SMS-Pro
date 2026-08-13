@@ -60,9 +60,9 @@ if (empty($userId)) {
     exit;
 }
 
-if (!in_array($action, ['reset', 'delete', 'monthly_credit_reset'], true)) {
+if (!in_array($action, ['reset', 'delete', 'monthly_credit_reset', 'toggle_pause', 'toggle_active', 'pause', 'unpause'], true)) {
     http_response_code(400);
-    echo json_encode(['status' => 'error', 'message' => 'action must be reset, delete, or monthly_credit_reset']);
+    echo json_encode(['status' => 'error', 'message' => 'action must be reset, delete, monthly_credit_reset, toggle_pause, toggle_active, pause, or unpause']);
     exit;
 }
 
@@ -77,6 +77,64 @@ try {
     }
 
     $userData = $userSnap->data();
+
+    // ── Pause / Unpause / Toggle Activation ──────────────────────────────────
+    if (in_array($action, ['toggle_pause', 'toggle_active', 'pause', 'unpause'], true)) {
+        $locId = $userData['active_location_id'] ?? $userData['location_id'] ?? '';
+        $targetEnabled = $action === 'pause' ? false : ($action === 'unpause' ? true : (isset($input['active']) ? (bool)$input['active'] : (isset($input['enabled']) ? (bool)$input['enabled'] : (isset($input['toggle_enabled']) ? (bool)$input['toggle_enabled'] : false))));
+        $now = new \DateTimeImmutable();
+        $ts = new \Google\Cloud\Core\Timestamp($now);
+
+        $userUpdate = [
+            'active'         => $targetEnabled,
+            'toggle_enabled' => $targetEnabled,
+            'updated_at'     => $ts,
+        ];
+        if (isset($input['subscription_status'])) {
+            $userUpdate['subscription_status'] = trim((string)$input['subscription_status']);
+        }
+        $userRef->set($userUpdate, ['merge' => true]);
+
+        if (!empty($locId)) {
+            $tokenRef = $db->collection('ghl_tokens')->document($locId);
+            if ($tokenRef->snapshot()->exists()) {
+                $tokUpdate = [
+                    'toggle_enabled' => $targetEnabled,
+                    'updated_at'     => $ts,
+                ];
+                if (isset($input['subscription_status'])) {
+                    $tokUpdate['subscription_status'] = trim((string)$input['subscription_status']);
+                }
+                $tokenRef->set($tokUpdate, ['merge' => true]);
+            }
+
+            $subRef = $db->collection('agency_subaccounts')->document($locId);
+            if ($subRef->snapshot()->exists()) {
+                $subUpdate = [
+                    'toggle_enabled' => $targetEnabled,
+                    'updated_at'     => $ts,
+                ];
+                if (isset($input['subscription_status'])) {
+                    $subUpdate['subscription_status'] = trim((string)$input['subscription_status']);
+                }
+                $subRef->set($subUpdate, ['merge' => true]);
+            }
+        }
+
+        NolaCache::invalidateAdminDashboard();
+        NolaCache::delete("admin_user_profile_" . $userId);
+        if (!empty($locId)) {
+            NolaCache::delete("account_profile_" . $locId);
+            NolaCache::deleteRegistry("credits_registry_" . $locId);
+        }
+
+        echo json_encode([
+            'status'         => 'success',
+            'toggle_enabled' => $targetEnabled,
+            'message'        => $targetEnabled ? 'User account unpaused and SMS sending resumed.' : 'User account paused and SMS sending disabled.'
+        ]);
+        exit;
+    }
 
     // ── Reset Subaccount ──────────────────────────────────────────────────────
     if ($action === 'reset') {
