@@ -409,7 +409,7 @@ export const AdminSettings: React.FC = () => {
 
     const [debouncedSearch, setDebouncedSearch] = useState('');
     const [filterType, setFilterType] = useState<'all' | 'message' | 'sender_request' | 'credit_purchase' | 'credit_usage'>('all');
-    const [categoryFilter, setCategoryFilter] = useState<'all' | 'successful' | 'provider_error' | 'validation' | 'platform_error' | 'pending'>('all');
+    const [categoryFilter, setCategoryFilter] = useState<'all' | 'successful' | 'provider_error' | 'provider_timeout' | 'invalid_phone' | 'content_rejected' | 'validation' | 'platform_error' | 'pending'>('all');
     const [filterMenuOpen, setFilterMenuOpen] = useState(false);
     const [currentPage, setCurrentPage] = useState(1);
     const [selectedLog, setSelectedLog] = useState<any | null>(null);
@@ -673,9 +673,21 @@ export const AdminSettings: React.FC = () => {
         if (filterType !== 'all' && type !== filterType) return false;
         
         const normGroup = getNormalizedStatusGroup(log);
+        const errCat = String(log.error_category || '').toLowerCase();
+        const rawReason = String(log.failure_reason || log.failed_reason || log.error || log.reason || '').toLowerCase();
+
         if (categoryFilter !== 'all') {
             if (categoryFilter === 'platform_error') {
                 if (!log.is_platform_error && normGroup !== 'platform_error') return false;
+            } else if (categoryFilter === 'provider_timeout') {
+                const isTimeout = errCat === 'semaphore_timeout' || errCat === 'unisms_timeout' || rawReason.includes('timeout') || rawReason.includes('timed out');
+                if (!isTimeout) return false;
+            } else if (categoryFilter === 'invalid_phone') {
+                const isInvalidPhone = errCat === 'invalid_phone' || rawReason.includes('invalid phone') || rawReason.includes('invalid_phone');
+                if (!isInvalidPhone) return false;
+            } else if (categoryFilter === 'content_rejected') {
+                const isContent = errCat === 'content_rejected' || errCat === 'content_too_short' || errCat === 'provider_validation_422' || rawReason.includes('spam') || rawReason.includes('too short') || rawReason.includes('content');
+                if (!isContent) return false;
             } else if (categoryFilter === 'provider_error') {
                 if (normGroup !== 'provider_error') return false;
             } else if (categoryFilter === 'validation') {
@@ -1084,8 +1096,11 @@ export const AdminSettings: React.FC = () => {
                                                 >
                                                     <option value="all">All Events</option>
                                                     <option value="successful">Successful Deliveries</option>
-                                                    <option value="provider_error">Provider Timeouts & Errors</option>
-                                                    <option value="validation">Validation Issues (Invalid Phone/Spam)</option>
+                                                    <option value="provider_error">All Provider Errors</option>
+                                                    <option value="provider_timeout">Provider Timeouts (Semaphore / UniSMS)</option>
+                                                    <option value="validation">All Validation Issues</option>
+                                                    <option value="invalid_phone">Invalid Destination Phone</option>
+                                                    <option value="content_rejected">Content Rejected / Spam</option>
                                                     <option value="platform_error">Platform Errors Only</option>
                                                     <option value="pending">Pending / Queued</option>
                                                 </select>
