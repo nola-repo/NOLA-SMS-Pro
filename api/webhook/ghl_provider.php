@@ -322,6 +322,28 @@ $messageId = provider_first_scalar($payload, [
     ['data', 'messageId'],
     ['data', 'message_id'],
 ]);
+$requestedSender = provider_first_scalar($payload, [
+    'sender',
+    'senderId',
+    'sender_id',
+    'from',
+    'sendername',
+    'sender_name',
+    ['data', 'sender'],
+    ['data', 'sender_id'],
+    ['data', 'senderId'],
+    ['data', 'sendername'],
+    ['data', 'sender_name'],
+    ['customData', 'sender'],
+    ['customData', 'sender_id'],
+    ['customData', 'senderId'],
+    ['customData', 'sendername'],
+    ['customData', 'sender_name'],
+    ['message', 'from'],
+    ['message', 'sender'],
+    ['message', 'senderId'],
+    ['message', 'sender_id'],
+]);
 $msgType = strtoupper(provider_first_scalar($payload, [
     'type',
     'messageType',
@@ -334,6 +356,7 @@ error_log('[ghl_provider][NORMALIZED] ' . json_encode([
     'locationId' => $locationId,
     'contactId' => $contactId,
     'messageId' => $messageId,
+    'requestedSender' => $requestedSender,
     'msgType' => $msgType,
 ]));
 
@@ -655,7 +678,7 @@ $senderResolution = SenderResolver::resolve(
     (string)$locationId,
     $config,
     $intData,
-    null,
+    $requestedSender ? (string)$requestedSender : null,
     $isSystemNotification,
     'ghl_provider'
 );
@@ -813,6 +836,8 @@ $localProviderMessageId = build_local_sms_doc_id(
     (string)$normalizedPhone,
     $messageId ? (string)$messageId : null
 );
+$billingReferenceId = $messageId ? (string)$messageId : $localProviderMessageId;
+$billingCharged = false;
 $providerPreflightTs = new \Google\Cloud\Core\Timestamp(new \DateTime());
 $creditsToCharge = $isSystemNotification ? 0 : $required_credits;
 
@@ -839,8 +864,7 @@ try {
         'source' => 'ghl_provider',
         'type' => 'Conversation Provider',
         'provider' => 'ghl_provider',
-        'provider_reference_id' => $messageId ?: $localProviderMessageId,
-        'provider_message_id' => $messageId ?: $localProviderMessageId,
+        'suppress_provider_reference' => true,
         'provider_status' => 'accepted',
         'name' => $displayName,
         'conversation_name' => $displayName,
@@ -912,12 +936,13 @@ if ($isSystemNotification) {
         'free_usage_count' => $freeUsageCount + $required_credits,
         'updated_at'       => new \Google\Cloud\Core\Timestamp(new \DateTime()),
     ], ['merge' => true]);
+    $billingCharged = true;
 
     try {
         $creditManager->record_trial_usage(
             $locationId,
             $required_credits,
-            $messageId ?? ('ghl_prov_trial_' . bin2hex(random_bytes(4))),
+            $billingReferenceId,
             "SMS (Trial) to {$normalizedPhone}"
         );
     } catch (\Exception $e) {
@@ -945,7 +970,7 @@ if ($isSystemNotification) {
         $baseProvider = ($activeProvider === 'unisms') ? 'unisms' : 'semaphore';
         $provider  = $usingOwnApiKey ? ($baseProvider . '_custom') : $baseProvider;
 
-        $refId = $messageId ?? ('ghl_prov_' . bin2hex(random_bytes(4)));
+        $refId = $billingReferenceId;
         $desc = "SMS to {$normalizedPhone}";
 
         $txMetadata = [
@@ -994,6 +1019,7 @@ if ($isSystemNotification) {
                 $txMetadata
             );
         }
+        $billingCharged = true;
 
         // ── Low Balance Trigger Coverage (ghl_provider paid deduction check) ────
         try {
@@ -1037,6 +1063,117 @@ try {
         $gateway_error = $firstRes['error'] ?? ProviderResultService::failureMessage($gatewaySummary['errors'], $chosenProvider);
         $smsStatus = $gatewaySummary['http_status'];
     }
+} catch (SmsProviderTimeoutException $e) {
+    // ── Retryable Timeout — queue for background retry ──────────────────────
+    // GHL already got HTTP 200. Do NOT refund credits yet.
+    // Mark message as Pending and write to sms_retry_queue so the retry worker
+    // picks it up in the next 5-minute window.
+    $gateway_error   = $e->getMessage();
+    $chosenProvider  = $e->provider ?: 'semaphore';
+    $gatewayAccepted = false;
+    $smsStatus       = 202;
+
+    error_log('[ghl_provider][TIMEOUT_QUEUED_FOR_RETRY] ' . json_encode([
+        'req_id'     => $providerReqId,
+        'locationId' => $locationId,
+        'messageId'  => $messageId,
+        'phone'      => $normalizedPhone,
+        'sender'     => $sender,
+        'provider'   => $chosenProvider,
+        'curl_error' => $e->curlError,
+    ]));
+
+    $retryQueued = false;
+    $retryDocId = 'retry_' . substr(hash('sha256', $localProviderMessageId), 0, 24);
+    $retryNow = new \DateTime();
+    $retryTs  = new \Google\Cloud\Core\Timestamp($retryNow);
+    $nextRetry = (new \DateTime())->modify('+5 minutes');
+    $nextRetryTs = new \Google\Cloud\Core\Timestamp($nextRetry);
+
+    // Write retry doc to Firestore. The deterministic doc ID prevents duplicate
+    // queue records when GHL or the PHP worker replays the same message.
+    try {
+        $retryRef = $db->collection('sms_retry_queue')->document($retryDocId);
+        $retrySnap = $retryRef->snapshot();
+        if ($retrySnap->exists()) {
+            $retryRef->set([
+                'last_error'    => $e->curlError ?: $e->getMessage(),
+                'updated_at'    => $retryTs,
+                'next_retry_at' => $nextRetryTs,
+            ], ['merge' => true]);
+        } else {
+            $retryRef->set([
+                'retry_doc_id'       => $retryDocId,
+                'message_id'         => $localProviderMessageId,
+                'ghl_message_id'     => $messageId,
+                'location_id'        => $locationId,
+                'phone'              => $normalizedPhone,
+                'message'            => $message,
+                'sender_id'          => $sender,
+                'api_key'            => $usingOwnApiKey ? ($activeApiKey ?? null) : null,
+                'provider_pref'      => $providerPreference,
+                'provider'           => $chosenProvider,
+                'account_id'         => $account_id,
+                'billing_reference_id' => $billingReferenceId,
+                'billing_charged'    => $billingCharged,
+                'billing_master_lock'=> $billingMasterLock ?? false,
+                'agency_id'          => $billingAgencyId ?? '',
+                'required_credits'   => $required_credits,
+                'using_free_credits' => $usingFreeCredits,
+                'status'             => 'pending_retry',
+                'attempts'           => 0,
+                'max_attempts'       => 3,
+                'last_error'         => $e->curlError ?: $e->getMessage(),
+                'created_at'         => $retryTs,
+                'updated_at'         => $retryTs,
+                'next_retry_at'      => $nextRetryTs,
+            ]);
+        }
+        $retryQueued = true;
+    } catch (\Throwable $retryWriteEx) {
+        error_log('[ghl_provider][RETRY_QUEUE_WRITE_FAILED] ' . $retryWriteEx->getMessage());
+    }
+
+    // Set message status to Pending (awaiting retry) — not Failed
+    if ($retryQueued) {
+        try {
+            MessageSyncService::recordMessageEvent($db, [
+                'origin'          => 'ghl_provider_retry_queued',
+                'retry_doc_id'    => $retryDocId,
+                'retry_status'    => 'pending_retry',
+                'retry_count'     => 0,
+                'retry_max_attempts' => 3,
+                'next_retry_at'   => $nextRetryTs,
+                'conversation_id' => $convId,
+                'location_id'     => $locationId,
+                'number'          => $normalizedPhone,
+                'message'         => $message,
+                'direction'       => 'outbound',
+                'sender_id'       => $sender,
+                'sender_name'     => $sender,
+                'status'          => 'Pending',
+                'ghl_message_id'  => $messageId,
+                'ghl_contact_id'  => $contactId,
+                'updated_at'      => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+                'source'          => 'ghl_provider',
+                'provider'        => $chosenProvider,
+                'suppress_provider_reference' => true,
+                'provider_error'  => $e->getMessage(),
+                'name'            => $displayName,
+                'conversation_name' => $displayName,
+                'message_id'      => $localProviderMessageId,
+            ]);
+        } catch (\Throwable $statusEx) {
+            error_log('[ghl_provider][RETRY_STATUS_UPDATE_FAILED] ' . $statusEx->getMessage());
+        }
+    }
+
+    if ($retryQueued) {
+        exit; // Background worker handles the rest
+    }
+
+    $gatewaySummary = ['errors' => [$gateway_error], 'http_status' => 503];
+    $firstRes = [];
 } catch (\Throwable $e) {
     $gatewaySummary = ProviderResultService::summarizeGatewayException($e);
     $smsStatus = $gatewaySummary['http_status'];
@@ -1062,7 +1199,9 @@ if (!$gatewayAccepted) {
     // status, but we refund credits and log the failure for investigation.
     error_log('[ghl_provider][PROVIDER_FAILED_POST_FLUSH] ' . ucfirst($chosenProvider) . ' rejected msg for loc=' . $locationId . ' msgId=' . $messageId . ' status=' . $smsStatus);
 
-    if ($usingFreeCredits) {
+    if (!$billingCharged) {
+        error_log('[ghl_provider][PROVIDER_FAILED_POST_FLUSH] No billing charge recorded; skipping refund for msgId=' . $messageId);
+    } elseif ($usingFreeCredits) {
         try {
             $intRef->set([
                 'free_usage_count' => \Google\Cloud\Firestore\FieldValue::increment(-$required_credits),
@@ -1072,7 +1211,7 @@ if (!$gatewayAccepted) {
             if (!empty($messageId)) {
                 $trialTxDocs = $db->collection('credit_transactions')
                     ->where('account_id', '=', CreditManager::integration_doc_id_for_location($locationId))
-                    ->where('reference_id', '=', $messageId)
+                    ->where('reference_id', '=', $billingReferenceId)
                     ->documents();
                 foreach ($trialTxDocs as $trialTxDoc) {
                     if ($trialTxDoc->exists()) {
@@ -1088,7 +1227,7 @@ if (!$gatewayAccepted) {
             $creditManager->add_credits(
                 $account_id,
                 $required_credits,
-                $messageId ?? 'refund_ghl_prov',
+                $billingReferenceId,
                 'Refund — SMS failed to send (' . ucfirst($chosenProvider) . ' rejected)',
                 'refund'
             );
@@ -1096,7 +1235,7 @@ if (!$gatewayAccepted) {
                 $creditManager->add_credits(
                     $billingAgencyId,
                     $required_credits,
-                    ($messageId ?? 'refund_ghl_prov') . '_agency',
+                    $billingReferenceId . '_agency',
                     'Agency refund - SMS failed to send (' . ucfirst($chosenProvider) . ' rejected)',
                     'refund',
                     'agency'

@@ -83,6 +83,8 @@ class GhlClient
                 CURLOPT_HTTPHEADER     => $headers,
                 CURLOPT_CONNECTTIMEOUT => 3,
                 CURLOPT_TIMEOUT        => 8,
+                CURLOPT_IPRESOLVE      => CURL_IPRESOLVE_V4,
+                CURLOPT_TCP_NODELAY    => 1,
             ];
 
             if ($method === 'POST') {

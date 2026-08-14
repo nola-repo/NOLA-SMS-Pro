@@ -49,3 +49,55 @@ interface SmsProviderInterface
      */
     public function normalizeStatus(string $rawStatus): string;
 }
+
+/**
+ * Base exception for transient provider timeouts (Semaphore, UniSMS, etc.).
+ * Signals to upstream callers (webhooks, workers) that the failure is network/gateway
+ * latency and is eligible for automatic retry queueing.
+ */
+class SmsProviderTimeoutException extends \RuntimeException
+{
+    public string $provider;
+    public string $curlError;
+    public string $senderId;
+    public string $recipient;
+
+    public function __construct(
+        string $message,
+        string $provider   = 'unknown',
+        string $curlError  = '',
+        string $senderId   = '',
+        string $recipient  = ''
+    ) {
+        parent::__construct($message);
+        $this->provider   = $provider;
+        $this->curlError  = $curlError;
+        $this->senderId   = $senderId;
+        $this->recipient  = $recipient;
+    }
+}
+
+class SemaphoreTimeoutException extends SmsProviderTimeoutException
+{
+    public function __construct(
+        string $message,
+        string $curlError  = '',
+        string $senderId   = '',
+        string $recipient  = ''
+    ) {
+        parent::__construct($message, 'semaphore', $curlError, $senderId, $recipient);
+    }
+}
+
+class UniSmsTimeoutException extends SmsProviderTimeoutException
+{
+    public function __construct(
+        string $message,
+        string $curlError  = '',
+        string $senderId   = '',
+        string $recipient  = ''
+    ) {
+        parent::__construct($message, 'unisms', $curlError, $senderId, $recipient);
+    }
+}
+

@@ -103,14 +103,14 @@ class UniSmsProvider implements SmsProviderInterface
         $lastHttpCode  = 0;
         $lastResponse  = false;
         $lastErrNo     = 0;
-        $effectiveTimeout = $timeoutOverride !== null ? max(1, $timeoutOverride) : max(8, $this->timeoutSeconds);
+        $effectiveTimeout = $timeoutOverride !== null ? max(1, $timeoutOverride) : min(7, max(1, $this->timeoutSeconds));
 
         for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
             $startTime = microtime(true);
             $ch = curl_init($url);
 
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, min(6, $effectiveTimeout));
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, min(5, $effectiveTimeout));
             curl_setopt($ch, CURLOPT_TIMEOUT, $effectiveTimeout);
             curl_setopt($ch, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
             curl_setopt($ch, CURLOPT_TCP_NODELAY, 1); // Disable Nagle's algorithm for instant packet dispatch
@@ -161,8 +161,9 @@ class UniSmsProvider implements SmsProviderInterface
 
             $isConnectionError = ($lastResponse === false);
             $isServerError     = ($lastHttpCode >= 500 && $lastHttpCode < 600);
+            $isHttpTimeout     = ($lastHttpCode === 408);
             $isRateLimit       = ($lastHttpCode === 429);
-            $isTransient       = $isConnectionError || $isServerError || $isRateLimit;
+            $isTransient       = $isConnectionError || $isServerError || $isHttpTimeout || $isRateLimit;
 
             // Fail-Fast check for hard socket errors
             $isHardSocketError = $isConnectionError && $latencyMs < 1000 && in_array($lastErrNo, [6, 7, 35], true);
@@ -216,7 +217,37 @@ class UniSmsProvider implements SmsProviderInterface
         if ($lastResponse === false) {
             // Final failure after all retries — auto-run diagnostics
             self::triggerDiagnostics('unisms', 'cURL error: ' . $lastCurlError, 'send');
+
+            $isTimeout = (
+                stripos($lastCurlError, 'timed out') !== false ||
+                stripos($lastCurlError, 'Connection timed') !== false ||
+                stripos($lastCurlError, 'Operation timed') !== false ||
+                in_array($lastErrNo, [28, 408], true)
+            );
+
+            if ($isTimeout) {
+                $recipient = is_array($payload) ? ($payload['recipient'] ?? ($payload['recipients'][0] ?? '')) : '';
+                $senderId  = is_array($payload) ? ($payload['sender_id'] ?? '') : '';
+                throw new UniSmsTimeoutException(
+                    "UniSMS cURL error: " . $lastCurlError,
+                    $lastCurlError,
+                    (string)$senderId,
+                    (string)$recipient
+                );
+            }
+
             throw new \Exception("UniSMS cURL error: " . $lastCurlError);
+        }
+
+        if ($lastHttpCode === 408) {
+            $recipient = is_array($payload) ? ($payload['recipient'] ?? ($payload['recipients'][0] ?? '')) : '';
+            $senderId  = is_array($payload) ? ($payload['sender_id'] ?? '') : '';
+            throw new UniSmsTimeoutException(
+                'UniSMS send timed out (HTTP 408)',
+                'HTTP 408',
+                (string)$senderId,
+                (string)$recipient
+            );
         }
 
         $decoded = json_decode($lastResponse, true);
@@ -287,6 +318,8 @@ class UniSmsProvider implements SmsProviderInterface
             try {
                 $res       = $this->sendSingle($number, $message, $senderId, $apiKey);
                 $results[] = $res;
+            } catch (SmsProviderTimeoutException $e) {
+                throw $e;
             } catch (\Exception $e) {
                 $providerHttpStatus = null;
                 if (preg_match('/HTTP\s+(\d{3})/i', $e->getMessage(), $m)) {

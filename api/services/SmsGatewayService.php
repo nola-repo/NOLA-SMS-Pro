@@ -227,7 +227,12 @@ class SmsGatewayService
                 'guard_action'        => 'blocked_unisms_swap_queued_for_retry',
                 'reason'              => 'Semaphore degraded, custom sender_id preserved without provider overwrite'
             ]));
-            throw new \Exception("Semaphore network degraded (Circuit Breaker OPEN). Message queued for delayed retry under Sender ID {$senderId}.");
+            throw new SemaphoreTimeoutException(
+                "Semaphore network degraded (Circuit Breaker OPEN). Message queued for delayed retry under Sender ID {$senderId}.",
+                'circuit_breaker_open',
+                $senderId,
+                $numbers[0] ?? ''
+            );
         }
 
         try {
@@ -256,6 +261,11 @@ class SmsGatewayService
                         'guard_action'    => 'prevented_unisms_failover',
                         'reason'          => 'Custom Semaphore sender ID cannot be substituted with default UniSMS sender'
                     ]));
+                    // Preserve typed SmsProviderTimeoutException so callers (ghl_provider, send_sms)
+                    // can queue the message for retry instead of marking it Failed immediately.
+                    if ($e instanceof SmsProviderTimeoutException) {
+                        throw $e;
+                    }
                     throw new \Exception("Semaphore transient network error ({$errMessage}). Preserved custom Sender ID {$senderId} without UniSMS substitution.");
                 }
 
@@ -286,6 +296,14 @@ class SmsGatewayService
                     ];
                 } catch (\Throwable $fbEx) {
                     $this->recordProviderMetric('unisms', true);
+                    // If fallback or original error was a typed timeout, preserve it so the
+                    // retry queue mechanism (ghl_provider.php) can catch it correctly.
+                    if ($fbEx instanceof SmsProviderTimeoutException) {
+                        throw $fbEx;
+                    }
+                    if ($e instanceof SmsProviderTimeoutException) {
+                        throw $e;
+                    }
                     throw new \Exception("Primary send failed ({$errMessage}) and fallback send failed: " . $fbEx->getMessage());
                 }
             } else {

@@ -207,8 +207,9 @@ class SemaphoreProvider implements SmsProviderInterface
 
             $isConnectionError = ($lastResponse === false);
             $isServerError     = ($lastHttpCode >= 500 && $lastHttpCode < 600);
+            $isHttpTimeout     = ($lastHttpCode === 408);
             $isRateLimit       = ($lastHttpCode === 429);
-            $isTransient       = $isConnectionError || $isServerError || $isRateLimit;
+            $isTransient       = $isConnectionError || $isServerError || $isHttpTimeout || $isRateLimit;
 
             // Fail-Fast check: Hard socket errors (DNS fail, connection refused <1s) should stop early
             $isHardSocketError = $isConnectionError && $latencyMs < 1000 && in_array($lastErrNo, [6, 7, 35], true);
@@ -252,9 +253,10 @@ class SemaphoreProvider implements SmsProviderInterface
         }
 
         return [
-            'response'  => $lastResponse,
-            'httpCode'  => $lastHttpCode,
-            'curlError' => $lastCurlError,
+            'response'   => $lastResponse,
+            'httpCode'   => $lastHttpCode,
+            'curlError'  => $lastCurlError,
+            'curlErrNo'  => $lastErrNo,
         ];
     }
 
@@ -278,14 +280,14 @@ class SemaphoreProvider implements SmsProviderInterface
         $lockFp = $this->acquirePacingLock($resolvedKey);
 
         try {
-            // Adaptive timeouts: connectTimeout = 10s, totalTimeout = 12s (Attempt 2+ up to 18s)
+            // Adaptive timeouts: connectTimeout = 5s, totalTimeout = 7s (Attempt 2+ up to 12s)
             $result = $this->curlWithRetry(
                 $this->apiUrl,
                 'POST',
                 $payload,
                 ["Content-Type: application/x-www-form-urlencoded"],
-                10,
-                12,
+                5,
+                7,
                 3
             );
         } finally {
@@ -295,11 +297,40 @@ class SemaphoreProvider implements SmsProviderInterface
         if ($result['response'] === false) {
             // Final failure after all retries — auto-run diagnostics in background
             self::triggerDiagnostics('semaphore', 'cURL error: ' . $result['curlError'], 'send');
-            throw new \Exception("Semaphore cURL error: " . $result['curlError']);
+
+            $curlErr = $result['curlError'];
+            $isTimeout = (
+                stripos($curlErr, 'timed out') !== false ||
+                stripos($curlErr, 'Connection timed') !== false ||
+                stripos($curlErr, 'Operation timed') !== false ||
+                in_array($result['curlErrNo'] ?? 0, [28, 408], true) // CURLE_OPERATION_TIMEDOUT
+            );
+
+            if ($isTimeout) {
+                // Retryable — caller should queue this for background retry
+                throw new SemaphoreTimeoutException(
+                    "Semaphore cURL error: " . $curlErr,
+                    $curlErr,
+                    $senderId,
+                    $numbers[0] ?? ''
+                );
+            }
+
+            // Non-timeout (hard socket error, DNS fail, etc.) — not retryable
+            throw new \Exception("Semaphore cURL error: " . $curlErr);
         }
 
         $httpCode = $result['httpCode'];
         $decoded  = json_decode($result['response'], true);
+
+        if ($httpCode === 408) {
+            throw new SemaphoreTimeoutException(
+                'Semaphore send timed out (HTTP 408)',
+                'HTTP 408',
+                $senderId,
+                $numbers[0] ?? ''
+            );
+        }
 
         if ($httpCode < 200 || $httpCode >= 300 || !is_array($decoded)) {
             $msg = $decoded['message'] ?? $decoded['error'] ?? 'Semaphore HTTP ' . $httpCode;

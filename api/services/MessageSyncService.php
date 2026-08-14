@@ -28,17 +28,23 @@ class MessageSyncService
         $messageText = (string)($event['message'] ?? '');
         $status = self::normalizeStatus($event['status'] ?? null, $direction);
         $activityMeta = self::activityMeta($event, $status);
-        $providerReferenceId = self::firstNonEmpty([
-            $event['provider_reference_id'] ?? null,
-            $event['provider_message_id'] ?? null,
-            $event['message_id'] ?? null,
-        ]);
-        $providerMessageId = self::firstNonEmpty([
-            $event['provider_message_id'] ?? null,
-            $providerReferenceId,
-        ]);
+        if (!empty($event['suppress_provider_reference'])) {
+            $providerReferenceId = null;
+            $providerMessageId = null;
+        } else {
+            $providerReferenceId = self::firstNonEmpty([
+                $event['provider_reference_id'] ?? null,
+                $event['provider_message_id'] ?? null,
+                $event['message_id'] ?? null,
+            ]);
+            $providerMessageId = self::firstNonEmpty([
+                $event['provider_message_id'] ?? null,
+                $providerReferenceId,
+            ]);
+        }
 
         $messageData = array_filter([
+            'origin' => $event['origin'] ?? null,
             'conversation_id' => $conversationId,
             'location_id' => $locationId,
             'message_id' => $messageId,
@@ -71,7 +77,11 @@ class MessageSyncService
             'is_retryable' => $activityMeta['is_retryable'] ?? null,
             'failure_summary' => $activityMeta['failure_summary'] ?? null,
             'retry_count' => $event['retry_count'] ?? null,
+            'retry_doc_id' => $event['retry_doc_id'] ?? null,
+            'retry_status' => $event['retry_status'] ?? null,
+            'retry_max_attempts' => $event['retry_max_attempts'] ?? null,
             'last_retry_at' => $event['last_retry_at'] ?? null,
+            'next_retry_at' => $event['next_retry_at'] ?? null,
             'finalized_at' => $event['finalized_at'] ?? null,
             'ghl_message_id' => $event['ghl_message_id'] ?? null,
             'ghl_conversation_id' => $event['ghl_conversation_id'] ?? null,
@@ -84,6 +94,7 @@ class MessageSyncService
 
         if ($isOutbound) {
             $logData = array_filter([
+                'origin' => $event['origin'] ?? null,
                 'message_id' => $messageId,
                 'message_reference_id' => $messageReferenceId,
                 'location_id' => $locationId,
@@ -111,7 +122,11 @@ class MessageSyncService
                 'is_retryable' => $activityMeta['is_retryable'] ?? null,
                 'failure_summary' => $activityMeta['failure_summary'] ?? null,
                 'retry_count' => $event['retry_count'] ?? null,
+                'retry_doc_id' => $event['retry_doc_id'] ?? null,
+                'retry_status' => $event['retry_status'] ?? null,
+                'retry_max_attempts' => $event['retry_max_attempts'] ?? null,
                 'last_retry_at' => $event['last_retry_at'] ?? null,
+                'next_retry_at' => $event['next_retry_at'] ?? null,
                 'finalized_at' => $event['finalized_at'] ?? null,
                 'ghl_message_id' => $event['ghl_message_id'] ?? null,
                 'ghl_contact_id' => $event['ghl_contact_id'] ?? null,

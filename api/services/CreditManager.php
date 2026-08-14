@@ -1006,6 +1006,196 @@ class CreditManager
         }
     }
 
+    public function refundRetryTimeout(
+        string $location_id,
+        int $amount,
+        string $billing_reference_id,
+        ?string $agency_id = null,
+        bool $refund_agency_wallet = false
+    ): array {
+        if ($amount <= 0 || trim($location_id) === '' || trim($billing_reference_id) === '') {
+            return ['refunded' => false, 'amount' => 0, 'reason' => 'nothing_to_refund'];
+        }
+
+        $refundRef = 'timeout_refund_' . $billing_reference_id;
+        $subaccountRef = $this->get_account_ref($location_id);
+        $subTxRef = $this->db->collection('credit_transactions')->document(
+            self::safeTransactionDocId('timeout_refund_', $billing_reference_id)
+        );
+
+        $agency_id = trim((string)($agency_id ?? ''));
+        $agencyRef = null;
+        $agencyWalletRef = null;
+        $agencyTxRef = null;
+        if ($refund_agency_wallet && $agency_id !== '') {
+            $agencyRef = $this->get_agency_ref($agency_id);
+            $agencyWalletRef = $this->db->collection('agency_wallet')->document($agency_id);
+            $agencyTxRef = $this->db->collection('credit_transactions')->document(
+                self::safeTransactionDocId('timeout_refund_', $billing_reference_id . '_agency')
+            );
+        }
+
+        try {
+            $result = $this->db->runTransaction(function ($transaction) use (
+                $subaccountRef,
+                $subTxRef,
+                $agencyRef,
+                $agencyWalletRef,
+                $agencyTxRef,
+                $amount,
+                $refundRef,
+                $location_id,
+                $agency_id
+            ) {
+                $subTxSnap = $transaction->snapshot($subTxRef);
+                if ($subTxSnap->exists()) {
+                    return ['refunded' => false, 'amount' => 0, 'reason' => 'already_refunded'];
+                }
+
+                $now = new \DateTimeImmutable();
+                $ts = new Timestamp($now);
+
+                $subSnap = $transaction->snapshot($subaccountRef);
+                $currentSubBalance = $subSnap->exists() ? (int)($subSnap->data()['credit_balance'] ?? 0) : 0;
+                $newSubBalance = $currentSubBalance + $amount;
+
+                $currentAgencyBalance = null;
+                $newAgencyBalance = null;
+                $walletSnap = null;
+                if ($agencyRef !== null && $agencyTxRef !== null) {
+                    $agencySnap = $transaction->snapshot($agencyRef);
+                    $currentAgencyBalance = $agencySnap->exists() ? (int)($agencySnap->data()['balance'] ?? 0) : 0;
+                    $newAgencyBalance = $currentAgencyBalance + $amount;
+                    if ($agencyWalletRef !== null) {
+                        $walletSnap = $transaction->snapshot($agencyWalletRef);
+                    }
+                }
+
+                $transaction->set($subaccountRef, [
+                    'credit_balance' => $newSubBalance,
+                    'updated_at' => $ts,
+                ], ['merge' => true]);
+
+                $transaction->create($subTxRef, [
+                    'transaction_id' => $subTxRef->id(),
+                    'transaction_reference_id' => ReferenceId::generate('TXN'),
+                    'account_id' => self::integration_doc_id_for_location($location_id),
+                    'wallet_scope' => 'subaccount',
+                    'type' => 'timeout_refund',
+                    'amount' => $amount,
+                    'balance_after' => $newSubBalance,
+                    'reference_id' => $refundRef,
+                    'description' => 'Refund - SMS not confirmed after provider timeout retries',
+                    'created_at' => $ts,
+                ]);
+
+                if ($agencyRef !== null && $agencyTxRef !== null) {
+                    $transaction->set($agencyRef, [
+                        'balance' => $newAgencyBalance,
+                        'updated_at' => $ts,
+                    ], ['merge' => true]);
+
+                    if ($agencyWalletRef !== null && $walletSnap !== null && $walletSnap->exists()) {
+                        $transaction->set($agencyWalletRef, [
+                            'balance' => $newAgencyBalance,
+                            'updated_at' => $ts,
+                        ], ['merge' => true]);
+                    }
+
+                    $transaction->create($agencyTxRef, [
+                        'transaction_id' => $agencyTxRef->id(),
+                        'transaction_reference_id' => ReferenceId::generate('TXN'),
+                        'account_id' => $agency_id,
+                        'target_account' => self::integration_doc_id_for_location($location_id),
+                        'wallet_scope' => 'agency',
+                        'type' => 'timeout_refund',
+                        'amount' => $amount,
+                        'balance_after' => $newAgencyBalance,
+                        'reference_id' => $refundRef . '_agency',
+                        'description' => 'Agency refund - SMS not confirmed after provider timeout retries',
+                        'created_at' => $ts,
+                    ]);
+                }
+
+                return ['refunded' => true, 'amount' => $amount];
+            });
+
+            $this->invalidateSubaccountCache($location_id);
+            if ($refund_agency_wallet && $agency_id !== '') {
+                try {
+                    require_once __DIR__ . '/../cache_helper.php';
+                    NolaCache::invalidateAgencyDashboard($agency_id);
+                } catch (\Throwable $e) {}
+            }
+            return $result;
+        } catch (\Throwable $e) {
+            error_log('[CreditManager][refundRetryTimeout] Refund failed for loc=' . $location_id . ': ' . $e->getMessage());
+            return ['refunded' => false, 'amount' => 0, 'reason' => 'refund_exception: ' . $e->getMessage()];
+        }
+    }
+
+    public function refundTrialUsageOnTimeout(string $location_id, int $amount, string $billing_reference_id): array
+    {
+        if ($amount <= 0 || trim($location_id) === '' || trim($billing_reference_id) === '') {
+            return ['refunded' => false, 'amount' => 0, 'reason' => 'nothing_to_refund'];
+        }
+
+        $integrationRef = $this->db->collection('integrations')->document(self::integration_doc_id_for_location($location_id));
+        $txRef = $this->db->collection('credit_transactions')->document(
+            self::safeTransactionDocId('timeout_trial_refund_', $billing_reference_id)
+        );
+        $refundRef = 'timeout_trial_refund_' . $billing_reference_id;
+
+        try {
+            $result = $this->db->runTransaction(function ($transaction) use ($integrationRef, $txRef, $amount, $refundRef, $location_id) {
+                $txSnap = $transaction->snapshot($txRef);
+                if ($txSnap->exists()) {
+                    return ['refunded' => false, 'amount' => 0, 'reason' => 'already_refunded'];
+                }
+
+                $now = new \DateTimeImmutable();
+                $ts = new Timestamp($now);
+                $intSnap = $transaction->snapshot($integrationRef);
+                $currentUsage = $intSnap->exists() ? (int)($intSnap->data()['free_usage_count'] ?? 0) : 0;
+                $newUsage = max(0, $currentUsage - $amount);
+
+                $transaction->set($integrationRef, [
+                    'free_usage_count' => $newUsage,
+                    'updated_at' => $ts,
+                ], ['merge' => true]);
+
+                $transaction->create($txRef, [
+                    'transaction_id' => $txRef->id(),
+                    'transaction_reference_id' => ReferenceId::generate('TXN'),
+                    'account_id' => self::integration_doc_id_for_location($location_id),
+                    'wallet_scope' => 'trial',
+                    'type' => 'timeout_trial_refund',
+                    'amount' => $amount,
+                    'reference_id' => $refundRef,
+                    'description' => 'Trial usage restored - SMS not confirmed after provider timeout retries',
+                    'created_at' => $ts,
+                ]);
+
+                return ['refunded' => true, 'amount' => $amount];
+            });
+
+            $this->invalidateSubaccountCache($location_id);
+            return $result;
+        } catch (\Throwable $e) {
+            error_log('[CreditManager][refundTrialUsageOnTimeout] Refund failed for loc=' . $location_id . ': ' . $e->getMessage());
+            return ['refunded' => false, 'amount' => 0, 'reason' => 'refund_exception: ' . $e->getMessage()];
+        }
+    }
+
+    private static function safeTransactionDocId(string $prefix, string $reference): string
+    {
+        $safe = preg_replace('/[^a-zA-Z0-9_-]/', '_', $reference);
+        if (strlen($safe) > 90) {
+            $safe = substr($safe, 0, 48) . '_' . substr(hash('sha256', $reference), 0, 32);
+        }
+        return $prefix . $safe;
+    }
+
     private function invalidateSubaccountCache(string $locId): void
     {
         try {

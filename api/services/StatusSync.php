@@ -68,6 +68,9 @@ class StatusSync
                 // Messages from send_sms.php may ALSO have a ghl_message_id (stored
                 // separately) but their message_id IS a real Semaphore ID — poll normally.
                 $isGhlProviderSource = ($data['source'] ?? '') === 'ghl_provider';
+                if ($isGhlProviderSource && self::isRetryWorkerOwned($data)) {
+                    continue;
+                }
                 if ($isGhlProviderSource && empty($data['provider_reference_id']) && empty($data['provider_message_id'])) {
                     $dateCreated = self::parseTs($data['date_created'] ?? $data['created_at'] ?? null);
                     if ($dateCreated && (time() - $dateCreated > 300)) {
@@ -202,6 +205,10 @@ class StatusSync
         // message ID as the Semaphore ID (they don't have a Semaphore ID at all).
         // Messages from send_sms.php with a separate ghl_message_id are fine to
         // poll — their message_id IS a real Semaphore ID.
+        if (($data['source'] ?? '') === 'ghl_provider' && self::isRetryWorkerOwned($data)) {
+            return;
+        }
+
         if (($data['source'] ?? '') === 'ghl_provider' && empty($data['provider_reference_id']) && empty($data['provider_message_id'])) {
             return;
         }
@@ -314,6 +321,16 @@ class StatusSync
     private static function providerMessageId(array $data, string $messageId): string
     {
         return (string)($data['provider_message_id'] ?? ($data['provider_reference_id'] ?? $messageId));
+    }
+
+    private static function isRetryWorkerOwned(array $data): bool
+    {
+        $origin = (string)($data['origin'] ?? '');
+        $retryStatus = strtolower(trim((string)($data['retry_status'] ?? '')));
+        if ($origin === 'ghl_provider_retry_queued') {
+            return true;
+        }
+        return in_array($retryStatus, ['pending_retry', 'processing'], true);
     }
 
     private static function finalize($db, $doc, $messageId, $status, $reason = null, $providerStatus = null) {
