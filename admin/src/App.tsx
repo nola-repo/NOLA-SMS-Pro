@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { BrowserRouter } from "react-router-dom";
 import { AdminLayout } from "./pages/AdminLayout";
+import { ErrorBoundary } from "./components/ui/ErrorBoundary";
 
 export const AdminApp: React.FC = () => {
   const [darkMode, setDarkMode] = useState(() => {
@@ -23,10 +24,12 @@ export const AdminApp: React.FC = () => {
   };
 
   return (
-    <BrowserRouter>
-      <div className="h-screen w-full">
-        <AdminLayout darkMode={darkMode} toggleDarkMode={toggleDarkMode} />
-      </div>
-    </BrowserRouter>
+    <ErrorBoundary appName="NOLA SMS Pro Admin">
+      <BrowserRouter>
+        <div className="h-screen w-full">
+          <AdminLayout darkMode={darkMode} toggleDarkMode={toggleDarkMode} />
+        </div>
+      </BrowserRouter>
+    </ErrorBoundary>
   );
 };

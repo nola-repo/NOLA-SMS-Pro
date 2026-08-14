@@ -213,7 +213,7 @@ export const CreditsTab: React.FC = () => {
             }
         } catch (error) {
             devLog.error("Failed to load credit billing data", error);
-        } fontally: {
+        } finally {
             if (mountedRef.current) {
                 setTxLoading(false);
             }

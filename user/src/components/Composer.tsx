@@ -301,6 +301,37 @@ export const Composer: React.FC<ComposerProps> = ({
   const touchStartYMsg = useRef<number>(0);
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
 
+  // ─── Lifecycle & Timer Cleanup (Memory Leak Protection) ─────────────────────
+  const isMountedRef = useRef(true);
+  const activeTimersRef = useRef<Set<number>>(new Set());
+
+  const setSafeTimeout = useCallback((callback: () => void, ms?: number): number => {
+    const timerId = window.setTimeout(() => {
+      activeTimersRef.current.delete(timerId);
+      if (isMountedRef.current) {
+        callback();
+      }
+    }, ms);
+    activeTimersRef.current.add(timerId);
+    return timerId;
+  }, []);
+
+  const clearSafeTimeout = useCallback((timerId: number | null | undefined) => {
+    if (timerId !== null && timerId !== undefined) {
+      window.clearTimeout(timerId);
+      activeTimersRef.current.delete(timerId);
+    }
+  }, []);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      activeTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
+      activeTimersRef.current.clear();
+    };
+  }, []);
+
   // Interactive features state
   const [isCustomValuesOpen, setIsCustomValuesOpen] = useState(false);
   const [isTagsOpen, setIsTagsOpen] = useState(false);
@@ -317,23 +348,30 @@ export const Composer: React.FC<ComposerProps> = ({
   });
   const toastRef = useRef(toast);
   toastRef.current = toast;
-  const toastHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastHideTimer = useRef<number | null>(null);
 
-  const showToast = (severity: 'success' | 'error', msg: string) => {
+  const showToast = useCallback((severity: 'success' | 'error', msg: string) => {
+    if (!isMountedRef.current) return;
     // If the exact same toast is already visible — do nothing
     if (toastRef.current.open && toastRef.current.severity === severity && toastRef.current.message === msg) return;
     // Cancel any pending auto-close from a previous toast
-    if (toastHideTimer.current) clearTimeout(toastHideTimer.current);
+    if (toastHideTimer.current) clearSafeTimeout(toastHideTimer.current);
     // Update in-place (no close→open = no blink)
     setToast({ open: true, severity, message: msg });
     // Auto-dismiss after 3 s
-    toastHideTimer.current = setTimeout(() => setToast(t => ({ ...t, open: false })), 3000);
-  };
+    toastHideTimer.current = setSafeTimeout(() => {
+      if (isMountedRef.current) {
+        setToast(t => ({ ...t, open: false }));
+      }
+    }, 3000);
+  }, [setSafeTimeout, clearSafeTimeout]);
 
-  const dismissToast = () => {
-    if (toastHideTimer.current) clearTimeout(toastHideTimer.current);
-    setToast(t => ({ ...t, open: false }));
-  };
+  const dismissToast = useCallback(() => {
+    if (toastHideTimer.current) clearSafeTimeout(toastHideTimer.current);
+    if (isMountedRef.current) {
+      setToast(t => ({ ...t, open: false }));
+    }
+  }, [clearSafeTimeout]);
   const [showDisabledReason, setShowDisabledReason] = useState(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
 
@@ -373,13 +411,13 @@ export const Composer: React.FC<ComposerProps> = ({
       currentLength > prevMessagesLength.current ||
       prevMessagesLength.current === 0
     ) {
-      setTimeout(scrollToBottom, 50);
+      setSafeTimeout(scrollToBottom, 50);
     }
     
     prevConversationId.current = conversationId;
     prevRawLogView.current = useRawLogView;
     prevMessagesLength.current = currentLength;
-  }, [conversationMessages, phoneLogMessages, useRawLogView, conversationId]);
+  }, [conversationMessages, phoneLogMessages, useRawLogView, conversationId, setSafeTimeout]);
 
   // Whenever the conversationId changes, reset the raw log view toggle
   useEffect(() => {
@@ -442,13 +480,17 @@ export const Composer: React.FC<ComposerProps> = ({
   }, [composeMode, conversationId]);
 
   useEffect(() => {
-    fetchContacts(locationId || undefined).then(setAllContacts).catch(devLog.error);
+    fetchContacts(locationId || undefined).then((contacts) => {
+      if (isMountedRef.current) {
+        setAllContacts(contacts);
+      }
+    }).catch(devLog.error);
   }, [locationId]);
 
   useEffect(() => {
     const handleContactUpdated = (event: Event) => {
       const { contact, previous } = (event as CustomEvent<{ contact?: Contact; previous?: Contact }>).detail || {};
-      if (!contact) return;
+      if (!contact || !isMountedRef.current) return;
 
       setAllContacts((current) => current.map((item) =>
         matchesContactUpdate(item, contact, previous) ? { ...item, ...contact } : item
@@ -456,7 +498,9 @@ export const Composer: React.FC<ComposerProps> = ({
       setBulkSelectedContacts((current) => current.map((item) =>
         matchesContactUpdate(item, contact, previous) ? { ...item, ...contact } : item
       ));
-      fetchContacts(locationId || undefined).then(setAllContacts).catch(devLog.error);
+      fetchContacts(locationId || undefined).then((contacts) => {
+        if (isMountedRef.current) setAllContacts(contacts);
+      }).catch(devLog.error);
     };
 
     window.addEventListener("nola-contact-updated", handleContactUpdated);
@@ -469,7 +513,9 @@ export const Composer: React.FC<ComposerProps> = ({
       if (locationId) {
         try {
           const templates = await fetchTemplates(locationId, false);
-          setTemplateOptions(templates);
+          if (isMountedRef.current) {
+            setTemplateOptions(templates);
+          }
         } catch (err) {
           devLog.warn("Background template cache pre-warming failed:", err);
         }
@@ -586,7 +632,7 @@ export const Composer: React.FC<ComposerProps> = ({
     const nextCursor = start + text.length;
 
     setMessage(nextMessage);
-    window.setTimeout(() => {
+    setSafeTimeout(() => {
       input?.focus();
       input?.setSelectionRange(nextCursor, nextCursor);
     }, 0);
@@ -698,12 +744,16 @@ export const Composer: React.FC<ComposerProps> = ({
 
     if (!messageText) {
       setShowDisabledReason(true);
-      setTimeout(() => setShowDisabledReason(false), 3000);
+      setSafeTimeout(() => {
+        if (isMountedRef.current) setShowDisabledReason(false);
+      }, 3000);
       return;
     }
     if (recipients.length === 0) {
       setShowDisabledReason(true);
-      setTimeout(() => setShowDisabledReason(false), 3000);
+      setSafeTimeout(() => {
+        if (isMountedRef.current) setShowDisabledReason(false);
+      }, 3000);
       return;
     }
 
@@ -711,7 +761,9 @@ export const Composer: React.FC<ComposerProps> = ({
     if (analysis.invalidRecipients.length > 0) {
       showToast("error", `${analysis.invalidRecipients.length} recipient${analysis.invalidRecipients.length === 1 ? " has" : "s have"} an invalid phone number.`);
       setShowDisabledReason(true);
-      setTimeout(() => setShowDisabledReason(false), 3000);
+      setSafeTimeout(() => {
+        if (isMountedRef.current) setShowDisabledReason(false);
+      }, 3000);
       return;
     }
 
@@ -735,7 +787,7 @@ export const Composer: React.FC<ComposerProps> = ({
     setBulkConfirmation(null);
 
     sendGuardRef.current = true;
-    window.setTimeout(() => {
+    setSafeTimeout(() => {
       sendGuardRef.current = false;
     }, 750);
 
@@ -784,7 +836,9 @@ export const Composer: React.FC<ComposerProps> = ({
               window.dispatchEvent(new Event('sms-sent'));
 
               // Re-fetch from database after a short delay to get the stored message
-              setTimeout(() => refresh(), 2000);
+              setSafeTimeout(() => {
+                if (isMountedRef.current) refresh();
+              }, 2000);
 
               // Real-time status polling: check Semaphore for actual delivery status
               // within seconds rather than waiting for the 5-min cron.
@@ -792,8 +846,10 @@ export const Composer: React.FC<ComposerProps> = ({
                 let attempts = 0;
                 const maxAttempts = 30; // ~60s total
                 const pollStatus = async () => {
+                  if (!isMountedRef.current) return;
                   attempts++;
                   const statusMap = await checkMessageStatus(messageIds);
+                  if (!isMountedRef.current) return;
                   const allResolved = messageIds.every(id => {
                     const s = (statusMap[id] || '').toLowerCase();
                     return s === 'sent' || s === 'failed' || s === 'success';
@@ -801,19 +857,21 @@ export const Composer: React.FC<ComposerProps> = ({
 
                   // Refresh messages to show DB-persisted status
                   if (allResolved || attempts >= maxAttempts) {
-                    refresh();
+                    if (isMountedRef.current) refresh();
                   } else {
-                    setTimeout(pollStatus, 2000);
+                    setSafeTimeout(pollStatus, 2000);
                   }
                 };
-                setTimeout(pollStatus, 2000);
+                setSafeTimeout(pollStatus, 2000);
               }
 
               // Navigate to contact view if not already there
               if (activeContact || shouldPromoteDraftConversation) {
                 // Already viewing contact, just refresh
               } else if (onSelectContact && recipients[0]) {
-                setTimeout(() => onSelectContact(recipients[0]), 500);
+                setSafeTimeout(() => {
+                  if (isMountedRef.current) onSelectContact(recipients[0]);
+                }, 500);
               }
             } else {
               updateMessageStatus(tempId, 'failed', undefined, smsResult.message || "Failed to send message");
@@ -856,6 +914,7 @@ export const Composer: React.FC<ComposerProps> = ({
               batchId,
               currentTags,
               (current, total, result) => {
+                if (!isMountedRef.current) return;
                 setSendingProgress({ current, total });
                 const phone = result.number;
                 const tempId = phone ? tempIds[phone] : undefined;
@@ -865,6 +924,7 @@ export const Composer: React.FC<ComposerProps> = ({
                 }
               }
             );
+            if (!isMountedRef.current) return;
             const successCount = results.filter(r => r.success).length;
             // Use results.length (deduplicated unique phones) as the denominator so that
             // contacts sharing the same phone number don't inflate the "failed" count.
@@ -883,7 +943,9 @@ export const Composer: React.FC<ComposerProps> = ({
               guardedToast(failedCount > 0 ? "error" : "success", successMsg);
 
               // Refresh to show new messages in the conversation
-              setTimeout(() => refresh(), 2000);
+              setSafeTimeout(() => {
+                if (isMountedRef.current) refresh();
+              }, 2000);
 
               // Real-time status polling: check Semaphore for actual delivery status
               const allMessageIds = results.flatMap(r => r.messageIds || []);
@@ -891,8 +953,10 @@ export const Composer: React.FC<ComposerProps> = ({
                 let attempts = 0;
                 const maxAttempts = 30; // ~60s total
                 const pollStatus = async () => {
+                  if (!isMountedRef.current) return;
                   attempts++;
                   const statusMap = await checkMessageStatus(allMessageIds);
+                  if (!isMountedRef.current) return;
                   const allResolved = allMessageIds.every(id => {
                     const s = (statusMap[id] || '').toLowerCase();
                     return s === 'sent' || s === 'failed' || s === 'success';
@@ -900,17 +964,19 @@ export const Composer: React.FC<ComposerProps> = ({
 
                   // Refresh messages to show DB-persisted status
                   if (allResolved || attempts >= maxAttempts) {
-                    refresh();
+                    if (isMountedRef.current) refresh();
                   } else {
-                    setTimeout(pollStatus, 2000);
+                    setSafeTimeout(pollStatus, 2000);
                   }
                 };
-                setTimeout(pollStatus, 2000);
+                setSafeTimeout(pollStatus, 2000);
               }
             } else {
               guardedToast("error", "Failed to send bulk messages");
             }
-            setSendingProgress(null);
+            if (isMountedRef.current) {
+              setSendingProgress(null);
+            }
           }
         } else {
           // NEW bulk SMS sending (creating new conversation)
@@ -973,6 +1039,7 @@ export const Composer: React.FC<ComposerProps> = ({
                 generatedBatchId,
                 currentTags,
                 (current, total, result) => {
+                  if (!isMountedRef.current) return;
                   setSendingProgress({ current, total });
                   const phone = result.number;
                   const tempId = phone ? tempIds[phone] : undefined;
@@ -982,6 +1049,7 @@ export const Composer: React.FC<ComposerProps> = ({
                   }
                 }
               );
+              if (!isMountedRef.current) return;
               const successCount = results.filter(r => r.success).length;
               // Use deduplicated result count to avoid false "failed" for duplicate phone numbers
               const sentTotal = results.length;
@@ -1009,7 +1077,9 @@ export const Composer: React.FC<ComposerProps> = ({
                 }));
 
                 // Refresh after navigation to fetch from Firestore
-                setTimeout(() => refresh(), 2000);
+                setSafeTimeout(() => {
+                  if (isMountedRef.current) refresh();
+                }, 2000);
 
                 // Real-time status polling: check Semaphore for actual delivery status
                 const allMessageIds = results.flatMap(r => r.messageIds || []);
@@ -1017,8 +1087,10 @@ export const Composer: React.FC<ComposerProps> = ({
                   let attempts = 0;
                   const maxAttempts = 30; // ~60s total
                   const pollStatus = async () => {
+                    if (!isMountedRef.current) return;
                     attempts++;
                     const statusMap = await checkMessageStatus(allMessageIds);
+                    if (!isMountedRef.current) return;
                     const allResolved = allMessageIds.every(id => {
                       const s = (statusMap[id] || '').toLowerCase();
                       return s === 'sent' || s === 'failed' || s === 'success';
@@ -1026,12 +1098,12 @@ export const Composer: React.FC<ComposerProps> = ({
 
                     // Refresh messages to show DB-persisted status
                     if (allResolved || attempts >= maxAttempts) {
-                      refresh();
+                      if (isMountedRef.current) refresh();
                     } else {
-                      setTimeout(pollStatus, 2000);
+                      setSafeTimeout(pollStatus, 2000);
                     }
                   };
-                  setTimeout(pollStatus, 2000);
+                  setSafeTimeout(pollStatus, 2000);
                 }
               } else {
                 guardedToast("error", "Failed to send bulk messages");
@@ -1060,7 +1132,9 @@ export const Composer: React.FC<ComposerProps> = ({
                 showToast("error", err instanceof Error ? err.message : "Failed to send bulk messages");
               }
             } finally {
-              setSendingProgress(null);
+              if (isMountedRef.current) {
+                setSendingProgress(null);
+              }
             }
           })();
         }
@@ -1154,7 +1228,9 @@ export const Composer: React.FC<ComposerProps> = ({
       updateMessageStatus(tempId, "sending", result.messageIds?.[0]);
       showToast("success", result.message || "Retry queued for delivery.");
       window.dispatchEvent(new Event("sms-sent"));
-      setTimeout(() => refresh(), 1500);
+      setSafeTimeout(() => {
+        if (isMountedRef.current) refresh();
+      }, 1500);
     } else {
       updateMessageStatus(tempId, "failed", undefined, result.message || "Retry failed");
       showToast("error", result.message || "Retry failed.");
@@ -1192,7 +1268,7 @@ export const Composer: React.FC<ComposerProps> = ({
   const toggleMessageDetails = (id: string, isExpanded: boolean, shouldRevealBottom = false) => {
     setExpandedMessageId(isExpanded ? null : id);
     if (!isExpanded && shouldRevealBottom) {
-      setTimeout(scrollToBottom, 80);
+      setSafeTimeout(scrollToBottom, 80);
     }
   };
 

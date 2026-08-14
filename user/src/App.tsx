@@ -17,6 +17,7 @@ import type { ViewTab } from "./components/Sidebar";
 import { TicketsTab } from "./components/TicketsTab";
 import { TopMoreOptions } from "./components/layout/TopMoreOptions";
 import { RedirectToBackend, RedirectInstallRegistration } from "./components/auth/RedirectHelpers";
+import { ErrorBoundary } from "./components/ui/ErrorBoundary";
 
 const AppLayout: React.FC = () => {
   const [darkMode, setDarkMode] = useState(() => {
@@ -297,13 +298,15 @@ const AppLayout: React.FC = () => {
 
 const App: React.FC = () => {
   return (
-    <AuthProvider>
-      <LocationProvider>
-        <BrowserRouter>
-          <AppLayout />
-        </BrowserRouter>
-      </LocationProvider>
-    </AuthProvider>
+    <ErrorBoundary appName="NOLA SMS Pro">
+      <AuthProvider>
+        <LocationProvider>
+          <BrowserRouter>
+            <AppLayout />
+          </BrowserRouter>
+        </LocationProvider>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 };
 

@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter, useLocation } from 'react-router-dom';
 import { AgencyProvider } from './context/AgencyContext.tsx';
 import { AppRoutes } from './routes.tsx';
+import { ErrorBoundary } from './components/ui/ErrorBoundary.tsx';
 
 const AgencyTitleSync = () => {
   const location = useLocation();
@@ -25,12 +26,14 @@ const AgencyTitleSync = () => {
 };
 
 const App = () => (
-  <AgencyProvider>
-    <BrowserRouter>
-      <AgencyTitleSync />
-      <AppRoutes />
-    </BrowserRouter>
-  </AgencyProvider>
+  <ErrorBoundary appName="NOLA SMS Pro Agency">
+    <AgencyProvider>
+      <BrowserRouter>
+        <AgencyTitleSync />
+        <AppRoutes />
+      </BrowserRouter>
+    </AgencyProvider>
+  </ErrorBoundary>
 );
 
 export default App;
