@@ -1,8 +1,80 @@
+export type FirestoreTimestamp = string | { _seconds: number; _nanoseconds: number } | { seconds: number; nanoseconds: number } | { toDate: () => Date } | Date | null;
+
 export interface SmsStats {
   totalSent: number;
   delivered: number;
   failed: number;
   lastSentAt: string;
+}
+
+/** Full message document contract from messages/{messageId} and sms_logs/{messageId} */
+export interface NolaMessageDoc {
+  message_id: string;
+  location_id: string;
+  number: string;
+  message: string;
+  direction: 'outbound' | 'inbound';
+  sender_id: string;
+  sender_name: string;
+  status: 'Sending' | 'Pending' | 'Sent' | 'Failed' | string;
+  origin?:
+    | 'ghl_provider_preflight'
+    | 'ghl_provider_retry_queued'
+    | 'retry_worker_processing'
+    | 'retry_worker_success'
+    | 'retry_worker_exhausted'
+    | 'ghl_provider'
+    | 'ghl_provider_failed'
+    | string;
+  retry_doc_id?: string;
+  retry_status?: 'pending_retry' | 'processing' | 'completed' | 'exhausted';
+  retry_count?: number;
+  retry_max_attempts?: number;
+  next_retry_at?: FirestoreTimestamp;
+  last_retry_at?: FirestoreTimestamp;
+  ghl_message_id?: string | null;
+  ghl_contact_id?: string | null;
+  provider?: 'semaphore' | 'unisms' | 'ghl_provider' | string;
+  provider_message_id?: string | null;
+  provider_reference_id?: string | null;
+  provider_error?: string | null;
+  created_at: FirestoreTimestamp;
+  updated_at?: FirestoreTimestamp;
+}
+
+/** Documents from sms_retry_queue/{retryDocId} */
+export interface SmsRetryQueueDoc {
+  retry_doc_id: string;
+  message_id: string;
+  ghl_message_id: string | null;
+  location_id: string;
+  phone: string;
+  message: string;
+  sender_id: string;
+  api_key: string | null;
+  provider_pref: 'system' | 'semaphore' | 'unisms' | string;
+  provider: 'semaphore' | 'unisms' | string;
+  account_id: string;
+  billing_reference_id: string;
+  billing_charged: boolean;
+  billing_master_lock: boolean;
+  agency_id: string;
+  required_credits: number;
+  using_free_credits: boolean;
+  status: 'pending_retry' | 'processing' | 'completed' | 'exhausted';
+  attempts: number;
+  max_attempts: number;
+  last_error: string | null;
+  worker_id?: string | null;
+  processing_started_at?: FirestoreTimestamp;
+  lease_expires_at?: FirestoreTimestamp | null;
+  created_at: FirestoreTimestamp;
+  updated_at: FirestoreTimestamp;
+  next_retry_at: FirestoreTimestamp;
+  completed_at?: FirestoreTimestamp;
+  exhausted_at?: FirestoreTimestamp;
+  final_provider?: string;
+  final_provider_message_id?: string | null;
 }
 
 /** One row from the `messages` Firestore collection */
@@ -17,15 +89,24 @@ export interface FirestoreMessage {
   status: string;
   batch_id?: string;
   recipient_key?: string;
-  created_at: string | { _seconds: number; _nanoseconds: number } | null;
+  created_at: FirestoreTimestamp;
   name?: string;
   location_id?: string;
+  origin?: string;
+  retry_doc_id?: string;
+  retry_status?: 'pending_retry' | 'processing' | 'completed' | 'exhausted';
+  retry_count?: number;
+  retry_max_attempts?: number;
+  next_retry_at?: FirestoreTimestamp;
+  last_retry_at?: FirestoreTimestamp;
   error_reason?: string;
   error_code?: string;
+  provider?: string;
+  provider_error?: string | null;
   provider_status?: string;
   provider_response?: string | Record<string, unknown> | null;
-  provider_message_id?: string;
-  provider_reference_id?: string;
+  provider_message_id?: string | null;
+  provider_reference_id?: string | null;
   ghl_sync_queued?: boolean;
   ghl_sync_job_id?: string;
   ghl_sync_success?: boolean;
@@ -34,7 +115,7 @@ export interface FirestoreMessage {
   ghl_sync_error?: string;
   ghl_sync_http_status?: number;
   ghl_sync_updated_at?: string;
-  ghl_message_id?: string;
+  ghl_message_id?: string | null;
 }
 
 /** One row from the `conversations` Firestore collection */
@@ -73,18 +154,27 @@ export interface SmsLog {
   sender_id: string;
   sender_name?: string;
   status: string;
-  date_created?: string | { _seconds: number; _nanoseconds: number };
+  date_created?: FirestoreTimestamp;
   source?: string;
   direction?: 'inbound' | 'outbound';
   batch_id?: string;
   recipient_key?: string;
   location_id?: string;
+  origin?: string;
+  retry_doc_id?: string;
+  retry_status?: 'pending_retry' | 'processing' | 'completed' | 'exhausted';
+  retry_count?: number;
+  retry_max_attempts?: number;
+  next_retry_at?: FirestoreTimestamp;
+  last_retry_at?: FirestoreTimestamp;
   error_reason?: string;
   error_code?: string;
+  provider?: string;
+  provider_error?: string | null;
   provider_status?: string;
   provider_response?: string | Record<string, unknown> | null;
-  provider_message_id?: string;
-  provider_reference_id?: string;
+  provider_message_id?: string | null;
+  provider_reference_id?: string | null;
   ghl_sync_queued?: boolean;
   ghl_sync_job_id?: string;
   ghl_sync_success?: boolean;
@@ -93,7 +183,7 @@ export interface SmsLog {
   ghl_sync_error?: string;
   ghl_sync_http_status?: number;
   ghl_sync_updated_at?: string;
-  ghl_message_id?: string;
+  ghl_message_id?: string | null;
 }
 
 export interface Message {
@@ -101,13 +191,30 @@ export interface Message {
   text: string;
   timestamp: Date;
   senderName: string;
-  status: 'sending' | 'sent' | 'delivered' | 'failed';
+  status: 'sending' | 'sent' | 'delivered' | 'failed' | 'pending' | string;
   errorReason?: string;
   errorCode?: string;
+  provider?: string;
+  providerError?: string | null;
   providerStatus?: string;
   providerResponse?: string | Record<string, unknown> | null;
-  providerMessageId?: string;
-  providerReferenceId?: string;
+  providerMessageId?: string | null;
+  providerReferenceId?: string | null;
+  // Retry queue fields
+  origin?: string;
+  retryDocId?: string;
+  retryStatus?: 'pending_retry' | 'processing' | 'completed' | 'exhausted';
+  retryCount?: number;
+  retryMaxAttempts?: number;
+  nextRetryAt?: Date | null;
+  lastRetryAt?: Date | null;
+  retry_doc_id?: string;
+  retry_status?: 'pending_retry' | 'processing' | 'completed' | 'exhausted';
+  retry_count?: number;
+  retry_max_attempts?: number;
+  next_retry_at?: FirestoreTimestamp;
+  last_retry_at?: FirestoreTimestamp;
+  provider_error?: string | null;
   // GHL Sync fields
   ghlSyncQueued?: boolean;
   ghlSyncJobId?: string;
@@ -117,7 +224,7 @@ export interface Message {
   ghlSyncError?: string;
   ghlSyncHttpStatus?: number;
   ghlSyncUpdatedAt?: string;
-  ghlMessageId?: string;
+  ghlMessageId?: string | null;
   ghl_sync_queued?: boolean;
   ghl_sync_job_id?: string;
   ghl_sync_success?: boolean;
@@ -126,12 +233,12 @@ export interface Message {
   ghl_sync_error?: string;
   ghl_sync_http_status?: number;
   ghl_sync_updated_at?: string;
-  ghl_message_id?: string;
+  ghl_message_id?: string | null;
   // Extra fields for compatibility
   batch_id?: string;
   conversation_id?: string;
   number?: string;
   recipient_key?: string;
   message?: string;
-  date_created?: string | { _seconds: number; _nanoseconds: number };
+  date_created?: FirestoreTimestamp;
 }

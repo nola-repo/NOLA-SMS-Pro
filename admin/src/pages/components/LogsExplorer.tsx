@@ -9,10 +9,12 @@ import {
     FiSearch,
     FiSend,
     FiXCircle,
+    FiLayers,
 } from 'react-icons/fi';
 import { adminFetch } from '../../utils/adminApi';
 import { getAdminAuthHeaders } from '../../utils/adminAuthHeaders';
 import { ADMIN_API_LOG_EVENT, getStoredAdminApiLogs } from '../../utils/apiFetch';
+import { AdminRetryQueue } from './AdminRetryQueue';
 
 const POLL_INTERVAL = 15000;
 const LOG_POLL_INTERVAL = 5000;
@@ -69,6 +71,7 @@ export const LogsExplorer: React.FC = () => {
     const [logSearch, setLogSearch] = useState('');
     const [logTypeFilter, setLogTypeFilter] = useState('ALL');
     const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
+    const [activeTab, setActiveTab] = useState<'logs' | 'retry_queue'>('logs');
 
     const fetchLogsOverview = useCallback(async (isInitial = false) => {
         if (isInitial) setLoading(true);
@@ -460,24 +463,55 @@ export const LogsExplorer: React.FC = () => {
                 ))}
             </div>
 
-            <section className="overflow-hidden rounded-2xl border border-[#e5e5e5] bg-white shadow-sm dark:border-white/5 dark:bg-[#1a1b1e]">
-                <div className="flex flex-col gap-3 border-b border-[#e5e5e5] px-5 py-4 dark:border-white/5 lg:flex-row lg:items-center lg:justify-between">
-                    <h3 className="flex items-center gap-2 text-[14px] font-bold text-[#111111] dark:text-white">
-                        <FiActivity className="h-4 w-4 text-[#2b83fa]" />
-                        Logs Explorer
-                    </h3>
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                        <select
-                            value={logTypeFilter}
-                            onChange={(event) => setLogTypeFilter(event.target.value)}
-                            className="h-9 rounded-xl border border-[#e5e5e5] bg-[#f7f7f7] px-3 text-[12px] font-semibold text-[#111111] outline-none transition focus:border-[#2b83fa]/40 focus:bg-white focus:ring-2 focus:ring-[#2b83fa]/10 dark:border-white/5 dark:bg-[#0d0e10] dark:text-white"
-                        >
-                            <option value="ALL">All Types</option>
-                            <option value="Send PH SMS">Send PH SMS</option>
-                            <option value="Conversation Provider">Conversation Provider</option>
-                            <option value="Inbound SMS">Inbound SMS</option>
-                            <option value="SMS">SMS</option>
-                        </select>
+            {/* View Switcher Tabs */}
+            <div className="flex items-center gap-2 border-b border-[#e5e5e5] dark:border-white/5 pb-2">
+                <button
+                    type="button"
+                    onClick={() => setActiveTab('logs')}
+                    className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-[13px] font-bold transition-all ${
+                        activeTab === 'logs'
+                            ? 'bg-white dark:bg-[#1a1b1e] text-[#2b83fa] shadow-sm border border-[#e5e5e5] dark:border-white/5'
+                            : 'text-[#6e6e73] dark:text-[#9aa0a6] hover:text-[#111111] dark:hover:text-white'
+                    }`}
+                >
+                    <FiActivity className="h-4 w-4" />
+                    Logs Explorer
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setActiveTab('retry_queue')}
+                    className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-[13px] font-bold transition-all ${
+                        activeTab === 'retry_queue'
+                            ? 'bg-white dark:bg-[#1a1b1e] text-amber-500 shadow-sm border border-[#e5e5e5] dark:border-white/5'
+                            : 'text-[#6e6e73] dark:text-[#9aa0a6] hover:text-[#111111] dark:hover:text-white'
+                    }`}
+                >
+                    <FiLayers className="h-4 w-4" />
+                    SMS Retry Queue
+                </button>
+            </div>
+
+            {activeTab === 'retry_queue' ? (
+                <AdminRetryQueue />
+            ) : (
+                <section className="overflow-hidden rounded-2xl border border-[#e5e5e5] bg-white shadow-sm dark:border-white/5 dark:bg-[#1a1b1e]">
+                    <div className="flex flex-col gap-3 border-b border-[#e5e5e5] px-5 py-4 dark:border-white/5 lg:flex-row lg:items-center lg:justify-between">
+                        <h3 className="flex items-center gap-2 text-[14px] font-bold text-[#111111] dark:text-white">
+                            <FiActivity className="h-4 w-4 text-[#2b83fa]" />
+                            Logs Explorer
+                        </h3>
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                            <select
+                                value={logTypeFilter}
+                                onChange={(event) => setLogTypeFilter(event.target.value)}
+                                className="h-9 rounded-xl border border-[#e5e5e5] bg-[#f7f7f7] px-3 text-[12px] font-semibold text-[#111111] outline-none transition focus:border-[#2b83fa]/40 focus:bg-white focus:ring-2 focus:ring-[#2b83fa]/10 dark:border-white/5 dark:bg-[#0d0e10] dark:text-white"
+                            >
+                                <option value="ALL">All Types</option>
+                                <option value="Send PH SMS">Send PH SMS</option>
+                                <option value="Conversation Provider">Conversation Provider</option>
+                                <option value="Inbound SMS">Inbound SMS</option>
+                                <option value="SMS">SMS</option>
+                            </select>
                         <label className="relative block w-full sm:w-[320px]">
                             <FiSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9aa0a6]" />
                             <input
@@ -584,6 +618,7 @@ export const LogsExplorer: React.FC = () => {
                     </div>
                 </div>
             </section>
+            )}
         </div>
     );
 };

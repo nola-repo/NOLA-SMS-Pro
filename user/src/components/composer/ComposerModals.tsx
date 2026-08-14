@@ -259,13 +259,45 @@ export const MessageDetailsModal: React.FC<{
               </div>
             )}
             <DetailRow label="Message ID" value={messageDetails.message.id} mono />
+            <DetailRow label="Provider" value={messageDetails.message.provider} />
             <DetailRow label="Provider ID" value={messageDetails.message.providerMessageId} mono />
             <DetailRow label="Provider reference" value={messageDetails.message.providerReferenceId} mono />
             <DetailRow label="Provider status" value={messageDetails.message.providerStatus} />
+            <DetailRow label="Provider error" value={messageDetails.message.providerError || messageDetails.message.provider_error} />
             <DetailRow label="Conversation ID" value={messageDetails.conversationId} mono />
             <DetailRow label="Batch ID" value={messageDetails.message.batch_id} mono />
+            <DetailRow label="Origin" value={messageDetails.message.origin} mono />
+
+            {/* Retry Queue Details */}
+            {(messageDetails.message.retryStatus || messageDetails.message.retry_status) && (
+              <DetailRow
+                label="Retry Status"
+                value={(() => {
+                  const m = messageDetails.message;
+                  const rStatus = m.retryStatus || m.retry_status;
+                  const rCount = m.retryCount ?? m.retry_count;
+                  const rMax = m.retryMaxAttempts ?? m.retry_max_attempts ?? 3;
+                  if (rStatus === 'processing') return 'Retrying now...';
+                  if (rStatus === 'pending_retry') return `Queued for retry (Attempt ${typeof rCount === 'number' ? Math.min(rCount + 1, rMax) : 1}/${rMax})`;
+                  if (rStatus === 'completed') return 'Retry completed successfully';
+                  if (rStatus === 'exhausted') return 'Retries exhausted (Credits restored)';
+                  return rStatus;
+                })()}
+              />
+            )}
+            {(typeof (messageDetails.message.retryCount ?? messageDetails.message.retry_count) === 'number') && (
+              <DetailRow
+                label="Retry Attempts"
+                value={`${(messageDetails.message.retryCount ?? messageDetails.message.retry_count ?? 0) + 1} of ${messageDetails.message.retryMaxAttempts ?? messageDetails.message.retry_max_attempts ?? 3}`}
+              />
+            )}
+            {messageDetails.message.nextRetryAt && (
+              <DetailRow label="Next Retry At" value={formatDetailsTimestamp(new Date(messageDetails.message.nextRetryAt))} />
+            )}
+            <DetailRow label="Retry Doc ID" value={messageDetails.message.retryDocId || messageDetails.message.retry_doc_id} mono />
+
             <DetailRow label="Error code" value={messageDetails.message.errorCode} mono />
-            <DetailRow label="Failure reason" value={messageDetails.message.errorReason || (messageDetails.message.status === "failed" ? "Provider rejected or did not confirm delivery." : undefined)} />
+            <DetailRow label="Failure reason" value={messageDetails.message.errorReason || (messageDetails.message.status === "failed" ? (messageDetails.message.origin === 'retry_worker_exhausted' ? "Retries exhausted. Credits were restored if billing was charged." : "Provider rejected or did not confirm delivery.") : undefined)} />
             
             {/* CRM Sync Details */}
             <DetailRow

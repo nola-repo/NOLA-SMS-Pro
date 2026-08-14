@@ -72,12 +72,24 @@ const SMS_ERROR_MESSAGES: Record<string, string> = {
   PAYLOAD_TOO_LARGE: "Message request is too large. Reduce recipients or message size and try again.",
 };
 
-const resolveSmsErrorMessage = (data: any, fallback = "SMS sending failed"): string => {
+interface SmsErrorPayload {
+  error?: string;
+  code?: string;
+  message?: string;
+  status?: string | number;
+  details?: unknown;
+  provider_response?: unknown;
+  response?: unknown;
+  output?: unknown;
+  [key: string]: unknown;
+}
+
+const resolveSmsErrorMessage = (data: SmsErrorPayload | Record<string, unknown> | null | undefined, fallback = "SMS sending failed"): string => {
   const code = String(data?.error || data?.code || "").trim();
   if (data?.status === 413 || code === "413") {
     return SMS_ERROR_MESSAGES.payload_too_large;
   }
-  return data?.message || SMS_ERROR_MESSAGES[code] || fallback;
+  return (typeof data?.message === "string" ? data.message : undefined) || SMS_ERROR_MESSAGES[code] || fallback;
 };
 
 /**
@@ -256,16 +268,16 @@ export const sendSms = async (
 
     if (!res.ok) {
       const errorText = await res.text();
-      let parsed: any = null;
+      let parsed: SmsErrorPayload | null = null;
       try {
-        parsed = JSON.parse(errorText);
+        parsed = JSON.parse(errorText) as SmsErrorPayload;
       } catch {
         parsed = null;
       }
       return {
         success: false,
-        error: parsed?.error,
-        code: parsed?.code || parsed?.error,
+        error: typeof parsed?.error === "string" ? parsed.error : undefined,
+        code: typeof parsed?.code === "string" ? parsed.code : typeof parsed?.error === "string" ? parsed.error : undefined,
         details: parsed?.details || parsed?.provider_response || parsed,
         providerResponse: parsed?.provider_response || parsed?.response || parsed?.output,
         message: parsed ? resolveSmsErrorMessage(parsed, `SMS request failed (${res.status})`) : (errorText || `SMS request failed (${res.status})`),

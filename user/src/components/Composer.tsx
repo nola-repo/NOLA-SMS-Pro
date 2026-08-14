@@ -23,6 +23,7 @@ import { buildDirectConversationId, buildGroupConversationId } from "../utils/co
 import { estimateSmsSegments } from "../utils/smsSegments";
 import { formatTemplateValidationMessage, validateTemplateContent } from "../utils/templateValidation";
 import { buildContactNameLookup, isPhoneLike, resolveContactNameByPhone } from "../utils/contactDisplay";
+import { getRetryBadgeInfo } from "../utils/smsStatus";
 
 import { BulkConfirmationModal, BulkSendSummaryModal, MessageDetailsModal, type MessageDetailsSelection, type BulkConfirmationState, type BulkSendSummaryState } from "./composer/ComposerModals";
 
@@ -1878,28 +1879,46 @@ export const Composer: React.FC<ComposerProps> = ({
                               })}
                             </span>
                             <span className="text-[10px] text-gray-400">•</span>
-                            <span
-                              className={`text-[10px] font-bold capitalize tracking-wider ${
-                                msg.status === 'sent'
+                            {(() => {
+                              const badge = getRetryBadgeInfo(msg);
+                              const toneClass =
+                                badge.tone === 'green'
                                   ? "text-green-500"
-                                  : msg.status === 'failed'
+                                  : badge.tone === 'red'
                                   ? "text-red-500"
-                                  : "text-gray-400"
-                              }`}
-                            >
-                              {msg.status === 'sending'
-                                ? <FiLoader className="animate-spin inline mb-0.5 mr-1" size={10} />
-                                : msg.status === 'sent'
-                                ? <FiCheck className="inline mb-0.5 mr-1" size={10} />
-                                : <FiAlertCircle size={10} className="inline mb-0.5 mr-1" />}
-                              {msg.status === 'sending' ? 'Sending...' : msg.status === 'sent' ? 'Sent' : 'Failed'}
-                            </span>
+                                  : badge.tone === 'amber' || badge.tone === 'amber_pulse'
+                                  ? "text-amber-500 dark:text-amber-400"
+                                  : "text-gray-400";
+
+                              return (
+                                <span
+                                  className={`text-[10px] font-bold capitalize tracking-wider flex items-center gap-0.5 ${toneClass}`}
+                                  title={badge.tooltip || (msg.errorReason ? `Failure reason: ${msg.errorReason}` : undefined)}
+                                >
+                                  {badge.tone === 'green' ? (
+                                    <FiCheck className="inline mb-0.5 mr-1" size={10} />
+                                  ) : badge.tone === 'red' ? (
+                                    <FiAlertCircle size={10} className="inline mb-0.5 mr-1" />
+                                  ) : badge.tone === 'amber_pulse' ? (
+                                    <FiLoader className="animate-spin inline mb-0.5 mr-1" size={10} />
+                                  ) : badge.tone === 'amber' ? (
+                                    <FiRefreshCw className="inline mb-0.5 mr-1 animate-spin" size={10} />
+                                  ) : (
+                                    <FiLoader className="animate-spin inline mb-0.5 mr-1" size={10} />
+                                  )}
+                                  {badge.label}
+                                </span>
+                              );
+                            })()}
                           </div>
                           {renderMessageQuickActions(msg, msg.number || historyPhoneNumber)}
                         </div>
-                        {!isExpanded && msg.status === "sending" && (
-                          <div className="mt-1 flex items-center justify-end px-1">
-                            <FiLoader className="h-3 w-3 animate-spin text-gray-400 dark:text-gray-500" />
+                        {!isExpanded && (msg.status === "sending" || (msg.retry_status && ['pending_retry', 'processing'].includes(msg.retry_status))) && (
+                          <div
+                            className="mt-1 flex items-center justify-end px-1"
+                            title={msg.retry_status === 'pending_retry' ? 'Retrying in background...' : msg.retry_status === 'processing' ? 'Retrying now...' : 'Sending...'}
+                          >
+                            <FiLoader className={`h-3 w-3 animate-spin ${msg.retry_status ? 'text-amber-500' : 'text-gray-400 dark:text-gray-500'}`} />
                           </div>
                         )}
                       </div>
@@ -1975,6 +1994,7 @@ export const Composer: React.FC<ComposerProps> = ({
                       sent: grp.rows.filter(m => (m.status || '').toLowerCase() === 'sent').length,
                       sending: grp.rows.filter(m => (m.status || '').toLowerCase() === 'sending').length,
                       failed: grp.rows.filter(m => ['failed', 'error'].includes((m.status || '').toLowerCase())).length,
+                      retrying: grp.rows.filter(m => m.retry_status && ['pending_retry', 'processing'].includes(m.retry_status)).length,
                       total: grp.rows.length
                     };
 
@@ -2034,7 +2054,12 @@ export const Composer: React.FC<ComposerProps> = ({
                                 {date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                               </span>
                               <span className="text-[10px] text-gray-400">•</span>
-                              {campaignStats.sending > 0 ? (
+                              {campaignStats.retrying > 0 ? (
+                                <span className="text-[10px] font-bold text-amber-500 dark:text-amber-400 capitalize tracking-wider flex items-center gap-0.5" title="Background delivery retries in progress">
+                                  <FiRefreshCw className="animate-spin inline mb-0.5 mr-1" size={10} />
+                                  Retrying... {campaignStats.retrying > 1 ? `(${campaignStats.retrying}/${campaignStats.total})` : ''}
+                                </span>
+                              ) : campaignStats.sending > 0 ? (
                                 <span className="text-[10px] font-bold text-gray-400 capitalize tracking-wider flex items-center gap-0.5">
                                   <FiLoader className="animate-spin inline mb-0.5 mr-1" size={10} />
                                   Sending...
@@ -2053,9 +2078,12 @@ export const Composer: React.FC<ComposerProps> = ({
                             </div>
                           </div>
 
-                          {!isExpanded && campaignStats.sending > 0 && (
-                            <div className="mt-1 flex items-center justify-end px-1">
-                              <FiLoader className="h-3 w-3 animate-spin text-gray-400 dark:text-gray-500" />
+                          {!isExpanded && (campaignStats.sending > 0 || campaignStats.retrying > 0) && (
+                            <div
+                              className="mt-1 flex items-center justify-end px-1"
+                              title={campaignStats.retrying > 0 ? 'Retrying in background...' : 'Sending...'}
+                            >
+                              <FiLoader className={`h-3 w-3 animate-spin ${campaignStats.retrying > 0 ? 'text-amber-500' : 'text-gray-400 dark:text-gray-500'}`} />
                             </div>
                           )}
                         </div>

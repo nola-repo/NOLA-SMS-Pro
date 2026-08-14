@@ -92,12 +92,21 @@ interface DatabaseMessageRow {
     status?: string;
     batch_id?: string;
     recipient_key?: string;
+    origin?: string;
+    retry_doc_id?: string;
+    retry_status?: 'pending_retry' | 'processing' | 'completed' | 'exhausted';
+    retry_count?: number;
+    retry_max_attempts?: number;
+    next_retry_at?: unknown;
+    last_retry_at?: unknown;
     error_reason?: string;
     error_code?: string;
+    provider?: string;
+    provider_error?: string | null;
     provider_status?: string;
     provider_response?: string | Record<string, unknown> | null;
-    provider_message_id?: string;
-    provider_reference_id?: string;
+    provider_message_id?: string | null;
+    provider_reference_id?: string | null;
     ghl_sync_queued?: boolean;
     ghl_sync_job_id?: string;
     ghl_sync_success?: boolean;
@@ -106,7 +115,7 @@ interface DatabaseMessageRow {
     ghl_sync_error?: string;
     ghl_sync_http_status?: number;
     ghl_sync_updated_at?: string;
-    ghl_message_id?: string;
+    ghl_message_id?: string | null;
 }
 
 /**
@@ -158,6 +167,12 @@ export const useConversationMessages = (conversationId: string | undefined, reci
                 status = 'failed';
             }
 
+            const errorReason = row.error_reason || (
+                row.origin === 'retry_worker_exhausted'
+                    ? 'Retries exhausted. Credits were restored if billing was charged.'
+                    : undefined
+            );
+
             return {
                 id: row.message_id || row.id || `msg-${Date.now()}-${Math.random()}`,
                 conversation_id: row.conversation_id,
@@ -170,8 +185,24 @@ export const useConversationMessages = (conversationId: string | undefined, reci
                 batch_id: row.batch_id,
                 recipient_key: row.recipient_key,
                 message: row.message,
-                errorReason: row.error_reason,
+                origin: row.origin,
+                retryDocId: row.retry_doc_id,
+                retryStatus: row.retry_status,
+                retryCount: typeof row.retry_count === 'number' ? row.retry_count : undefined,
+                retryMaxAttempts: typeof row.retry_max_attempts === 'number' ? row.retry_max_attempts : undefined,
+                nextRetryAt: row.next_retry_at ? parseFirestoreDate(row.next_retry_at) : null,
+                lastRetryAt: row.last_retry_at ? parseFirestoreDate(row.last_retry_at) : null,
+                retry_doc_id: row.retry_doc_id,
+                retry_status: row.retry_status,
+                retry_count: typeof row.retry_count === 'number' ? row.retry_count : undefined,
+                retry_max_attempts: typeof row.retry_max_attempts === 'number' ? row.retry_max_attempts : undefined,
+                next_retry_at: row.next_retry_at as any,
+                last_retry_at: row.last_retry_at as any,
+                errorReason,
                 errorCode: row.error_code,
+                provider: row.provider,
+                providerError: row.provider_error,
+                provider_error: row.provider_error,
                 providerStatus: row.provider_status,
                 providerResponse: row.provider_response,
                 providerMessageId: row.provider_message_id || row.provider_reference_id,
