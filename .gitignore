@@ -13,6 +13,7 @@ api/webhook/last_payload.json
 raw_logs.txt
 raw_logs_utf8.txt
 scratch/
+api/cache/data/
 
 # SSL cert bundle (local curl use only, never commit)
 cacert.pem

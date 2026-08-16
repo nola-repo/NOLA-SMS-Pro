@@ -3,6 +3,10 @@
 require_once __DIR__ . '/SmsGatewayService.php';
 require_once __DIR__ . '/providers/SemaphoreProvider.php';
 require_once __DIR__ . '/providers/UniSmsProvider.php';
+// Ensure NolaCache is available when this class is instantiated outside a full request context.
+if (!class_exists('NolaCache', false)) {
+    require_once __DIR__ . '/../cache_helper.php';
+}
 
 class SemaphoreBalanceFetcher
 {
@@ -216,24 +220,36 @@ class SemaphoreBalanceFetcher
                     ];
                 }
             } elseif ($redisResult !== null) {
-                // ── Non-timeout non-active (e.g. 429): use Redis cache ────────
+                // ── Non-timeout non-active (e.g. HTTP 429 rate limit): use Redis cache ───
                 $result = array_merge($redisResult, ['fetched_via' => 'redis_cache']);
-            } elseif (!empty($fallbackData['provider_credit_balance'])) {
-                // ── Tier 4: Per-subaccount Firestore field ────────────────────
-                $result = [
-                    'status'      => 'active',
-                    'credits'     => (int) $fallbackData['provider_credit_balance'],
-                    'error'       => null,
-                    'fetched_via' => 'subaccount_firestore_field',
-                ];
-                NolaCache::set($redisCacheKey, $result, 900);
             } else {
-                $result = [
-                    'status'      => $check['status'] ?? 'inactive',
-                    'credits'     => (int) ($check['credits'] ?? 0),
-                    'error'       => $check['error'] ?? null,
-                    'fetched_via' => 'none',
-                ];
+                // ── No Redis cache — try Firestore LKG (handles HTTP 429 as well) ────────
+                $lkg = $this->readLastKnownGood($providerKey, $cleanApiKey);
+                if ($lkg !== null) {
+                    $result = [
+                        'status'      => 'active',
+                        'credits'     => $lkg['credits'],
+                        'error'       => null,
+                        'fetched_via' => 'firestore_lkg',
+                    ];
+                    NolaCache::set($redisCacheKey, $result, 300);
+                } elseif (!empty($fallbackData['provider_credit_balance'])) {
+                    // ── Tier 4: Per-subaccount Firestore field ─────────────────────────────
+                    $result = [
+                        'status'      => 'active',
+                        'credits'     => (int) $fallbackData['provider_credit_balance'],
+                        'error'       => null,
+                        'fetched_via' => 'subaccount_firestore_field',
+                    ];
+                    NolaCache::set($redisCacheKey, $result, 900);
+                } else {
+                    $result = [
+                        'status'      => $check['status'] ?? 'inactive',
+                        'credits'     => (int) ($check['credits'] ?? 0),
+                        'error'       => $check['error'] ?? null,
+                        'fetched_via' => 'none',
+                    ];
+                }
             }
 
         } catch (\Throwable $e) {
@@ -358,10 +374,16 @@ class SemaphoreBalanceFetcher
         $uniKeys = array_values(array_unique($uniKeys));
 
         // 3. Calculate Semaphore totals
+        // Pacing: Semaphore's API rate-limits concurrent requests (HTTP 429).
+        // Sleep 300ms between each key to stay within the rate limit when multiple
+        // custom API keys are registered on the platform.
         $semTotalCredits  = 0;
         $semConnectedAccs = 0;
         $semFetchSources  = [];
-        foreach ($semKeys as $key) {
+        foreach ($semKeys as $index => $key) {
+            if ($index > 0) {
+                usleep(300000); // 300ms pacing between Semaphore API calls
+            }
             $bal = $this->fetchBalance('semaphore', $key);
             if ($bal['status'] === 'active') {
                 $semTotalCredits += max(0, (int)$bal['credits']);

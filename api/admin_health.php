@@ -5,6 +5,7 @@ header('Content-Type: application/json');
 require __DIR__ . '/webhook/firestore_client.php';
 require_once __DIR__ . '/admin_auth_helper.php';
 require_once __DIR__ . '/services/SmsGatewayService.php';
+require_once __DIR__ . '/services/SemaphoreBalanceFetcher.php';
 require_once __DIR__ . '/cache_helper.php';
 require_once __DIR__ . '/performance_logger.php';
 
@@ -39,7 +40,7 @@ try {
     error_log("[admin_health.php] Database connection test failed: " . $e->getMessage());
 }
 
-// 2. Load BOTH providers' status and balance
+// 2. Load BOTH providers' status and balance (leveraging SemaphoreBalanceFetcher with caching / LKG)
 $activeProviderName = 'system';
 $providerDetails = [];
 
@@ -48,38 +49,38 @@ try {
     $gateway = new SmsGatewayService();
     $activeProviderName = $gateway->getProviderName();
 
-    $semProvider = $gateway->getProviderInstance('semaphore');
-    $uniProvider = $gateway->getProviderInstance('unisms');
+    $fetcher = new SemaphoreBalanceFetcher();
+    $summary = $fetcher->getDashboardSummary($db);
 
-    $semCheck = $semProvider->checkAccount();
-    $uniCheck = $uniProvider->checkAccount();
+    $semSummary = $summary['semaphore'] ?? [];
+    $uniSummary = $summary['unisms'] ?? [];
 
-    $semCredits = (int)($semCheck['credits'] ?? 0);
-    $uniCredits = (int)($uniCheck['credits'] ?? 0);
+    $semCredits = (int)($semSummary['total_credits'] ?? $semSummary['credits'] ?? 0);
+    $uniCredits = (int)($uniSummary['total_credits'] ?? $uniSummary['credits'] ?? 0);
 
     $providerDetails = [
         'active_provider' => $activeProviderName,
         'all_providers' => [
             'semaphore' => [
                 'name'        => 'Semaphore',
-                'status'      => $semCheck['status'] ?? 'inactive',
+                'status'      => $semSummary['status'] ?? 'inactive',
                 'credits'     => $semCredits,
-                'configured'  => ($semCheck['status'] ?? '') === 'active',
+                'configured'  => ($semSummary['status'] ?? '') === 'active',
                 'is_active'   => in_array($activeProviderName, ['semaphore', 'auto_failover'], true),
-                'warning'     => $semCredits < 1000 && $semCredits >= 300 && ($semCheck['status'] ?? '') === 'active',
-                'critical'    => $semCredits < 300 && ($semCheck['status'] ?? '') === 'active',
+                'warning'     => $semCredits < 1000 && $semCredits >= 300 && ($semSummary['status'] ?? '') === 'active',
+                'critical'    => $semCredits < 300 && ($semSummary['status'] ?? '') === 'active',
                 'error'       => null,
             ],
             'unisms' => [
                 'name'        => 'UniSMS',
-                'status'      => $uniCheck['status'] ?? 'inactive',
+                'status'      => $uniSummary['status'] ?? 'inactive',
                 'credits'     => $uniCredits,
-                'email'       => $uniCheck['email'] ?? null,
-                'sid_tokens'  => isset($uniCheck['sid_tokens']) ? (int)$uniCheck['sid_tokens'] : null,
-                'configured'  => ($uniCheck['status'] ?? '') === 'active',
+                'email'       => null,
+                'sid_tokens'  => null,
+                'configured'  => ($uniSummary['status'] ?? '') === 'active',
                 'is_active'   => $activeProviderName === 'unisms',
-                'warning'     => $uniCredits < 200 && $uniCredits >= 50 && ($uniCheck['status'] ?? '') === 'active',
-                'critical'    => $uniCredits < 50 && ($uniCheck['status'] ?? '') === 'active',
+                'warning'     => $uniCredits < 200 && $uniCredits >= 50 && ($uniSummary['status'] ?? '') === 'active',
+                'critical'    => $uniCredits < 50 && ($uniSummary['status'] ?? '') === 'active',
                 'error'       => null,
             ],
         ],

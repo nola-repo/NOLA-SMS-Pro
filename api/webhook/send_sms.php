@@ -618,9 +618,11 @@ $flagIsTrue    = ($reqSystemFlag === true || $reqSystemFlag === 'true' || $reqSy
 $isKnownSystemAlert = $systemAlertType !== '' && in_array($systemAlertType, $knownSystemAlertTypes, true);
 
 $isSystemNotification = false;
-if ($centralLocationId !== '' && ($triggeringLocationId === $centralLocationId || $locId === $centralLocationId)) {
-    $isSystemNotification = true;
-} elseif ($flagIsTrue || $isKnownSystemAlert) {
+// NOTE: Do NOT classify messages as system notifications based solely on the location ID matching
+// the central NOLA CRM location. That caused every regular automation/campaign sent from the NOLA CRM
+// subaccount to bypass its approved sender ID ("NOLA") and fall back to the system default "NOLASMSPro".
+// A message is only a system notification when the payload explicitly declares it.
+if ($flagIsTrue || $isKnownSystemAlert) {
     $isSystemNotification = true;
 }
 
