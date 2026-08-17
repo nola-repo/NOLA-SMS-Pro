@@ -26,7 +26,14 @@ try {
     auth_require_api_or_jwt_for_location($db, (string)$locId);
 
     if ($method === 'GET') {
-        $limit = min((int)($_GET['limit'] ?? 50), 100);
+        $rawLimit = $_GET['limit'] ?? null;
+        if ($rawLimit === 'all' || $rawLimit === '0') {
+            $limit = 1000;
+        } elseif ($rawLimit !== null && is_numeric($rawLimit)) {
+            $limit = min(max((int)$rawLimit, 1), 1000);
+        } else {
+            $limit = 1000;
+        }
         $offset = max((int)($_GET['offset'] ?? 0), 0);
         $type = $_GET['type'] ?? null; // optional: direct | bulk
 
