@@ -7,6 +7,8 @@ import { collection, query, where, onSnapshot, doc } from "firebase/firestore";
 import { ensureFirestoreAuth } from "../services/firestoreAuth";
 import { db } from "../services/firebaseConfig";
 
+import { getAccountSettings } from "../utils/settingsStorage";
+
 const CACHE_TTL_MS = 60_000;
 const SKELETON_DELAY_MS = 160;
 
@@ -134,6 +136,7 @@ interface DatabaseMessageRow {
  */
 export const useConversationMessages = (conversationId: string | undefined, recipientKey?: string) => {
     const { locationId } = useLocationId();
+    const resolvedLocationId = locationId || getAccountSettings().ghlLocationId || '';
     const [messages, setMessages] = useState<Message[]>([]);
     const [conversation, setConversation] = useState<Conversation | null>(null);
     const [loading, setLoading] = useState(false);
@@ -144,8 +147,8 @@ export const useConversationMessages = (conversationId: string | undefined, reci
     const skeletonTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const requestSeq = useRef(0);
     const cacheKey = useMemo(
-        () => buildMessageHistoryCacheKey(locationId || undefined, conversationId, recipientKey),
-        [conversationId, locationId, recipientKey]
+        () => buildMessageHistoryCacheKey(resolvedLocationId || undefined, conversationId, recipientKey),
+        [conversationId, resolvedLocationId, recipientKey]
     );
     const cacheKeyRef = useRef(cacheKey);
     const optimisticMessageTargets = useRef(new Map<string, string>());
@@ -337,7 +340,7 @@ export const useConversationMessages = (conversationId: string | undefined, reci
         setErrorStatus(undefined);
 
         try {
-            const rows = await fetchMessagesByConversationId(conversationId, 100, recipientKey, locationId || undefined);
+            const rows = await fetchMessagesByConversationId(conversationId, 100, recipientKey, resolvedLocationId || undefined);
             if (requestSeq.current !== requestId) return;
 
             processAndMergeMessages(rows);
@@ -370,7 +373,7 @@ export const useConversationMessages = (conversationId: string | undefined, reci
                 isInitialLoad.current = false;
             }
         }
-    }, [conversationId, recipientKey, locationId, processAndMergeMessages]);
+    }, [conversationId, recipientKey, resolvedLocationId, processAndMergeMessages]);
 
     // Initial fetch — reset state when conversation changes
     useEffect(() => {
@@ -413,7 +416,7 @@ export const useConversationMessages = (conversationId: string | undefined, reci
 
     // Real-time Firestore message subscription
     useEffect(() => {
-        if (!conversationId || !locationId) return;
+        if (!conversationId) return;
 
         let unsubscribe: (() => void) | undefined;
 
@@ -423,7 +426,6 @@ export const useConversationMessages = (conversationId: string | undefined, reci
 
                 let q = query(
                     collection(db, 'messages'),
-                    where('location_id', '==', locationId),
                     where('conversation_id', '==', conversationId)
                 );
 
@@ -448,12 +450,12 @@ export const useConversationMessages = (conversationId: string | undefined, reci
             }
         };
 
-        setupListener();
+        void setupListener();
 
         return () => {
             if (unsubscribe) unsubscribe();
         };
-    }, [conversationId, locationId, recipientKey, processAndMergeMessages]);
+    }, [conversationId, recipientKey, processAndMergeMessages]);
 
     // Real-time Firestore conversation document subscription
     useEffect(() => {

@@ -283,12 +283,45 @@ export const Composer: React.FC<ComposerProps> = ({
   } = usePhoneMessages(historyPhoneNumber);
 
   const [useRawLogView, setUseRawLogView] = useState(false);
-  const shouldUseRawLogFallback =
-    !useRawLogView &&
-    !!historyPhoneNumber &&
-    !historyLoading &&
-    conversationMessages.length === 0 &&
-    phoneLogMessages.length > 0;
+
+  const mergedDirectMessages = useMemo(() => {
+    if (useRawLogView) {
+      return phoneLogMessages;
+    }
+    if (conversationMessages.length === 0) {
+      return phoneLogMessages;
+    }
+    if (phoneLogMessages.length === 0) {
+      return conversationMessages;
+    }
+
+    // Merge conversationMessages and phoneLogMessages, deduplicating by text + close timestamp or ID
+    const map = new Map<string, Message>();
+    phoneLogMessages.forEach((m) => {
+      map.set(m.id, m);
+    });
+    conversationMessages.forEach((m) => {
+      let foundKey: string | null = null;
+      for (const [key, existing] of map.entries()) {
+        if (
+          existing.id === m.id ||
+          (existing.text.trim() === m.text.trim() &&
+            Math.abs(new Date(existing.timestamp).getTime() - new Date(m.timestamp).getTime()) < 60_000)
+        ) {
+          foundKey = key;
+          break;
+        }
+      }
+      if (foundKey) {
+        map.delete(foundKey);
+      }
+      map.set(m.id, m);
+    });
+
+    return Array.from(map.values()).sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+  }, [useRawLogView, conversationMessages, phoneLogMessages]);
 
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -401,7 +434,7 @@ export const Composer: React.FC<ComposerProps> = ({
   const prevRawLogView = useRef<boolean>(false);
 
   useEffect(() => {
-    const currentLength = useRawLogView ? phoneLogMessages.length : conversationMessages.length;
+    const currentLength = useRawLogView ? phoneLogMessages.length : mergedDirectMessages.length;
     
     // Only auto-scroll on initial load, when conversation changes, 
     // when toggling raw log view, or when new messages arrive.
@@ -418,7 +451,7 @@ export const Composer: React.FC<ComposerProps> = ({
     prevConversationId.current = conversationId;
     prevRawLogView.current = useRawLogView;
     prevMessagesLength.current = currentLength;
-  }, [conversationMessages, phoneLogMessages, useRawLogView, conversationId, setSafeTimeout]);
+  }, [mergedDirectMessages, phoneLogMessages, useRawLogView, conversationId, setSafeTimeout]);
 
   // Whenever the conversationId changes, reset the raw log view toggle
   useEffect(() => {
@@ -1616,7 +1649,11 @@ export const Composer: React.FC<ComposerProps> = ({
                                 key={contact.id}
                                 onClick={() => {
                                   if (!hasPhone) return;
-                                  isSelected ? handleRemoveBulkContact(contact.id) : handleSelectBulkContact(contact);
+                                  if (isSelected) {
+                                    handleRemoveBulkContact(contact.id);
+                                  } else {
+                                    handleSelectBulkContact(contact);
+                                  }
                                 }}
                                 title={!hasPhone ? 'This contact has no phone number and cannot receive messages' : ''}
                                 className={`px-3 py-2.5 rounded-xl flex items-center justify-between transition-all duration-150 ${!hasPhone
@@ -1742,9 +1779,9 @@ export const Composer: React.FC<ComposerProps> = ({
                 )}
               </div>
             </div>
-          ) : historyLoading && !useRawLogView && conversationMessages.length === 0 ? (
+          ) : historyLoading && !useRawLogView && mergedDirectMessages.length === 0 ? (
             <MessageHistorySkeleton />
-          ) : !useRawLogView && !shouldUseRawLogFallback && conversationMessages.length === 0 ? (
+          ) : !useRawLogView && mergedDirectMessages.length === 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center">
               {!lottieError ? (
                 <DotLottieReact
@@ -1770,12 +1807,12 @@ export const Composer: React.FC<ComposerProps> = ({
                   : (composeMode === "bulk" ? "Select contacts to send a synchronized update across your network." : "Type a message below to start a new professional conversation.")}
               </p>
             </div>
-          ) : (useRawLogView || shouldUseRawLogFallback) ? (
+          ) : useRawLogView ? (
             <div className="space-y-1 max-w-4xl mx-auto w-full mt-auto">
               <div className="mb-3 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <span className="px-2 py-0.5 rounded-full bg-gray-100 dark:bg-white/10 text-[11px] font-semibold text-gray-600 dark:text-gray-300">
-                    {shouldUseRawLogFallback ? "Synced from outbound log" : "Raw outbound log view"}
+                    Raw outbound log view
                   </span>
                   {phoneLogLoading && (
                     <span className="text-[11px] text-gray-400 flex items-center gap-1">
@@ -2126,7 +2163,7 @@ export const Composer: React.FC<ComposerProps> = ({
                   });
                 }
 
-                const sourceMessages = conversationMessages;
+                const sourceMessages = mergedDirectMessages;
                 return sourceMessages.map((msg, index) => {
                   const isInbound = msg.direction === 'inbound';
                   const isExpanded = expandedMessageId === msg.id;
