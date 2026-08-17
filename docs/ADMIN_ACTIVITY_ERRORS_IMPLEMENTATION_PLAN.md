@@ -1,169 +1,26 @@
-# Admin Platform Activity Error Reduction Implementation Plan
+# Admin Platform Activity Frontend Implementation Plan
 
-Date prepared: August 12, 2026  
-Target work date: August 13, 2026  
-Scope: Backend + frontend changes for Admin Platform Activity error clarity, SMS provider failure reduction, and handoff-ready diagnostics.
+Date revised: August 13, 2026  
+Primary owner: Frontend  
+Backend status: Done, pushed, and deployed  
+Goal: Update Admin Platform Activity so provider, validation, and true platform issues are shown clearly instead of being grouped as generic "errors."
 
-## 1. Current Findings
+## 1. Backend Changes Already Deployed
 
-The Admin Platform Activity page is not showing only backend/platform crashes. It is a unified activity feed containing SMS sends, SMS history logs, sender ID requests, and credit transactions.
+The backend baseline was implemented and deployed on August 12, 2026.
 
-Recent sampled activity showed:
+- Commit: `d8d03a5 Normalize admin activity error metadata`
+- Cloud Run revision: `sms-api-00928-jfc`
+- Cloud Build: `b30aa236-e57e-4a9c-9faa-72bb7ec4c62f`
+- Endpoint affected: `/api/admin_sender_requests.php?action=logs`
 
-- 507 simulated unique activity feed rows.
-- 54 failed rows.
-- 2 pending rows.
-- 201 successful rows.
-- 250 credit transaction rows that do not map cleanly to success/failure status.
+The backend change is backward-compatible. Existing frontend code can keep reading `data`; the new fields are additive.
 
-Failure categories from the sampled feed:
+### New Top-Level Response Field
 
-- 43 Semaphore timeout failures.
-- 5 invalid phone failures.
-- 2 UniSMS content rejected as spam-like.
-- 1 UniSMS timeout.
-- 1 UniSMS content too short.
-- 2 other stored failure reasons.
+`?action=logs` now returns a `summary` object alongside the existing `data` array.
 
-Main conclusion: most visible "errors" are SMS provider delivery or validation issues, not admin platform crashes.
-
-## 2. Goals
-
-1. Reduce real SMS send failures, especially Semaphore timeout failures.
-2. Stop labeling all failed activity as generic platform errors.
-3. Normalize backend activity rows so frontend can display clear categories.
-4. Make Admin Platform Activity useful for triage: provider issue, validation issue, content issue, sender request, credit event, or true platform error.
-5. Provide testable acceptance criteria for backend and frontend teams.
-
-## 3. Backend Implementation Plan
-
-### Phase 1: Normalize Activity Row Metadata
-
-Add normalized fields to SMS-related activity rows written into `messages` and `sms_logs`.
-
-Recommended fields:
-
-```json
-{
-  "status_group": "successful | pending | failed | validation | provider_error",
-  "error_category": "semaphore_timeout | unisms_timeout | invalid_phone | content_rejected | content_too_short | provider_validation_422 | ghl_sync_error | platform_exception | other",
-  "severity": "info | warning | error",
-  "is_platform_error": false,
-  "is_retryable": true,
-  "retry_count": 0,
-  "last_retry_at": null,
-  "finalized_at": null
-}
-```
-
-Initial mapping:
-
-- `sent`, `delivered`, `completed`, `success` -> `status_group=successful`, `severity=info`.
-- `queued`, `sending`, `pending`, `provider_pending` -> `status_group=pending`, `severity=info`.
-- Invalid phone -> `status_group=validation`, `error_category=invalid_phone`, `severity=warning`, `is_platform_error=false`.
-- Provider timeout -> `status_group=provider_error`, `error_category=semaphore_timeout` or `unisms_timeout`, `severity=warning`, `is_platform_error=false`, `is_retryable=true`.
-- UniSMS HTTP 422 content issues -> `status_group=validation`, `error_category=content_rejected` or `content_too_short`, `severity=warning`.
-- Unhandled backend exceptions -> `status_group=failed`, `error_category=platform_exception`, `severity=error`, `is_platform_error=true`.
-
-Primary files:
-
-- `api/webhook/send_sms.php`
-- `api/webhook/ghl_provider.php`
-- `api/services/StatusSync.php`
-- `api/services/providers/SemaphoreProvider.php`
-- `api/services/providers/UniSmsProvider.php`
-- `api/admin_sender_requests.php`
-
-### Phase 2: Add Error Categorization Helper
-
-Create a shared backend helper for consistent categorization.
-
-Suggested file:
-
-- `api/services/ActivityErrorClassifier.php`
-
-Responsibilities:
-
-- Accept raw provider response, status, curl error, HTTP code, and validation reason.
-- Return normalized metadata fields.
-- Keep the exact provider error in `raw_error` or existing provider response fields for detail modals.
-- Avoid duplicating string matching across `send_sms.php`, `ghl_provider.php`, and `StatusSync.php`.
-
-Suggested public methods:
-
-```php
-ActivityErrorClassifier::fromProviderFailure(string $provider, ?int $httpCode, ?string $error, array $providerResponse = []): array;
-ActivityErrorClassifier::fromValidationFailure(string $reason): array;
-ActivityErrorClassifier::fromStatus(string $status): array;
-```
-
-### Phase 3: Improve Semaphore Timeout Handling
-
-Most observed failures are Semaphore timeouts. Treat timeouts as provider uncertainty first, not immediate permanent failure.
-
-Implementation steps:
-
-1. When Semaphore send times out, store status as `provider_pending` or `queued_timeout_unconfirmed` if the provider may still have accepted the request.
-2. Add `is_retryable=true` and `error_category=semaphore_timeout`.
-3. Let status reconciliation finalize the message as `sent`, `failed`, or `expired`.
-4. Add circuit breaker logic:
-   - Track recent Semaphore timeout rate.
-   - If threshold is exceeded, temporarily route eligible sends to UniSMS.
-   - Store `provider_failover_used=true` when failover happens.
-5. Add structured logs for every provider timeout and failover decision.
-
-Acceptance criteria:
-
-- A Semaphore timeout does not always become a permanent `failed` row immediately.
-- Activity feed displays the row as provider issue or pending retry.
-- Status sync can later change it to successful.
-- Admin cache is invalidated after status changes.
-
-### Phase 4: Pre-Validate Phone Numbers
-
-Stop calling providers for invalid recipient numbers.
-
-Implementation steps:
-
-1. Add or reuse a phone normalizer for PH mobile numbers.
-2. Validate workflow/GHL phone numbers before provider send.
-3. If invalid:
-   - Do not call Semaphore or UniSMS.
-   - Save activity row with `status_group=validation`, `error_category=invalid_phone`.
-   - Return a clear API response.
-4. Include sanitized `location_id`, `source`, and `workflow_block_reason` fields for triage.
-
-Acceptance criteria:
-
-- Invalid numbers show as validation issues, not provider failures.
-- Invalid numbers do not consume provider calls or credits.
-- GHL workflow caller receives a clear response.
-
-### Phase 5: Pre-Validate SMS Content
-
-Reduce UniSMS HTTP 422 failures.
-
-Implementation steps:
-
-1. Reject empty, placeholder-only, or too-short messages before provider send.
-2. Preserve existing GSM-7 sanitization.
-3. Map UniSMS 422 responses into clear categories:
-   - Spam-like content -> `content_rejected`.
-   - Minimum length issue -> `content_too_short`.
-   - Other 422 -> `provider_validation_422`.
-4. Store a user-friendly `failure_summary`.
-
-Acceptance criteria:
-
-- UniSMS 422 rows have readable categories.
-- Frontend does not need to parse raw provider JSON.
-- Raw provider response remains available for diagnostics.
-
-### Phase 6: Update Admin Activity Endpoint
-
-Update `api/admin_sender_requests.php?action=logs` to return normalized summary and metadata.
-
-Recommended response shape:
+Example:
 
 ```json
 {
@@ -175,66 +32,117 @@ Recommended response shape:
     "failed": 54,
     "provider_errors": 44,
     "validation_errors": 6,
-    "platform_errors": 0
+    "platform_errors": 0,
+    "warnings": 50,
+    "errors": 0
   },
   "data": []
 }
 ```
 
-Implementation steps:
+### New Row Fields
 
-1. Keep existing data array for backward compatibility.
-2. Add `summary` object.
-3. Add normalized metadata to each returned row.
-4. Keep deduplication by document ID.
-5. Add category counts server-side so frontend does not infer too much.
-6. Invalidate `admin_activity_logs_all` after status updates, retries, sender request changes, and credit transaction changes.
+New and backfilled activity rows may include:
 
-Acceptance criteria:
+```json
+{
+  "status_group": "successful | pending | failed | validation | provider_error | other",
+  "error_category": "semaphore_timeout | unisms_timeout | invalid_phone | content_rejected | content_too_short | provider_validation_422 | ghl_sync_error | platform_exception | other",
+  "severity": "info | warning | error",
+  "is_platform_error": false,
+  "is_retryable": true,
+  "failure_summary": "Semaphore timeout. Message may need retry or provider failover."
+}
+```
 
-- Existing frontend still works if it ignores `summary`.
-- New frontend can use `summary` and normalized row fields.
-- Activity feed no longer needs to parse provider error strings to categorize failures.
+### Backend Meaning
 
-### Phase 7: Backend Tests
+- `provider_error`: SMS provider issue, not an admin platform crash.
+- `validation`: invalid phone/content issue, not an admin platform crash.
+- `failed`: final failed state or true failure category.
+- `is_platform_error=true`: only use this for actual backend/platform issues.
+- `failure_summary`: preferred user-facing reason when available.
 
-Add focused tests for:
+## 2. Frontend Problem To Solve
 
-- Semaphore timeout classification.
-- UniSMS timeout classification.
-- UniSMS HTTP 422 content classification.
-- Invalid phone pre-validation.
-- Status sync updating a provider timeout from pending to sent.
-- Admin activity summary counts.
-- Cache invalidation after status updates.
+The current Admin Platform Activity UI can make provider delivery failures look like admin platform errors. This causes confusion because most logged "errors" are actually:
 
-Suggested test locations:
+- Semaphore timeout delivery issues.
+- Invalid phone number blocks.
+- UniSMS content validation rejections.
+- Sender request rejections or pending reviews.
+- Credit events that are activity, not errors.
 
-- `laravel/tests/Unit/`
-- `laravel/tests/Feature/Bridge/`
+Frontend should use backend categories to make the page feel like a triage dashboard, not an alarming error dump.
 
-## 4. Frontend Implementation Plan
+## 3. Frontend Goals
 
-### Phase 1: Update Terminology
+1. Stop labeling all failed rows as generic platform errors.
+2. Use backend `summary` for the activity stats when present.
+3. Display provider issues, validation issues, and platform errors as separate concepts.
+4. Add filters for the new backend categories.
+5. Show friendly failure text first, with raw provider details only in the detail modal.
+6. Keep compatibility with older backend responses and older log rows.
 
-Avoid presenting all failures as platform errors.
+## 4. Primary Frontend File
 
-Recommended labels:
-
-- Replace "Review" with "Needs Review" or split into "Pending" and "Failed".
-- Use "Delivery Issues" for provider failures.
-- Use "Validation Issues" for invalid phone/content problems.
-- Reserve "Platform Errors" only for `is_platform_error=true`.
-
-Primary frontend file:
+Main file to update:
 
 - `tmp/nola-sms-pro-frontend/admin/src/pages/components/SystemSettings.tsx`
 
-### Phase 2: Use Backend Summary
+Current areas to inspect:
 
-When `?action=logs` returns `summary`, use it for dashboard cards.
+- `fetchLogs`
+- `getType`
+- `getStatusGroup`
+- `activityStats`
+- filter controls
+- activity row renderer
+- detail modal
 
-Cards to show:
+## 5. Implementation Plan
+
+### Phase 1: Consume Backend Summary
+
+Update `fetchLogs` to store both:
+
+- `logsData.data`
+- `logsData.summary`
+
+Recommended state:
+
+```ts
+type ActivitySummary = {
+  total: number;
+  successful: number;
+  pending: number;
+  failed: number;
+  provider_errors: number;
+  validation_errors: number;
+  platform_errors: number;
+  warnings: number;
+  errors: number;
+};
+
+const [activitySummary, setActivitySummary] = useState<ActivitySummary | null>(null);
+```
+
+Fallback behavior:
+
+- If `summary` exists, use it for top cards.
+- If `summary` is missing, keep the existing client-side count logic.
+
+Acceptance criteria:
+
+- Old response shape still renders.
+- New response shape renders with backend counts.
+- No runtime error if `summary` is missing or incomplete.
+
+### Phase 2: Replace Generic "Review" Count
+
+Current "Review" grouping is too vague because it combines failed and pending activity.
+
+Recommended cards:
 
 - Events
 - SMS
@@ -244,13 +152,61 @@ Cards to show:
 - Validation Issues
 - Platform Errors
 
-Fallback:
+If there is limited space, use:
 
-- If `summary` is missing, keep current client-side count logic.
+- Events
+- Provider Issues
+- Validation Issues
+- Platform Errors
+- Pending
 
-### Phase 3: Add Category Filters
+Important display rules:
 
-Add filters/chips:
+- `provider_errors` should not be styled as a critical platform outage by default.
+- `validation_errors` should use warning styling, not danger styling.
+- `platform_errors` should be the only card with strong error styling.
+
+Acceptance criteria:
+
+- Semaphore timeout rows increase Provider Issues, not Platform Errors.
+- Invalid phone rows increase Validation Issues.
+- `platform_errors` remains 0 unless backend sends `is_platform_error=true`.
+
+### Phase 3: Add Category-Aware Helpers
+
+Create helpers that prefer backend fields but gracefully fall back to old logic.
+
+Suggested helpers:
+
+```ts
+const getStatusGroup = (log: any) => {
+  if (log.status_group) return String(log.status_group).toLowerCase();
+
+  const status = String(log.status || log.delivery_status || '').toLowerCase();
+  if (['sent', 'delivered', 'approved', 'completed', 'paid', 'success', 'successful'].includes(status)) return 'successful';
+  if (['pending', 'queued', 'processing', 'requested', 'sending'].includes(status)) return 'pending';
+  if (['failed', 'rejected', 'revoked', 'error', 'denied'].includes(status)) return 'failed';
+  return status ? 'pending' : 'successful';
+};
+
+const getErrorCategory = (log: any) => {
+  return String(log.error_category || '').toLowerCase();
+};
+
+const isPlatformError = (log: any) => {
+  return Boolean(log.is_platform_error);
+};
+```
+
+Acceptance criteria:
+
+- Old logs without `status_group` still render.
+- New logs use backend classification.
+- Raw provider strings are no longer the primary categorization path.
+
+### Phase 4: Add Filters
+
+Add filters/chips for:
 
 - All
 - SMS
@@ -259,105 +215,182 @@ Add filters/chips:
 - Provider Timeout
 - Invalid Phone
 - Content Rejected
+- Validation
 - Platform Error
 
-Filtering should use backend fields:
+Filter behavior:
 
-- `status_group`
-- `error_category`
-- `severity`
-- `is_platform_error`
+- Provider Timeout: `error_category` is `semaphore_timeout` or `unisms_timeout`.
+- Invalid Phone: `error_category=invalid_phone`.
+- Content Rejected: `error_category=content_rejected`, `content_too_short`, or `provider_validation_422`.
+- Validation: `status_group=validation`.
+- Platform Error: `is_platform_error=true`.
 
-Do not parse raw provider response in the frontend except as a fallback.
+Acceptance criteria:
 
-### Phase 4: Improve Row Copy
+- Provider timeout filter isolates Semaphore/UniSMS timeout rows.
+- Invalid phone filter isolates invalid-phone blocks.
+- Platform Error filter does not include provider failures.
 
-Display user-friendly failure messages.
+### Phase 5: Improve Row Labels And Copy
 
-Suggested mappings:
+Use `failure_summary` as the preferred display text when present.
 
-- `semaphore_timeout`: "Semaphore timeout. Message may need retry or provider failover."
-- `unisms_timeout`: "UniSMS timeout. Message may need retry."
-- `invalid_phone`: "Invalid recipient phone number."
-- `content_rejected`: "Provider rejected the SMS content."
-- `content_too_short`: "Message content is too short."
-- `platform_exception`: "Backend platform error. Engineering review required."
+Recommended mapping fallback:
 
-In the detail modal:
+```ts
+const friendlyFailureReason = (log: any) => {
+  if (log.failure_summary) return log.failure_summary;
 
-- Show friendly summary first.
-- Show raw provider response under "Technical Details".
-- Keep copy button for reference ID, provider message ID, and location ID.
+  switch (log.error_category) {
+    case 'semaphore_timeout':
+      return 'Semaphore timeout. Message may need retry or provider failover.';
+    case 'unisms_timeout':
+      return 'UniSMS timeout. Message may need retry.';
+    case 'invalid_phone':
+      return 'Invalid recipient phone number.';
+    case 'content_rejected':
+      return 'Provider rejected the SMS content.';
+    case 'content_too_short':
+      return 'Message content is too short.';
+    case 'provider_validation_422':
+      return 'Provider rejected the SMS request as invalid.';
+    case 'platform_exception':
+      return 'Backend platform error. Engineering review required.';
+    default:
+      return getFailureReason(log);
+  }
+};
+```
 
-### Phase 5: Add Provider Health Strip
+Recommended row titles:
 
-Add a compact status strip above the activity table:
+- `provider_error` + timeout category: "Provider Timeout"
+- `validation` + invalid phone: "Invalid Phone"
+- `validation` + content category: "Content Validation"
+- `is_platform_error=true`: "Platform Error"
+- sender request rejected: "Sender Request Rejected"
+- pending sender request: "Sender Request Pending"
 
-- Semaphore timeouts today.
-- UniSMS timeouts today.
-- Invalid phone count today.
-- Last successful send.
-- Failover active or inactive.
+Acceptance criteria:
 
-This can be backed by the Admin Activity summary first, then upgraded to a dedicated health endpoint later.
+- Activity rows are understandable without opening the modal.
+- Provider timeout rows do not say "Platform Error."
+- Raw provider text is still available in detail view.
 
-### Phase 6: Frontend Tests
+### Phase 6: Update Detail Modal
 
-Add tests for:
+Detail modal should show:
+
+- Friendly summary
+- Category
+- Severity
+- Retryable: yes/no
+- Provider
+- Status
+- Location ID
+- Reference ID
+- Provider message/reference ID
+- Raw provider response under "Technical Details"
+
+Do not remove raw provider data; support still needs it.
+
+Acceptance criteria:
+
+- Support can copy IDs from modal.
+- Non-technical admin users see a readable reason first.
+- Raw provider response is not the first or only explanation.
+
+### Phase 7: Add Provider Health Strip
+
+Add a compact strip above the table or under the stats cards.
+
+Suggested items:
+
+- Semaphore timeouts
+- UniSMS timeouts
+- Invalid phone issues
+- Content validation issues
+- Platform errors
+
+This can initially be calculated client-side from loaded logs. Later it can move to a dedicated backend health endpoint.
+
+Acceptance criteria:
+
+- Admin can quickly see whether the issue is provider health, input validation, or platform error.
+- Strip does not block existing activity list workflow.
+
+## 6. UX Copy Guidelines
+
+Use calm and specific labels:
+
+- "Provider issue" instead of "System error"
+- "Validation issue" instead of "Failed"
+- "Timeout" instead of raw cURL text
+- "Platform error" only when `is_platform_error=true`
+
+Avoid showing raw text like this as the main row reason:
+
+```txt
+Semaphore cURL error: Connection timed out after 8068 milliseconds
+```
+
+Prefer:
+
+```txt
+Semaphore timeout. Message may need retry or provider failover.
+```
+
+## 7. Frontend QA Checklist
+
+Use mocked rows or a staging response containing:
+
+- `status_group=provider_error`, `error_category=semaphore_timeout`
+- `status_group=provider_error`, `error_category=unisms_timeout`
+- `status_group=validation`, `error_category=invalid_phone`
+- `status_group=validation`, `error_category=content_rejected`
+- `status_group=failed`, `error_category=platform_exception`, `is_platform_error=true`
+- old row with only `status=failed` and no normalized fields
+- credit transaction row
+- sender request row
+
+Checklist:
 
 - Summary cards render from backend `summary`.
-- Old response shape still works.
-- Category filters isolate provider timeout, validation, and platform error rows.
-- Friendly message mapping works.
-- Raw provider response appears only in detail modal.
+- Page still works if `summary` is absent.
+- Provider timeout rows are not counted as Platform Errors.
+- Invalid phone rows appear as Validation Issues.
+- Platform Error filter only shows `is_platform_error=true`.
+- Friendly reason appears in row and modal.
+- Raw provider response appears in modal technical details.
+- Existing search and pagination still work.
+- Existing type pills still work for SMS, Credits, and Sender Requests.
 
-## 5. Suggested Work Order Tomorrow
+## 8. Backend Follow-Up Items
 
-1. Backend: add `ActivityErrorClassifier`.
-2. Backend: update phone/content validation before provider calls.
-3. Backend: update provider failure handling and normalized metadata writes.
-4. Backend: update Admin Activity endpoint summary.
-5. Backend: add cache invalidation after status updates.
-6. Frontend: consume normalized fields and summary.
-7. Frontend: update labels, filters, and friendly failure messages.
-8. QA: run seeded/fake failure cases plus one real read-only activity analysis.
+These are not required for the frontend work but remain useful backend hardening tasks:
 
-## 6. QA Checklist
+1. Decide whether Semaphore timeouts should be retried automatically or marked pending for scheduler reconciliation.
+2. Decide whether failover from Semaphore to UniSMS should be automatic, admin-configurable, or manual.
+3. Decide whether validation issues should appear in default activity or only under filters.
+4. Add deeper classifier unit tests for edge cases.
+5. Consider a dedicated provider health endpoint if the Activity page needs longer time windows than the current feed.
 
-Backend:
+## 9. Deployment Order
 
-- Invalid phone does not hit SMS provider.
-- Invalid phone does not deduct credits.
-- Semaphore timeout is classified as `semaphore_timeout`.
-- UniSMS timeout is classified as `unisms_timeout`.
-- UniSMS spam-like rejection is classified as `content_rejected`.
-- Admin Activity returns `summary`.
-- Admin Activity cache clears after status changes.
-- True exceptions are the only rows with `is_platform_error=true`.
+1. Backend: done and deployed.
+2. Frontend: update Admin Platform Activity to consume the new fields.
+3. QA frontend against production/staging API response shape.
+4. Deploy frontend.
+5. Recheck Admin Platform Activity counts and labels after deploy.
 
-Frontend:
+## 10. Success Definition
 
-- Admin page does not call provider failures "platform errors".
-- Summary cards match backend summary.
-- Filters work by category.
-- Detail modal shows friendly reason and raw diagnostics.
-- Existing old logs without normalized fields still render safely.
+This work is complete when Admin Platform Activity clearly answers:
 
-## 7. Deployment Notes
+- Is this a provider issue?
+- Is this a validation/input issue?
+- Is this a sender request or credit event?
+- Is this a true backend/platform error?
 
-- Deploy backend first.
-- Frontend must tolerate both old and new response shapes.
-- Keep raw provider error fields for support/debugging.
-- After deploy, rerun the read-only analyzer and compare:
-  - Semaphore timeout count.
-  - Invalid phone count.
-  - Provider validation count.
-  - Platform error count.
-
-## 8. Open Questions
-
-1. Should Semaphore timeouts be retried automatically, or marked pending for scheduler reconciliation first?
-2. Should failover from Semaphore to UniSMS be automatic, admin-configurable, or manual only?
-3. Should invalid GHL workflow phone numbers create visible Admin Activity rows, or be hidden from default activity and shown only under Validation Issues?
-4. What timeout threshold should trigger provider health warnings?
-5. Should credit deduction happen only after provider acceptance, or remain as-is with refund/reversal on final failure?
+Provider failures should no longer make the admin platform look broken unless the backend explicitly marks `is_platform_error=true`.

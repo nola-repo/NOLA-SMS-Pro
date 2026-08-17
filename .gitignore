@@ -18,9 +18,6 @@ api/cache/data/
 # SSL cert bundle (local curl use only, never commit)
 cacert.pem
 
-# Planning/design docs (local reference only)
-docs/
-
 # Ignore VSCode config
 .vscode/
 
@@ -45,5 +42,7 @@ _nola-sms-pro-frontend/
 vendor/
 frontend_old/
 temp_*/
+tmp/
+outputs/
 .DS_Store
 Thumbs.db
