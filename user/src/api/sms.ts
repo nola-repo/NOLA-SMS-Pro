@@ -685,9 +685,9 @@ export const fetchConversations = async (explicitLocationId?: string): Promise<C
 
     if (locationId) headers['X-GHL-Location-ID'] = locationId;
 
-    let CONVERSATIONS_URL = API_CONFIG.conversations;
+    let CONVERSATIONS_URL = `${API_CONFIG.conversations}?limit=1000`;
     if (locationId) {
-      CONVERSATIONS_URL += `?location_id=${encodeURIComponent(locationId)}`;
+      CONVERSATIONS_URL += `&location_id=${encodeURIComponent(locationId)}`;
     }
     const res = await apiFetch(CONVERSATIONS_URL, { headers });
     if (!res.ok) throw new Error(`Failed to fetch conversations: ${res.status}`);
