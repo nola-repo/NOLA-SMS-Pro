@@ -11,7 +11,7 @@ import {
 } from 'react-icons/fi';
 import { adminFetch } from '../../utils/adminApi';
 import { getAdminAuthHeaders } from '../../utils/adminAuthHeaders';
-import type { SmsRetryQueueDoc } from '../../../../user/src/types/Sms';
+import type { SmsRetryQueueDoc } from '../../types/Sms';
 
 const RETRY_QUEUE_API = '/api/admin_sender_requests.php?action=retry_queue';
 const POLL_INTERVAL = 10000;
