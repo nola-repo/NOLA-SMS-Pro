@@ -860,94 +860,102 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   }}
                 >
                   <div className="flex flex-col gap-0.5 py-0.5">
-                    {directHistory.map(contact => (
-                      <div
-                        key={contact.id}
-                        className={`
-                          group relative transition-all duration-200 overflow-visible
-                          px-3 py-2 rounded-xl cursor-pointer mx-1
-                          ${activeContactId === contact.id
-                            ? 'bg-[#eceff3] dark:bg-[#202327] ring-1 ring-black/[0.06] dark:ring-white/[0.06]'
-                            : 'hover:bg-black/[0.03] dark:hover:bg-white/[0.03]'}
-                        `}
-                        onClick={() => {
-                          onTabChange('compose');
-                          onSelectContact(contact);
-                          // Client-side mark as read: dismiss the unread badge
-                          if (contact.unread) {
-                            setDismissedUnreadIds(prev => new Set(prev).add(contact.id));
-                          }
-                        }}
-                      >
-                        {activeContactId === contact.id && (
-                          <span className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-[#111111] dark:bg-white/80" />
-                        )}
-                        <div className="flex items-center gap-3">
-                          <div className="relative flex-shrink-0">
-                            <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-[13px] transition-all duration-200
-                            ${activeContactId === contact.id
-                                ? 'bg-[#111111] text-white shadow-md shadow-black/10 dark:bg-white dark:text-[#111111]'
-                                : contact.unread
-                                ? 'bg-[#2b83fa]/15 text-[#2b83fa] dark:bg-[#2b83fa]/25 dark:text-[#8bbcff]'
-                                : 'bg-[#f0f2f4] dark:bg-[#2a2b32] text-[#5f6368] dark:text-[#9aa0a6]'}
-                            `}>
-                              {(contact.name || contact.phone).charAt(0).toUpperCase()}
-                            </div>
-                            {activeContactId === contact.id && (
-                              <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-green-500 border-2 border-white dark:border-[#121415]" />
-                            )}
-                            {contact.unread && activeContactId !== contact.id && (
-                              <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-[#2b83fa] border-2 border-white dark:border-[#121415] shadow-sm animate-pulse" title="New reply" />
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex justify-between items-center mb-0.5">
-                              <span className={`text-[13px] truncate leading-tight ${activeContactId === contact.id ? 'font-bold text-[#111111] dark:text-white' : contact.unread ? 'font-bold text-[#111111] dark:text-white' : 'font-medium text-[#3c4043] dark:text-[#e8eaed]'}`}>
-                                {toProperCase(contact.name || contact.phone)}
-                              </span>
-                              <div className="flex items-center gap-0.5 flex-shrink-0 ml-1">
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (openMenuId === contact.id) {
-                                      setOpenMenuId(null);
-                                    } else {
-                                      const rect = e.currentTarget.getBoundingClientRect();
-                                      setMenuAnchor({ x: rect.right, y: rect.bottom });
-                                      setOpenMenuId(contact.id);
-                                    }
-                                  }}
-                                  className="p-1 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-black/[0.06] dark:hover:bg-white/10 transition-all"
-                                >
-                                  <FiMoreVertical className="w-3.5 h-3.5 text-[#9aa0a6]" />
-                                </button>
-                                {openMenuId === contact.id && menuAnchor && createPortal(
-                                  <div
-                                    className="fixed bg-white dark:bg-[#1e1f23] rounded-xl shadow-xl border border-black/5 dark:border-white/10 py-1.5 min-w-[120px] z-[99999] animate-in zoom-in-95 duration-150"
-                                    style={{ top: menuAnchor.y + 4, left: menuAnchor.x, transform: 'translateX(-100%)', transformOrigin: 'top right' }}
-                                    onClick={(e) => e.stopPropagation()}
-                                  >
-                                    <button
-                                      onClick={(e) => startDeleteContact(contact.id, contact.phone, e)}
-                                      className="w-full px-3 py-2 text-left text-[12px] text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 flex items-center gap-2 transition-colors"
-                                    >
-                                      <FiTrash2 className="w-3.5 h-3.5" />
-                                      Delete
-                                    </button>
-                                  </div>,
-                                  document.body
-                                )}
+                    {directHistory.map(contact => {
+                      const isContactActive = activeTab === 'compose' && activeContactId === contact.id;
+                      return (
+                        <div
+                          key={contact.id}
+                          className={`
+                            group relative transition-all duration-200 overflow-visible
+                            px-3 py-2 rounded-xl cursor-pointer mx-1
+                            ${isContactActive
+                              ? 'bg-[#eceff3] dark:bg-[#202327] ring-1 ring-black/[0.06] dark:ring-white/[0.06]'
+                              : 'hover:bg-black/[0.03] dark:hover:bg-white/[0.03]'}
+                          `}
+                          onClick={() => {
+                            onTabChange('compose');
+                            onSelectContact(contact);
+                            // Client-side mark as read: dismiss the unread badge
+                            if (contact.unread) {
+                              setDismissedUnreadIds(prev => new Set(prev).add(contact.id));
+                            }
+                          }}
+                        >
+                          {isContactActive && (
+                            <span className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-[#111111] dark:bg-white/80" />
+                          )}
+                          <div className="flex items-center gap-3">
+                            <div className="relative flex-shrink-0">
+                              <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-[13px] transition-all duration-200
+                              ${isContactActive
+                                  ? 'bg-[#111111] text-white shadow-md shadow-black/10 dark:bg-white dark:text-[#111111]'
+                                  : contact.unread
+                                  ? 'bg-[#2b83fa]/15 text-[#2b83fa] dark:bg-[#2b83fa]/25 dark:text-[#8bbcff]'
+                                  : 'bg-[#f0f2f4] dark:bg-[#2a2b32] text-[#5f6368] dark:text-[#9aa0a6]'}
+                              `}>
+                                {(contact.name || contact.phone).charAt(0).toUpperCase()}
                               </div>
+                              {isContactActive && (
+                                <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-green-500 border-2 border-white dark:border-[#121415]" />
+                              )}
+                              {contact.unread && !isContactActive && (
+                                <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-[#2b83fa] border-2 border-white dark:border-[#121415] shadow-sm animate-pulse" title="New reply" />
+                              )}
                             </div>
-                            <div className={`text-[11.5px] truncate leading-snug ${activeContactId === contact.id ? 'text-[#5f6368] dark:text-[#b6bac2]' : contact.unread ? 'text-[#111111] dark:text-[#e8eaed] font-medium' : 'text-[#9aa0a6] dark:text-[#5f6368]'}`}>
-                              {contact.lastMessage ? (
-                                contact.lastMessageDirection === 'outbound' ? `You: ${contact.lastMessage}` : contact.lastMessage
-                              ) : 'No messages yet'}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex justify-between items-center mb-0.5">
+                                <span className={`text-[13px] truncate leading-tight ${isContactActive ? 'font-bold text-[#111111] dark:text-white' : contact.unread ? 'font-bold text-[#111111] dark:text-white' : 'font-medium text-[#3c4043] dark:text-[#e8eaed]'}`}>
+                                  {toProperCase(contact.name || contact.phone)}
+                                </span>
+                                <div className="flex items-center gap-0.5 flex-shrink-0 ml-1">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (openMenuId === contact.id) {
+                                        setOpenMenuId(null);
+                                      } else {
+                                        const rect = e.currentTarget.getBoundingClientRect();
+                                        setMenuAnchor({ x: rect.right, y: rect.bottom });
+                                        setOpenMenuId(contact.id);
+                                      }
+                                    }}
+                                    className="p-1 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-black/[0.06] dark:hover:bg-white/10 transition-all"
+                                  >
+                                    <FiMoreVertical className="w-3.5 h-3.5 text-[#9aa0a6]" />
+                                  </button>
+                                  {openMenuId === contact.id && menuAnchor && createPortal(
+                                    <div
+                                      className="fixed bg-white dark:bg-[#1e1f23] rounded-xl shadow-xl border border-black/5 dark:border-white/10 py-1.5 min-w-[120px] z-[99999] animate-in zoom-in-95 duration-150"
+                                      style={{ top: menuAnchor.y + 4, left: menuAnchor.x, transform: 'translateX(-100%)', transformOrigin: 'top right' }}
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <button
+                                        onClick={(e) => startDeleteContact(contact.id, contact.phone, e)}
+                                        className="w-full px-3 py-2 text-left text-[12px] text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 flex items-center gap-2 transition-colors"
+                                      >
+                                        <FiTrash2 className="w-3.5 h-3.5" />
+                                        Delete
+                                      </button>
+                                    </div>,
+                                    document.body
+                                  )}
+                                </div>
+                              </div>
+                              <div className="text-[11.5px] text-[#80868b] dark:text-[#9aa0a6] truncate flex items-center gap-1 font-normal">
+                                {contact.lastMessage ? (
+                                  <>
+                                    {contact.lastMessageDirection === 'outbound' && (
+                                      <span className="font-semibold text-[#5f6368] dark:text-[#bdc1c6]">You:</span>
+                                    )}
+                                    <span className="truncate">{contact.lastMessage}</span>
+                                  </>
+                                ) : 'No messages yet'}
+                              </div>
                             </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -970,7 +978,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <div className="flex flex-col gap-0.5 py-0.5">
                     {bulkHistory.length > 0 ? (
                       bulkHistory.map(item => {
-                        const isActive = activeBulkMessageId === item.id;
+                        const isActive = activeTab === 'compose' && activeBulkMessageId === item.id;
                         return (
                           <div
                             key={item.id}
