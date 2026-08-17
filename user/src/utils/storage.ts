@@ -32,7 +32,7 @@ export const getDeletedContactIds = (): string[] => {
     const stored = safeStorage.getItem(withTenant(DELETED_CONTACTS_KEY));
     if (!stored) return [];
     return JSON.parse(stored);
-  } catch (error) {
+  } catch {
     return [];
   }
 };

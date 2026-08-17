@@ -1293,9 +1293,11 @@ export const Composer: React.FC<ComposerProps> = ({
 
   const composeWidthClass = "max-w-4xl mx-auto w-full";
   const dateSeparatorClass = "px-3 py-1.5 rounded-full bg-white/[0.85] dark:bg-white/[0.07] border border-[#dce4ee] dark:border-white/10 text-[11px] font-bold text-[#667085] dark:text-[#b8bdc7]";
-  const messageContainerClass = "max-w-[78%] sm:max-w-[620px] flex flex-col items-end group mb-0.5 cursor-pointer";
-  const outboundBubbleClass = "bg-gradient-to-r from-[#1d6bd4] via-[#2b83fa] to-[#2563eb] text-white px-4 py-3 ring-1 ring-white/25 transition-colors";
+  const messageContainerClass = "max-w-[78%] sm:max-w-[620px] flex flex-col group mb-0.5 cursor-pointer";
+  const outboundBubbleClass = "bg-gradient-to-r from-[#1d6bd4] via-[#2b83fa] to-[#2563eb] text-white px-4 py-3 ring-1 ring-white/25 transition-colors shadow-sm";
+  const inboundBubbleClass = "bg-[#f0f3f8] dark:bg-[#1c1e24] text-[#111111] dark:text-[#ececf1] px-4 py-3 border border-[#dce4ee] dark:border-white/10 shadow-sm transition-colors";
   const bubbleOptionsButtonClass = "absolute -left-9 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-[#d6e0eb] dark:border-white/10 bg-white/[0.9] dark:bg-[#17191f]/90 text-[#667085] dark:text-[#a7adba] opacity-0 pointer-events-auto transition-all group-hover:opacity-100 hover:opacity-100 focus-visible:opacity-100 hover:text-[#1d6bd4] dark:hover:text-[#8bbcff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2b83fa]/30";
+  const inboundBubbleOptionsButtonClass = "absolute -right-9 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-[#d6e0eb] dark:border-white/10 bg-white/[0.9] dark:bg-[#17191f]/90 text-[#667085] dark:text-[#a7adba] opacity-0 pointer-events-auto transition-all group-hover:opacity-100 hover:opacity-100 focus-visible:opacity-100 hover:text-[#1d6bd4] dark:hover:text-[#8bbcff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2b83fa]/30";
 
   return (
     <div className="flex flex-col h-full bg-[#f8fafc] dark:bg-[#0c0d10] relative overflow-hidden transition-colors duration-300">
@@ -1805,6 +1807,7 @@ export const Composer: React.FC<ComposerProps> = ({
                 </div>
               ) : (
                 phoneLogMessages.map((msg, index) => {
+                  const isInbound = msg.direction === 'inbound';
                   const isExpanded = expandedMessageId === msg.id;
                   const prevMsg = phoneLogMessages[index - 1];
                   const nextMsg = phoneLogMessages[index + 1];
@@ -1813,21 +1816,31 @@ export const Composer: React.FC<ComposerProps> = ({
                   const showDateSeparator =
                     !prevMsg || new Date(prevMsg.timestamp).toDateString() !== msgDateStr;
 
-                  const isPrevSameGroup = !showDateSeparator;
+                  const isPrevSameGroup = !showDateSeparator && prevMsg && (prevMsg.direction === msg.direction || (!prevMsg.direction && !isInbound));
                   const isNextSameGroup =
-                    nextMsg && new Date(nextMsg.timestamp).toDateString() === msgDateStr;
+                    nextMsg && (nextMsg.direction === msg.direction || (!nextMsg.direction && !isInbound)) && new Date(nextMsg.timestamp).toDateString() === msgDateStr;
 
                   let roundingClasses = "rounded-[20px]";
-                  if (isPrevSameGroup && isNextSameGroup) {
-                    roundingClasses = "rounded-[20px] rounded-tr-[4px] rounded-br-[4px]";
-                  } else if (isPrevSameGroup && !isNextSameGroup) {
-                    roundingClasses = "rounded-[20px] rounded-tr-[4px]";
-                  } else if (!isPrevSameGroup && isNextSameGroup) {
-                    roundingClasses = "rounded-[20px] rounded-br-[4px]";
+                  if (isInbound) {
+                    if (isPrevSameGroup && isNextSameGroup) {
+                      roundingClasses = "rounded-[20px] rounded-tl-[4px] rounded-bl-[4px]";
+                    } else if (isPrevSameGroup && !isNextSameGroup) {
+                      roundingClasses = "rounded-[20px] rounded-tl-[4px]";
+                    } else if (!isPrevSameGroup && isNextSameGroup) {
+                      roundingClasses = "rounded-[20px] rounded-bl-[4px]";
+                    }
+                  } else {
+                    if (isPrevSameGroup && isNextSameGroup) {
+                      roundingClasses = "rounded-[20px] rounded-tr-[4px] rounded-br-[4px]";
+                    } else if (isPrevSameGroup && !isNextSameGroup) {
+                      roundingClasses = "rounded-[20px] rounded-tr-[4px]";
+                    } else if (!isPrevSameGroup && isNextSameGroup) {
+                      roundingClasses = "rounded-[20px] rounded-br-[4px]";
+                    }
                   }
 
                   return (
-                    <div key={msg.id} className="w-full flex flex-col items-end">
+                    <div key={msg.id} className={`w-full flex flex-col ${isInbound ? 'items-start' : 'items-end'}`}>
                       {showDateSeparator && (
                         <div className="w-full flex items-center justify-center my-5">
                           <span className={dateSeparatorClass}>
@@ -1840,34 +1853,50 @@ export const Composer: React.FC<ComposerProps> = ({
                         </div>
                       )}
                       <div
-                        className={messageContainerClass}
+                        className={`${messageContainerClass} ${isInbound ? 'items-start' : 'items-end'}`}
                         onClick={() => toggleMessageDetails(msg.id, isExpanded, index === phoneLogMessages.length - 1)}
                       >
-                        <div className="relative flex items-end justify-end">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              showMessageDetails(msg);
-                            }}
-                            className={bubbleOptionsButtonClass}
-                            aria-label="Message options"
-                            title="Message details"
-                          >
-                            <FiMoreHorizontal className="h-4 w-4" />
-                          </button>
-                          <div className={`${outboundBubbleClass} ${roundingClasses}`}>
+                        <div className={`relative flex items-end ${isInbound ? 'justify-start' : 'justify-end'}`}>
+                          {!isInbound && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                showMessageDetails(msg);
+                              }}
+                              className={bubbleOptionsButtonClass}
+                              aria-label="Message options"
+                              title="Message details"
+                            >
+                              <FiMoreHorizontal className="h-4 w-4" />
+                            </button>
+                          )}
+                          <div className={`${isInbound ? inboundBubbleClass : outboundBubbleClass} ${roundingClasses}`}>
                             <p className="text-[14.5px] leading-relaxed whitespace-pre-wrap">
                               {msg.text}
                             </p>
                           </div>
+                          {isInbound && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                showMessageDetails(msg);
+                              }}
+                              className={inboundBubbleOptionsButtonClass}
+                              aria-label="Message options"
+                              title="Message details"
+                            >
+                              <FiMoreHorizontal className="h-4 w-4" />
+                            </button>
+                          )}
                         </div>
                         <div
                           className={`overflow-hidden transition-all duration-300 ease-in-out ${
                             isExpanded ? "max-h-20 opacity-100 mt-1 mb-1 px-1" : "max-h-0 opacity-0"
                           }`}
                         >
-                          <div className="flex items-center gap-2">
+                          <div className={`flex items-center gap-2 ${isInbound ? 'justify-start' : 'justify-end'}`}>
                             <span className="text-[10px] font-semibold text-gray-500 dark:text-gray-400">
                               {msg.senderName}
                             </span>
@@ -1879,7 +1908,12 @@ export const Composer: React.FC<ComposerProps> = ({
                               })}
                             </span>
                             <span className="text-[10px] text-gray-400">•</span>
-                            {(() => {
+                            {isInbound ? (
+                              <span className="text-[10px] font-bold text-blue-500 dark:text-blue-400 capitalize tracking-wider flex items-center gap-0.5">
+                                <FiCheck className="inline mb-0.5 mr-1" size={10} />
+                                Received
+                              </span>
+                            ) : (() => {
                               const badge = getRetryBadgeInfo(msg);
                               const toneClass =
                                 badge.tone === 'green'
@@ -1913,7 +1947,7 @@ export const Composer: React.FC<ComposerProps> = ({
                           </div>
                           {renderMessageQuickActions(msg, msg.number || historyPhoneNumber)}
                         </div>
-                        {!isExpanded && (msg.status === "sending" || (msg.retry_status && ['pending_retry', 'processing'].includes(msg.retry_status))) && (
+                        {!isInbound && !isExpanded && (msg.status === "sending" || (msg.retry_status && ['pending_retry', 'processing'].includes(msg.retry_status))) && (
                           <div
                             className="mt-1 flex items-center justify-end px-1"
                             title={msg.retry_status === 'pending_retry' ? 'Retrying in background...' : msg.retry_status === 'processing' ? 'Retrying now...' : 'Sending...'}
@@ -2094,6 +2128,7 @@ export const Composer: React.FC<ComposerProps> = ({
 
                 const sourceMessages = conversationMessages;
                 return sourceMessages.map((msg, index) => {
+                  const isInbound = msg.direction === 'inbound';
                   const isExpanded = expandedMessageId === msg.id;
                   const prevMsg = sourceMessages[index - 1];
                   const nextMsg = sourceMessages[index + 1];
@@ -2101,20 +2136,30 @@ export const Composer: React.FC<ComposerProps> = ({
                   const msgDateStr = new Date(msg.timestamp).toDateString();
                   const showDateSeparator = !prevMsg || new Date(prevMsg.timestamp).toDateString() !== msgDateStr;
 
-                  const isPrevSameGroup = !showDateSeparator;
-                  const isNextSameGroup = nextMsg && new Date(nextMsg.timestamp).toDateString() === msgDateStr;
+                  const isPrevSameGroup = !showDateSeparator && prevMsg && (prevMsg.direction === msg.direction || (!prevMsg.direction && !isInbound));
+                  const isNextSameGroup = nextMsg && (nextMsg.direction === msg.direction || (!nextMsg.direction && !isInbound)) && new Date(nextMsg.timestamp).toDateString() === msgDateStr;
 
                   let roundingClasses = "rounded-[20px]";
-                  if (isPrevSameGroup && isNextSameGroup) {
-                    roundingClasses = "rounded-[20px] rounded-tr-[4px] rounded-br-[4px]";
-                  } else if (isPrevSameGroup && !isNextSameGroup) {
-                    roundingClasses = "rounded-[20px] rounded-tr-[4px]";
-                  } else if (!isPrevSameGroup && isNextSameGroup) {
-                    roundingClasses = "rounded-[20px] rounded-br-[4px]";
+                  if (isInbound) {
+                    if (isPrevSameGroup && isNextSameGroup) {
+                      roundingClasses = "rounded-[20px] rounded-tl-[4px] rounded-bl-[4px]";
+                    } else if (isPrevSameGroup && !isNextSameGroup) {
+                      roundingClasses = "rounded-[20px] rounded-tl-[4px]";
+                    } else if (!isPrevSameGroup && isNextSameGroup) {
+                      roundingClasses = "rounded-[20px] rounded-bl-[4px]";
+                    }
+                  } else {
+                    if (isPrevSameGroup && isNextSameGroup) {
+                      roundingClasses = "rounded-[20px] rounded-tr-[4px] rounded-br-[4px]";
+                    } else if (isPrevSameGroup && !isNextSameGroup) {
+                      roundingClasses = "rounded-[20px] rounded-tr-[4px]";
+                    } else if (!isPrevSameGroup && isNextSameGroup) {
+                      roundingClasses = "rounded-[20px] rounded-br-[4px]";
+                    }
                   }
 
                   return (
-                    <div key={msg.id} className="w-full flex flex-col items-end">
+                    <div key={msg.id} className={`w-full flex flex-col ${isInbound ? 'items-start' : 'items-end'}`}>
                       {showDateSeparator && (
                         <div className="w-full flex items-center justify-center my-5">
                           <span className={dateSeparatorClass}>
@@ -2123,29 +2168,45 @@ export const Composer: React.FC<ComposerProps> = ({
                         </div>
                       )}
                       <div
-                        className={messageContainerClass}
+                        className={`${messageContainerClass} ${isInbound ? 'items-start' : 'items-end'}`}
                         onClick={() => toggleMessageDetails(msg.id, isExpanded, index === sourceMessages.length - 1)}
                       >
-                        <div className="relative flex items-end justify-end">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              showMessageDetails(msg);
-                            }}
-                            className={bubbleOptionsButtonClass}
-                            aria-label="Message options"
-                            title="Message details"
-                          >
-                            <FiMoreHorizontal className="h-4 w-4" />
-                          </button>
-                          <div className={`${outboundBubbleClass} ${roundingClasses}`}>
+                        <div className={`relative flex items-end ${isInbound ? 'justify-start' : 'justify-end'}`}>
+                          {!isInbound && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                showMessageDetails(msg);
+                              }}
+                              className={bubbleOptionsButtonClass}
+                              aria-label="Message options"
+                              title="Message details"
+                            >
+                              <FiMoreHorizontal className="h-4 w-4" />
+                            </button>
+                          )}
+                          <div className={`${isInbound ? inboundBubbleClass : outboundBubbleClass} ${roundingClasses}`}>
                             <p className="text-[14.5px] leading-relaxed whitespace-pre-wrap">{msg.text}</p>
                           </div>
+                          {isInbound && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                showMessageDetails(msg);
+                              }}
+                              className={inboundBubbleOptionsButtonClass}
+                              aria-label="Message options"
+                              title="Message details"
+                            >
+                              <FiMoreHorizontal className="h-4 w-4" />
+                            </button>
+                          )}
                         </div>
 
                         <div className={`overflow-hidden transition-all duration-300 ease-in-out ${isExpanded ? 'max-h-40 opacity-100 mt-1 mb-1 px-1' : 'max-h-0 opacity-0'}`}>
-                          <div className="flex items-center gap-2">
+                          <div className={`flex items-center gap-2 ${isInbound ? 'justify-start' : 'justify-end'}`}>
                             <span className="text-[10px] font-semibold text-gray-500 dark:text-gray-400">
                               {msg.senderName}
                             </span>
@@ -2154,11 +2215,30 @@ export const Composer: React.FC<ComposerProps> = ({
                               {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                             </span>
                             <span className="text-[10px] text-gray-400">•</span>
-                            <span className={`text-[10px] font-bold capitalize tracking-wider ${msg.status === 'sent' ? 'text-green-500' : msg.status === 'failed' ? 'text-red-500' : 'text-gray-400'}`}>
-                              {msg.status === 'sending' ? <FiLoader className="animate-spin inline mb-0.5 mr-1" size={10} /> : msg.status === 'sent' ? <FiCheck className="inline mb-0.5 mr-1" size={10} /> : <FiAlertCircle size={10} className="inline mb-0.5 mr-1 animate-pulse" />}
-                              {msg.status === 'sending' ? 'Sending...' : msg.status === 'sent' ? 'Sent' : 'Failed'}
+                            <span className={`text-[10px] font-bold capitalize tracking-wider ${isInbound ? 'text-blue-500 dark:text-blue-400' : msg.status === 'sent' ? 'text-green-500' : msg.status === 'failed' ? 'text-red-500' : 'text-gray-400'}`}>
+                              {isInbound ? (
+                                <>
+                                  <FiCheck className="inline mb-0.5 mr-1" size={10} />
+                                  Received
+                                </>
+                              ) : msg.status === 'sending' ? (
+                                <>
+                                  <FiLoader className="animate-spin inline mb-0.5 mr-1" size={10} />
+                                  Sending...
+                                </>
+                              ) : msg.status === 'sent' ? (
+                                <>
+                                  <FiCheck className="inline mb-0.5 mr-1" size={10} />
+                                  Sent
+                                </>
+                              ) : (
+                                <>
+                                  <FiAlertCircle size={10} className="inline mb-0.5 mr-1 animate-pulse" />
+                                  Failed
+                                </>
+                              )}
                             </span>
-                            {(() => {
+                            {!isInbound && (() => {
                               const isSuccess = msg.ghlSyncSuccess ?? msg.ghl_sync_success;
                               const isSkipped = msg.ghlSyncSkipped ?? msg.ghl_sync_skipped;
                               const isQueued = msg.ghlSyncQueued ?? msg.ghl_sync_queued ?? !!(msg.ghlSyncJobId || msg.ghl_sync_job_id);
@@ -2197,7 +2277,7 @@ export const Composer: React.FC<ComposerProps> = ({
                               }
                               return null;
                             })()}
-                            {msg.status === 'failed' && msg.errorReason && (
+                            {!isInbound && msg.status === 'failed' && msg.errorReason && (
                               <span className="text-[10px] text-red-400 font-medium truncate max-w-[160px]" title={msg.errorReason}>
                                 - {msg.errorReason}
                               </span>
@@ -2205,7 +2285,7 @@ export const Composer: React.FC<ComposerProps> = ({
                           </div>
                           {renderMessageQuickActions(msg, msg.number || historyPhoneNumber)}
                         </div>
-                        {!isExpanded && msg.status === "sending" && (
+                        {!isInbound && !isExpanded && msg.status === "sending" && (
                           <div className="mt-1 flex items-center justify-end px-1">
                             <FiLoader className="h-3 w-3 animate-spin text-gray-400 dark:text-gray-500" />
                           </div>

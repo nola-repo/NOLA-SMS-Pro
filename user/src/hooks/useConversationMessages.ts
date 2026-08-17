@@ -1,7 +1,7 @@
 import { devLog } from '../utils/devLog';
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { fetchMessagesByConversationId, ConversationMessagesError } from "../api/sms";
-import type { Message, Conversation } from "../types/Sms";
+import type { Message, Conversation, FirestoreTimestamp } from "../types/Sms";
 import { useLocationId } from "../context/LocationContext";
 import { collection, query, where, onSnapshot, doc } from "firebase/firestore";
 import { ensureFirestoreAuth } from "../services/firestoreAuth";
@@ -39,6 +39,7 @@ const STATUS_PRIORITY: Record<string, number> = {
     pending: 2,
     sent: 3,
     delivered: 4,
+    received: 4,
     failed: 4,
     rejected: 4,
     undelivered: 4,
@@ -84,15 +85,21 @@ interface DatabaseMessageRow {
     message_id?: string;
     conversation_id?: string;
     number?: string;
+    from?: string;
+    to?: string;
     message?: string;
+    direction?: 'inbound' | 'outbound' | string;
     created_at?: unknown;
     date_created?: unknown;
+    date_received?: unknown;
     sender_id?: string;
     sender_name?: string;
     status?: string;
     batch_id?: string;
     recipient_key?: string;
     origin?: string;
+    unisms_virtual_number_id?: string;
+    unisms_txt_conversation_id?: string;
     retry_doc_id?: string;
     retry_status?: 'pending_retry' | 'processing' | 'completed' | 'exhausted';
     retry_count?: number;
@@ -148,23 +155,29 @@ export const useConversationMessages = (conversationId: string | undefined, reci
     }, [cacheKey]);
 
     const processAndMergeMessages = useCallback((rows: DatabaseMessageRow[]) => {
-        // Sort oldest → newest for chronological display
-        const sorted = [...rows].sort(
-            (a, b) =>
-                parseFirestoreDate(a.created_at).getTime() -
-                parseFirestoreDate(b.created_at).getTime()
-        );
+        // Sort oldest → newest for chronological display using date_received or created_at
+        const sorted = [...rows].sort((a, b) => {
+            const dateA = parseFirestoreDate(a.date_received || a.created_at || a.date_created).getTime();
+            const dateB = parseFirestoreDate(b.date_received || b.created_at || b.date_created).getTime();
+            return dateA - dateB;
+        });
 
         const formatted: Message[] = sorted.map((row) => {
-            let status = (row.status as string || 'sending').toLowerCase();
+            const rawStatus = (row.status as string || 'sending').toLowerCase();
+            const direction = (row.direction as string || 'outbound').toLowerCase() as 'inbound' | 'outbound';
             
             // Strictly unify statuses for UI
-            if (['queued', 'pending'].includes(status)) {
-                status = 'sending';
-            } else if (['delivered', 'success'].includes(status)) {
-                status = 'sent';
-            } else if (['rejected', 'undelivered', 'expired'].includes(status)) {
-                status = 'failed';
+            let status = rawStatus;
+            if (direction === 'inbound') {
+                status = 'received';
+            } else {
+                if (['queued', 'pending'].includes(rawStatus)) {
+                    status = 'sending';
+                } else if (['delivered', 'success'].includes(rawStatus)) {
+                    status = 'sent';
+                } else if (['rejected', 'undelivered', 'expired'].includes(rawStatus)) {
+                    status = 'failed';
+                }
             }
 
             const errorReason = row.error_reason || (
@@ -173,19 +186,28 @@ export const useConversationMessages = (conversationId: string | undefined, reci
                     : undefined
             );
 
+            const timestamp = parseFirestoreDate(row.date_received || row.created_at || row.date_created);
+
             return {
                 id: row.message_id || row.id || `msg-${Date.now()}-${Math.random()}`,
                 conversation_id: row.conversation_id,
                 number: row.number,
+                from: row.from,
+                to: row.to,
+                direction,
                 text: row.message || "",
-                timestamp: parseFirestoreDate(row.created_at || row.date_created),
-                senderName: row.sender_name || row.sender_id || "NOLASMSPro",
+                timestamp,
+                senderName: direction === 'inbound'
+                    ? (row.from || row.number || "Contact")
+                    : (row.sender_name || row.sender_id || "NOLASMSPro"),
                 status: status as Message["status"],
 
                 batch_id: row.batch_id,
                 recipient_key: row.recipient_key,
                 message: row.message,
                 origin: row.origin,
+                unisms_virtual_number_id: row.unisms_virtual_number_id,
+                unisms_txt_conversation_id: row.unisms_txt_conversation_id,
                 retryDocId: row.retry_doc_id,
                 retryStatus: row.retry_status,
                 retryCount: typeof row.retry_count === 'number' ? row.retry_count : undefined,
@@ -196,11 +218,11 @@ export const useConversationMessages = (conversationId: string | undefined, reci
                 retry_status: row.retry_status,
                 retry_count: typeof row.retry_count === 'number' ? row.retry_count : undefined,
                 retry_max_attempts: typeof row.retry_max_attempts === 'number' ? row.retry_max_attempts : undefined,
-                next_retry_at: row.next_retry_at as any,
-                last_retry_at: row.last_retry_at as any,
+                next_retry_at: row.next_retry_at as FirestoreTimestamp | undefined,
+                last_retry_at: row.last_retry_at as FirestoreTimestamp | undefined,
                 errorReason,
                 errorCode: row.error_code,
-                provider: row.provider,
+                provider: row.provider || (row.unisms_virtual_number_id ? 'unisms' : (direction === 'inbound' ? 'unisms' : (row.sender_id ? 'semaphore' : undefined))),
                 providerError: row.provider_error,
                 provider_error: row.provider_error,
                 providerStatus: row.provider_status,
@@ -457,6 +479,9 @@ export const useConversationMessages = (conversationId: string | undefined, reci
                             name: d.name ?? null,
                             last_message: d.last_message ?? null,
                             last_message_at: d.last_message_at ? (typeof d.last_message_at.toDate === 'function' ? d.last_message_at.toDate().toISOString() : d.last_message_at) : null,
+                            last_message_direction: d.last_message_direction ?? null,
+                            last_message_sender: d.last_message_sender ?? null,
+                            unread: d.unread ?? false,
                             updated_at: d.updated_at ? (typeof d.updated_at.toDate === 'function' ? d.updated_at.toDate().toISOString() : d.updated_at) : null,
                             ghl_contact_id: d.ghl_contact_id ?? null,
                         } as Conversation);
@@ -500,6 +525,7 @@ export const useConversationMessages = (conversationId: string | undefined, reci
             text,
             timestamp: new Date(),
             senderName,
+            direction: 'outbound',
             status: "sending",
         };
 

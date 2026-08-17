@@ -21,10 +21,10 @@ export const useMessages = (phoneNumber: string | undefined) => {
         } else if (typeof log.date_created === 'string') {
             date = new Date(log.date_created);
         } else if (typeof log.date_created === 'object' && log.date_created !== null) {
-            if ('toDate' in log.date_created && typeof (log.date_created as any).toDate === 'function') {
-                date = (log.date_created as any).toDate();
+            if ('toDate' in log.date_created && typeof (log.date_created as { toDate: () => Date }).toDate === 'function') {
+                date = (log.date_created as { toDate: () => Date }).toDate();
             } else if ('_seconds' in log.date_created) {
-                date = new Date((log.date_created as any)._seconds * 1000);
+                date = new Date((log.date_created as { _seconds: number })._seconds * 1000);
             } else {
                 date = new Date();
             }

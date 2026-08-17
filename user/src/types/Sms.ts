@@ -82,6 +82,8 @@ export interface FirestoreMessage {
   id: string;
   conversation_id: string;
   number: string;
+  from?: string;
+  to?: string;
   message: string;
   direction: 'inbound' | 'outbound';
   sender_id: string;
@@ -90,9 +92,12 @@ export interface FirestoreMessage {
   batch_id?: string;
   recipient_key?: string;
   created_at: FirestoreTimestamp;
+  date_received?: FirestoreTimestamp;
   name?: string;
   location_id?: string;
   origin?: string;
+  unisms_virtual_number_id?: string;
+  unisms_txt_conversation_id?: string;
   retry_doc_id?: string;
   retry_status?: 'pending_retry' | 'processing' | 'completed' | 'exhausted';
   retry_count?: number;
@@ -125,10 +130,13 @@ export interface Conversation {
   members: string[];      // normalised phone numbers
   last_message: string;
   last_message_at: string | null;
+  last_message_direction?: 'inbound' | 'outbound';
+  last_message_sender?: string;
   name: string;
   updated_at: string | null;
   location_id?: string;
   ghl_contact_id?: string;
+  unread?: boolean;
 }
 
 export interface BulkMessageHistoryItem {
@@ -191,7 +199,13 @@ export interface Message {
   text: string;
   timestamp: Date;
   senderName: string;
-  status: 'sending' | 'sent' | 'delivered' | 'failed' | 'pending' | string;
+  direction?: 'inbound' | 'outbound';
+  status: 'sending' | 'sent' | 'delivered' | 'failed' | 'received' | 'pending' | string;
+  from?: string;
+  to?: string;
+  date_received?: FirestoreTimestamp;
+  unisms_virtual_number_id?: string;
+  unisms_txt_conversation_id?: string;
   errorReason?: string;
   errorCode?: string;
   provider?: string;

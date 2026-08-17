@@ -1,5 +1,5 @@
 import { devLog } from '../utils/devLog';
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { fetchContacts } from "../api/contacts";
 import { renameConversation, deleteConversation, normalizePHNumber, fetchConversations } from "../api/sms";
@@ -107,15 +107,6 @@ const matchesContactUpdate = (target: Contact, contact: Contact, previous?: Cont
   );
 };
 
-const matchesCurrentContact = (target: Contact, contact: Contact) => {
-  if (target.id === contact.id) return true;
-  if (target.ghl_contact_id && target.ghl_contact_id === contact.ghl_contact_id) return true;
-  if (target.ghl_contact_id && target.ghl_contact_id === contact.id) return true;
-  if (contact.ghl_contact_id && target.id === contact.ghl_contact_id) return true;
-  const targetPhone = contactPhoneKey(target.phone);
-  return !!targetPhone && targetPhone === contactPhoneKey(contact.phone);
-};
-
 export const Sidebar: React.FC<SidebarProps> = ({
   activeTab,
   onTabChange,
@@ -130,8 +121,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { locationId } = useLocationId();
   const resolvedLocationId = locationId || getAccountSettings().ghlLocationId || '';
   const [contacts, setContacts] = useState<Contact[]>([]);
-  const [directHistory, setDirectHistory] = useState<Contact[]>([]);
-  const [bulkHistory, setBulkHistory] = useState<BulkMessageHistoryItem[]>([]);
   const [localBulkHistory, setLocalBulkHistory] = useState<BulkMessageHistoryItem[]>(() => getBulkMessageHistory());
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [directMessagesExpanded, setDirectMessagesExpanded] = useState(true);
@@ -150,6 +139,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const contactsRef = useRef<Contact[]>([]);
   // Track last_message per conversation to detect new messages and notify the Composer
   const lastMessageTracker = useRef<Map<string, string>>(new Map());
+  // Track conversations the user has already opened (client-side "mark as read")
+  const [dismissedUnreadIds, setDismissedUnreadIds] = useState<Set<string>>(new Set());
   const [onboardingDone, setOnboardingDone] = useState(
     () => localStorage.getItem('nola_onboarding_done') === 'true'
   );
@@ -194,14 +185,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
   }, [resolvedLocationId]);
 
   useEffect(() => {
-    loadContacts();
-    // Refresh contacts list every 60 seconds (since they don't change that fast)
+    let isSubscribed = true;
+    const fetch = async () => {
+      try {
+        const data = await fetchContacts(resolvedLocationId || undefined);
+        if (!isSubscribed) return;
+        const deletedIds = getDeletedContactIds();
+        const filtered = data.filter(c => !deletedIds.includes(c.id));
+        setContacts(filtered);
+        contactsRef.current = filtered;
+      } catch (e) {
+        devLog.error(e);
+      }
+    };
+    void fetch();
     const interval = setInterval(() => {
-      loadContacts();
+      void fetch();
     }, 60000);
 
-    return () => clearInterval(interval);
-  }, [loadContacts]);
+    return () => {
+      isSubscribed = false;
+      clearInterval(interval);
+    };
+  }, [resolvedLocationId]);
 
   useEffect(() => {
     const handleContactUpdated = (event: Event) => {
@@ -213,12 +219,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         contactsRef.current = next;
         return next;
       });
-      setDirectHistory(prev => prev.map(item =>
-        matchesCurrentContact(item, contact)
-          ? { ...item, name: contact.name || item.name, phone: contact.phone || item.phone, ghl_contact_id: contact.ghl_contact_id || item.ghl_contact_id }
-          : item
-      ));
-      loadContacts();
+      void loadContacts();
     };
 
     window.addEventListener('nola-contact-updated', handleContactUpdated);
@@ -230,7 +231,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setLoading(false);
   }, []);
 
-  useEffect(() => {
+  const directHistory = useMemo<Contact[]>(() => {
     const contactMap = buildContactNameLookup(contacts);
     const contactsByGhlId = new Map<string, Contact>();
     const contactsByPhoneKey = new Map<string, Contact>();
@@ -276,13 +277,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
       }
 
       const name = contactName || serverName || phone;
-
+      const isUnread = (conv.unread === true || conv.last_message_direction === 'inbound') && !dismissedUnreadIds.has(convId);
       const item: Contact = {
         id: convId,
         name,
         phone: contactByGhlId?.phone || contactByPhone?.phone || phone,
         lastMessage: asText(conv.last_message),
         lastSentAt: conv.last_message_at || conv.updated_at || undefined,
+        lastMessageDirection: conv.last_message_direction,
+        unread: isUnread,
         ghl_contact_id: contactByGhlId?.ghl_contact_id || contactByGhlId?.id || contactByPhone?.ghl_contact_id || contactByPhone?.id || undefined
       };
 
@@ -310,13 +313,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
       }
     });
 
-    const historyContacts: Contact[] = Array.from(dedupedDirectConvs.values()).sort((a, b) => {
+    return Array.from(dedupedDirectConvs.values()).sort((a, b) => {
       const timeA = new Date(a.lastSentAt || 0).getTime();
       const timeB = new Date(b.lastSentAt || 0).getTime();
       return timeB - timeA;
     });
-    setDirectHistory(historyContacts);
+  }, [contacts, conversations, dismissedUnreadIds]);
 
+  const bulkHistory = useMemo<BulkMessageHistoryItem[]>(() => {
+    const contactMap = buildContactNameLookup(contacts);
     const mergedBulk = new Map<string, BulkMessageHistoryItem>();
 
     localBulkHistory.forEach(item => {
@@ -367,23 +372,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
           locationId: conv.location_id,
         };
         mergedBulk.set(key, item);
-
       });
 
-    const combined = Array.from(mergedBulk.values())
+    return Array.from(mergedBulk.values())
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-    setBulkHistory(combined);
+  }, [contacts, conversations, localBulkHistory]);
 
-    // Detect new messages and notify the Composer for immediate refresh
+  // Detect new messages and notify the Composer for immediate refresh
+  useEffect(() => {
     const prevTracker = lastMessageTracker.current;
     const newTracker = new Map<string, string>();
 
     // Track direct conversations
-    historyContacts.forEach(c => {
+    directHistory.forEach(c => {
       if (c.lastMessage) newTracker.set(c.id, c.lastMessage);
     });
     // Track bulk conversations
-    combined.forEach(b => {
+    bulkHistory.forEach(b => {
       const convId = b.batchId ? `group_${b.batchId}` : b.id;
       if (b.message) newTracker.set(convId, b.message);
     });
@@ -393,7 +398,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       newTracker.forEach((msg, convId) => {
         const prev = prevTracker.get(convId);
         if (prev !== undefined && prev !== msg) {
-          // This conversation has a new message
+          // This conversation has a new message — re-enable unread badge
+          setDismissedUnreadIds(prevSet => {
+            if (!prevSet.has(convId)) return prevSet;
+            const next = new Set(prevSet);
+            next.delete(convId);
+            return next;
+          });
           window.dispatchEvent(new CustomEvent('conversation-updated', {
             detail: { conversationId: convId }
           }));
@@ -409,7 +420,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       });
     }
     lastMessageTracker.current = newTracker;
-  }, [conversations, contacts, localBulkHistory]);
+  }, [directHistory, bulkHistory]);
 
   useEffect(() => {
     const handleBulkMessageCreated = (event: Event) => {
@@ -430,20 +441,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!resolvedLocationId) {
-      setDirectHistory([]);
-      setBulkHistory([]);
-      setConversations([]);
-      setLoading(false);
-      return;
-    }
-
-    setLoading(true);
-    setLocalBulkHistory(getBulkMessageHistory());
-
     let unsubscribe: (() => void) | undefined;
 
     const setupConversationsListener = async () => {
+      if (!resolvedLocationId) {
+        return;
+      }
+
       try {
         await ensureFirestoreAuth();
 
@@ -463,6 +467,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               name: d.name ?? null,
               last_message: d.last_message ?? null,
               last_message_at: d.last_message_at ? (typeof d.last_message_at.toDate === 'function' ? d.last_message_at.toDate().toISOString() : d.last_message_at) : null,
+              last_message_direction: d.last_message_direction ?? null,
+              unread: d.unread ?? false,
               updated_at: d.updated_at ? (typeof d.updated_at.toDate === 'function' ? d.updated_at.toDate().toISOString() : d.updated_at) : null,
               ghl_contact_id: d.ghl_contact_id ?? null,
             } satisfies Conversation;
@@ -471,7 +477,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           applyConversationRows(docRows);
         }, (err) => {
           devLog.error("Firestore conversations snapshot error:", err);
-          fetchConversations(resolvedLocationId)
+          void fetchConversations(resolvedLocationId)
             .then(applyConversationRows)
             .catch((fallbackErr) => {
               devLog.error("Sidebar conversations API fallback error:", fallbackErr);
@@ -480,7 +486,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         });
       } catch (err) {
         devLog.error("Firestore setup error in Sidebar:", err);
-        fetchConversations(resolvedLocationId)
+        void fetchConversations(resolvedLocationId)
           .then(applyConversationRows)
           .catch((fallbackErr) => {
             devLog.error("Sidebar conversations API fallback error:", fallbackErr);
@@ -489,7 +495,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       }
     };
 
-    setupConversationsListener();
+    void setupConversationsListener();
 
     return () => {
       if (unsubscribe) unsubscribe();
@@ -530,10 +536,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
       renameBulkMessage(id, editingBulkName.trim());
 
       // 3. Update UI
-      setBulkHistory(prev => prev.map(item => item.id === editingBulkId ? { ...item, customName: editingBulkName } : item));
       setLocalBulkHistory(prev => prev.map(item => item.id === editingBulkId ? { ...item, customName: editingBulkName } : item));
       // Refresh list from server to ensure sync
-      loadContacts();
+      void loadContacts();
     }
     setEditingBulkId(null);
     setEditingBulkName("");
@@ -553,7 +558,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const item = bulkHistory.find(h => h.id === deletingBulkId);
     if (item && item.batchId) {
       let conversationId = `group_${item.batchId}`;
-      const prefix = item.locationId || getAccountSettings().ghlLocationId;
+          const prefix = item.locationId || getAccountSettings().ghlLocationId;
       if (prefix) {
         conversationId = `${prefix}_${conversationId}`;
       }
@@ -564,9 +569,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     deleteBulkMessage(deletingBulkId);
 
     // 3. Update UI
-    setBulkHistory(prev => prev.filter(item => item.id !== deletingBulkId));
     setLocalBulkHistory(prev => prev.filter(item => item.id !== deletingBulkId));
-    loadContacts();
+    void loadContacts();
     setDeletingBulkId(null);
   };
 
@@ -609,8 +613,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
     // 4. Clear from UI immediately
     setContacts(contacts.filter(c => c.id !== id));
-    setDirectHistory(prev => prev.filter(c => c.id !== id));
-    loadContacts(); // fetch fresh state just in case
+    void loadContacts(); // fetch fresh state just in case
     setDeletingContact(null);
   };
 
@@ -689,7 +692,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   NOLA SMS PRO
                 </h2>
                 <div className="flex items-center gap-1.5 mt-0.5">
-                  <span className="text-[10px] font-bold text-[#6e6e73] dark:text-[#94959b] uppercase tracking-widest opacity-80">One Way SMS</span>
+                  <span className="text-[10px] font-bold text-[#2b83fa] dark:text-[#60a5fa] uppercase tracking-widest opacity-95">2-Way SMS Platform</span>
                 </div>
               </div>
             )}
@@ -870,6 +873,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         onClick={() => {
                           onTabChange('compose');
                           onSelectContact(contact);
+                          // Client-side mark as read: dismiss the unread badge
+                          if (contact.unread) {
+                            setDismissedUnreadIds(prev => new Set(prev).add(contact.id));
+                          }
                         }}
                       >
                         {activeContactId === contact.id && (
@@ -880,6 +887,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-[13px] transition-all duration-200
                             ${activeContactId === contact.id
                                 ? 'bg-[#111111] text-white shadow-md shadow-black/10 dark:bg-white dark:text-[#111111]'
+                                : contact.unread
+                                ? 'bg-[#2b83fa]/15 text-[#2b83fa] dark:bg-[#2b83fa]/25 dark:text-[#8bbcff]'
                                 : 'bg-[#f0f2f4] dark:bg-[#2a2b32] text-[#5f6368] dark:text-[#9aa0a6]'}
                             `}>
                               {(contact.name || contact.phone).charAt(0).toUpperCase()}
@@ -887,10 +896,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             {activeContactId === contact.id && (
                               <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-green-500 border-2 border-white dark:border-[#121415]" />
                             )}
+                            {contact.unread && activeContactId !== contact.id && (
+                              <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-[#2b83fa] border-2 border-white dark:border-[#121415] shadow-sm animate-pulse" title="New reply" />
+                            )}
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex justify-between items-center mb-0.5">
-                              <span className={`text-[13px] truncate leading-tight ${activeContactId === contact.id ? 'font-bold text-[#111111] dark:text-white' : 'font-medium text-[#3c4043] dark:text-[#e8eaed]'}`}>
+                              <span className={`text-[13px] truncate leading-tight ${activeContactId === contact.id ? 'font-bold text-[#111111] dark:text-white' : contact.unread ? 'font-bold text-[#111111] dark:text-white' : 'font-medium text-[#3c4043] dark:text-[#e8eaed]'}`}>
                                 {toProperCase(contact.name || contact.phone)}
                               </span>
                               <div className="flex items-center gap-0.5 flex-shrink-0 ml-1">
@@ -927,8 +939,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                 )}
                               </div>
                             </div>
-                            <div className={`text-[11.5px] truncate leading-snug ${activeContactId === contact.id ? 'text-[#5f6368] dark:text-[#b6bac2]' : 'text-[#9aa0a6] dark:text-[#5f6368]'}`}>
-                              {contact.lastMessage || 'No messages yet'}
+                            <div className={`text-[11.5px] truncate leading-snug ${activeContactId === contact.id ? 'text-[#5f6368] dark:text-[#b6bac2]' : contact.unread ? 'text-[#111111] dark:text-[#e8eaed] font-medium' : 'text-[#9aa0a6] dark:text-[#5f6368]'}`}>
+                              {contact.lastMessage ? (
+                                contact.lastMessageDirection === 'outbound' ? `You: ${contact.lastMessage}` : contact.lastMessage
+                              ) : 'No messages yet'}
                             </div>
                           </div>
                         </div>

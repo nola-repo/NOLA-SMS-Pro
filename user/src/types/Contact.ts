@@ -6,6 +6,8 @@ export interface Contact {
   ghl_contact_id?: string;
   lastMessage?: string;
   lastSentAt?: string;
+  lastMessageDirection?: 'inbound' | 'outbound';
+  unread?: boolean;
   source?: string;
   tags?: string[];
 }
