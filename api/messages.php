@@ -253,35 +253,80 @@ try {
 
     if ($conversationId !== null && $conversationId !== '') {
         $q = $db->collection('messages')
-            ->where('location_id', '==', $locId)
             ->where('conversation_id', '==', $conversationId);
 
-        $query = $q->orderBy('date_created', 'DESC')
-            ->limit($limit)
-            ->offset($offset);
-        foreach ($query->documents() as $doc) {
+        $recipientKey = $_GET['recipient_key'] ?? null;
+        if ($recipientKey) {
+            $q = $q->where('recipient_key', '==', $recipientKey);
+        }
+
+        $rows = [];
+        foreach ($q->documents() as $doc) {
             if (!$doc->exists())
                 continue;
             $d = $doc->data();
+
+            if (!empty($d['location_id']) && $d['location_id'] !== $locId) {
+                continue;
+            }
+
             \Nola\Services\StatusSync::checkAndSyncSingleMessage($db, $d, $doc->id(), $apiKey, $apiKeyCache);
-            $out['data'][] = [
+
+            $msgDirection = strtolower(trim((string)($d['direction'] ?? 'outbound')));
+            $rawStatus = $d['status'] ?? null;
+            $msgStatus = $msgDirection === 'inbound' ? 'Received' : $mapStatus($rawStatus);
+
+            $dateCreated = isset($d['date_created']) && is_object($d['date_created']) && method_exists($d['date_created'], 'formatAsString')
+                ? $d['date_created']->formatAsString()
+                : (isset($d['date_created']) ? (string)$d['date_created'] : null);
+
+            $dateReceived = isset($d['date_received']) && is_object($d['date_received']) && method_exists($d['date_received'], 'formatAsString')
+                ? $d['date_received']->formatAsString()
+                : (isset($d['date_received']) ? (string)$d['date_received'] : null);
+
+            $createdAt = isset($d['created_at']) && is_object($d['created_at']) && method_exists($d['created_at'], 'formatAsString')
+                ? $d['created_at']->formatAsString()
+                : (isset($d['created_at']) ? (string)$d['created_at'] : ($dateCreated ?: $dateReceived));
+
+            $timestampStr = isset($d['timestamp']) && is_object($d['timestamp']) && method_exists($d['timestamp'], 'formatAsString')
+                ? $d['timestamp']->formatAsString()
+                : (isset($d['timestamp']) ? (string)$d['timestamp'] : ($dateReceived ?: ($createdAt ?: $dateCreated)));
+
+            $rows[] = [
                 'id' => $doc->id(),
-                'message_id' => $d['message_id'] ?? null,
+                'message_id' => $d['message_id'] ?? $doc->id(),
                 'conversation_id' => $d['conversation_id'] ?? null,
-                'location_id' => $d['location_id'] ?? null,
-                'number' => $d['number'] ?? null,
-                'message' => $d['message'] ?? null,
-                'direction' => $d['direction'] ?? 'outbound',
+                'location_id' => $d['location_id'] ?? $locId,
+                'number' => $d['number'] ?? ($d['to'] ?? ($d['from'] ?? null)),
+                'from' => $d['from'] ?? null,
+                'to' => $d['to'] ?? null,
+                'message' => $d['message'] ?? ($d['text'] ?? ($d['content'] ?? '')),
+                'direction' => $msgDirection,
                 'sender_id' => $d['sender_id'] ?? null,
-                'status' => $mapStatus($d['status'] ?? null),
+                'sender_name' => $d['sender_name'] ?? ($d['sender_id'] ?? null),
+                'status' => $msgStatus,
                 'batch_id' => $d['batch_id'] ?? null,
                 'recipient_key' => $d['recipient_key'] ?? null,
-                'date_created' => isset($d['date_created']) ? $d['date_created']->formatAsString() : null,
-                'created_at' => isset($d['created_at']) ? $d['created_at']->formatAsString() : (isset($d['date_created']) ? $d['date_created']->formatAsString() : null),
+                'date_created' => $dateCreated,
+                'date_received' => $dateReceived,
+                'created_at' => $createdAt,
+                'timestamp' => $timestampStr,
                 'name' => $d['name'] ?? null,
+                'unisms_virtual_number_id' => $d['unisms_virtual_number_id'] ?? null,
+                'unisms_txt_conversation_id' => $d['unisms_txt_conversation_id'] ?? null,
             ];
         }
-        $out['total'] = count($out['data']);
+
+        // Sort by timestamp DESC
+        usort($rows, function($a, $b) {
+            $ta = strtotime($a['timestamp'] ?: ($a['date_received'] ?: ($a['created_at'] ?: ($a['date_created'] ?: '0'))));
+            $tb = strtotime($b['timestamp'] ?: ($b['date_received'] ?: ($b['created_at'] ?: ($b['date_created'] ?: '0'))));
+            return $tb <=> $ta;
+        });
+
+        $sliced = array_slice($rows, $offset, $limit);
+        $out['data'] = $sliced;
+        $out['total'] = count($rows);
         echo json_encode($out, JSON_PRETTY_PRINT);
         exit;
     }
