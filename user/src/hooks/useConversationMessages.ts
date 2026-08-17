@@ -23,13 +23,21 @@ const buildMessageHistoryCacheKey = (
 /** Parse a Firestore timestamp (string, native Timestamp, or _seconds object) to a JS Date */
 const parseFirestoreDate = (raw: unknown): Date => {
     if (!raw) return new Date();
-    if (typeof raw === "string") return new Date(raw);
+    if (raw instanceof Date) return raw;
+    if (typeof raw === "number") return new Date(raw);
+    if (typeof raw === "string") {
+        const d = new Date(raw);
+        return isNaN(d.getTime()) ? new Date() : d;
+    }
     if (typeof raw === "object" && raw !== null) {
         if ("toDate" in raw && typeof (raw as { toDate: () => Date }).toDate === "function") {
             return (raw as { toDate: () => Date }).toDate();
         }
         if ("_seconds" in raw) {
             return new Date((raw as { _seconds: number })._seconds * 1000);
+        }
+        if ("seconds" in raw) {
+            return new Date((raw as { seconds: number }).seconds * 1000);
         }
     }
     return new Date();
@@ -189,7 +197,9 @@ export const useConversationMessages = (conversationId: string | undefined, reci
                     : undefined
             );
 
-            const timestamp = parseFirestoreDate(row.date_received || row.created_at || row.date_created);
+            const timestamp = parseFirestoreDate(
+                row.date_received || row.created_at || row.date_created || (row as Record<string, unknown>).timestamp
+            );
 
             return {
                 id: row.message_id || row.id || `msg-${Date.now()}-${Math.random()}`,

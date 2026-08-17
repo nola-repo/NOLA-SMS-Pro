@@ -253,6 +253,9 @@ export const Composer: React.FC<ComposerProps> = ({
    * brief window before the iframe handshake completes, or standalone URL usage).
    */
   const conversationId = useMemo(() => {
+    if (activeContact?.id && (activeContact.id.includes('_conv_') || activeContact.id.startsWith('conv_'))) {
+      return activeContact.id;
+    }
     const effectiveLocationId = locationId || getAccountSettings().ghlLocationId || null;
     if (historyPhoneNumber) {
       return buildDirectConversationId(historyPhoneNumber, effectiveLocationId) || undefined;
@@ -262,7 +265,7 @@ export const Composer: React.FC<ComposerProps> = ({
       return buildGroupConversationId(activeBulkMessage.batchId, prefix) || undefined;
     }
     return undefined;
-  }, [historyPhoneNumber, activeBulkMessage, locationId]);
+  }, [activeContact, historyPhoneNumber, activeBulkMessage, locationId]);
 
   const {
     messages: conversationMessages,
