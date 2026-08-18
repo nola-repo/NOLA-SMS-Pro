@@ -464,12 +464,12 @@ HTML);
 if ($locationIdRaw !== '') {
     try {
         $dbForInstall = get_firestore();
-        $linkedAccount = install_linked_account_for_location($dbForInstall, $locationIdRaw);
+        $linkedAccount = install_linked_account_for_location($dbForInstall, $locationIdRaw, false);
         if ($_SERVER['REQUEST_METHOD'] !== 'POST' && !empty($linkedAccount['email'])) {
             $emailVal = htmlspecialchars((string)$linkedAccount['email'], ENT_QUOTES, 'UTF-8');
         }
         if ($_SERVER['REQUEST_METHOD'] !== 'POST' && empty($linkedAccount['email']) && !$isBulkInstall) {
-            $loginInstallClass = install_classify_location($dbForInstall, $locationIdRaw);
+            $loginInstallClass = install_classify_location($dbForInstall, $locationIdRaw, null, null, false);
             if (($loginInstallClass['status'] ?? '') === INSTALL_STATE_COMPANY_MISMATCH) {
                 il_page('Sub-account Mismatch', '<div class="error-box">This login link does not match the selected GoHighLevel sub-account. Please reinstall from the correct sub-account.</div>');
             }

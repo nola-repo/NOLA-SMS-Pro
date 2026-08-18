@@ -2555,21 +2555,6 @@ function install_linked_account_for_location($db, string $locationId, bool $deep
         }
     }
 
-    try {
-        $subQuery = $db->collectionGroup('subaccounts')
-            ->where(\Google\Cloud\Firestore\FieldPath::documentId(), '=', $locationId)
-            ->limit(1)
-            ->documents();
-        foreach ($subQuery as $subDoc) {
-            $linked = install_linked_account_from_subaccount_doc($subDoc, $locationId, 'users.subaccounts.document_id');
-            if ($linked !== null) {
-                install_backfill_location_owner($db, $locationId, $linked);
-                return $linked;
-            }
-        }
-    } catch (Exception $e) {
-        error_log("[install_helpers] subaccount document-id lookup failed for {$locationId}: " . $e->getMessage());
-    }
 
     $linked = install_linked_account_for_location_owner_fallbacks($db, $locationId);
     if ($linked !== null) {
