@@ -14,7 +14,7 @@ if (PHP_SAPI !== 'cli') {
     exit;
 }
 
-require __DIR__ . '/webhook/firestore_client.php';
+require dirname(__DIR__) . '/api/webhook/firestore_client.php';
 
 $apply = in_array('--apply', $argv, true);
 $overwrite = in_array('--overwrite', $argv, true);

@@ -14,7 +14,7 @@
  *   php migrate_location_members.php --dry-run
  */
 
-require __DIR__ . '/api/webhook/firestore_client.php';
+require dirname(__DIR__) . '/api/webhook/firestore_client.php';
 
 $dryRun = in_array('--dry-run', $argv ?? [], true);
 $db = get_firestore();

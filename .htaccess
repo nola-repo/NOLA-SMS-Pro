@@ -31,6 +31,9 @@
     RewriteCond %{REQUEST_FILENAME} -d
     RewriteRule ^ - [L]
 
+    # ── Legacy Static Asset Fallback ────────────────────────────────────
+    RewriteRule ^PNG[\s%20\-_]+NOLA[\s%20\-_]+SMS[\s%20\-_]+PRO[\s%20\-_]+Standard\.png$ assets/PNG\ -\ NOLA\ SMS\ PRO\ Standard.png [NC,L]
+
     # ── v2 hot-path bypasses (avoid Laravel bridge process spawn) ────────
     RewriteRule ^api/v2/ghl-contacts/?$ /api/ghl_contacts.php [NC,L,QSA]
     RewriteRule ^api/v2/ghl-conversations/?$ /api/ghl-conversations.php [NC,L,QSA]

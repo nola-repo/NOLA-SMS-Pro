@@ -10,7 +10,7 @@
  * Usage: php seed_master_senders.php
  */
 
-require __DIR__ . '/api/webhook/firestore_client.php';
+require dirname(__DIR__) . '/api/webhook/firestore_client.php';
 
 $db = get_firestore();
 

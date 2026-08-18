@@ -316,7 +316,10 @@ $bodyContent = <<<HTML
          STEP 1 — Email Entry
     ════════════════════════════════════════ -->
     <div id="step1-wrapper">
-
+        <!-- Brand Logo -->
+        <div class="logo-wrap">
+            <img src="/assets/PNG%20-%20NOLA%20SMS%20PRO%20Standard.png" alt="NOLA SMS Pro" class="logo-img" onerror="if(!this.dataset.tried){this.dataset.tried='1';this.src='https://smspro-api.nolacrm.io/assets/PNG%20-%20NOLA%20SMS%20PRO%20Standard.png';}">
+        </div>
 
         <h1>Forgot Password</h1>
         <p class="subtitle">Enter your email address and we'll send<br>you a 6-digit verification code.</p>
@@ -343,10 +346,8 @@ $bodyContent = <<<HTML
     <div id="step2-wrapper" class="hidden">
         <!-- Brand Logo -->
         <div class="logo-wrap">
-            <img src="https://smspro-api.nolacrm.io/PNG%20-%20NOLA%20SMS%20PRO%20Standard.png" alt="NOLA SMS Pro" class="logo-img">
+            <img src="/assets/PNG%20-%20NOLA%20SMS%20PRO%20Standard.png" alt="NOLA SMS Pro" class="logo-img" onerror="if(!this.dataset.tried){this.dataset.tried='1';this.src='https://smspro-api.nolacrm.io/assets/PNG%20-%20NOLA%20SMS%20PRO%20Standard.png';}">
         </div>
-
-
 
         <h1>Enter Your Code</h1>
         <p class="subtitle" id="step2-subtitle">We sent a 6-digit code to your email.<br>It expires in 10 minutes.</p>
@@ -383,7 +384,7 @@ $bodyContent = <<<HTML
     <div id="step3-wrapper" class="hidden">
         <!-- Brand Logo -->
         <div class="logo-wrap">
-            <img src="https://smspro-api.nolacrm.io/PNG%20-%20NOLA%20SMS%20PRO%20Standard.png" alt="NOLA SMS Pro" class="logo-img">
+            <img src="/assets/PNG%20-%20NOLA%20SMS%20PRO%20Standard.png" alt="NOLA SMS Pro" class="logo-img" onerror="if(!this.dataset.tried){this.dataset.tried='1';this.src='https://smspro-api.nolacrm.io/assets/PNG%20-%20NOLA%20SMS%20PRO%20Standard.png';}">
         </div>
 
 

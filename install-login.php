@@ -227,7 +227,7 @@ function il_page(string $title, string $body): void {
     <div class="blob blob-br"></div>
     <div class="card">
         <div class="logo-wrap">
-            <img src="https://smspro-api.nolacrm.io/PNG%20-%20NOLA%20SMS%20PRO%20Standard.png" alt="NOLA SMS Pro" class="logo-img">
+            <img src="/assets/PNG%20-%20NOLA%20SMS%20PRO%20Standard.png" alt="NOLA SMS Pro" class="logo-img" onerror="if(!this.dataset.tried){this.dataset.tried='1';this.src='https://smspro-api.nolacrm.io/assets/PNG%20-%20NOLA%20SMS%20PRO%20Standard.png';}">
         </div>
         {$body}
     </div>

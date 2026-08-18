@@ -5,7 +5,7 @@
  * Or access via browser: http://localhost:8000/generate-test-link.php
  */
 
-require_once __DIR__ . '/api/jwt_helper.php';
+require_once dirname(__DIR__) . '/api/jwt_helper.php';
 
 // Try to load JWT_SECRET from environment or fallback to a dummy secret for testing
 $jwtSecret = getenv('JWT_SECRET');

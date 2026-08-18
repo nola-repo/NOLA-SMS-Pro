@@ -15,7 +15,7 @@ if (($_GET['key'] ?? '') !== 'nola_fix_2026') {
     die('Forbidden');
 }
 
-require __DIR__ . '/api/webhook/firestore_client.php';
+require dirname(__DIR__) . '/api/webhook/firestore_client.php';
 header('Content-Type: application/json');
 
 $db = get_firestore();

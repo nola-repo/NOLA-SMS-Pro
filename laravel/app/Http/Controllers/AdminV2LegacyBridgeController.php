@@ -49,7 +49,7 @@ class AdminV2LegacyBridgeController extends Controller
 
     public function seedAdmin(Request $request): Response
     {
-        return $this->forwardToLegacy(base_path('../api/seed_admin.php'), $request->method(), $request->query->all(), (string) $request->getContent());
+        return $this->forwardToLegacy(base_path('../scripts/seed_admin.php'), $request->method(), $request->query->all(), (string) $request->getContent());
     }
 
     public function health(Request $request): Response
