@@ -130,19 +130,23 @@ Go to [Google Cloud Console → Cloud Build → Triggers](https://console.cloud.
 
 ## 5. Step 4: GoHighLevel Custom Menu Link Configuration
 
-To test Staging inside GoHighLevel without exposing it to clients:
+To test Staging inside GoHighLevel without exposing it to live client subaccounts:
 
-1. Open your **HighLevel Agency Dashboard**.
+1. Open your **HighLevel Agency Dashboard** (`app.nolacrm.io`).
 2. Go to **Settings → Custom Menu Links**.
-3. Click **Create New Link**:
+3. Click **Create New Link** (or edit existing):
    - **Icon:** 🛠️ *(or any distinct icon)*
    - **Title:** `NOLA SMS Pro (Staging / QA)`
-   - **URL:** Your staging URL (`https://staging.nolacrm.io` or `https://nolasmspro-frontend-staging-xxxxx-as.a.run.app`)
+   - **URL:** `https://nolasmspro-frontend-staging-116662437564.asia-southeast1.run.app/?location_id={{location.id}}`
+     *(Appending `?location_id={{location.id}}` ensures HighLevel dynamically passes the active subaccount ID to the iframe)*
    - **Show on:** **Only in selected accounts**
-   - **Select Location:** Check **ONLY your internal test location / QA subaccount**.
+   - **Select Locations:** Configured for your internal testing subaccounts:
+     * ✅ **DEMO**
+     * ✅ **NOLACRM**
+     * ✅ **NOLASMSPro**
 4. Click **Save**.
 
-> **Result:** Live paying clients only see the production app. Only your internal test location sees the Staging app link.
+> **Result:** Live paying client subaccounts only see the production app. Your internal QA subaccounts (**DEMO**, **NOLACRM**, **NOLASMSPro**) have instant access to test Staging features inside the HighLevel iframe.
 
 ---
 
