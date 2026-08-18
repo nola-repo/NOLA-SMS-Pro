@@ -625,7 +625,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!empty($redirectParamRaw) && (str_starts_with($redirectParamRaw, 'https://') || str_starts_with($redirectParamRaw, 'http://'))) {
                 $standaloneApp = $redirectParamRaw;
             }
-            $ghlCrm          = getenv('GHL_CRM_BASE_URL') ?: 'https://app.nolacrm.io';
+            $crmDomainRaw    = trim((string)($_GET['crm_domain'] ?? ''));
+            $ghlCrm          = $crmDomainRaw !== '' ? $crmDomainRaw : install_detect_crm_base_url($_SERVER['HTTP_REFERER'] ?? null);
             $ghlCustomPageId = getenv('GHL_CUSTOM_PAGE_ID') ?: '69a642aae76974824fd39bb6';
 
             if ($locationIdRaw !== '') {

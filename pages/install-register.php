@@ -450,6 +450,9 @@ if ($locationId) {
                 . '&location_id=' . urlencode((string)$locationId)
                 . '&install_status=' . urlencode(INSTALL_STATE_LINKED_ACCOUNT)
                 . '&resolution_source=' . urlencode('register_pre_form_guard');
+            if ($tokenCrmDomain !== '') {
+                $redirectUrl .= '&crm_domain=' . urlencode($tokenCrmDomain);
+            }
             if ($companyNameRaw !== '') {
                 $redirectUrl .= '&company=' . urlencode($companyNameRaw);
             }
@@ -656,6 +659,7 @@ ir_page('Create Your Account', <<<HTML
             token_type: "{$tokenTypeSafe}",
             location_id: "{$locationIdSafe}",
             company_id: "{$companyIdSafe}",
+            crm_domain: "{$crmDomainSafe}",
             resolution_source: "{$resolutionSourceSafe}"
         };
         let agreed = false;
@@ -862,12 +866,16 @@ ir_page('Create Your Account', <<<HTML
                 || (successData.user && successData.user.active_location_id)
                 || INSTALL_DIAGNOSTICS.location_id
                 || '';
+            const crmDomain = (successData.user && successData.user.crm_domain)
+                || INSTALL_DIAGNOSTICS.crm_domain
+                || REACT_APP;
             const u = btoa(JSON.stringify(successData.user || {}));
             let redirectDest;
             if (locId) {
                 // Dynamic subaccount location link for all GHL installations
                 const ghlPath = '/v2/location/' + encodeURIComponent(locId) + '/custom-page-link/' + GHL_CUSTOM_PAGE_ID;
-                redirectDest = REACT_APP + ghlPath;
+                const safeCrmDomain = crmDomain.replace(/\/+$/, '');
+                redirectDest = safeCrmDomain + ghlPath;
             } else {
                 // Pure standalone (no location context) → NOLA SMS Pro standalone app
                 redirectDest = STANDALONE_APP;

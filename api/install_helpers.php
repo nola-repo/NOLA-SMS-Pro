@@ -2903,6 +2903,54 @@ function install_registration_status_for_account($db, string $locationId): strin
     return 'not_installed';
 }
 
+/**
+ * Automatically detects the appropriate HighLevel CRM domain.
+ * Supports: app.nolacrm.io, app.gohighlevel.com, and custom whitelabels.
+ */
+function install_detect_crm_base_url(?string $referer = null, ?string $state = null, ?string $companyDomain = null): string
+{
+    // 1. If company has a registered custom whitelabel domain in Firestore
+    if (!empty($companyDomain)) {
+        $cleaned = trim((string)$companyDomain);
+        if ($cleaned !== '') {
+            return 'https://' . rtrim(preg_replace('#^https?://#i', '', $cleaned), '/');
+        }
+    }
+
+    // 2. Check the Referer header from the incoming request
+    $ref = strtolower((string)($referer ?? ($_SERVER['HTTP_REFERER'] ?? '')));
+    if ($ref !== '') {
+        if (str_contains($ref, 'nolacrm.io')) {
+            return 'https://app.nolacrm.io';
+        }
+        if (str_contains($ref, 'gohighlevel.com') || str_contains($ref, 'leadconnectorhq.com')) {
+            return 'https://app.gohighlevel.com';
+        }
+    }
+
+    // 3. Check if origin was passed in the OAuth state parameter
+    if (!empty($state)) {
+        $decodedState = json_decode($state, true);
+        if (is_array($decodedState)) {
+            $origin = strtolower((string)($decodedState['origin'] ?? $decodedState['crm_domain'] ?? $decodedState['crm_url'] ?? ''));
+            if ($origin !== '') {
+                if (str_contains($origin, 'nolacrm.io')) {
+                    return 'https://app.nolacrm.io';
+                }
+                if (str_contains($origin, 'gohighlevel.com') || str_contains($origin, 'leadconnectorhq.com')) {
+                    return 'https://app.gohighlevel.com';
+                }
+                if (preg_match('#^https?://#i', $origin)) {
+                    return rtrim($origin, '/');
+                }
+            }
+        }
+    }
+
+    // 4. Default fallback: configured GHL CRM base URL or primary CRM
+    return getenv('GHL_CRM_BASE_URL') ?: 'https://app.nolacrm.io';
+}
+
 function install_build_registration_url(
     string $jwtSecret,
     string $locationId,
@@ -2911,13 +2959,17 @@ function install_build_registration_url(
     string $companyName,
     string $resolutionSource,
     string $installStatus = '',
-    array $extraClaims = []
+    array $extraClaims = [],
+    ?string $crmBaseUrl = null
 ): string {
+    $crmDomain = $crmBaseUrl ?: install_detect_crm_base_url();
+
     $payload = [
         'type' => 'install',
         'location_id' => $locationId,
         'location_name' => $locationName,
         'company_id' => $companyId,
+        'crm_domain' => $crmDomain,
         'resolution_source' => $resolutionSource,
     ];
     if (trim($companyName) !== '') {
@@ -3413,7 +3465,8 @@ function install_decide_location_redirect(
     bool $deepOwnershipFallback = true,
     bool $provisionFast = false,
     ?bool $preloadedTokenExists = null,
-    ?array $preloadedTokenData = null
+    ?array $preloadedTokenData = null,
+    ?string $crmBaseUrl = null
 ): array {
     $classification = $provisionFast
         ? install_classify_location_for_provision(
@@ -3444,9 +3497,12 @@ function install_decide_location_redirect(
         ];
     }
 
+    $crmDomain = $crmBaseUrl ?: install_detect_crm_base_url();
+
     if (!empty($classification['linked'])) {
         $url = 'https://smspro-api.nolacrm.io/login?welcome_back=1&name=' . urlencode($locationName ?: 'Your Sub-Account')
             . '&location_id=' . urlencode($locationId)
+            . '&crm_domain=' . urlencode($crmDomain)
             . '&install_status=' . urlencode(INSTALL_STATE_LINKED_ACCOUNT)
             . '&resolution_source=' . urlencode($resolutionSource);
         if ($companyName !== '') {
@@ -3473,7 +3529,9 @@ function install_decide_location_redirect(
             $companyId,
             $companyName,
             $resolutionSource,
-            $status
+            $status,
+            [],
+            $crmDomain
         ),
         'classification' => $classification,
     ];

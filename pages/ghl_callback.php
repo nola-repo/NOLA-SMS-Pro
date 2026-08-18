@@ -1934,6 +1934,8 @@ if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
         }
     }
 
+$detectedCrmBaseUrl = install_detect_crm_base_url($_SERVER['HTTP_REFERER'] ?? null, $state ?? null);
+
 $directDecision = install_decide_location_redirect(
     $db,
     $jwtSecret,
@@ -1942,7 +1944,12 @@ $directDecision = install_decide_location_redirect(
     $companyId,
     $companyName,
     (string)($finalResolution['source'] ?? 'direct_location_callback'),
-    $tokenExistedBeforeDirect
+    $tokenExistedBeforeDirect,
+    true,
+    false,
+    null,
+    null,
+    $detectedCrmBaseUrl
 );
 
 if ($directDecision['kind'] === 'error' || empty($directDecision['url'])) {
