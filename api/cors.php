@@ -16,6 +16,7 @@ $configuredOrigins = array_filter(array_map('trim', explode(',', (string) (geten
 $trustedProductOrigins = [
     'https://smspro.nolacrm.io',
     'https://app.nolacrm.io',
+    'https://staging.nolacrm.io',
     'https://app.nolasmspro.com',
     'https://agency.nolasmspro.com',
     'https://app.gohighlevel.com',
@@ -29,6 +30,13 @@ $allowedOrigins = $configuredOrigins
     ? array_values(array_unique(array_merge($configuredOrigins, $trustedProductOrigins)))
     : array_merge($trustedProductOrigins, $localOrigins);
 $allowOrigin = in_array($origin, $allowedOrigins, true) ? $origin : '';
+
+// Allow Cloud Run staging/production direct domains (*.run.app)
+if ($allowOrigin === '' && !empty($origin)) {
+    if (preg_match('#^https://[a-zA-Z0-9\-_]+(\.[a-zA-Z0-9\-_]+)?\.run\.app$#', $origin) === 1 || preg_match('#^https://[a-zA-Z0-9\-_]+\.a\.run\.app$#', $origin) === 1) {
+        $allowOrigin = $origin;
+    }
+}
 
 // If credentials are required, Access-Control-Allow-Origin cannot be '*'
 // We only mirror explicitly trusted origins.

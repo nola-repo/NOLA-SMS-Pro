@@ -270,9 +270,10 @@ $locationIdRaw = trim((string)($_GET['location_id'] ?? $_POST['location_id'] ?? 
 $locationIdSafe = htmlspecialchars($locationIdRaw, ENT_QUOTES, 'UTF-8');
 $isBulkInstall = isset($_GET['bulk_install']) && $_GET['bulk_install'] === '1';
 $isBulkProvisioning = isset($_GET['provisioning']) && $_GET['provisioning'] === '1';
-$bulkCount     = (int)($_GET['count'] ?? 0);
 $sessionIdRaw  = trim((string)($_GET['session_id'] ?? ''));
 $installTokenRaw = trim((string)($_GET['install_token'] ?? ''));
+$redirectParamRaw = trim((string)($_GET['redirect'] ?? $_POST['redirect'] ?? ''));
+$redirectParamSafe = htmlspecialchars($redirectParamRaw, ENT_QUOTES, 'UTF-8');
 
 // ── Handle POST & Password Reset Actions ─────────────────────────────────────
 $formError = null;
@@ -619,8 +620,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Determine the post-login destination:
             //  • GHL installation / marketplace / iframe flow (location_id present) → dynamic deep-link
             //    into the user's exact GHL location subaccount custom page.
-            //  • Pure standalone login (no location_id) → NOLA SMS Pro standalone app.
+            //  • Pure standalone login (no location_id) → caller origin ($redirectParamRaw) or NOLA SMS Pro standalone app.
             $standaloneApp   = 'https://app.nolasmspro.com';
+            if (!empty($redirectParamRaw) && (str_starts_with($redirectParamRaw, 'https://') || str_starts_with($redirectParamRaw, 'http://'))) {
+                $standaloneApp = $redirectParamRaw;
+            }
             $ghlCrm          = getenv('GHL_CRM_BASE_URL') ?: 'https://app.nolacrm.io';
             $ghlCustomPageId = getenv('GHL_CUSTOM_PAGE_ID') ?: '69a642aae76974824fd39bb6';
 
@@ -629,7 +633,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $ghlPath      = '/v2/location/' . rawurlencode($locationIdRaw) . '/custom-page-link/' . $ghlCustomPageId;
                 $redirectDest = rtrim($ghlCrm, '/') . $ghlPath;
             } else {
-                // Pure standalone login → NOLA SMS Pro standalone app
+                // Pure standalone login → NOLA SMS Pro standalone app or staging origin
                 $redirectDest = $standaloneApp;
             }
 
@@ -875,6 +879,7 @@ il_page('Sign In', <<<HTML
         {$errorHtml}
         <form id="login-form" method="POST" action="{$formAction}">
             <input type="hidden" name="location_id" value="{$locationIdSafe}">
+            <input type="hidden" name="redirect" value="{$redirectParamSafe}">
             <div class="field">
                 <label for="{$emailLabelFor}">Email Address</label>
                 <div class="input-wrap">
