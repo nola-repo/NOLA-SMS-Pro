@@ -28,6 +28,9 @@ export const SharedLogin: React.FC = () => {
     const targetUrl = new URL(`${baseUrl}/login`);
     const params = new URLSearchParams(window.location.search);
     params.forEach((value, key) => targetUrl.searchParams.set(key, value));
+    if (!targetUrl.searchParams.has('redirect')) {
+      targetUrl.searchParams.set('redirect', window.location.origin);
+    }
     window.location.replace(targetUrl.toString());
   }, [isAuthenticated, isGhlFrame, navigate]);
   return <AppLoadingScreen message="Authenticating..." subtext="Connecting to your session..." />;
