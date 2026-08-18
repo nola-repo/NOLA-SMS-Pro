@@ -16,19 +16,8 @@ require_once dirname(__DIR__) . '/api/jwt_helper.php';
 require_once dirname(__DIR__) . '/api/webhook/firestore_client.php';
 require_once dirname(__DIR__) . '/api/install_helpers.php';
 
-$isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-    || ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https'
-    || ($_SERVER['SERVER_PORT'] ?? '') === '443';
-$scheme = $isHttps ? 'https' : 'http';
-$host = $_SERVER['HTTP_HOST'] ?? '';
-$detectedOrigin = $host !== '' ? ($scheme . '://' . $host) : 'https://smspro-api.nolacrm.io';
-
-$apiBase = getenv('APP_BASE_URL') ?: (
-    (str_contains($host, 'staging') || str_contains($host, 'localhost') || str_contains($host, 'run.app'))
-        ? $detectedOrigin
-        : 'https://smspro-api.nolacrm.io'
-);
-$reactApp = getenv('GHL_CRM_BASE_URL') ?: 'https://app.nolacrm.io';
+$apiBase  = 'https://smspro-api.nolacrm.io';
+$reactApp = 'https://app.nolacrm.io';
 $marketplace = 'https://marketplace.leadconnectorhq.com/apps/overview/68118e8f9f1bac2ffc84ed23';
 
 // ── Shared page renderer (matches install-register.php / ghl_callback.php) ───

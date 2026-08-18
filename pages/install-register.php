@@ -20,18 +20,7 @@ if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
         exit('Server configuration error: JWT secret missing.');
     }
 }
-$isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-    || ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https'
-    || ($_SERVER['SERVER_PORT'] ?? '') === '443';
-$scheme = $isHttps ? 'https' : 'http';
-$host = $_SERVER['HTTP_HOST'] ?? '';
-$detectedOrigin = $host !== '' ? ($scheme . '://' . $host) : 'https://smspro-api.nolacrm.io';
-
-$apiBase = getenv('APP_BASE_URL') ?: (
-    (str_contains($host, 'staging') || str_contains($host, 'localhost') || str_contains($host, 'run.app'))
-        ? $detectedOrigin
-        : 'https://smspro-api.nolacrm.io'
-);
+$apiBase         = 'https://smspro-api.nolacrm.io';
 $reactApp        = getenv('GHL_CRM_BASE_URL') ?: 'https://app.nolacrm.io';
 $marketplace     = 'https://marketplace.leadconnectorhq.com/apps/overview/68118e8f9f1bac2ffc84ed23';
 $ghlCustomPageId = getenv('GHL_CUSTOM_PAGE_ID') ?: '69a642aae76974824fd39bb6';
