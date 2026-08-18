@@ -558,7 +558,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const item = bulkHistory.find(h => h.id === deletingBulkId);
     if (item && item.batchId) {
       let conversationId = `group_${item.batchId}`;
-          const prefix = item.locationId || getAccountSettings().ghlLocationId;
+      const prefix = item.locationId || getAccountSettings().ghlLocationId;
       if (prefix) {
         conversationId = `${prefix}_${conversationId}`;
       }
@@ -692,7 +692,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   NOLA SMS PRO
                 </h2>
                 <div className="flex items-center gap-1.5 mt-0.5">
-                  <span className="text-[10px] font-bold text-[#6e6e73] dark:text-[#94959b] uppercase tracking-widest opacity-80">Staging Phase - One Way SMS</span>
+                  <span className="text-[10px] font-bold text-[#6e6e73] dark:text-[#94959b] uppercase tracking-widest opacity-80">Staging Environment</span>
                 </div>
               </div>
             )}
@@ -890,8 +890,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               ${isContactActive
                                   ? 'bg-[#111111] text-white shadow-md shadow-black/10 dark:bg-white dark:text-[#111111]'
                                   : contact.unread
-                                  ? 'bg-[#2b83fa]/15 text-[#2b83fa] dark:bg-[#2b83fa]/25 dark:text-[#8bbcff]'
-                                  : 'bg-[#f0f2f4] dark:bg-[#2a2b32] text-[#5f6368] dark:text-[#9aa0a6]'}
+                                    ? 'bg-[#2b83fa]/15 text-[#2b83fa] dark:bg-[#2b83fa]/25 dark:text-[#8bbcff]'
+                                    : 'bg-[#f0f2f4] dark:bg-[#2a2b32] text-[#5f6368] dark:text-[#9aa0a6]'}
                               `}>
                                 {(contact.name || contact.phone).charAt(0).toUpperCase()}
                               </div>
