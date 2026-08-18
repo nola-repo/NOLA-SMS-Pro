@@ -1,11 +1,23 @@
 <?php
 
-require __DIR__ . '/api/webhook/firestore_client.php';
-require_once __DIR__ . '/api/install_helpers.php';
+require dirname(__DIR__) . '/api/webhook/firestore_client.php';
+require_once dirname(__DIR__) . '/api/install_helpers.php';
 
 // ─── Global Context ────────────────────────────────────────────────────────────
 $locationIdSafe = '';
-$backendApiUrl = 'https://smspro-api.nolacrm.io';
+$isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+    || ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https'
+    || ($_SERVER['SERVER_PORT'] ?? '') === '443';
+$scheme = $isHttps ? 'https' : 'http';
+$host = $_SERVER['HTTP_HOST'] ?? '';
+$detectedOrigin = $host !== '' ? ($scheme . '://' . $host) : 'https://smspro-api.nolacrm.io';
+
+$backendApiUrl = getenv('APP_BASE_URL') ?: (
+    (str_contains($host, 'staging') || str_contains($host, 'localhost') || str_contains($host, 'run.app'))
+        ? $detectedOrigin
+        : 'https://smspro-api.nolacrm.io'
+);
+$redirectUri = getenv('GHL_REDIRECT_URI') ?: rtrim($backendApiUrl, '/') . '/oauth/callback';
 
 /**
  * Whether greppable install tracing is enabled. Set GHL_INSTALL_TRACE=0 to disable.
@@ -387,7 +399,8 @@ function render_error(string $message, array $details = []): void
         $details_html = "<pre class=\"error-pre\">{$json}</pre>";
     }
 
-    $reinstall_url = 'https://marketplace.leadconnectorhq.com/v2/oauth/chooselocation?response_type=code&redirect_uri=https%3A%2F%2Fsmspro-api.nolacrm.io%2Foauth%2Fcallback&client_id=6999da2b8f278296d95f7274-mmn30t4f&scope=contacts.readonly+contacts.write+conversations.readonly+conversations.write+conversations%2Fmessage.readonly+conversations%2Fmessage.write+locations.readonly+locations%2FcustomFields.readonly+oauth.readonly+oauth.write&version_id=6999da2b8f278296d95f7274';
+    global $redirectUri;
+    $reinstall_url = 'https://marketplace.leadconnectorhq.com/v2/oauth/chooselocation?response_type=code&redirect_uri=' . urlencode($redirectUri) . '&client_id=6999da2b8f278296d95f7274-mmn30t4f&scope=contacts.readonly+contacts.write+conversations.readonly+conversations.write+conversations%2Fmessage.readonly+conversations%2Fmessage.write+locations.readonly+locations%2FcustomFields.readonly+oauth.readonly+oauth.write&version_id=6999da2b8f278296d95f7274';
     $stateLocationId = install_clean_location_id($locationIdSafe);
     if ($stateLocationId !== null) {
         $reinstall_url .= '&state=' . urlencode(json_encode(['selected_location_id' => $stateLocationId]));
@@ -1031,7 +1044,7 @@ function has_linked_user_for_location($db, string $locationId): bool
 // Agency installs use /oauth/agency-callback → ghl_agency_callback.php
 $clientId     = getenv('GHL_CLIENT_ID');
 $clientSecret = getenv('GHL_CLIENT_SECRET');
-$redirectUri  = 'https://smspro-api.nolacrm.io/oauth/callback'; // HARDCODED
+$redirectUri  = getenv('GHL_REDIRECT_URI') ?: rtrim($backendApiUrl, '/') . '/oauth/callback';
 
 if (!$clientId || !$clientSecret) {
     error_log('[GHL_CALLBACK] Server configuration error: GHL client credentials are not set.');

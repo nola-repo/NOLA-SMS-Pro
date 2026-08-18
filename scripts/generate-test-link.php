@@ -29,13 +29,13 @@ $port = isset($_SERVER['SERVER_PORT']) ? $_SERVER['SERVER_PORT'] : '8000';
 $host = isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : 'localhost:' . $port;
 $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? "https" : "http";
 
-$browserUrl = "$protocol://$host/install-register.php?install_token=" . $token;
+$browserUrl = "$protocol://$host/register?install_token=" . $token;
 
 if (php_sapi_name() === 'cli') {
     echo "\n=== NOLA SMS Pro Local Registration Test Link Generator ===\n";
     echo "Using JWT_SECRET: " . (getenv('JWT_SECRET') ? "Loaded from environment" : "None detected (using fallback 'dummy_secret_for_local_test')") . "\n\n";
     echo "Click or copy the URL below to view the registration form on your local server:\n";
-    echo "=> http://localhost:8000/install-register.php?install_token=" . $token . "\n\n";
+    echo "=> http://localhost:8000/register?install_token=" . $token . "\n\n";
     echo "Note: If your local server runs on a different port, replace 8000 with your port.\n";
     echo "========================================================\n\n";
 } else {

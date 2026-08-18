@@ -23,9 +23,12 @@ class MarketplaceInstallationContractTest extends TestCase
 
     public function test_reinstall_links_match_lean_marketplace_scope_set(): void
     {
-        $callback = file_get_contents($this->rootFile('ghl_callback.php'));
-        $debug = file_get_contents($this->rootFile('oauth_debug.php'));
-        $combined = $callback . "\n" . $debug;
+        $callbackPath = file_exists($this->rootFile('pages/ghl_callback.php')) 
+            ? $this->rootFile('pages/ghl_callback.php') 
+            : $this->rootFile('ghl_callback.php');
+        $callback = file_exists($callbackPath) ? file_get_contents($callbackPath) : '';
+        $debug = file_exists($this->rootFile('oauth_debug.php')) ? file_get_contents($this->rootFile('oauth_debug.php')) : '';
+        $combined = urldecode($callback) . "\n" . $debug;
 
         foreach ([
             'contacts.readonly',

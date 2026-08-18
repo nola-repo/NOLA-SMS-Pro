@@ -33,6 +33,7 @@
 
     # ── Legacy Static Asset Fallback ────────────────────────────────────
     RewriteRule ^PNG[\s%20\-_]+NOLA[\s%20\-_]+SMS[\s%20\-_]+PRO[\s%20\-_]+Standard\.png$ assets/PNG\ -\ NOLA\ SMS\ PRO\ Standard.png [NC,L]
+    RewriteRule ^favicon\.png$ assets/favicon.png [NC,L]
 
     # ── v2 hot-path bypasses (avoid Laravel bridge process spawn) ────────
     RewriteRule ^api/v2/ghl-contacts/?$ /api/ghl_contacts.php [NC,L,QSA]
@@ -48,10 +49,10 @@
     RewriteRule ^api/v2/(.*)$ /api/v2/index.php [NC,L,QSA]
 
     # ── OAuth ────────────────────────────────────────────────────────────
-    # /oauth/callback         -> /ghl_callback.php          (subaccount app)
-    # /oauth/agency-callback  -> /ghl_agency_callback.php   (agency app)
-    RewriteRule ^oauth/callback/?$        /ghl_callback.php        [NC,L,QSA]
-    RewriteRule ^oauth/agency-callback/?$ /ghl_agency_callback.php [NC,L,QSA]
+    # /oauth/callback         -> pages/ghl_callback.php          (subaccount app)
+    # /oauth/agency-callback  -> pages/ghl_agency_callback.php   (agency app)
+    RewriteRule ^oauth/callback/?$        pages/ghl_callback.php        [NC,L,QSA]
+    RewriteRule ^oauth/agency-callback/?$ pages/ghl_agency_callback.php [NC,L,QSA]
 
     # ── Hide .php extension: redirect direct .php access to clean URLs ──
     # This prevents users from accessing the .php files directly if they know the path.
@@ -71,6 +72,14 @@
     RewriteRule ^api/get_credit_transactions\.php$ /api/get_credit_transactions [R=301,L]
     RewriteCond %{THE_REQUEST} \s/+ghl_callback\.php[\s?] [NC]
     RewriteRule ^ghl_callback\.php$ /oauth/callback [R=301,L]
+    RewriteCond %{THE_REQUEST} \s/+ghl_agency_callback\.php[\s?] [NC]
+    RewriteRule ^ghl_agency_callback\.php$ /oauth/agency-callback [R=301,L]
+    RewriteCond %{THE_REQUEST} \s/+install-login\.php[\s?] [NC]
+    RewriteRule ^install-login\.php$ /login [R=301,L]
+    RewriteCond %{THE_REQUEST} \s/+install-register\.php[\s?] [NC]
+    RewriteRule ^install-register\.php$ /register [R=301,L]
+    RewriteCond %{THE_REQUEST} \s/+install-forgot-password\.php[\s?] [NC]
+    RewriteRule ^install-forgot-password\.php$ /forgot-password [R=301,L]
 
     # ── Webhook endpoints (public URLs without /api/ prefix) ─────────
     # /webhook/send_sms     -> /api/webhook/send_sms.php
@@ -98,9 +107,10 @@
     RewriteRule ^api/ghl-conversations/?$ /api/ghl-conversations.php [NC,L,QSA]
 
     # ── Public / Auth endpoints ────────────────────────────────────────────
-    RewriteRule ^register/?$ install-register.php [NC,L,QSA]
-    RewriteRule ^login/?$    install-login.php    [NC,L,QSA]
-    RewriteRule ^forgot-password/?$ install-forgot-password.php [NC,L,QSA]
+    RewriteRule ^register/?$ pages/install-register.php [NC,L,QSA]
+    RewriteRule ^login/?$    pages/install-login.php    [NC,L,QSA]
+    RewriteRule ^forgot-password/?$ pages/install-forgot-password.php [NC,L,QSA]
+    RewriteRule ^auth-handoff(\.html)?$ pages/auth-handoff.html [NC,L,QSA]
 
     RewriteRule ^api/auth/forgot-password-otp/?$ /api/auth/forgot_password_otp.php [NC,L,QSA]
     RewriteRule ^api/auth/reset-password-otp/?$  /api/auth/reset_password_otp.php  [NC,L,QSA]
