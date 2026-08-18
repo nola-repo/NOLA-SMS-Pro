@@ -37,12 +37,12 @@ export const ProtectedRoute: React.FC = () => {
     // Ignore storage errors in incognito/strict-privacy mode
   }
 
-  // Inside a GHL iframe: allow if authenticated OR if GHL launch signals are present
-  // (GHL SSO will complete the autologin handshake after load)
-  const isGhlWithActiveSignals = urlHasParams || isAuth;
+  // Inside a GHL iframe: allow if authenticated, inside iframe, or if GHL launch signals are present
+  // (GHL SSO / postMessage / LocationContext will complete the handshake)
+  const isGhlWithActiveSignals = urlHasParams || isAuth || isIframe;
 
   if (!isAuth && !isGhlWithActiveSignals) {
-    // No valid session and no GHL launch signal — even in an iframe, deny access.
+    // No valid session and not in iframe — deny access.
     return <Navigate to="/login" replace />;
   }
 
