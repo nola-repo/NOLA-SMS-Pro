@@ -3022,7 +3022,8 @@ function install_complete_company_location_selection(
     string $locationName,
     string $resolutionSource,
     ?string $selectionSessionId = null,
-    bool $skipClaimRecord = false
+    bool $skipClaimRecord = false,
+    ?string $crmBaseUrl = null
 ): array {
     $locationId = install_clean_location_id($locationId);
     $companyId = trim($companyId);
@@ -3131,7 +3132,8 @@ function install_complete_company_location_selection(
         false,
         true,
         $preloadedTokenExists,
-        $preloadedTokenData
+        $preloadedTokenData,
+        $crmBaseUrl
     );
 
     if (($decision['kind'] ?? '') === 'error' || empty($decision['url'])) {
@@ -3228,7 +3230,8 @@ function install_try_server_redirect_single_selection(
     array $companyData,
     array $candidateLocations,
     string $resolutionSource,
-    ?string $selectionSessionId = null
+    ?string $selectionSessionId = null,
+    ?string $crmBaseUrl = null
 ): bool {
     $candidateIds = [];
     $candidateNames = [];
@@ -3261,7 +3264,9 @@ function install_try_server_redirect_single_selection(
         $locationId,
         (string)($candidateNames[$locationId] ?? ''),
         $resolutionSource,
-        $selectionSessionId
+        $selectionSessionId,
+        false,
+        $crmBaseUrl
     );
 
     if (!$result['ok'] || empty($result['url'])) {

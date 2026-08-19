@@ -129,6 +129,7 @@ try {
     }
     $companyData = $companySnap->data();
     $companyName = trim((string)($session['company_name'] ?? $payload['company_name'] ?? $companyData['company_name'] ?? $companyData['agency_name'] ?? ''));
+    $crmBaseUrl = trim((string)($session['crm_domain'] ?? $payload['crm_domain'] ?? ''));
 
     try {
         install_record_selection_claim($db, $sessionId, $companyId, $locationId);
@@ -148,7 +149,8 @@ try {
         (string)($candidateNames[$locationId] ?? ''),
         'signed_install_selection',
         $sessionId,
-        true
+        true,
+        $crmBaseUrl !== '' ? $crmBaseUrl : null
     );
 
     if (!$result['ok'] || empty($result['url'])) {

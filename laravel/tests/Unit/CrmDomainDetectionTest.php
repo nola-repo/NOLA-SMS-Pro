@@ -77,4 +77,34 @@ class CrmDomainDetectionTest extends TestCase
         $this->assertEquals('https://app.gohighlevel.com', $payload['crm_domain'] ?? null);
         $this->assertEquals('loc_test_123', $payload['location_id'] ?? null);
     }
+
+    public function test_moved_callback_uses_parent_api_include_paths(): void
+    {
+        $callback = file_get_contents(dirname(__DIR__, 3) . '/pages/ghl_callback.php');
+
+        $this->assertStringNotContainsString("__DIR__ . '/api/", $callback);
+        $this->assertStringContainsString("dirname(__DIR__) . '/api/jwt_helper.php'", $callback);
+        $this->assertStringContainsString("dirname(__DIR__) . '/api/cache_helper.php'", $callback);
+    }
+
+    public function test_registration_page_preserves_crm_domain_from_install_payload(): void
+    {
+        $register = file_get_contents(dirname(__DIR__, 3) . '/pages/install-register.php');
+
+        $this->assertStringContainsString("\$tokenCrmDomain = trim((string) (\$payload['crm_domain'] ?? ''));", $register);
+        $this->assertStringContainsString("\$crmDomainSafe = htmlspecialchars(\$tokenCrmDomain, ENT_QUOTES, 'UTF-8');", $register);
+        $this->assertStringContainsString('crm_domain: "{$crmDomainSafe}"', $register);
+    }
+
+    public function test_selection_flow_preserves_detected_crm_domain(): void
+    {
+        $callback = file_get_contents(dirname(__DIR__, 3) . '/pages/ghl_callback.php');
+        $resolver = file_get_contents(dirname(__DIR__, 3) . '/api/auth/resolve_install_selection.php');
+        $helpers = file_get_contents(dirname(__DIR__, 3) . '/api/install_helpers.php');
+
+        $this->assertStringContainsString("'crm_domain' => \$crmBaseUrl", $callback);
+        $this->assertStringContainsString("\$crmBaseUrl = trim((string)(\$session['crm_domain'] ?? \$payload['crm_domain'] ?? ''));", $resolver);
+        $this->assertStringContainsString("\$crmBaseUrl !== '' ? \$crmBaseUrl : null", $resolver);
+        $this->assertStringContainsString('?string $crmBaseUrl = null', $helpers);
+    }
 }

@@ -419,7 +419,8 @@ function create_install_selection_session(
     array $debug = [],
     string $selectionState = INSTALL_STATE_AMBIGUOUS,
     string $uiMode = 'list',
-    ?string $preselectedLocationId = null
+    ?string $preselectedLocationId = null,
+    ?string $crmBaseUrl = null
 ): array {
     $preselectedLocationId = install_clean_location_id($preselectedLocationId);
     if ($preselectedLocationId !== null) {
@@ -453,6 +454,7 @@ function create_install_selection_session(
         'ui_mode' => $uiMode,
         'preselected_location_id' => install_clean_location_id($preselectedLocationId),
         'candidate_locations' => $rows,
+        'crm_domain' => $crmBaseUrl,
         'debug' => $debug,
         'created_at' => new \Google\Cloud\Core\Timestamp($now),
         'updated_at' => new \Google\Cloud\Core\Timestamp($now),
@@ -464,6 +466,7 @@ function create_install_selection_session(
         'session_id' => $sessionId,
         'company_id' => $companyId,
         'company_name' => $companyName,
+        'crm_domain' => $crmBaseUrl,
         'candidate_hash' => hash('sha256', implode('|', $candidateIds)),
     ], $jwtSecret, 900);
 
@@ -615,7 +618,8 @@ function render_company_location_recovery_selection(
     string $companyToken,
     array $resolution,
     array $debug = [],
-    ?string $preselectedLocationId = null
+    ?string $preselectedLocationId = null,
+    ?string $crmBaseUrl = null
 ): void {
     $preselectedLocationId = install_clean_location_id($preselectedLocationId);
     if ($preselectedLocationId !== null) {
@@ -667,7 +671,8 @@ function render_company_location_recovery_selection(
         ],
         INSTALL_STATE_SELECTION_REQUIRED,
         (string)$narrowed['ui_mode'],
-        $narrowed['preselected_location_id']
+        $narrowed['preselected_location_id'],
+        $crmBaseUrl
     );
 
     error_log('[GHL_CALLBACK] Selection-required install recovery session=' . $selectionSession['session_id']);
@@ -685,7 +690,8 @@ function render_company_location_recovery_selection(
         ($narrowed['ui_mode'] ?? '') === 'confirm_preselected'
             ? 'recovery_confirm_preselected'
             : 'recovery_single_candidate',
-        (string)$selectionSession['session_id']
+        (string)$selectionSession['session_id'],
+        $crmBaseUrl
     );
     render_ambiguous_selection(
         (string)$selectionSession['session_token'],
@@ -1042,6 +1048,7 @@ if (!isset($_GET['code']))
 
 $code  = $_GET['code'];
 $state = $_GET['state'] ?? null;
+$detectedCrmBaseUrl = install_detect_crm_base_url($_SERVER['HTTP_REFERER'] ?? null, $state ?? null);
 $queryLocationId = install_extract_location_id_from_query($_GET);
 $queryApprovedLocationIds = install_unique_ids(array_merge(
     install_extract_location_ids_from_mixed($_GET['approvedLocations'] ?? null),
@@ -1359,7 +1366,7 @@ if (($data['userType'] ?? '') === 'Company') {
             ]);
         }
 
-        require_once __DIR__ . '/api/jwt_helper.php';
+        require_once dirname(__DIR__) . '/api/jwt_helper.php';
         $jwtSecret2 = getenv('JWT_SECRET');
         if ($jwtSecret2 === false || trim((string)$jwtSecret2) === '') {
             error_log('[GHL_CALLBACK] JWT_SECRET missing; cannot generate install token.');
@@ -1392,7 +1399,11 @@ if (($data['userType'] ?? '') === 'Company') {
             $companyNameCaseA,
             (string)($caseAResolution['source'] ?? 'case_a_single_location'),
             $caseATokenExistedBefore,
-            $caseADeepFallback
+            $caseADeepFallback,
+            false,
+            null,
+            null,
+            $detectedCrmBaseUrl
         );
 
         error_log('[GHL_CALLBACK_DEBUG] caseA_install_decision=' . json_encode([
@@ -1427,7 +1438,7 @@ if (($data['userType'] ?? '') === 'Company') {
         }
 
         try {
-            require_once __DIR__ . '/api/cache_helper.php';
+            require_once dirname(__DIR__) . '/api/cache_helper.php';
             NolaCache::invalidateAdminDashboard();
             if ($singleLocationId) {
                 NolaCache::delete("account_profile_" . $singleLocationId);
@@ -1444,7 +1455,7 @@ if (($data['userType'] ?? '') === 'Company') {
     }
 
     if (count($locationsArrayIds) > 1) {
-        require_once __DIR__ . '/api/jwt_helper.php';
+        require_once dirname(__DIR__) . '/api/jwt_helper.php';
         $jwtSecretSelect = getenv('JWT_SECRET');
         if ($jwtSecretSelect === false || trim((string)$jwtSecretSelect) === '') {
             error_log('[GHL_CALLBACK] JWT_SECRET missing; cannot generate ambiguous selection session.');
@@ -1479,7 +1490,8 @@ if (($data['userType'] ?? '') === 'Company') {
             ],
             INSTALL_STATE_AMBIGUOUS,
             (string)$narrowedSelection['ui_mode'],
-            $narrowedSelection['preselected_location_id']
+            $narrowedSelection['preselected_location_id'],
+            $detectedCrmBaseUrl
         );
         error_log('[GHL_CALLBACK] Ambiguous install selection required session=' . $selectionSession['session_id']);
         install_try_server_redirect_single_selection(
@@ -1497,7 +1509,8 @@ if (($data['userType'] ?? '') === 'Company') {
             ($narrowedSelection['ui_mode'] ?? '') === 'confirm_preselected'
                 ? 'callback_confirm_preselected'
                 : 'callback_single_candidate',
-            (string)$selectionSession['session_id']
+            (string)$selectionSession['session_id'],
+            $detectedCrmBaseUrl
         );
         render_ambiguous_selection(
             (string)$selectionSession['session_token'],
@@ -1508,7 +1521,7 @@ if (($data['userType'] ?? '') === 'Company') {
     }
 
     if (empty($locationsArrayIds)) {
-        require_once __DIR__ . '/api/jwt_helper.php';
+        require_once dirname(__DIR__) . '/api/jwt_helper.php';
         $jwtSecretSelect = getenv('JWT_SECRET');
         if ($jwtSecretSelect === false || trim((string)$jwtSecretSelect) === '') {
             error_log('[GHL_CALLBACK] JWT_SECRET missing; cannot generate selection-required recovery session.');
@@ -1528,7 +1541,8 @@ if (($data['userType'] ?? '') === 'Company') {
                 'isBulkInstallation' => $data['isBulkInstallation'] ?? null,
                 'state_present' => $state !== null && $state !== '',
             ],
-            $preselectedForRecovery
+            $preselectedForRecovery,
+            $detectedCrmBaseUrl
         );
     }
 
@@ -1603,7 +1617,7 @@ if (!$locationId) {
     $finalCandidateIds = $finalResolution['candidate_ids'] ?? [];
     $finalCompanyId = trim((string)($data['companyId'] ?? ''));
     if ($finalCompanyId !== '' && ($data['userType'] ?? '') === 'Company') {
-        require_once __DIR__ . '/api/jwt_helper.php';
+        require_once dirname(__DIR__) . '/api/jwt_helper.php';
         $jwtSecretSelect = getenv('JWT_SECRET');
         if ($jwtSecretSelect === false || trim((string)$jwtSecretSelect) === '') {
             error_log('[GHL_CALLBACK] JWT_SECRET missing; cannot generate final selection session.');
@@ -1667,7 +1681,8 @@ if (!$locationId) {
                 ],
                 INSTALL_STATE_AMBIGUOUS,
                 (string)$finalNarrowed['ui_mode'],
-                $finalNarrowed['preselected_location_id']
+                $finalNarrowed['preselected_location_id'],
+                $detectedCrmBaseUrl
             );
             install_try_server_redirect_single_selection(
                 $db,
@@ -1684,7 +1699,8 @@ if (!$locationId) {
                 ($finalNarrowed['ui_mode'] ?? '') === 'confirm_preselected'
                     ? 'final_confirm_preselected'
                     : 'final_single_candidate',
-                (string)$selectionSession['session_id']
+                (string)$selectionSession['session_id'],
+                $detectedCrmBaseUrl
             );
             render_ambiguous_selection(
                 (string)$selectionSession['session_token'],
@@ -1707,7 +1723,8 @@ if (!$locationId) {
                     'token_userType' => $data['userType'] ?? null,
                     'state_present' => $state !== null && $state !== '',
                 ],
-                $finalPreselectedRecovery
+                $finalPreselectedRecovery,
+                $detectedCrmBaseUrl
             );
         }
     }
@@ -1913,7 +1930,7 @@ catch (Exception $e) {
 
 // ─── Redirect Logic (replaces the old static success page) ────────────────────
 
-require_once __DIR__ . '/api/jwt_helper.php';
+require_once dirname(__DIR__) . '/api/jwt_helper.php';
 
 $jwtSecret = getenv('JWT_SECRET');
 if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
@@ -1933,8 +1950,6 @@ if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
             error_log('[GHL_CALLBACK] company name lookup failed: ' . $e->getMessage());
         }
     }
-
-$detectedCrmBaseUrl = install_detect_crm_base_url($_SERVER['HTTP_REFERER'] ?? null, $state ?? null);
 
 $directDecision = install_decide_location_redirect(
     $db,
@@ -1987,7 +2002,7 @@ error_log('[GHL_CALLBACK_DEBUG] final_redirect=' . json_encode([
 ]));
 
 try {
-    require_once __DIR__ . '/api/cache_helper.php';
+    require_once dirname(__DIR__) . '/api/cache_helper.php';
     NolaCache::invalidateAdminDashboard();
     if ($locationId) {
         NolaCache::delete("account_profile_" . $locationId);

@@ -361,6 +361,11 @@ $locationNameRaw = (string) ($payload['location_name'] ?? '');
 $locationName = htmlspecialchars($locationNameRaw, ENT_QUOTES, 'UTF-8');
 $companyId    = $payload['company_id'] ?? null;
 $companyNameRaw = (string) ($payload['company_name'] ?? '');
+$tokenCrmDomain = trim((string) ($payload['crm_domain'] ?? ''));
+if ($tokenCrmDomain !== '' && !preg_match('#^https?://#i', $tokenCrmDomain)) {
+    $tokenCrmDomain = '';
+}
+$crmDomainSafe = htmlspecialchars($tokenCrmDomain, ENT_QUOTES, 'UTF-8');
 $irLocTokenExists = false;
 $irLocTokenData = [];
 
