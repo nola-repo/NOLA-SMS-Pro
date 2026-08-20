@@ -66,7 +66,34 @@ RewriteRule ^api/contacts/?$ /api/location/contacts.php [NC,L,QSA]
 
 ---
 
-## 4. Update All Internal References
+## 4. Check Frontend Impact Before Moving
+
+The frontend (React app) calls PHP endpoints via clean API URLs like `/api/messages`,
+`/api/contacts`, `/api/notifications`, etc. These URLs must never change.
+
+**Before moving any HTTP-facing PHP file, you must:**
+
+1. Identify the public URL this file is served at (from `.htaccess`).
+2. Search the frontend codebase for any `fetch`, `axios`, `api/` string, or URL
+   reference that matches this public URL.
+   ```
+   grep -r "api/messages" src/
+   grep -r "api/contacts" src/
+   ```
+3. Confirm the public URL (left side of the `.htaccess` rule) is NOT changing —
+   only the disk path on the right side changes.
+4. If the public URL is staying the same, the frontend is unaffected and no
+   frontend code changes are needed.
+5. **Never change the public URL without coordinating with the frontend team first.**
+   Changing a URL that the React app calls will silently break API requests.
+
+**The safe principle:** Moving a PHP file on disk = safe for frontend as long as
+the `.htaccess` public URL is preserved. The frontend only knows about URLs,
+not about where PHP files live on disk.
+
+---
+
+## 5. Update All Internal References
 
 After updating `.htaccess`, find and fix every internal reference to the moved file:
 
@@ -76,7 +103,7 @@ After updating `.htaccess`, find and fix every internal reference to the moved f
 
 ---
 
-## 5. Do Not Move Files That Are Safe to Keep in Root
+## 6. Do Not Move Files That Are Safe to Keep in Root
 
 Some files belong in `api/` root and must not be moved:
 
@@ -92,7 +119,7 @@ Only move them if you are explicitly tasked with doing so and have mapped every 
 
 ---
 
-## 6. Move One File or One Logical Group at a Time
+## 7. Move One File or One Logical Group at a Time
 
 Do not reorganize the entire `api/` folder in one operation.
 
@@ -102,18 +129,21 @@ Do not reorganize the entire `api/` folder in one operation.
 
 ---
 
-## 7. Verify Before Committing
+## 8. Verify Before Committing
 
 After moving a file and updating all references:
 
 1. Confirm the `.htaccess` route still resolves correctly (right-side path exists on disk).
 2. Confirm no `require`/`include` path still points to the old location.
 3. Confirm the file was not removed from `.htaccess` entirely by accident.
-4. If there is a test or health-check endpoint for the moved file, verify it still responds.
+4. **Test the public-facing URL on staging** — make a real HTTP request to the endpoint
+   and confirm it returns the expected response (not a 404 or 500).
+5. If the frontend calls this endpoint, confirm the frontend feature that depends on
+   it still works end-to-end in the staging environment.
 
 ---
 
-## 8. Commit Message Format
+## 9. Commit Message Format
 
 Use a focused, descriptive commit message per group moved:
 
@@ -126,7 +156,7 @@ Do not use generic messages like `"reorganize files"` or `"cleanup"`.
 
 ---
 
-## 9. Staged Rollout — Staging First
+## 10. Staged Rollout — Staging First
 
 All file reorganizations must go through `staging` before `main`.
 
