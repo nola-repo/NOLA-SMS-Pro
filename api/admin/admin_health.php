@@ -1,13 +1,13 @@
 <?php
-require_once __DIR__ . '/cors.php';
+require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 
-require __DIR__ . '/webhook/firestore_client.php';
+require __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/admin_auth_helper.php';
-require_once __DIR__ . '/services/SmsGatewayService.php';
-require_once __DIR__ . '/services/SemaphoreBalanceFetcher.php';
-require_once __DIR__ . '/cache_helper.php';
-require_once __DIR__ . '/performance_logger.php';
+require_once __DIR__ . '/../services/SmsGatewayService.php';
+require_once __DIR__ . '/../services/SemaphoreBalanceFetcher.php';
+require_once __DIR__ . '/../cache_helper.php';
+require_once __DIR__ . '/../performance_logger.php';
 
 NolaPerformance::start('/api/admin_health.php');
 

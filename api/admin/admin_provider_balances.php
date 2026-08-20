@@ -20,14 +20,14 @@
  *   Frontend teams: display a "Last known value" chip when is_stale === true.
  */
 
-require_once __DIR__ . '/cors.php';
+require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 
-require_once __DIR__ . '/webhook/firestore_client.php';
+require_once __DIR__ . '/../webhook/firestore_client.php';
 require_once __DIR__ . '/admin_auth_helper.php';
-require_once __DIR__ . '/services/SmsGatewayService.php';
-require_once __DIR__ . '/services/SemaphoreBalanceFetcher.php';
-require_once __DIR__ . '/cache_helper.php';
+require_once __DIR__ . '/../services/SmsGatewayService.php';
+require_once __DIR__ . '/../services/SemaphoreBalanceFetcher.php';
+require_once __DIR__ . '/../cache_helper.php';
 
 // Only super_admin may view raw provider credentials / balances
 $claims = require_secure_admin_auth(['super_admin']);

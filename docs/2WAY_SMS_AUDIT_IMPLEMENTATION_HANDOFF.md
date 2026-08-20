@@ -686,4 +686,3 @@ Do not mark 2-way SMS ready until these pass in staging:
 - Workflow custom action sends do not duplicate native SMS.
 - Inbound and failed-delivery notifications work through in-app and email channels.
 - Unknown or unassigned virtual numbers cannot create cross-location messages.
-

@@ -38,8 +38,8 @@
     # ── v2 hot-path bypasses (avoid Laravel bridge process spawn) ────────
     RewriteRule ^api/v2/ghl-contacts/?$ /api/ghl_contacts.php [NC,L,QSA]
     RewriteRule ^api/v2/ghl-conversations/?$ /api/ghl-conversations.php [NC,L,QSA]
-    RewriteRule ^api/v2/admin_health/?$ /api/admin_health.php [NC,L,QSA]
-    RewriteRule ^api/admin/provider-balances/?$ /api/admin_provider_balances.php [NC,L,QSA]
+    RewriteRule ^api/v2/admin_health/?$ /api/admin/admin_health.php [NC,L,QSA]
+    RewriteRule ^api/admin/provider-balances/?$ /api/admin/admin_provider_balances.php [NC,L,QSA]
     RewriteRule ^api/v2/auth/ghl_autologin/?$ /api/auth/ghl_autologin.php [NC,L,QSA]
     RewriteRule ^api/v2/location/bootstrap/?$ /api/location/bootstrap.php [NC,L,QSA]
 
@@ -124,6 +124,21 @@
     RewriteRule ^api/auth/me/?$       /api/auth/me.php       [NC,L,QSA]
     # Unified first-load gate used both inside and outside the GHL iframe.
     RewriteRule ^api/location/bootstrap/?$ /api/location/bootstrap.php [NC,L,QSA]
+
+    # ── Admin endpoints (moved from api/ root to api/admin/) ─────────────────
+    RewriteRule ^api/admin_agencies/?$          /api/admin/admin_agencies.php          [NC,L,QSA]
+    RewriteRule ^api/admin_auth/?$              /api/admin/admin_auth.php              [NC,L,QSA]
+    RewriteRule ^api/admin_fix_agency_names/?$  /api/admin/admin_fix_agency_names.php  [NC,L,QSA]
+    RewriteRule ^api/admin_forgot_password/?$   /api/admin/admin_forgot_password.php   [NC,L,QSA]
+    RewriteRule ^api/admin_list_agency_users/?$ /api/admin/admin_list_agency_users.php [NC,L,QSA]
+    RewriteRule ^api/admin_list_users/?$        /api/admin/admin_list_users.php        [NC,L,QSA]
+    RewriteRule ^api/admin_manage_user/?$       /api/admin/admin_manage_user.php       [NC,L,QSA]
+    RewriteRule ^api/admin_notifications/?$     /api/admin/admin_notifications.php     [NC,L,QSA]
+    RewriteRule ^api/admin_profile/?$           /api/admin/admin_profile.php           [NC,L,QSA]
+    RewriteRule ^api/admin_sender_requests/?$   /api/admin/admin_sender_requests.php   [NC,L,QSA]
+    RewriteRule ^api/admin_settings/?$          /api/admin/admin_settings.php          [NC,L,QSA]
+    RewriteRule ^api/admin_users/?$             /api/admin/admin_users.php             [NC,L,QSA]
+
     RewriteRule ^api/agency/ghl_autologin/?$ /api/agency/ghl_autologin.php [NC,L,QSA]
     # Legacy user-app path: location-level autologin.
     RewriteRule ^api/auth/ghl_autologin/?$ /api/auth/ghl_autologin.php [NC,L,QSA]

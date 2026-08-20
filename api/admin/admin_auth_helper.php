@@ -1,7 +1,7 @@
 <?php
 
-require_once __DIR__ . '/jwt_helper.php';
-require_once __DIR__ . '/webhook/firestore_client.php';
+require_once __DIR__ . '/../jwt_helper.php';
+require_once __DIR__ . '/../webhook/firestore_client.php';
 
 function admin_auth_json(int $status, string $message): void
 {

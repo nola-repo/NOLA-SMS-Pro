@@ -1,10 +1,10 @@
 <?php
 
-require_once __DIR__ . '/cors.php';
+require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 
-require __DIR__ . '/webhook/firestore_client.php';
-require_once __DIR__ . '/jwt_helper.php';
+require __DIR__ . '/../webhook/firestore_client.php';
+require_once __DIR__ . '/../jwt_helper.php';
 
 $method = $_SERVER['REQUEST_METHOD'];
 
@@ -163,7 +163,7 @@ if ($action === 'update_profile') {
         ], $secret, $tokenTtl);
 
         // Invalidate cache
-        require_once __DIR__ . '/cache_helper.php';
+        require_once __DIR__ . '/../cache_helper.php';
         NolaCache::invalidateAdminDashboard();
         if (class_exists('NolaCache') && method_exists('NolaCache', 'delete')) {
             NolaCache::delete("admin_admins_list");

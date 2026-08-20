@@ -1,14 +1,14 @@
 <?php
 
-require_once __DIR__ . '/cors.php';
+require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 
-require __DIR__ . '/webhook/firestore_client.php';
-require __DIR__ . '/auth_helpers.php';
-require_once __DIR__ . '/services/CreditManager.php';
-require_once __DIR__ . '/services/ActivityErrorClassifier.php';
-require_once __DIR__ . '/cache_helper.php';
-require_once __DIR__ . '/performance_logger.php';
+require __DIR__ . '/../webhook/firestore_client.php';
+require __DIR__ . '/../auth_helpers.php';
+require_once __DIR__ . '/../services/CreditManager.php';
+require_once __DIR__ . '/../services/ActivityErrorClassifier.php';
+require_once __DIR__ . '/../cache_helper.php';
+require_once __DIR__ . '/../performance_logger.php';
 
 NolaPerformance::start('/api/admin_sender_requests.php', [
     'action' => (string)($_GET['action'] ?? ($_SERVER['REQUEST_METHOD'] === 'GET' ? 'sender_requests' : 'mutation')),
@@ -59,7 +59,7 @@ function nola_normalize_sms_provider($value): string
 function nola_validate_provider_key(string $provider, string $apiKey): bool
 {
     if ($provider === 'unisms') {
-        require_once __DIR__ . '/services/providers/UniSmsProvider.php';
+        require_once __DIR__ . '/../services/providers/UniSmsProvider.php';
         $uniSms = new UniSmsProvider(['UNISMS_API_KEY' => $apiKey]);
         $accCheck = $uniSms->checkAccount();
         return ($accCheck['status'] ?? '') === 'active';
@@ -727,7 +727,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // 3. Dispatch approval or rejection notification
     if (in_array($status, ['approved', 'rejected'])) {
         try {
-            require_once __DIR__ . '/services/NotificationService.php';
+            require_once __DIR__ . '/../services/NotificationService.php';
             NotificationService::notifySenderIdStatus($db, $locId, $reqData['requested_id'], $status, $note);
         } catch (\Throwable $e) {
             error_log("[admin_sender_requests.php] Failed to send sender ID notification ($status): " . $e->getMessage());
