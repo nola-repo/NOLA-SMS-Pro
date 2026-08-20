@@ -36,8 +36,8 @@
     RewriteRule ^favicon\.png$ assets/favicon.png [NC,L]
 
     # ── v2 hot-path bypasses (avoid Laravel bridge process spawn) ────────
-    RewriteRule ^api/v2/ghl-contacts/?$ /api/ghl_contacts.php [NC,L,QSA]
-    RewriteRule ^api/v2/ghl-conversations/?$ /api/ghl-conversations.php [NC,L,QSA]
+    RewriteRule ^api/v2/ghl-contacts/?$ /api/ghl/ghl_contacts.php [NC,L,QSA]
+    RewriteRule ^api/v2/ghl-conversations/?$ /api/ghl/ghl-conversations.php [NC,L,QSA]
     RewriteRule ^api/v2/admin_health/?$ /api/admin/admin_health.php [NC,L,QSA]
     RewriteRule ^api/admin/provider-balances/?$ /api/admin/admin_provider_balances.php [NC,L,QSA]
     RewriteRule ^api/v2/auth/ghl_autologin/?$ /api/auth/ghl_autologin.php [NC,L,QSA]
@@ -100,11 +100,14 @@
     # /api/bulk-campaigns -> /api/webhook/fetch_bulk_messages.php
     RewriteRule ^api/bulk-campaigns/?$ /api/webhook/fetch_bulk_messages.php [NC,L,QSA]
 
-    # /api/ghl-contacts -> /api/ghl_contacts.php (Using the more robust underscore version)
-    RewriteRule ^api/ghl-contacts/?$ /api/ghl_contacts.php [NC,L,QSA]
+    # /api/ghl-contacts -> /api/ghl/ghl_contacts.php
+    RewriteRule ^api/ghl-contacts/?$ /api/ghl/ghl_contacts.php [NC,L,QSA]
 
-    # /api/ghl-conversations -> /api/ghl-conversations.php
-    RewriteRule ^api/ghl-conversations/?$ /api/ghl-conversations.php [NC,L,QSA]
+    # /api/ghl-conversations -> /api/ghl/ghl-conversations.php
+    RewriteRule ^api/ghl-conversations/?$ /api/ghl/ghl-conversations.php [NC,L,QSA]
+
+    # /api/ghl_oauth -> /api/ghl/ghl_oauth.php
+    RewriteRule ^api/ghl_oauth/?$ /api/ghl/ghl_oauth.php [NC,L,QSA]
 
     # ── Public / Auth endpoints ────────────────────────────────────────────
     RewriteRule ^register/?$ pages/install-register.php [NC,L,QSA]
