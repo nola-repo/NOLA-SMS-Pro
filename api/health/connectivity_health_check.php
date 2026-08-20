@@ -15,11 +15,11 @@
  *   Header: X-Diag-Key: nola_diag_2026
  */
 
-require_once __DIR__ . '/cors.php';
+require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json; charset=utf-8');
 
-require_once __DIR__ . '/webhook/firestore_client.php';
-require_once __DIR__ . '/services/ConnectivityMonitor.php';
+require_once __DIR__ . '/../webhook/firestore_client.php';
+require_once __DIR__ . '/../services/ConnectivityMonitor.php';
 
 // ── Auth ───────────────────────────────────────────────────────────────────────
 $ACCESS_KEY   = 'nola_diag_2026';

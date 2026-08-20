@@ -4,12 +4,12 @@ ini_set('display_errors', 0);
 ini_set('display_startup_errors', 0);
 error_reporting(E_ALL);
 
-require_once __DIR__ . '/cors.php';
+require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 
-require __DIR__ . '/webhook/firestore_client.php';
-require __DIR__ . '/auth_helpers.php';
-require_once __DIR__ . '/services/ApiValueFormatter.php';
+require __DIR__ . '/../webhook/firestore_client.php';
+require __DIR__ . '/../auth_helpers.php';
+require_once __DIR__ . '/../services/ApiValueFormatter.php';
 
 
 $db = get_firestore();
@@ -40,7 +40,7 @@ try {
         $conversationId = $_GET['id'] ?? $_GET['conversation_id'] ?? null;
 
         // Try to load cached conversations list first
-        require_once __DIR__ . '/cache_helper.php';
+        require_once __DIR__ . '/../cache_helper.php';
         $cacheTtl = 120;
         $paramsHash = md5(serialize([$limit, $offset, $type, $conversationId]));
         $cacheKey = "conversations_list_{$locId}_{$paramsHash}";
@@ -164,7 +164,7 @@ try {
 
         // Invalidate conversations cache for this location ID
         try {
-            require_once __DIR__ . '/cache_helper.php';
+            require_once __DIR__ . '/../cache_helper.php';
             NolaCache::deleteRegistry("conversations_registry_{$locId}");
         } catch (\Throwable $cacheEx) {
             error_log("[conversations] Cache invalidation failed: " . $cacheEx->getMessage());
@@ -196,7 +196,7 @@ try {
 
                 // Invalidate conversations cache for this location ID
                 try {
-                    require_once __DIR__ . '/cache_helper.php';
+                    require_once __DIR__ . '/../cache_helper.php';
                     NolaCache::deleteRegistry("conversations_registry_{$locId}");
                 } catch (\Throwable $cacheEx) {
                     error_log("[conversations] Cache invalidation failed: " . $cacheEx->getMessage());

@@ -165,25 +165,31 @@
     RewriteRule ^api/billing/auto_recharge_cron/?$ /api/billing/auto_recharge_cron.php [NC,L,QSA]
     RewriteRule ^api/billing/monthly_credit_reset_cron/?$ /api/billing/monthly_credit_reset_cron.php [NC,L,QSA]
 
-    # ── Generic API endpoints ───────────────────────────────────────────
-    # /api/messages -> /api/messages.php
-    # /api/contacts -> /api/contacts.php
-    # /api/credits  -> /api/credits.php
-    # /api/account  -> /api/account.php
-    # etc.
-    RewriteRule ^api/messages/?$ /api/messages.php [NC,L,QSA]
-    RewriteRule ^api/contacts/?$ /api/contacts.php [NC,L,QSA]
-    RewriteRule ^api/account/?$ /api/account.php [NC,L,QSA]
-    RewriteRule ^api/account-sender/?$ /api/account-sender.php [NC,L,QSA]
-    RewriteRule ^api/sender-requests/?$ /api/sender-requests.php [NC,L,QSA]
-    RewriteRule ^api/notifications/?$ /api/notifications.php [NC,L,QSA]
-    RewriteRule ^api/credits/?$ /api/credits.php [NC,L,QSA]
-    RewriteRule ^api/get_credit_transactions/?$ /api/get_credit_transactions.php [NC,L,QSA]
-    RewriteRule ^api/conversations/?$ /api/conversations.php [NC,L,QSA]
-    RewriteRule ^api/templates/?$ /api/templates.php [NC,L,QSA]
-    RewriteRule ^api/notification-settings/?$ /api/notification-settings.php [NC,L,QSA]
-    RewriteRule ^api/check_message_status/?$ /api/check_message_status.php [NC,L,QSA]
-    RewriteRule ^api/check-message-status/?$ /api/check_message_status.php [NC,L,QSA]
+    # ── Generic API endpoints (updated paths after reorganization) ──────────
+    # messaging/
+    RewriteRule ^api/messages/?$             /api/messaging/messages.php             [NC,L,QSA]
+    RewriteRule ^api/contacts/?$             /api/messaging/contacts.php             [NC,L,QSA]
+    RewriteRule ^api/conversations/?$        /api/messaging/conversations.php        [NC,L,QSA]
+    RewriteRule ^api/templates/?$            /api/messaging/templates.php            [NC,L,QSA]
+    RewriteRule ^api/check_message_status/?$ /api/messaging/check_message_status.php [NC,L,QSA]
+    RewriteRule ^api/check-message-status/?$ /api/messaging/check_message_status.php [NC,L,QSA]
+    RewriteRule ^api/retry_sms_queue/?$      /api/messaging/retry_sms_queue.php      [NC,L,QSA]
+    # account/
+    RewriteRule ^api/account/?$              /api/account/account.php                [NC,L,QSA]
+    RewriteRule ^api/account-sender/?$       /api/account/account-sender.php         [NC,L,QSA]
+    # notifications/
+    RewriteRule ^api/notifications/?$        /api/notifications/notifications.php        [NC,L,QSA]
+    RewriteRule ^api/notification-settings/?$/api/notifications/notification-settings.php[NC,L,QSA]
+    # billing/ additions
+    RewriteRule ^api/credits/?$              /api/billing/credits.php                [NC,L,QSA]
+    RewriteRule ^api/get_credit_transactions/?$ /api/billing/get_credit_transactions.php [NC,L,QSA]
+    # sender/
+    RewriteRule ^api/sender-requests/?$      /api/sender/sender-requests.php         [NC,L,QSA]
+    RewriteRule ^api/get_sender_config/?$    /api/sender/get_sender_config.php       [NC,L,QSA]
+    # health/
+    RewriteRule ^api/connectivity_health_check/?$ /api/health/connectivity_health_check.php [NC,L,QSA]
+    # tickets/
+    RewriteRule ^api/tickets/?$              /api/tickets/tickets.php                [NC,L,QSA]
 
     # Catch-all: /api/XXX -> /api/XXX.php (if the .php file exists)
     RewriteCond %{REQUEST_FILENAME}.php -f

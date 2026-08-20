@@ -11,11 +11,11 @@ ini_set('display_errors', 0);
 ini_set('display_startup_errors', 0);
 error_reporting(E_ALL);
 
-require_once __DIR__ . '/cors.php';
+require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 
-require __DIR__ . '/webhook/firestore_client.php';
-require __DIR__ . '/auth_helpers.php';
+require __DIR__ . '/../webhook/firestore_client.php';
+require __DIR__ . '/../auth_helpers.php';
 
 
 $db     = get_firestore();
@@ -35,7 +35,7 @@ try {
 
     // ── GET — list all templates for this location ──────────────────────
     if ($method === 'GET') {
-        require_once __DIR__ . '/cache_helper.php';
+        require_once __DIR__ . '/../cache_helper.php';
         $cacheKey = "templates_list_{$locId}";
         $registryKey = "templates_registry_{$locId}";
 
@@ -112,7 +112,7 @@ try {
 
         // Invalidate templates cache
         try {
-            require_once __DIR__ . '/cache_helper.php';
+            require_once __DIR__ . '/../cache_helper.php';
             NolaCache::deleteRegistry("templates_registry_{$locId}");
         } catch (\Throwable $cacheEx) {
             error_log("[templates] Cache invalidation failed: " . $cacheEx->getMessage());
@@ -181,7 +181,7 @@ try {
 
         // Invalidate templates cache
         try {
-            require_once __DIR__ . '/cache_helper.php';
+            require_once __DIR__ . '/../cache_helper.php';
             NolaCache::deleteRegistry("templates_registry_{$locId}");
         } catch (\Throwable $cacheEx) {
             error_log("[templates] Cache invalidation failed: " . $cacheEx->getMessage());
@@ -229,7 +229,7 @@ try {
 
         // Invalidate templates cache
         try {
-            require_once __DIR__ . '/cache_helper.php';
+            require_once __DIR__ . '/../cache_helper.php';
             NolaCache::deleteRegistry("templates_registry_{$locId}");
         } catch (\Throwable $cacheEx) {
             error_log("[templates] Cache invalidation failed: " . $cacheEx->getMessage());

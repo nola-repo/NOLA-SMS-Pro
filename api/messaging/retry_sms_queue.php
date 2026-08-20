@@ -12,15 +12,15 @@ ini_set('display_errors', 0);
 error_reporting(E_ALL);
 set_time_limit(55);
 
-require_once __DIR__ . '/cors.php';
+require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 
-require_once __DIR__ . '/webhook/firestore_client.php';
-require_once __DIR__ . '/services/CreditManager.php';
-require_once __DIR__ . '/services/SmsGatewayService.php';
-require_once __DIR__ . '/services/MessageSyncService.php';
-require_once __DIR__ . '/services/GhlSyncService.php';
-require_once __DIR__ . '/services/providers/SmsProviderInterface.php';
+require_once __DIR__ . '/../webhook/firestore_client.php';
+require_once __DIR__ . '/../services/CreditManager.php';
+require_once __DIR__ . '/../services/SmsGatewayService.php';
+require_once __DIR__ . '/../services/MessageSyncService.php';
+require_once __DIR__ . '/../services/GhlSyncService.php';
+require_once __DIR__ . '/../services/providers/SmsProviderInterface.php';
 
 $isCli = (PHP_SAPI === 'cli');
 if (!$isCli) {

@@ -4,11 +4,11 @@ ini_set('display_errors', 0);
 ini_set('display_startup_errors', 0);
 error_reporting(E_ALL);
 
-require_once __DIR__ . '/cors.php';
+require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 
-require __DIR__ . '/webhook/firestore_client.php';
-require __DIR__ . '/auth_helpers.php';
+require __DIR__ . '/../webhook/firestore_client.php';
+require __DIR__ . '/../auth_helpers.php';
 
 $db = get_firestore();
 
@@ -51,7 +51,7 @@ if (!$authenticated) {
         $token = $matches[1];
         $secret = getenv('JWT_SECRET');
         if ($secret !== false && trim((string)$secret) !== '') {
-            require_once __DIR__ . '/jwt_helper.php';
+            require_once __DIR__ . '/../jwt_helper.php';
             $claims = jwt_verify($token, (string)$secret);
             if ($claims) {
                 $role = (string)($claims['role'] ?? '');
@@ -118,7 +118,7 @@ try {
 
     $month = $_GET['month'] ?? null;
     
-    require_once __DIR__ . '/cache_helper.php';
+    require_once __DIR__ . '/../cache_helper.php';
     $paramsHash = md5(serialize([$accountId, $limit, $month]));
     $cacheKey = "transactions_list_{$accountId}_{$paramsHash}";
     $registryKey = "credits_registry_{$locId}";

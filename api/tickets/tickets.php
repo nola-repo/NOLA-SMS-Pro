@@ -4,13 +4,13 @@ ini_set('display_errors', 0);
 ini_set('display_startup_errors', 0);
 error_reporting(E_ALL);
 
-require_once __DIR__ . '/cors.php';
+require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 
-require __DIR__ . '/webhook/firestore_client.php';
-require __DIR__ . '/auth_helpers.php';
-require_once __DIR__ . '/cache_helper.php';
-require_once __DIR__ . '/services/ApiValueFormatter.php';
+require __DIR__ . '/../webhook/firestore_client.php';
+require __DIR__ . '/../auth_helpers.php';
+require_once __DIR__ . '/../cache_helper.php';
+require_once __DIR__ . '/../services/ApiValueFormatter.php';
 
 $db = get_firestore();
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -216,7 +216,7 @@ try {
         tickets_invalidate_cache((string)$locId);
 
         try {
-            require_once __DIR__ . '/services/NotificationService.php';
+            require_once __DIR__ . '/../services/NotificationService.php';
             $locationName = NotificationService::resolveLocationName($db, (string)$locId);
             NotificationService::createAdminNotification($db, [
                 'type' => 'support_ticket',

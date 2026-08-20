@@ -13,11 +13,11 @@ ini_set('display_errors', 0);
 ini_set('display_startup_errors', 0);
 error_reporting(E_ALL);
 
-require_once __DIR__ . '/cors.php';
+require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 
-require __DIR__ . '/webhook/firestore_client.php';
-require __DIR__ . '/auth_helpers.php';
+require __DIR__ . '/../webhook/firestore_client.php';
+require __DIR__ . '/../auth_helpers.php';
 
 validate_api_request();
 
@@ -106,7 +106,7 @@ try {
 
             // 3. Fallback: install_linked_account_for_location
             if ($userEmail === null || $userEmail === '') {
-                require_once __DIR__ . '/install_helpers.php';
+                require_once __DIR__ . '/../install_helpers.php';
                 $linked = install_linked_account_for_location($db, (string)$locId, false);
                 if ($linked !== null) {
                     $userEmail = $linked['email'] !== '' ? $linked['email'] : null;
@@ -246,7 +246,7 @@ try {
 
             // 3. Fallback: install_linked_account_for_location
             if ($userEmail === null || $userEmail === '') {
-                require_once __DIR__ . '/install_helpers.php';
+                require_once __DIR__ . '/../install_helpers.php';
                 $linked = install_linked_account_for_location($db, (string)$locId, false);
                 if ($linked !== null) {
                     $userEmail = $linked['email'] !== '' ? $linked['email'] : null;

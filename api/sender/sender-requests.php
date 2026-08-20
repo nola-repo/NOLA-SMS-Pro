@@ -4,13 +4,13 @@ ini_set('display_errors', 0);
 ini_set('display_startup_errors', 0);
 error_reporting(E_ALL);
 
-require_once __DIR__ . '/cors.php';
+require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 
-require __DIR__ . '/webhook/firestore_client.php';
-require __DIR__ . '/auth_helpers.php';
-require_once __DIR__ . '/cache_helper.php';
-require_once __DIR__ . '/services/ReferenceId.php';
+require __DIR__ . '/../webhook/firestore_client.php';
+require __DIR__ . '/../auth_helpers.php';
+require_once __DIR__ . '/../cache_helper.php';
+require_once __DIR__ . '/../services/ReferenceId.php';
 
 // 1. Authentication
 validate_api_request();
@@ -212,7 +212,7 @@ try {
 
         // 3. Dispatch pending email notification
         try {
-            require_once __DIR__ . '/services/NotificationService.php';
+            require_once __DIR__ . '/../services/NotificationService.php';
             NotificationService::notifySenderIdStatus($db, $locId, $requestedId, 'pending', null, $purpose, $sampleMessage, !empty($storedDocuments));
         } catch (\Throwable $e) {
             error_log("[sender-requests.php] Failed to send sender ID pending notification: " . $e->getMessage());

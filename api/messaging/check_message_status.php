@@ -13,13 +13,13 @@ ini_set('display_errors', 0);
 ini_set('display_startup_errors', 0);
 error_reporting(E_ALL);
 
-require_once __DIR__ . '/cors.php';
+require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 
-require __DIR__ . '/webhook/firestore_client.php';
-require __DIR__ . '/auth_helpers.php';
-require __DIR__ . '/webhook/config.php';
-require_once __DIR__ . '/services/SenderResolver.php';
+require __DIR__ . '/../webhook/firestore_client.php';
+require __DIR__ . '/../auth_helpers.php';
+require __DIR__ . '/../webhook/config.php';
+require_once __DIR__ . '/../services/SenderResolver.php';
 
 validate_api_request();
 
@@ -37,7 +37,7 @@ if (empty($messageIds)) {
     exit;
 }
 
-$config = require __DIR__ . '/webhook/config.php';
+$config = require __DIR__ . '/../webhook/config.php';
 $db = get_firestore();
 
 $systemApiKey = $config['SEMAPHORE_API_KEY'];
@@ -55,7 +55,7 @@ $results = [];
 
 // Instantiate gateway once — provider config is read from Firestore once
 // and reused for all message IDs in this request.
-require_once __DIR__ . '/services/SmsGatewayService.php';
+require_once __DIR__ . '/../services/SmsGatewayService.php';
 $gateway = new SmsGatewayService();
 
 foreach ($messageIds as $messageId) {
