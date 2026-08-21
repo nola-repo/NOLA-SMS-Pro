@@ -1,0 +1,214 @@
+name: 📬 Notify Frontend Team
+
+on:
+  push:
+    branches:
+      - main
+      - staging
+      - develop
+
+jobs:
+  detect-and-notify:
+    name: Detect Frontend Impact & Send Email
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout with enough history to diff ──────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      # ── 2. Collect commit & diff metadata ────────────────────────────────────
+      - name: Gather change context
+        id: ctx
+        run: |
+          BRANCH="${GITHUB_REF_NAME}"
+          COMMIT_SHA="${GITHUB_SHA}"
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          AUTHOR="${{ github.actor }}"
+          COMMIT_MSG=$(git log -1 --pretty=%B | head -20)
+          TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M UTC")
+          REPO_URL="https://github.com/${{ github.repository }}"
+          COMMIT_URL="${REPO_URL}/commit/${COMMIT_SHA}"
+
+          # Full list of changed files
+          CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff --name-only HEAD 2>/dev/null)
+
+          echo "branch=${BRANCH}"             >> $GITHUB_OUTPUT
+          echo "short_sha=${SHORT_SHA}"       >> $GITHUB_OUTPUT
+          echo "author=${AUTHOR}"             >> $GITHUB_OUTPUT
+          echo "timestamp=${TIMESTAMP}"       >> $GITHUB_OUTPUT
+          echo "commit_url=${COMMIT_URL}"     >> $GITHUB_OUTPUT
+          echo "repo_url=${REPO_URL}"         >> $GITHUB_OUTPUT
+
+          # Multi-line outputs need special encoding
+          echo "commit_msg<<EOF"              >> $GITHUB_OUTPUT
+          echo "${COMMIT_MSG}"                >> $GITHUB_OUTPUT
+          echo "EOF"                          >> $GITHUB_OUTPUT
+
+          echo "changed_files<<EOF"           >> $GITHUB_OUTPUT
+          echo "${CHANGED}"                   >> $GITHUB_OUTPUT
+          echo "EOF"                          >> $GITHUB_OUTPUT
+
+      # ── 3. Apply notification rules ──────────────────────────────────────────
+      - name: Apply frontend notification rules
+        id: rules
+        run: |
+          CHANGED="${{ steps.ctx.outputs.changed_files }}"
+          COMMIT_MSG="${{ steps.ctx.outputs.commit_msg }}"
+          NEEDS_NOTIFY="false"
+          REASONS=""
+
+          # RULE 1 – Auth / token changes
+          if echo "$CHANGED" | grep -qiE "(auth|login|token|jwt|session|middleware)"; then
+            NEEDS_NOTIFY="true"
+            REASONS="${REASONS}<li>🔐 <strong>Auth / Token changes</strong> — Frontend may need to update auth headers or refresh flow.</li>"
+          fi
+
+          # RULE 2 – API endpoint files changed
+          if echo "$CHANGED" | grep -qE "^api/.*\.php$"; then
+            NEEDS_NOTIFY="true"
+            REASONS="${REASONS}<li>🛠️ <strong>API endpoint updated</strong> — Review changed PHP files for new/modified request or response contracts.</li>"
+          fi
+
+          # RULE 3 – 2-Way SMS / Webhooks
+          if echo "$CHANGED" | grep -qiE "(sms|webhook|inbound|outbound|conversation|two.way|twoway|receive)"; then
+            NEEDS_NOTIFY="true"
+            REASONS="${REASONS}<li>💬 <strong>2-Way SMS / Webhook changes</strong> — Frontend may need to implement or update real-time listeners.</li>"
+          fi
+
+          # RULE 4 – Database schema / migration changes
+          if echo "$CHANGED" | grep -qiE "(migration|schema|firestore\.rules|firestore\.indexes)"; then
+            NEEDS_NOTIFY="true"
+            REASONS="${REASONS}<li>🗄️ <strong>Database / Firestore schema change</strong> — Frontend queries or security rules may be affected.</li>"
+          fi
+
+          # RULE 5 – Docs or API spec updated (MD files in docs/ or root)
+          if echo "$CHANGED" | grep -qiE "(docs/|frontend/|handoff|HANDOFF|API_SPEC|openapi|swagger)"; then
+            NEEDS_NOTIFY="true"
+            REASONS="${REASONS}<li>📄 <strong>Documentation / API spec updated</strong> — Check the updated docs for frontend integration notes.</li>"
+          fi
+
+          # RULE 6 – Commit message explicitly tags frontend
+          if echo "$COMMIT_MSG" | grep -qiE "(frontend|fe:|breaking|api change|new endpoint|requires frontend|notify fe)"; then
+            NEEDS_NOTIFY="true"
+            REASONS="${REASONS}<li>🏷️ <strong>Commit message flags frontend</strong> — Developer explicitly tagged this commit as frontend-relevant.</li>"
+          fi
+
+          # RULE 7 – Environment / config changes
+          if echo "$CHANGED" | grep -qiE "(\.env|config|docker-compose|cloudbuild|Dockerfile)"; then
+            NEEDS_NOTIFY="true"
+            REASONS="${REASONS}<li>⚙️ <strong>Environment / config change</strong> — CORS, base URLs, or env variables may have changed.</li>"
+          fi
+
+          echo "needs_notify=${NEEDS_NOTIFY}"  >> $GITHUB_OUTPUT
+          echo "reasons<<EOF"                  >> $GITHUB_OUTPUT
+          echo "${REASONS}"                    >> $GITHUB_OUTPUT
+          echo "EOF"                           >> $GITHUB_OUTPUT
+
+      # ── 4. Build pretty changed-files list ───────────────────────────────────
+      - name: Format changed files for email
+        id: files
+        if: steps.rules.outputs.needs_notify == 'true'
+        run: |
+          LIST=$(echo "${{ steps.ctx.outputs.changed_files }}" \
+            | tr ' ' '\n' \
+            | grep -v '^$' \
+            | sed 's|^|<li><code>|; s|$|</code></li>|' \
+            | tr -d '\r')
+          echo "html_list<<EOF"  >> $GITHUB_OUTPUT
+          echo "${LIST}"         >> $GITHUB_OUTPUT
+          echo "EOF"             >> $GITHUB_OUTPUT
+
+      # ── 5. Send email ─────────────────────────────────────────────────────────
+      - name: Send email to frontend team
+        if: steps.rules.outputs.needs_notify == 'true'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          secure: false
+          username: ${{ secrets.NOTIFY_MAIL_USER }}
+          password: ${{ secrets.NOTIFY_MAIL_PASS }}
+          subject: "[NOLA SMS Pro] Backend Update Requires Frontend Attention — ${{ steps.ctx.outputs.branch }} (${{ steps.ctx.outputs.short_sha }})"
+          to: ${{ secrets.FRONTEND_EMAIL }}
+          from: "NOLA CRM Backend <${{ secrets.NOTIFY_MAIL_USER }}>"
+          html_body: |
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+              <meta charset="UTF-8" />
+              <style>
+                body { font-family: Arial, sans-serif; background: #f4f6f9; margin: 0; padding: 0; }
+                .wrapper { max-width: 620px; margin: 30px auto; background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 2px 12px rgba(0,0,0,0.1); }
+                .header { background: linear-gradient(135deg, #1a1a2e, #16213e); color: #fff; padding: 28px 30px; }
+                .header h1 { margin: 0; font-size: 20px; }
+                .header p { margin: 6px 0 0; font-size: 13px; color: #a0aec0; }
+                .badge { display: inline-block; background: #e53e3e; color: #fff; border-radius: 4px; padding: 2px 8px; font-size: 11px; font-weight: bold; margin-left: 8px; vertical-align: middle; }
+                .badge.info { background: #3182ce; }
+                .body { padding: 28px 30px; }
+                .section { margin-bottom: 24px; }
+                .section h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: #718096; margin: 0 0 10px; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; }
+                .meta-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+                .meta-table td { padding: 7px 10px; border-bottom: 1px solid #f0f0f0; }
+                .meta-table td:first-child { color: #718096; width: 130px; font-weight: bold; }
+                ul { margin: 0; padding-left: 20px; }
+                ul li { font-size: 14px; padding: 4px 0; color: #2d3748; }
+                code { background: #edf2f7; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+                .cta { display: inline-block; background: #3182ce; color: #fff !important; text-decoration: none; border-radius: 6px; padding: 10px 22px; font-weight: bold; font-size: 14px; margin-top: 10px; }
+                .footer { background: #f7fafc; text-align: center; padding: 16px; font-size: 12px; color: #a0aec0; border-top: 1px solid #e2e8f0; }
+              </style>
+            </head>
+            <body>
+              <div class="wrapper">
+                <div class="header">
+                  <h1>📬 NOLA SMS Pro — Backend Update <span class="badge">Action Required</span></h1>
+                  <p>A backend push was detected that requires your attention as the frontend team.</p>
+                </div>
+                <div class="body">
+
+                  <div class="section">
+                    <h2>📋 Commit Summary</h2>
+                    <table class="meta-table">
+                      <tr><td>Branch</td><td><code>${{ steps.ctx.outputs.branch }}</code></td></tr>
+                      <tr><td>Commit</td><td><a href="${{ steps.ctx.outputs.commit_url }}">${{ steps.ctx.outputs.short_sha }}</a></td></tr>
+                      <tr><td>Author</td><td>${{ steps.ctx.outputs.author }}</td></tr>
+                      <tr><td>Pushed at</td><td>${{ steps.ctx.outputs.timestamp }}</td></tr>
+                      <tr><td>Message</td><td><em>${{ steps.ctx.outputs.commit_msg }}</em></td></tr>
+                    </table>
+                  </div>
+
+                  <div class="section">
+                    <h2>⚠️ Why You Are Being Notified</h2>
+                    <ul>
+                      ${{ steps.rules.outputs.reasons }}
+                    </ul>
+                  </div>
+
+                  <div class="section">
+                    <h2>📁 Changed Files</h2>
+                    <ul>
+                      ${{ steps.files.outputs.html_list }}
+                    </ul>
+                  </div>
+
+                  <div class="section">
+                    <h2>🔗 Actions</h2>
+                    <a class="cta" href="${{ steps.ctx.outputs.commit_url }}">View Commit on GitHub →</a>
+                    &nbsp;
+                    <a class="cta" style="background:#2f855a;" href="${{ steps.ctx.outputs.repo_url }}">View Repository →</a>
+                  </div>
+
+                  <p style="font-size:13px;color:#718096;">
+                    Please review the changes above and coordinate with the backend team if any frontend updates are needed.
+                    This is an automated notification — do not reply directly to this email.
+                  </p>
+                </div>
+                <div class="footer">
+                  NOLA SMS Pro · Automated Backend Notification System<br/>
+                  Repo: <a href="${{ steps.ctx.outputs.repo_url }}">${{ github.repository }}</a>
+                </div>
+              </div>
+            </body>
+            </html>
