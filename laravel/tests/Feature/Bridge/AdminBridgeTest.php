@@ -13,7 +13,7 @@ class AdminBridgeTest extends TestCase
         $this->mock(LegacyPhpBridgeService::class, function (Mockery\MockInterface $mock) {
             $mock->shouldReceive('call')
                 ->withArgs(function ($actualScript, $actualMethod, $actualQuery, $actualRawBody) {
-                    return str_ends_with($actualScript, 'api/admin_auth.php')
+                    return str_ends_with($actualScript, 'api/admin/admin_auth.php')
                         && $actualMethod === 'POST'
                         && $actualQuery === []
                         && str_contains($actualRawBody, '"email":"admin@example.com"')
@@ -40,7 +40,7 @@ class AdminBridgeTest extends TestCase
         $this->mock(LegacyPhpBridgeService::class, function (Mockery\MockInterface $mock) {
             $mock->shouldReceive('call')
                 ->withArgs(function ($actualScript, $actualMethod, $actualQuery, $actualRawBody) {
-                    return str_ends_with($actualScript, 'api/admin_list_agency_users.php')
+                    return str_ends_with($actualScript, 'api/admin/admin_list_agency_users.php')
                         && $actualMethod === 'GET'
                         && $actualQuery === []
                         && $actualRawBody === '[]';
@@ -63,7 +63,7 @@ class AdminBridgeTest extends TestCase
         $this->mock(LegacyPhpBridgeService::class, function (Mockery\MockInterface $mock) {
             $mock->shouldReceive('call')
                 ->withArgs(function ($actualScript, $actualMethod, $actualQuery, $actualRawBody) {
-                    return str_ends_with($actualScript, 'api/admin_health.php')
+                    return str_ends_with($actualScript, 'api/admin/admin_health.php')
                         && $actualMethod === 'GET'
                         && $actualQuery === []
                         && $actualRawBody === '[]';

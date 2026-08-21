@@ -19,17 +19,17 @@ class GhlV2LegacyBridgeController extends Controller
 
     public function ghlOauth(Request $request): Response
     {
-        return $this->forwardToLegacy(base_path('../api/ghl_oauth.php'), $request->method(), $request->all(), (string) $request->getContent());
+        return $this->forwardToLegacy(base_path('../api/ghl/ghl_oauth.php'), $request->method(), $request->all(), (string) $request->getContent());
     }
 
     public function ghlContacts(Request $request): Response
     {
-        return $this->forwardToLegacy(base_path('../api/ghl_contacts.php'), $request->method(), $request->all(), (string) $request->getContent());
+        return $this->forwardToLegacy(base_path('../api/ghl/ghl_contacts.php'), $request->method(), $request->all(), (string) $request->getContent());
     }
 
     public function ghlConversations(Request $request): Response
     {
-        return $this->forwardToLegacy(base_path('../api/ghl-conversations.php'), $request->method(), $request->all(), (string) $request->getContent());
+        return $this->forwardToLegacy(base_path('../api/ghl/ghl-conversations.php'), $request->method(), $request->all(), (string) $request->getContent());
     }
 
     public function whitelabel(Request $request): Response

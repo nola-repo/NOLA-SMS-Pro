@@ -11,7 +11,7 @@ class ProductBridgeTest extends TestCase
         $expectedResponse = ['success' => true, 'data' => []];
 
         $this->mockLegacyBridge(
-            script: 'api/tickets.php',
+            script: 'api/tickets/tickets.php',
             status: 200,
             body: $expectedResponse
         );

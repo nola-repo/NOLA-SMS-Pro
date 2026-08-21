@@ -8,7 +8,7 @@ class AdminManageUserContractTest extends TestCase
 {
     public function test_subaccount_reset_preserves_sender_approval_configuration(): void
     {
-        $source = file_get_contents(__DIR__ . '/../../../api/admin_manage_user.php');
+        $source = file_get_contents(__DIR__ . '/../../../api/admin/admin_manage_user.php');
         $this->assertIsString($source);
 
         $resetStart = strpos($source, "if (\$action === 'reset')");

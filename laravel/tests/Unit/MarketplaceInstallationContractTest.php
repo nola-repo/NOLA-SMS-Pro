@@ -58,7 +58,7 @@ class MarketplaceInstallationContractTest extends TestCase
 
     public function test_support_ticket_submission_dispatches_admin_and_workflow_notifications(): void
     {
-        $tickets = file_get_contents($this->rootFile('api/tickets.php'));
+        $tickets = file_get_contents($this->rootFile('api/tickets/tickets.php'));
         $notifications = file_get_contents($this->rootFile('api/services/NotificationService.php'));
 
         $this->assertStringContainsString('NotificationService::createAdminNotification', $tickets);
@@ -83,7 +83,7 @@ class MarketplaceInstallationContractTest extends TestCase
     public function test_email_workflow_events_are_mirrored_to_in_app_notifications(): void
     {
         $notifications = file_get_contents($this->rootFile('api/services/NotificationService.php'));
-        $tickets = file_get_contents($this->rootFile('api/tickets.php'));
+        $tickets = file_get_contents($this->rootFile('api/tickets/tickets.php'));
 
         $this->assertStringContainsString("'type'          => \$alertType", $notifications);
         $this->assertStringContainsString("'type'          => 'top_up_success'", $notifications);

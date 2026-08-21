@@ -14,37 +14,37 @@ class AdminV2LegacyBridgeController extends Controller
 
     public function auth(Request $request): Response
     {
-        return $this->forwardToLegacy(base_path('../api/admin_auth.php'), $request->method(), $request->query->all(), (string) $request->getContent());
+        return $this->forwardToLegacy(base_path('../api/admin/admin_auth.php'), $request->method(), $request->query->all(), (string) $request->getContent());
     }
 
     public function agencies(Request $request): Response
     {
-        return $this->forwardToLegacy(base_path('../api/admin_agencies.php'), $request->method(), $request->query->all(), (string) $request->getContent());
+        return $this->forwardToLegacy(base_path('../api/admin/admin_agencies.php'), $request->method(), $request->query->all(), (string) $request->getContent());
     }
 
     public function users(Request $request): Response
     {
-        return $this->forwardToLegacy(base_path('../api/admin_users.php'), $request->method(), $request->query->all(), (string) $request->getContent());
+        return $this->forwardToLegacy(base_path('../api/admin/admin_users.php'), $request->method(), $request->query->all(), (string) $request->getContent());
     }
 
     public function agencyUsers(Request $request): Response
     {
-        return $this->forwardToLegacy(base_path('../api/admin_list_agency_users.php'), $request->method(), $request->query->all(), (string) $request->getContent());
+        return $this->forwardToLegacy(base_path('../api/admin/admin_list_agency_users.php'), $request->method(), $request->query->all(), (string) $request->getContent());
     }
 
     public function settings(Request $request): Response
     {
-        return $this->forwardToLegacy(base_path('../api/admin_settings.php'), $request->method(), $request->query->all(), (string) $request->getContent());
+        return $this->forwardToLegacy(base_path('../api/admin/admin_settings.php'), $request->method(), $request->query->all(), (string) $request->getContent());
     }
 
     public function senderRequests(Request $request): Response
     {
-        return $this->forwardToLegacy(base_path('../api/admin_sender_requests.php'), $request->method(), $request->query->all(), (string) $request->getContent());
+        return $this->forwardToLegacy(base_path('../api/admin/admin_sender_requests.php'), $request->method(), $request->query->all(), (string) $request->getContent());
     }
 
     public function forgotPassword(Request $request): Response
     {
-        return $this->forwardToLegacy(base_path('../api/admin_forgot_password.php'), $request->method(), $request->query->all(), (string) $request->getContent());
+        return $this->forwardToLegacy(base_path('../api/admin/admin_forgot_password.php'), $request->method(), $request->query->all(), (string) $request->getContent());
     }
 
     public function seedAdmin(Request $request): Response
@@ -54,7 +54,7 @@ class AdminV2LegacyBridgeController extends Controller
 
     public function health(Request $request): Response
     {
-        return $this->forwardToLegacy(base_path('../api/admin_health.php'), $request->method(), $request->query->all(), (string) $request->getContent());
+        return $this->forwardToLegacy(base_path('../api/admin/admin_health.php'), $request->method(), $request->query->all(), (string) $request->getContent());
     }
 
     private function forwardToLegacy(string $script, string $method, array $query = [], string $rawBody = ''): Response

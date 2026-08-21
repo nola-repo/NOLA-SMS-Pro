@@ -133,14 +133,14 @@
     # /api/bulk-campaigns -> /api/webhook/fetch_bulk_messages.php
     RewriteRule ^api/bulk-campaigns/?$ /api/webhook/fetch_bulk_messages.php [NC,L,QSA]
 
-    # /api/ghl-contacts -> /api/ghl/ghl_contacts.php
-    RewriteRule ^api/ghl-contacts/?$ /api/ghl/ghl_contacts.php [NC,L,QSA]
+    # /api/ghl-contacts and legacy /api/ghl_contacts.php -> /api/ghl/ghl_contacts.php
+    RewriteRule ^api/ghl[-_]contacts(\.php)?/?$ /api/ghl/ghl_contacts.php [NC,L,QSA]
 
-    # /api/ghl-conversations -> /api/ghl/ghl-conversations.php
-    RewriteRule ^api/ghl-conversations/?$ /api/ghl/ghl-conversations.php [NC,L,QSA]
+    # /api/ghl-conversations and legacy /api/ghl-conversations.php -> /api/ghl/ghl-conversations.php
+    RewriteRule ^api/ghl-conversations(\.php)?/?$ /api/ghl/ghl-conversations.php [NC,L,QSA]
 
-    # /api/ghl_oauth -> /api/ghl/ghl_oauth.php
-    RewriteRule ^api/ghl_oauth/?$ /api/ghl/ghl_oauth.php [NC,L,QSA]
+    # /api/ghl_oauth and legacy /api/ghl_oauth.php -> /api/ghl/ghl_oauth.php
+    RewriteRule ^api/ghl_oauth(\.php)?/?$ /api/ghl/ghl_oauth.php [NC,L,QSA]
 
     # ── Public / Auth endpoints ────────────────────────────────────────────
     RewriteRule ^register/?$ pages/install-register.php [NC,L,QSA]
@@ -162,18 +162,18 @@
     RewriteRule ^api/location/bootstrap/?$ /api/location/bootstrap.php [NC,L,QSA]
 
     # ── Admin endpoints (moved from api/ root to api/admin/) ─────────────────
-    RewriteRule ^api/admin_agencies/?$          /api/admin/admin_agencies.php          [NC,L,QSA]
-    RewriteRule ^api/admin_auth/?$              /api/admin/admin_auth.php              [NC,L,QSA]
-    RewriteRule ^api/admin_fix_agency_names/?$  /api/admin/admin_fix_agency_names.php  [NC,L,QSA]
-    RewriteRule ^api/admin_forgot_password/?$   /api/admin/admin_forgot_password.php   [NC,L,QSA]
-    RewriteRule ^api/admin_list_agency_users/?$ /api/admin/admin_list_agency_users.php [NC,L,QSA]
-    RewriteRule ^api/admin_list_users/?$        /api/admin/admin_list_users.php        [NC,L,QSA]
-    RewriteRule ^api/admin_manage_user/?$       /api/admin/admin_manage_user.php       [NC,L,QSA]
-    RewriteRule ^api/admin_notifications/?$     /api/admin/admin_notifications.php     [NC,L,QSA]
-    RewriteRule ^api/admin_profile/?$           /api/admin/admin_profile.php           [NC,L,QSA]
-    RewriteRule ^api/admin_sender_requests/?$   /api/admin/admin_sender_requests.php   [NC,L,QSA]
-    RewriteRule ^api/admin_settings/?$          /api/admin/admin_settings.php          [NC,L,QSA]
-    RewriteRule ^api/admin_users/?$             /api/admin/admin_users.php             [NC,L,QSA]
+    RewriteRule ^api/admin_agencies(\.php)?/?$          /api/admin/admin_agencies.php          [NC,L,QSA]
+    RewriteRule ^api/admin_auth(\.php)?/?$              /api/admin/admin_auth.php              [NC,L,QSA]
+    RewriteRule ^api/admin_fix_agency_names(\.php)?/?$  /api/admin/admin_fix_agency_names.php  [NC,L,QSA]
+    RewriteRule ^api/admin_forgot_password(\.php)?/?$   /api/admin/admin_forgot_password.php   [NC,L,QSA]
+    RewriteRule ^api/admin_list_agency_users(\.php)?/?$ /api/admin/admin_list_agency_users.php [NC,L,QSA]
+    RewriteRule ^api/admin_list_users(\.php)?/?$        /api/admin/admin_list_users.php        [NC,L,QSA]
+    RewriteRule ^api/admin_manage_user(\.php)?/?$       /api/admin/admin_manage_user.php       [NC,L,QSA]
+    RewriteRule ^api/admin_notifications(\.php)?/?$     /api/admin/admin_notifications.php     [NC,L,QSA]
+    RewriteRule ^api/admin_profile(\.php)?/?$           /api/admin/admin_profile.php           [NC,L,QSA]
+    RewriteRule ^api/admin_sender_requests(\.php)?/?$   /api/admin/admin_sender_requests.php   [NC,L,QSA]
+    RewriteRule ^api/admin_settings(\.php)?/?$          /api/admin/admin_settings.php          [NC,L,QSA]
+    RewriteRule ^api/admin_users(\.php)?/?$             /api/admin/admin_users.php             [NC,L,QSA]
 
     RewriteRule ^api/agency/ghl_autologin/?$ /api/agency/ghl_autologin.php [NC,L,QSA]
     # Legacy user-app path: location-level autologin.
@@ -202,29 +202,29 @@
 
     # ── Generic API endpoints (updated paths after reorganization) ──────────
     # messaging/
-    RewriteRule ^api/messages/?$             /api/messaging/messages.php             [NC,L,QSA]
-    RewriteRule ^api/contacts/?$             /api/messaging/contacts.php             [NC,L,QSA]
-    RewriteRule ^api/conversations/?$        /api/messaging/conversations.php        [NC,L,QSA]
-    RewriteRule ^api/templates/?$            /api/messaging/templates.php            [NC,L,QSA]
-    RewriteRule ^api/check_message_status/?$ /api/messaging/check_message_status.php [NC,L,QSA]
-    RewriteRule ^api/check-message-status/?$ /api/messaging/check_message_status.php [NC,L,QSA]
-    RewriteRule ^api/retry_sms_queue/?$      /api/messaging/retry_sms_queue.php      [NC,L,QSA]
+    RewriteRule ^api/messages(\.php)?/?$             /api/messaging/messages.php             [NC,L,QSA]
+    RewriteRule ^api/contacts(\.php)?/?$             /api/messaging/contacts.php             [NC,L,QSA]
+    RewriteRule ^api/conversations(\.php)?/?$        /api/messaging/conversations.php        [NC,L,QSA]
+    RewriteRule ^api/templates(\.php)?/?$            /api/messaging/templates.php            [NC,L,QSA]
+    RewriteRule ^api/check_message_status(\.php)?/?$ /api/messaging/check_message_status.php [NC,L,QSA]
+    RewriteRule ^api/check-message-status(\.php)?/?$ /api/messaging/check_message_status.php [NC,L,QSA]
+    RewriteRule ^api/retry_sms_queue(\.php)?/?$      /api/messaging/retry_sms_queue.php      [NC,L,QSA]
     # account/
-    RewriteRule ^api/account/?$              /api/account/account.php                [NC,L,QSA]
-    RewriteRule ^api/account-sender/?$       /api/account/account-sender.php         [NC,L,QSA]
+    RewriteRule ^api/account(\.php)?/?$              /api/account/account.php                [NC,L,QSA]
+    RewriteRule ^api/account-sender(\.php)?/?$       /api/account/account-sender.php         [NC,L,QSA]
     # notifications/
-    RewriteRule ^api/notifications/?$        /api/notifications/notifications.php        [NC,L,QSA]
-    RewriteRule ^api/notification-settings/?$ /api/notifications/notification-settings.php [NC,L,QSA]
+    RewriteRule ^api/notifications(\.php)?/?$        /api/notifications/notifications.php        [NC,L,QSA]
+    RewriteRule ^api/notification-settings(\.php)?/?$ /api/notifications/notification-settings.php [NC,L,QSA]
     # billing/ additions
-    RewriteRule ^api/credits/?$              /api/billing/credits.php                [NC,L,QSA]
-    RewriteRule ^api/get_credit_transactions/?$ /api/billing/get_credit_transactions.php [NC,L,QSA]
+    RewriteRule ^api/credits(\.php)?/?$              /api/billing/credits.php                [NC,L,QSA]
+    RewriteRule ^api/get_credit_transactions(\.php)?/?$ /api/billing/get_credit_transactions.php [NC,L,QSA]
     # sender/
-    RewriteRule ^api/sender-requests/?$      /api/sender/sender-requests.php         [NC,L,QSA]
-    RewriteRule ^api/get_sender_config/?$    /api/sender/get_sender_config.php       [NC,L,QSA]
+    RewriteRule ^api/sender-requests(\.php)?/?$      /api/sender/sender-requests.php         [NC,L,QSA]
+    RewriteRule ^api/get_sender_config(\.php)?/?$    /api/sender/get_sender_config.php       [NC,L,QSA]
     # health/
-    RewriteRule ^api/connectivity_health_check/?$ /api/health/connectivity_health_check.php [NC,L,QSA]
+    RewriteRule ^api/connectivity_health_check(\.php)?/?$ /api/health/connectivity_health_check.php [NC,L,QSA]
     # tickets/
-    RewriteRule ^api/tickets/?$              /api/tickets/tickets.php                [NC,L,QSA]
+    RewriteRule ^api/tickets(\.php)?/?$              /api/tickets/tickets.php                [NC,L,QSA]
 
     # Catch-all: /api/XXX -> /api/XXX.php (if the .php file exists)
     RewriteCond %{REQUEST_FILENAME}.php -f
