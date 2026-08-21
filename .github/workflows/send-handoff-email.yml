@@ -1,0 +1,108 @@
+name: 📨 Send Frontend Handoff Email (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      subject_title:
+        description: "Handoff title (e.g. '401 Fix + 2-Way SMS Plan')"
+        required: true
+        default: "401 Fix + 2-Way SMS Plan + Reorganization Update"
+      summary_points:
+        description: "Brief bullet points of what changed (one per line)"
+        required: true
+        default: |
+          401 on /api/auth/me — frontend race condition fix required
+          2-Way SMS (UniSMS) — frontend phases F1-F7 ready to build
+          Backend file reorganization — no frontend action needed
+      note:
+        description: "Optional extra note for the frontend team"
+        required: false
+        default: ""
+
+jobs:
+  send-handoff:
+    name: Send Handoff Summary to Frontend Team
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Build bullet points HTML
+        id: bullets
+        run: |
+          POINTS="${{ github.event.inputs.summary_points }}"
+          HTML=$(echo "$POINTS" | while IFS= read -r line; do
+            [ -n "$line" ] && echo "<li>${line}</li>"
+          done)
+          echo "html<<EOF" >> $GITHUB_OUTPUT
+          echo "$HTML"     >> $GITHUB_OUTPUT
+          echo "EOF"       >> $GITHUB_OUTPUT
+
+      - name: Send handoff email
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          secure: false
+          username: ${{ secrets.NOTIFY_MAIL_USER }}
+          password: ${{ secrets.NOTIFY_MAIL_PASS }}
+          subject: "[NOLA SMS Pro] 📋 Frontend Handoff — ${{ github.event.inputs.subject_title }}"
+          to: ${{ secrets.FRONTEND_EMAIL }}
+          from: "NOLA CRM Backend <${{ secrets.NOTIFY_MAIL_USER }}>"
+          html_body: |
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+              <meta charset="UTF-8"/>
+              <style>
+                body { font-family: Arial, sans-serif; background: #f4f6f9; margin: 0; padding: 0; color: #2d3748; }
+                .wrapper { max-width: 620px; margin: 30px auto; background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 2px 12px rgba(0,0,0,0.1); }
+                .header { background: linear-gradient(135deg, #1a1a2e, #16213e); color: #fff; padding: 28px 30px; }
+                .header h1 { margin: 0 0 6px; font-size: 20px; }
+                .header p { margin: 0; font-size: 13px; color: #a0aec0; }
+                .body { padding: 28px 30px; }
+                h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: #718096; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; }
+                ul { padding-left: 20px; margin: 12px 0; }
+                li { font-size: 14px; padding: 5px 0; color: #2d3748; line-height: 1.6; }
+                .cta { display: inline-block; background: #3182ce; color: #fff !important; text-decoration: none; border-radius: 6px; padding: 12px 24px; font-weight: bold; font-size: 14px; margin-top: 8px; }
+                .note-box { background: #fffbeb; border-left: 4px solid #d69e2e; padding: 12px 16px; border-radius: 4px; font-size: 13px; margin-top: 20px; }
+                .footer { background: #f7fafc; text-align: center; padding: 16px; font-size: 12px; color: #a0aec0; border-top: 1px solid #e2e8f0; }
+                code { background: #edf2f7; padding: 2px 5px; border-radius: 3px; font-size: 12px; font-family: monospace; }
+              </style>
+            </head>
+            <body>
+            <div class="wrapper">
+              <div class="header">
+                <h1>📋 NOLA SMS Pro — Frontend Handoff</h1>
+                <p>The backend team has raised items that require your attention.</p>
+              </div>
+              <div class="body">
+
+                <h2>📌 What This Handoff Covers</h2>
+                <ul>
+                  ${{ steps.bullets.outputs.html }}
+                </ul>
+
+                <h2>📄 Full Details</h2>
+                <p>
+                  The complete handoff document with all technical details, acceptance criteria,
+                  file references, and step-by-step instructions is available in the shared repo:
+                </p>
+                <p>
+                  <strong>File:</strong> <code>docs/FRONTEND_HANDOFF.md</code>
+                </p>
+                <a class="cta" href="https://github.com/nola-repo/NOLA-SMS-Pro/blob/staging/docs/FRONTEND_HANDOFF.md">
+                  📖 View Full Handoff Document →
+                </a>
+
+                ${{ github.event.inputs.note != '' && format('<div class="note-box"><strong>📝 Additional Note from Backend Team:</strong><br/>{0}</div>', github.event.inputs.note) || '' }}
+
+                <p style="margin-top:24px; font-size:13px; color:#718096;">
+                  Please review the handoff document and coordinate with the backend team
+                  if you have questions. This is an automated notification — do not reply to this email.
+                </p>
+              </div>
+              <div class="footer">
+                NOLA SMS Pro · Backend Team · <a href="https://github.com/nola-repo/NOLA-SMS-Pro">nola-repo/NOLA-SMS-Pro</a>
+              </div>
+            </div>
+            </body>
+            </html>
