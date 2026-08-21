@@ -3,8 +3,19 @@ name: 📨 Send Frontend Handoff Email (Manual)
 on:
   workflow_dispatch:
     inputs:
+      subject_title:
+        description: "Handoff title (e.g. '401 Fix + 2-Way SMS Plan')"
+        required: true
+        default: "401 Fix + 2-Way SMS Plan + Reorganization Update"
+      summary_points:
+        description: "Brief bullet points of what changed (one per line)"
+        required: true
+        default: |
+          401 on /api/auth/me — frontend race condition fix required
+          2-Way SMS (UniSMS) — frontend phases F1-F7 ready to build
+          Backend file reorganization — no frontend action needed
       note:
-        description: "Optional extra note to append at the bottom of the email"
+        description: "Optional extra note for the frontend team"
         required: false
         default: ""
 
@@ -14,6 +25,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Build bullet points HTML
+        id: bullets
+        run: |
+          POINTS="${{ github.event.inputs.summary_points }}"
+          HTML=$(echo "$POINTS" | while IFS= read -r line; do
+            [ -n "$line" ] && echo "<li>${line}</li>"
+          done)
+          echo "html<<EOF" >> $GITHUB_OUTPUT
+          echo "$HTML"     >> $GITHUB_OUTPUT
+          echo "EOF"       >> $GITHUB_OUTPUT
+
       - name: Send handoff email
         uses: dawidd6/action-send-mail@v3
         with:
@@ -22,7 +44,7 @@ jobs:
           secure: false
           username: ${{ secrets.NOTIFY_MAIL_USER }}
           password: ${{ secrets.NOTIFY_MAIL_PASS }}
-          subject: "[NOLA SMS Pro] 📋 Frontend Handoff — 401 Fix + 2-Way SMS Plan + Reorganization Update"
+          subject: "[NOLA SMS Pro] 📋 Frontend Handoff — ${{ github.event.inputs.subject_title }}"
           to: ${{ secrets.FRONTEND_EMAIL }}
           from: "NOLA CRM Backend <${{ secrets.NOTIFY_MAIL_USER }}>"
           html_body: |
@@ -32,223 +54,54 @@ jobs:
               <meta charset="UTF-8"/>
               <style>
                 body { font-family: Arial, sans-serif; background: #f4f6f9; margin: 0; padding: 0; color: #2d3748; }
-                .wrapper { max-width: 680px; margin: 30px auto; background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 2px 12px rgba(0,0,0,0.1); }
-                .header { background: linear-gradient(135deg, #1a1a2e, #16213e); color: #fff; padding: 30px; }
+                .wrapper { max-width: 620px; margin: 30px auto; background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 2px 12px rgba(0,0,0,0.1); }
+                .header { background: linear-gradient(135deg, #1a1a2e, #16213e); color: #fff; padding: 28px 30px; }
                 .header h1 { margin: 0 0 6px; font-size: 20px; }
                 .header p { margin: 0; font-size: 13px; color: #a0aec0; }
-                .meta { background: #f7fafc; padding: 14px 30px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #4a5568; }
-                .meta span { margin-right: 24px; }
                 .body { padding: 28px 30px; }
-                h2 { font-size: 16px; color: #1a202c; border-left: 4px solid #3182ce; padding-left: 10px; margin-top: 32px; }
-                h3 { font-size: 14px; color: #2d3748; margin-top: 20px; }
-                p, li { font-size: 14px; line-height: 1.7; }
-                ul { padding-left: 20px; }
-                code { background: #edf2f7; padding: 2px 6px; border-radius: 3px; font-size: 12px; font-family: monospace; }
-                pre { background: #1a202c; color: #e2e8f0; padding: 14px 16px; border-radius: 6px; overflow-x: auto; font-size: 12px; line-height: 1.6; }
-                table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 12px 0; }
-                th { background: #edf2f7; text-align: left; padding: 8px 10px; border: 1px solid #e2e8f0; }
-                td { padding: 8px 10px; border: 1px solid #e2e8f0; }
-                .badge { display: inline-block; border-radius: 4px; padding: 2px 8px; font-size: 11px; font-weight: bold; }
-                .badge-red { background: #fed7d7; color: #c53030; }
-                .badge-green { background: #c6f6d5; color: #276749; }
-                .badge-blue { background: #bee3f8; color: #2b6cb0; }
-                .badge-yellow { background: #fefcbf; color: #744210; }
-                .section-divider { border: none; border-top: 2px solid #e2e8f0; margin: 30px 0; }
-                .alert { border-left: 4px solid #e53e3e; background: #fff5f5; padding: 12px 16px; border-radius: 4px; font-size: 13px; margin: 12px 0; }
-                .alert.info { border-color: #3182ce; background: #ebf8ff; }
-                .alert.success { border-color: #38a169; background: #f0fff4; }
-                .sequence { background: #1a202c; color: #e2e8f0; padding: 14px 16px; border-radius: 6px; font-size: 12px; font-family: monospace; line-height: 2; }
+                h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: #718096; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; }
+                ul { padding-left: 20px; margin: 12px 0; }
+                li { font-size: 14px; padding: 5px 0; color: #2d3748; line-height: 1.6; }
+                .cta { display: inline-block; background: #3182ce; color: #fff !important; text-decoration: none; border-radius: 6px; padding: 12px 24px; font-weight: bold; font-size: 14px; margin-top: 8px; }
+                .note-box { background: #fffbeb; border-left: 4px solid #d69e2e; padding: 12px 16px; border-radius: 4px; font-size: 13px; margin-top: 20px; }
                 .footer { background: #f7fafc; text-align: center; padding: 16px; font-size: 12px; color: #a0aec0; border-top: 1px solid #e2e8f0; }
-                .summary-table th { background: #2d3748; color: #fff; }
+                code { background: #edf2f7; padding: 2px 5px; border-radius: 3px; font-size: 12px; font-family: monospace; }
               </style>
             </head>
             <body>
             <div class="wrapper">
-
-              <!-- HEADER -->
               <div class="header">
-                <h1>📋 NOLA SMS Pro — Frontend Team Handoff</h1>
-                <p>Backend summary of findings and required frontend actions. Please review carefully.</p>
+                <h1>📋 NOLA SMS Pro — Frontend Handoff</h1>
+                <p>The backend team has raised items that require your attention.</p>
               </div>
-
-              <!-- META -->
-              <div class="meta">
-                <span>📅 <strong>Date:</strong> 2026-08-21</span>
-                <span>🔗 <strong>Repo:</strong> <a href="https://github.com/nola-repo/NOLA-SMS-Pro" style="color:#3182ce;">nola-repo/NOLA-SMS-Pro</a></span>
-              </div>
-
               <div class="body">
 
-                <p>This handoff covers <strong>3 items</strong> the frontend team needs to be aware of:</p>
-                <ol>
-                  <li><strong>401 Unauthorized on <code>/api/auth/me</code></strong> — what is expected behavior and what the frontend must fix</li>
-                  <li><strong>2-Way SMS with UniSMS (Virtual Numbers)</strong> — frontend-only implementation phases</li>
-                  <li><strong>Backend File Reorganization</strong> — what changed on disk and why it does NOT affect the frontend</li>
-                </ol>
-
-                <hr class="section-divider"/>
-
-                <!-- ITEM 1 -->
-                <h2>🔐 Item 1: 401 Unauthorized on <code>/api/auth/me</code></h2>
-
-                <h3>What Was Found</h3>
-                <p>When inspecting the app, the following error appears in the browser console:</p>
-                <pre>GET https://app.nolasmspro.com/api/auth/me → 401 Unauthorized
-            {"error":"Missing auth token. Provide Authorization: Bearer &lt;token&gt;.","code":"AUTH_TOKEN_MISSING"}</pre>
-
-                <h3>Backend Verdict: ✅ Working Correctly</h3>
-                <p>The backend is <strong>NOT broken</strong>. <code>GET /api/auth/me</code> is intentionally designed to return <code>401</code> when no token is present.</p>
-
-                <table>
-                  <tr><th>Condition</th><th>Response</th></tr>
-                  <tr><td>No token</td><td><code>401 AUTH_TOKEN_MISSING</code></td></tr>
-                  <tr><td>Invalid/expired token</td><td><code>401</code></td></tr>
-                  <tr><td>Valid token, user doc missing</td><td><code>404</code></td></tr>
-                  <tr><td>Valid token, user found</td><td><code>200 { "user": ... }</code></td></tr>
-                </table>
-
-                <div class="alert">
-                  ⚠️ Do <strong>NOT</strong> change this endpoint to return <code>200</code> for unauthenticated requests.
-                </div>
-
-                <h3>The Real Problem — Frontend Race Condition</h3>
-                <p>The <code>401</code> error occurs because the frontend calls <code>/api/auth/me</code> <strong>before the GHL auto-login flow has completed</strong> and a token has been saved. The app fires the profile check too early on first load inside the GHL iframe.</p>
-
-                <h3>What the Frontend Must Fix</h3>
-                <p><strong>1. Treat <code>401</code> from <code>/api/auth/me</code> as "session not ready yet" — not as a final failure.</strong></p>
+                <h2>📌 What This Handoff Covers</h2>
                 <ul>
-                  <li>Start or await the GHL auto-login flow (<code>GET /api/auth/ghl_autologin?location_id=...</code>)</li>
-                  <li>Save the returned token</li>
-                  <li><strong>Retry</strong> <code>/api/auth/me</code> with <code>Authorization: Bearer &lt;token&gt;</code></li>
-                  <li>Only show an error screen if the retry also fails</li>
+                  ${{ steps.bullets.outputs.html }}
                 </ul>
 
-                <p><strong>2. Extract <code>location_id</code> correctly from the GHL iframe URL:</strong></p>
-                <pre>/v2/location/{locationId}/custom-page-link/{pageId}</pre>
-                <p>Do NOT send a company/account ID as <code>location_id</code>.</p>
+                <h2>📄 Full Details</h2>
+                <p>
+                  The complete handoff document with all technical details, acceptance criteria,
+                  file references, and step-by-step instructions is available in the shared repo:
+                </p>
+                <p>
+                  <strong>File:</strong> <code>docs/FRONTEND_HANDOFF.md</code>
+                </p>
+                <a class="cta" href="https://github.com/nola-repo/NOLA-SMS-Pro/blob/staging/docs/FRONTEND_HANDOFF.md">
+                  📖 View Full Handoff Document →
+                </a>
 
-                <p><strong>3. Correct expected sequence on first load:</strong></p>
-                <div class="sequence">
-            1. App loads inside GHL iframe<br/>
-            2. Frontend extracts location_id from URL<br/>
-            3. Frontend calls GET /api/auth/me → gets 401 (expected)<br/>
-            4. Frontend calls GET /api/auth/ghl_autologin?location_id={id}<br/>
-            5. Backend returns 200 with JWT token<br/>
-            6. Frontend saves token<br/>
-            7. Frontend retries GET /api/auth/me with Authorization: Bearer &lt;token&gt;<br/>
-            8. Backend returns 200 with user profile ✅
-                </div>
-                <p style="font-size:13px;color:#718096;">If step 4 returns <code>404</code>, <code>409</code>, or <code>422</code> — surface the error code to the user and do not loop.</p>
+                ${{ github.event.inputs.note != '' && format('<div class="note-box"><strong>📝 Additional Note from Backend Team:</strong><br/>{0}</div>', github.event.inputs.note) || '' }}
 
-                <hr class="section-divider"/>
-
-                <!-- ITEM 2 -->
-                <h2>💬 Item 2: 2-Way SMS with UniSMS — Frontend Implementation Phases</h2>
-
-                <div class="alert info">
-                  The backend has completed a full audit. Backend team owns all provider routing, inbound/outbound wiring, and Firestore schema. <strong>The frontend does not need to wait for virtual numbers to begin building UI components.</strong>
-                </div>
-
-                <h3>Phase F1: Account &amp; Settings UI</h3>
-                <ul>
-                  <li>Assigned virtual number display</li>
-                  <li>Virtual number status badge: <code>pending</code> / <code>active</code> / <code>inactive</code> / <code>failed</code></li>
-                  <li>2-way SMS availability indicator per location</li>
-                  <li>Provider mode label: NOLA app only / GHL Workflow / GHL Conversation Provider / Default SMS / Native-mirrored</li>
-                </ul>
-                <p><strong>Do NOT expose:</strong> UniSMS API keys, webhook secrets, provider signing keys.</p>
-
-                <h3>Phase F2: Compose &amp; Conversation Reply Behavior</h3>
-                <ul>
-                  <li>Keep using <code>POST /api/sms</code> — nothing changes here</li>
-                  <li>Add <code>Idempotency-Key: sms_&lt;location_id&gt;_&lt;uuid&gt;</code> header to all sends</li>
-                  <li>When replying in a conversation, pass: <code>conversation_id</code>, <code>contact_id</code>, <code>reply_from_virtual_number: true</code></li>
-                  <li>Disable reply button when: account paused, install blocked, credits missing, virtual number inactive/failed</li>
-                </ul>
-
-                <h3>Phase F3: Conversations List &amp; Thread Rendering</h3>
-                <table>
-                  <tr><th>Field</th><th>Display</th></tr>
-                  <tr><td><code>direction</code></td><td>inbound / outbound icon</td></tr>
-                  <tr><td><code>status</code></td><td>Received / Sending / Sent / Failed</td></tr>
-                  <tr><td><code>virtual_number</code></td><td>from number for outbound replies</td></tr>
-                  <tr><td><code>ghl_sync_failed</code></td><td>Warning badge — separate from SMS delivery</td></tr>
-                </table>
-                <p>Use <code>fresh=1</code> after send or inbound to bypass stale cache: <code>GET /api/conversations?fresh=1&amp;location_id=...</code></p>
-
-                <h3>Phase F4: GHL Embedded App Behavior</h3>
-                <ul>
-                  <li>Continue sending <code>X-GHL-Location-ID</code> header</li>
-                  <li>Do not request conversations/notifications until location context is confirmed</li>
-                  <li>Show GHL sync warnings separately from provider send failures</li>
-                </ul>
-
-                <h3>Phase F5: Templates</h3>
-                <ul>
-                  <li>Keep templates as content insertion only</li>
-                  <li>Pass optional: <code>template_id</code>, <code>template_name</code> for audit</li>
-                  <li>Validate the final rendered body, not just the raw template</li>
-                </ul>
-
-                <h3>Phase F6: Notifications UI</h3>
-                <ul>
-                  <li>Add notification settings for: inbound SMS received, unread reminder, failed delivery, low balance, virtual number issues</li>
-                  <li>Clicking an inbound SMS notification must open the correct conversation directly</li>
-                </ul>
-
-                <h3>Phase F7: Admin/Setup Clarity UI</h3>
-                <ul>
-                  <li>Show GHL Conversation Provider installed/enabled status</li>
-                  <li>Show provider mode (default vs custom)</li>
-                  <li>Warn when native SMS and NOLA SMS action are both configured for the same automation</li>
-                </ul>
-
-                <div class="alert success">
-                  <strong>Do not build frontend logic that directly calls UniSMS.</strong> All sends go through <code>/api/sms</code>.
-                </div>
-
-                <hr class="section-divider"/>
-
-                <!-- ITEM 3 -->
-                <h2>📁 Item 3: Backend File Reorganization — No Frontend Action Required</h2>
-
-                <table>
-                  <tr><th>Files Moved</th><th>New Location</th></tr>
-                  <tr><td><code>admin_*.php</code> files</td><td><code>api/admin/</code></td></tr>
-                  <tr><td>GHL-related files</td><td><code>api/ghl/</code></td></tr>
-                  <tr><td>Messaging, account, notifications, billing, sender, health, tickets</td><td>Respective subdirectories</td></tr>
-                </table>
-
-                <div class="alert success">
-                  <strong>All public API URLs are exactly the same.</strong> The <code>.htaccess</code> routing rules were updated alongside every file move. The reorganization is purely a backend disk-structure change and is transparent to the frontend.
-                </div>
-
-                <p>If you observe any <code>404</code> errors on previously working endpoints after this change was deployed to staging, report them immediately.</p>
-
-                <hr class="section-divider"/>
-
-                <!-- SUMMARY TABLE -->
-                <h2>📊 Summary Table</h2>
-                <table class="summary-table">
-                  <tr><th>Item</th><th>Owner</th><th>Status</th><th>Action Required</th></tr>
-                  <tr><td>401 on <code>/api/auth/me</code></td><td>Frontend</td><td><span class="badge badge-red">Fix Needed</span></td><td>Fix auth retry flow on first load</td></tr>
-                  <tr><td>2-Way SMS - F1 Settings UI</td><td>Frontend</td><td><span class="badge badge-yellow">Pending</span></td><td>Build virtual number display &amp; status</td></tr>
-                  <tr><td>2-Way SMS - F2 Reply Behavior</td><td>Frontend</td><td><span class="badge badge-yellow">Pending</span></td><td>Add idempotency key + reply flags</td></tr>
-                  <tr><td>2-Way SMS - F3 Thread Rendering</td><td>Frontend</td><td><span class="badge badge-yellow">Pending</span></td><td>Add direction/status/virtual number fields</td></tr>
-                  <tr><td>2-Way SMS - F4 GHL Embedded</td><td>Frontend</td><td><span class="badge badge-yellow">Pending</span></td><td>Delay requests until location confirmed</td></tr>
-                  <tr><td>2-Way SMS - F5 Templates</td><td>Frontend</td><td><span class="badge badge-yellow">Pending</span></td><td>Support templates in reply, pass metadata</td></tr>
-                  <tr><td>2-Way SMS - F6 Notifications UI</td><td>Frontend</td><td><span class="badge badge-yellow">Pending</span></td><td>Add inbound/failed notification settings</td></tr>
-                  <tr><td>2-Way SMS - F7 Admin Setup UI</td><td>Frontend</td><td><span class="badge badge-yellow">Pending</span></td><td>Show provider mode &amp; setup state</td></tr>
-                  <tr><td>Backend File Reorganization</td><td>Backend</td><td><span class="badge badge-green">Complete</span></td><td>No frontend action needed ✅</td></tr>
-                </table>
-
-                ${{ github.event.inputs.note != '' && format('<hr/><p><strong>📝 Additional Note:</strong> {0}</p>', github.event.inputs.note) || '' }}
-
+                <p style="margin-top:24px; font-size:13px; color:#718096;">
+                  Please review the handoff document and coordinate with the backend team
+                  if you have questions. This is an automated notification — do not reply to this email.
+                </p>
               </div>
-
               <div class="footer">
-                NOLA SMS Pro · Backend Team Handoff<br/>
-                Repo: <a href="https://github.com/nola-repo/NOLA-SMS-Pro">nola-repo/NOLA-SMS-Pro</a> · Do not reply to this email directly.
+                NOLA SMS Pro · Backend Team · <a href="https://github.com/nola-repo/NOLA-SMS-Pro">nola-repo/NOLA-SMS-Pro</a>
               </div>
             </div>
             </body>
