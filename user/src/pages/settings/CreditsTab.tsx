@@ -19,7 +19,7 @@ import { safeStorage } from "../../utils/safeStorage";
 import { apiFetch } from "../../utils/apiFetch";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE || '';
-const CHECKOUT_ALLOWED_ORIGINS = new Set(['https://sms.nolawebsolutions.com', 'https://nolasmspro.com']);
+const CHECKOUT_ALLOWED_ORIGINS = new Set(['https://sms.nolawebsolutions.com', 'https://nolasmspro.com', 'https://checkout.nolasmspro.com']);
 const CHECKOUT_SESSION_STORAGE_KEY = 'nola_pending_checkout';
 const VALID_LOCATION_ID = /^[A-Za-z0-9_-]{8,80}$/;
 type CreditTransactionWithFallbacks = CreditTransaction & { timestamp?: string };
@@ -486,7 +486,15 @@ export const CreditsTab: React.FC = () => {
             accountProfile = null;
         }
 
-        if (!accountProfile?.location_id || accountProfile.location_id !== resolvedLocationId) {
+        if (!accountProfile?.location_id) {
+            accountProfile = getCachedAccountProfile(resolvedLocationId) || (
+                (locationId || liveProfile?.location_id) === resolvedLocationId
+                    ? { location_id: resolvedLocationId, full_name: liveProfile?.name, email: liveProfile?.email } as unknown as AccountProfile
+                    : null
+            );
+        }
+
+        if (!resolvedLocationId || !VALID_LOCATION_ID.test(resolvedLocationId) || (accountProfile?.location_id && accountProfile.location_id !== resolvedLocationId)) {
             resetCheckoutState(true);
             setCheckoutError('We could not verify this subaccount for checkout. Please refresh and try again.');
             return;

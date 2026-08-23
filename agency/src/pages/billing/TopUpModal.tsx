@@ -13,11 +13,11 @@ export const TopUpModal: React.FC<{
   const popupPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const packages: CreditPackage[] = [
-    { credits: 10, price: 10, link: "https://sms.nolawebsolutions.com/nola-sms-pro---500-credits-page-8465-657955" },
-    { credits: 500, price: 500, link: "https://sms.nolawebsolutions.com/nola-sms-pro---500-credits-page-8465" },
-    { credits: 1100, price: 1000, link: "https://sms.nolawebsolutions.com/nola-sms-pro---1000-credits" },
-    { credits: 2750, price: 2500, link: "https://sms.nolawebsolutions.com/nola-sms-pro-2750-credits" },
-    { credits: 6000, price: 5000, link: "https://sms.nolawebsolutions.com/nola-sms-pro-6000-credits" },
+    { credits: 10, price: 10, link: "https://checkout.nolasmspro.com/nola-sms-pro-10-credits" },
+    { credits: 500, price: 500, link: "https://checkout.nolasmspro.com/nola-sms-pro-500-credits" },
+    { credits: 1100, price: 1000, link: "https://checkout.nolasmspro.com/nola-sms-pro-1100-credits" },
+    { credits: 2750, price: 2500, link: "https://checkout.nolasmspro.com/nola-sms-pro-2750-credits" },
+    { credits: 6000, price: 5000, link: "https://checkout.nolasmspro.com/nola-sms-pro-6000-credits" },
   ];
 
   const handleTopUpSubmit = (e: React.FormEvent) => {

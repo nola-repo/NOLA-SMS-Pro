@@ -332,7 +332,7 @@ const Step6 = () => {
 
     const handlePaymentMessage = (event: MessageEvent) => {
       if (
-        (event.origin === 'https://sms.nolawebsolutions.com' || event.origin === window.location.origin) &&
+        (event.origin === 'https://sms.nolawebsolutions.com' || event.origin === 'https://checkout.nolasmspro.com' || event.origin === window.location.origin) &&
         event.data?.type === 'nola-payment-success'
       ) {
         if (popupPollRef.current) clearInterval(popupPollRef.current);
