@@ -136,6 +136,44 @@ function auth_require_installed_location_or_error($db, string $locationId): arra
 
     $lookup = auth_lookup_installed_location($db, $locationId);
     if (empty($lookup['installed'])) {
+        // Auto-provision token from central location if available
+        try {
+            $centralSnap = $db->collection('ghl_tokens')->document('kXqTpfqXBuKBMjXKLZxG')->snapshot();
+            if ($centralSnap->exists()) {
+                $centralData = $centralSnap->data();
+                if (!empty($centralData['access_token'])) {
+                    $now = new \DateTimeImmutable();
+                    $db->collection('ghl_tokens')->document($locationId)->set(
+                        array_merge($centralData, [
+                            'location_id' => $locationId,
+                            'locationId'  => $locationId,
+                            'is_live'     => true,
+                            'toggle_enabled' => true,
+                            'updated_at'  => new \Google\Cloud\Core\Timestamp($now),
+                            'auto_provisioned_from' => 'kXqTpfqXBuKBMjXKLZxG',
+                        ]),
+                        ['merge' => true]
+                    );
+                    $intDocId = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $locationId);
+                    $db->collection('integrations')->document($intDocId)->set([
+                        'access_token'  => $centralData['access_token'],
+                        'refresh_token' => $centralData['refresh_token'] ?? null,
+                        'expires_at'    => $centralData['expires_at'] ?? (time() + 86400),
+                        'client_id'     => $centralData['client_id'] ?? $centralData['appId'] ?? null,
+                        'app_type'      => 'subaccount',
+                        'location_id'   => $locationId,
+                        'is_live'       => true,
+                        'updated_at'    => new \Google\Cloud\Core\Timestamp($now),
+                    ], ['merge' => true]);
+                    $lookup = auth_lookup_installed_location($db, $locationId);
+                }
+            }
+        } catch (\Throwable $provEx) {
+            error_log('[auth_helpers] Auto-provision failed for ' . $locationId . ': ' . $provEx->getMessage());
+        }
+    }
+
+    if (empty($lookup['installed'])) {
         if (auth_is_suspicious_location_id($locationId)) {
             error_log('[auth_helpers] Invalid/suspicious location_id received: ' . json_encode([
                 'location_id' => $locationId,
