@@ -5,10 +5,10 @@
     RewriteBase /
     DirectorySlash Off
 
-    # Strip trailing slashes from /api/* paths to prevent Apache mod_dir from
-    # issuing an internal redirect over http (Mixed Content). This is the
-    # mod_rewrite equivalent of DirectorySlash Off for API routes.
-    RewriteRule ^(api/.+)/$ /$1 [R=301,L,NC]
+    # API RewriteRules below accept optional trailing slashes directly.
+    # Do not issue external API slash redirects here: behind Cloud Run, Apache
+    # can construct them with the internal http://:8080 origin and trigger
+    # browser Mixed Content blocking.
 
     # ── Preserve Authorization header through rewrites ──────────────────
     # Apache strips HTTP_AUTHORIZATION when a RewriteRule is processed.

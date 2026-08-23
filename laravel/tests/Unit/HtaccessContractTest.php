@@ -63,4 +63,22 @@ class HtaccessContractTest extends TestCase
             $this->assertStringContainsString($rule, $source);
         }
     }
+
+    public function test_api_trailing_slashes_are_not_externally_redirected(): void
+    {
+        $source = file_get_contents($this->rootFile('.htaccess'));
+        $lines = preg_split('/\R/', $source);
+
+        foreach ($lines as $lineNumber => $line) {
+            $trimmed = trim($line);
+            if ($trimmed === '' || str_starts_with($trimmed, '#') || !str_starts_with($trimmed, 'RewriteRule ')) {
+                continue;
+            }
+
+            $this->assertFalse(
+                str_contains($trimmed, '^(api/.+)/$') && preg_match('/\[[^\]]*\bR(?:=301)?\b/i', $trimmed) === 1,
+                'API trailing slash redirect can leak http://:8080 behind Cloud Run at .htaccess:' . ($lineNumber + 1)
+            );
+        }
+    }
 }
