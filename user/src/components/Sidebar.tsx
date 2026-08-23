@@ -692,7 +692,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   NOLA SMS PRO
                 </h2>
                 <div className="flex items-center gap-1.5 mt-0.5">
-                  <span className="text-[10px] font-bold text-[#6e6e73] dark:text-[#94959b] uppercase tracking-widest opacity-80">Staging Environment</span>
+                  <span className="text-[10px] font-bold text-[#6e6e73] dark:text-[#94959b] uppercase tracking-widest opacity-80">One-Way SMS</span>
                 </div>
               </div>
             )}
