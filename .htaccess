@@ -31,9 +31,12 @@
     # this file is a safety net that ensures CORS headers are always present.
 
 
-    # If the request is for an existing file or directory, serve it directly
-    RewriteCond %{REQUEST_FILENAME} -f [OR]
-    RewriteCond %{REQUEST_FILENAME} -d
+    # Only serve existing FILES directly.
+    # Do NOT short-circuit for directories (-d): API paths like /api/account
+    # are real directories on disk but must be handled by the RewriteRules
+    # below (not mod_dir), otherwise Apache redirects to http://:8080/api/account/
+    # causing Mixed Content errors in the browser.
+    RewriteCond %{REQUEST_FILENAME} -f
     RewriteRule ^ - [L]
 
     # ── Legacy Static Asset Fallback ────────────────────────────────────

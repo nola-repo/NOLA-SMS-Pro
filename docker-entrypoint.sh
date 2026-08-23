@@ -30,5 +30,20 @@ EOF
 
 echo "[entrypoint] Laravel .env generated."
 
+# ── Pass Cloud Run secrets into Apache environment for PHP getenv() ───────────
+# Apache does not automatically inherit shell environment variables.
+# We write a SetEnv conf so PHP can read JWT_SECRET and WEBHOOK_SECRET.
+APACHE_SECRETS_CONF="/etc/apache2/conf-available/nola-secrets.conf"
+cat > "$APACHE_SECRETS_CONF" <<EOF
+$([ -n "$JWT_SECRET" ] && echo "SetEnv JWT_SECRET $JWT_SECRET")
+$([ -n "$WEBHOOK_SECRET" ] && echo "SetEnv WEBHOOK_SECRET $WEBHOOK_SECRET")
+$([ -n "$GHL_CLIENT_ID" ] && echo "SetEnv GHL_CLIENT_ID $GHL_CLIENT_ID")
+$([ -n "$GHL_CLIENT_SECRET" ] && echo "SetEnv GHL_CLIENT_SECRET $GHL_CLIENT_SECRET")
+$([ -n "$SEMAPHORE_API_KEY" ] && echo "SetEnv SEMAPHORE_API_KEY $SEMAPHORE_API_KEY")
+$([ -n "$FIREBASE_CREDENTIALS" ] && echo "SetEnv FIREBASE_CREDENTIALS $FIREBASE_CREDENTIALS")
+EOF
+a2enconf nola-secrets 2>/dev/null || true
+echo "[entrypoint] Apache secrets env conf written."
+
 # ── Start Apache ──────────────────────────────────────────────────────────────
 exec apache2-foreground
