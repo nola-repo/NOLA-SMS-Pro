@@ -139,9 +139,9 @@ try {
         }
 
         $q = $db->collection('support_tickets')
-            ->where('location_id', '==', (string)$locId);
+            ->where('location_id', '=', (string)$locId);
         if ($status !== '' && strtolower($status) !== 'all') {
-            $q = $q->where('status', '==', strtolower($status));
+            $q = $q->where('status', '=', strtolower($status));
         }
 
         $docs = $q->documents();

@@ -42,15 +42,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         }
     }
 
-    $query = $db->collection('credit_transactions')->where('wallet_scope', '==', $scope);
+    $query = $db->collection('credit_transactions')->where('wallet_scope', '=', $scope);
 
     if ($scope === 'agency' && $agency_id) {
-        $query = $query->where('account_id', '==', $agency_id);
+        $query = $query->where('account_id', '=', $agency_id);
     } elseif ($scope === 'subaccount' && $location_id) {
         $docId = (strpos($location_id, 'ghl_') === 0)
             ? $location_id
             : 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $location_id);
-        $query = $query->where('account_id', '==', $docId);
+        $query = $query->where('account_id', '=', $docId);
     }
 
     // Month filter — applied client-side after fetching since Firestore requires

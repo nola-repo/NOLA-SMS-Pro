@@ -22,7 +22,7 @@ try {
     // We look in ghl_tokens for a document where companyId matches agency_id
     $tokenData = null;
     $query = $db->collection('ghl_tokens')
-        ->where('companyId', '==', $agency_id)
+        ->where('companyId', '=', $agency_id)
         ->documents();
 
     foreach ($query as $doc) {

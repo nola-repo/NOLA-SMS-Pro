@@ -45,7 +45,7 @@ function auto_recharge_record_pending($db, string $scope, string $accountId, int
 }
 
 // 1. Process Agency Wallets
-$agencyQuery = $db->collection('agency_wallet')->where('auto_recharge_enabled', '==', true)->documents();
+$agencyQuery = $db->collection('agency_wallet')->where('auto_recharge_enabled', '=', true)->documents();
 foreach ($agencyQuery as $doc) {
     if (!$doc->exists()) continue;
     $data = $doc->data();
@@ -80,7 +80,7 @@ foreach ($agencyQuery as $doc) {
 }
 
 // 2. Process Subaccount Wallets
-$subaccountQuery = $db->collection('integrations')->where('auto_recharge_enabled', '==', true)->documents();
+$subaccountQuery = $db->collection('integrations')->where('auto_recharge_enabled', '=', true)->documents();
 foreach ($subaccountQuery as $doc) {
     if (!$doc->exists()) continue;
     $data = $doc->data();

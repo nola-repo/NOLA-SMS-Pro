@@ -62,15 +62,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     if (!$bypassCache) {
         $cachedData = NolaCache::get($cacheKey);
         if ($cachedData !== null) {
+    $agency_id = $_GET['agency_id'] ?? null;
+    $status = $_GET['status'] ?? null;
+
+    if (!$agency_id) {
+        http_response_code(400);
+        echo json_encode(['error' => 'agency_id required']);
+        exit;
+    }
+
+    auth_assert_agency_billing_allowed($db, (string)$agency_id);
+
+    $cacheKey = 'credit_requests_' . md5((string)$agency_id . '|' . (string)$status);
+    $cacheTtl = 60;
+    $bypassCache = isset($_GET['refresh']) || isset($_GET['bypass_cache']);
+    if (!$bypassCache) {
+        $cachedData = NolaCache::get($cacheKey);
+        if ($cachedData !== null) {
             NolaCache::sendApiCacheHeaders($cacheTtl, true);
             echo json_encode($cachedData);
             exit;
         }
     }
 
-    $query = $db->collection('credit_requests')->where('agency_id', '==', $agency_id);
+    $query = $db->collection('credit_requests')->where('agency_id', '=', $agency_id);
     if ($status && $status !== 'all') {
-        $query = $query->where('status', '==', $status);
+        $query = $query->where('status', '=', $status);
     }
 
     // Using orderby requires a composite index, we will do it clientside or simple query mapping

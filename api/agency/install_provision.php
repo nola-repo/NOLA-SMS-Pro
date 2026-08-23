@@ -313,8 +313,8 @@ try {
                 $restoredSenderFields = [];
                 try {
                     foreach ($db->collection('sender_id_requests')
-                        ->where('location_id', '==', (string)$locId)
-                        ->where('status', '==', 'approved')
+                        ->where('location_id', '=', (string)$locId)
+                        ->where('status', '=', 'approved')
                         ->limit(1)->documents() as $sreq) {
                         if (!$sreq->exists()) continue;
                         $sd = $sreq->data();

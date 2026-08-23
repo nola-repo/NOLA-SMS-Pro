@@ -364,7 +364,7 @@ final class GhlTokenProvider
             $data['firestore_doc_id'] = $registryKey;
         } else {
             $query = $db->collection('ghl_tokens')
-                ->where('location_id', '==', $registryKey)
+                ->where('location_id', '=', $registryKey)
                 ->limit(1)
                 ->documents();
             foreach ($query as $d) {

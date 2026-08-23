@@ -66,8 +66,8 @@ try {
 
         if ($approvedSenderId) {
             $approvedQuery = $db->collection('sender_id_requests')
-                ->where('location_id', '==', $locId)
-                ->where('status', '==', 'approved')
+                ->where('location_id', '=', $locId)
+                ->where('status', '=', 'approved')
                 ->documents();
 
             $stillApproved = false;

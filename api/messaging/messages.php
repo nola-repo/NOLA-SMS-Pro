@@ -147,15 +147,15 @@ try {
     // Bulk fetch by batch_id (frontend: /api/messages?batch_id=...).
     if ($batchId !== null && $batchId !== '') {
         $q = $db->collection('messages')
-            ->where('location_id', '==', $locId)
-            ->where('batch_id', '==', $batchId);
+            ->where('location_id', '=', $locId)
+            ->where('batch_id', '=', $batchId);
 
         // Allow combined filtering for a specific contact in a bulk batch
         if ($recipientKey) {
-            $q = $q->where('recipient_key', '==', (string)$recipientKey);
+            $q = $q->where('recipient_key', '=', (string)$recipientKey);
         }
         elseif ($conversationId) {
-            $q = $q->where('conversation_id', '==', (string)$conversationId);
+            $q = $q->where('conversation_id', '=', (string)$conversationId);
         }
 
         $query = $q->orderBy('date_created', 'DESC')
@@ -217,8 +217,8 @@ try {
         }
  
         $q = $db->collection('messages')
-            ->where('location_id', '==', $locId)
-            ->where('conversation_id', '==', $conv);
+            ->where('location_id', '=', $locId)
+            ->where('conversation_id', '=', $conv);
 
         $query = $q->orderBy('date_created', 'DESC')
             ->limit($limit)
@@ -253,11 +253,11 @@ try {
 
     if ($conversationId !== null && $conversationId !== '') {
         $q = $db->collection('messages')
-            ->where('conversation_id', '==', $conversationId);
+            ->where('conversation_id', '=', $conversationId);
 
         $recipientKey = $_GET['recipient_key'] ?? null;
         if ($recipientKey) {
-            $q = $q->where('recipient_key', '==', $recipientKey);
+            $q = $q->where('recipient_key', '=', $recipientKey);
         }
 
         $rows = [];
@@ -333,7 +333,7 @@ try {
 
     if ($direction === 'inbound' || $direction === 'all') {
         $q = $db->collection('inbound_messages')
-            ->where('location_id', '==', $locId);
+            ->where('location_id', '=', $locId);
 
         $inboundQuery = $q->orderBy('date_received', 'DESC')
             ->limit($direction === 'all' ? (int)($limit / 2) : $limit)
@@ -356,10 +356,10 @@ try {
 
     if ($direction === 'outbound' || $direction === 'all') {
         $q = $db->collection('sms_logs')
-            ->where('location_id', '==', $locId);
+            ->where('location_id', '=', $locId);
 
         if ($status) {
-            $q = $q->where('status', '==', $status);
+            $q = $q->where('status', '=', $status);
         }
 
         $q = $q->orderBy('date_created', 'DESC');

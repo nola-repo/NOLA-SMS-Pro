@@ -648,7 +648,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // Keep one active Sender ID per location in the request history.
         $sameLocationRequests = $db->collection('sender_id_requests')
-            ->where('location_id', '==', $locId)
+            ->where('location_id', '=', $locId)
             ->documents();
         foreach ($sameLocationRequests as $sameRequest) {
             if (!$sameRequest->exists() || $sameRequest->id() === $requestId) {
@@ -755,7 +755,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
 
     // Source: ghl_tokens collection, filtered by appType == 'agency'
     $agencyDocs = $db->collection('ghl_tokens')
-        ->where('appType', '==', 'agency')
+        ->where('appType', '=', 'agency')
         ->documents();
 
     foreach ($agencyDocs as $doc) {

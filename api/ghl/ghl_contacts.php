@@ -152,7 +152,7 @@ function nola_sync_contact_conversation($db, string $locationId, string $contact
 
             foreach (['messages', 'sms_logs'] as $collectionName) {
                 $rows = $db->collection($collectionName)
-                    ->where('conversation_id', '==', $sourceDocId)
+                    ->where('conversation_id', '=', $sourceDocId)
                     ->documents();
                 foreach ($rows as $row) {
                     if ($row->exists()) {
@@ -171,7 +171,7 @@ function nola_sync_contact_conversation($db, string $locationId, string $contact
 
     if ($contactId !== '') {
         $conversationDocs = $db->collection('conversations')
-            ->where('ghl_contact_id', '==', $contactId)
+            ->where('ghl_contact_id', '=', $contactId)
             ->documents();
         foreach ($conversationDocs as $doc) {
             if ($doc->exists()) {

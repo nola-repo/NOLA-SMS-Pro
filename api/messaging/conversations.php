@@ -61,7 +61,7 @@ try {
         }
 
         $q = $db->collection('conversations')
-            ->where('location_id', '==', $locId);
+            ->where('location_id', '=', $locId);
 
         if ($conversationId) {
             // Enforce prefixing for lookup if needed
@@ -69,7 +69,7 @@ try {
             if ((str_starts_with($conversationId, 'conv_') || str_starts_with($conversationId, 'group_')) && !str_starts_with($conversationId, $prefix)) {
                 $conversationId = $prefix . $conversationId;
             }
-            $q = $q->where('id', '==', $conversationId);
+            $q = $q->where('id', '=', $conversationId);
         }
 
         $q = $q->orderBy('last_message_at', 'DESC');
@@ -189,7 +189,7 @@ try {
                 $docRef->delete();
 
                 // Optional: Cascade delete messages sharing this ID
-                $messages = $db->collection('messages')->where('conversation_id', '==', $id)->documents();
+                $messages = $db->collection('messages')->where('conversation_id', '=', $id)->documents();
                 foreach ($messages as $msgDoc) {
                     $msgDoc->reference()->delete();
                 }

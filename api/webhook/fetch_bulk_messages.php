@@ -26,7 +26,7 @@ try {
 
     // Fetch bulk messages scoped to this location only
     $query = $collection
-        ->where('location_id', '==', $locationId)
+        ->where('location_id', '=', $locationId)
         ->where('batch_id', '!=', '')
         ->orderBy('batch_id')
         ->orderBy('date_created', 'DESC');

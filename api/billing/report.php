@@ -100,12 +100,12 @@ function report_month_range(?string $month): array
 
 function report_collect_transactions($db, string $scope, ?string $agencyId, ?string $locationId, ?DateTimeImmutable $monthStart, ?DateTimeImmutable $monthEnd): array
 {
-    $query = $db->collection('credit_transactions')->where('wallet_scope', '==', $scope);
+    $query = $db->collection('credit_transactions')->where('wallet_scope', '=', $scope);
 
     if ($scope === 'agency' && $agencyId) {
-        $query = $query->where('account_id', '==', $agencyId);
+        $query = $query->where('account_id', '=', $agencyId);
     } elseif ($scope === 'subaccount' && $locationId) {
-        $query = $query->where('account_id', '==', CreditManager::integration_doc_id_for_location($locationId));
+        $query = $query->where('account_id', '=', CreditManager::integration_doc_id_for_location($locationId));
     }
 
     $rows = [];

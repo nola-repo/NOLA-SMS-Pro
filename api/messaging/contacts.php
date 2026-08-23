@@ -68,13 +68,13 @@ function contacts_find_duplicate($db, string $locId, string $normalizedPhone, ?s
 
     $queries = [
         $db->collection('contacts')
-            ->where('location_id', '==', $locId)
-            ->where('phone_normalized', '==', $normalizedPhone)
+            ->where('location_id', '=', $locId)
+            ->where('phone_normalized', '=', $normalizedPhone)
             ->limit(2)
             ->documents(),
         $db->collection('contacts')
-            ->where('location_id', '==', $locId)
-            ->where('phone', '==', $normalizedPhone)
+            ->where('location_id', '=', $locId)
+            ->where('phone', '=', $normalizedPhone)
             ->limit(2)
             ->documents(),
     ];
@@ -148,15 +148,15 @@ try {
 
         $queryLimit = $search !== '' ? 500 : $limit;
         $q = $db->collection('contacts')
-            ->where('location_id', '==', $locId)
+            ->where('location_id', '=', $locId)
             ->orderBy('created_at', 'DESC');
 
         if ($phone !== '') {
             $normalized = contacts_normalized_phone($phone);
             if ($normalized !== null) {
-                $q = $q->where('phone_normalized', '==', $normalized);
+                $q = $q->where('phone_normalized', '=', $normalized);
             } else {
-                $q = $q->where('phone', '==', $phone);
+                $q = $q->where('phone', '=', $phone);
             }
         }
 

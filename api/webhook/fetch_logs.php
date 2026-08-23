@@ -31,28 +31,28 @@ try {
 
     if ($conversation_id) {
         $query = $collection
-            ->where('location_id', '==', $locationId)
+            ->where('location_id', '=', $locationId)
             ->where('conversation_id', '=', $conversation_id);
     }
     elseif ($recipient_key) {
         $query = $collection
-            ->where('location_id', '==', $locationId)
+            ->where('location_id', '=', $locationId)
             ->where('recipient_key', '=', $recipient_key);
     }
     elseif ($batch_id) {
         $query = $collection
-            ->where('location_id', '==', $locationId)
+            ->where('location_id', '=', $locationId)
             ->where('batch_id', '=', $batch_id);
     }
     elseif ($number) {
         $query = $collection
-            ->where('location_id', '==', $locationId)
+            ->where('location_id', '=', $locationId)
             ->where('number', '=', $number);
     }
     else {
         // Default: recent messages for this location
         $query = $collection
-            ->where('location_id', '==', $locationId);
+            ->where('location_id', '=', $locationId);
     }
 
     $logs = $query

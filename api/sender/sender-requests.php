@@ -57,7 +57,7 @@ try {
     if ($method === 'GET') {
         // Fetch sender ID requests for this location (removed orderBy to avoid composite index requirement)
         $query = $db->collection('sender_id_requests')
-                    ->where('location_id', '==', $locId)
+                    ->where('location_id', '=', $locId)
                     ->limit(50);
         
         $results = [];
@@ -169,7 +169,7 @@ try {
         // The same Sender ID may be requested or approved in multiple subaccounts.
         $requestedIdLower = strtolower($requestedId);
         $sameLocationRequests = $db->collection('sender_id_requests')
-            ->where('location_id', '==', $locId)
+            ->where('location_id', '=', $locId)
             ->documents();
 
         foreach ($sameLocationRequests as $requestDoc) {
