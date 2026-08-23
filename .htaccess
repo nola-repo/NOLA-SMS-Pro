@@ -4,9 +4,10 @@
     RewriteEngine On
     RewriteBase /
 
-    # Prevent Apache from issuing internal HTTP redirects for directory paths
-    # (e.g. /api/account -> http://...:8080/api/account/) which cause Mixed Content errors.
-    DirectorySlash Off
+    # Strip trailing slashes from /api/* paths to prevent Apache mod_dir from
+    # issuing an internal redirect over http (Mixed Content). This is the
+    # mod_rewrite equivalent of DirectorySlash Off for API routes.
+    RewriteRule ^(api/.+)/$ /$1 [R=301,L,NC]
 
     # ── Preserve Authorization header through rewrites ──────────────────
     # Apache strips HTTP_AUTHORIZATION when a RewriteRule is processed.
