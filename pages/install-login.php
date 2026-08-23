@@ -274,6 +274,7 @@ $sessionIdRaw  = trim((string)($_GET['session_id'] ?? ''));
 $installTokenRaw = trim((string)($_GET['install_token'] ?? ''));
 $redirectParamRaw = trim((string)($_GET['redirect'] ?? $_POST['redirect'] ?? ''));
 $redirectParamSafe = htmlspecialchars($redirectParamRaw, ENT_QUOTES, 'UTF-8');
+$bulkCount = max(0, (int)($_GET['count'] ?? 0));
 
 // ── Handle POST & Password Reset Actions ─────────────────────────────────────
 $formError = null;
