@@ -3,6 +3,7 @@
 <IfModule mod_rewrite.c>
     RewriteEngine On
     RewriteBase /
+    DirectorySlash Off
 
     # Strip trailing slashes from /api/* paths to prevent Apache mod_dir from
     # issuing an internal redirect over http (Mixed Content). This is the
@@ -213,7 +214,7 @@
     RewriteRule ^api/account-sender/?$       /api/account/account-sender.php         [NC,L,QSA]
     # notifications/
     RewriteRule ^api/notifications/?$        /api/notifications/notifications.php        [NC,L,QSA]
-    RewriteRule ^api/notification-settings/?$/api/notifications/notification-settings.php[NC,L,QSA]
+    RewriteRule ^api/notification-settings/?$ /api/notifications/notification-settings.php [NC,L,QSA]
     # billing/ additions
     RewriteRule ^api/credits/?$              /api/billing/credits.php                [NC,L,QSA]
     RewriteRule ^api/get_credit_transactions/?$ /api/billing/get_credit_transactions.php [NC,L,QSA]
