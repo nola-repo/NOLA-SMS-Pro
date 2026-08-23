@@ -198,7 +198,7 @@ function nola_sync_contact_conversation($db, string $locationId, string $contact
     }
 
     try {
-        require_once __DIR__ . '/cache_helper.php';
+        require_once __DIR__ . '/../cache_helper.php';
         NolaCache::deleteRegistry("conversations_registry_{$locationId}");
     } catch (\Throwable $cacheEx) {
         error_log("[ghl_contacts] Conversation cache invalidation failed: " . $cacheEx->getMessage());
@@ -207,7 +207,7 @@ function nola_sync_contact_conversation($db, string $locationId, string $contact
 
 // ── GET: fetch contacts (with pagination) ─────────────────────────────────
 if ($method === 'GET') {
-    require_once __DIR__ . '/cache_helper.php';
+    require_once __DIR__ . '/../cache_helper.php';
     $cacheTtl = 1800;
     $cacheKey = "ghl_contacts_list_{$locationId}";
     $lastGoodCacheKey = "ghl_contacts_last_good_{$locationId}";
@@ -317,7 +317,7 @@ if ($method === 'POST') {
 
     // Invalidate contacts cache
     try {
-        require_once __DIR__ . '/cache_helper.php';
+        require_once __DIR__ . '/../cache_helper.php';
         NolaCache::deleteRegistry("ghl_contacts_registry_{$locationId}");
     } catch (\Throwable $cacheEx) {
         error_log("[ghl_contacts] Cache invalidation failed: " . $cacheEx->getMessage());
@@ -367,7 +367,7 @@ if ($method === 'PUT') {
 
     // Invalidate contacts cache
     try {
-        require_once __DIR__ . '/cache_helper.php';
+        require_once __DIR__ . '/../cache_helper.php';
         NolaCache::deleteRegistry("ghl_contacts_registry_{$locationId}");
     } catch (\Throwable $cacheEx) {
         error_log("[ghl_contacts] Cache invalidation failed: " . $cacheEx->getMessage());
@@ -420,7 +420,7 @@ if ($method === 'DELETE') {
 
     // Invalidate contacts cache
     try {
-        require_once __DIR__ . '/cache_helper.php';
+        require_once __DIR__ . '/../cache_helper.php';
         NolaCache::deleteRegistry("ghl_contacts_registry_{$locationId}");
     } catch (\Throwable $cacheEx) {
         error_log("[ghl_contacts] Cache invalidation failed: " . $cacheEx->getMessage());
