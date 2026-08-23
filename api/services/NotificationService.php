@@ -623,7 +623,7 @@ class NotificationService
         require_once __DIR__ . '/GhlClient.php';
 
         // ── 1. Read required env vars ──────────────────────────────────────
-        $centralLocationId = getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: '';
+        $centralLocationId = getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: 'kXqTpfqXBuKBMjXKLZxG';
         if ($centralLocationId === '') {
             error_log(
                 "[LowBalanceAlert::syncCentral] NOLA_ALERT_GHL_LOCATION_ID is not set. "
@@ -823,7 +823,7 @@ class NotificationService
 
         self::createRegistrationAdminNotification($db, $locationId, $email, $fullName, $phone, $role);
 
-        $centralLocationId = getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: '';
+        $centralLocationId = getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: 'kXqTpfqXBuKBMjXKLZxG';
         if ($centralLocationId === '') {
             error_log("[WelcomeAlert] NOLA_ALERT_GHL_LOCATION_ID is not set. Skipping GHL delivery.");
             return;
@@ -1078,7 +1078,7 @@ class NotificationService
         require_once __DIR__ . '/GhlClient.php';
 
         // ── 1. Read required env vars ──────────────────────────────────────
-        $centralLocationId = getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: '';
+        $centralLocationId = getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: 'kXqTpfqXBuKBMjXKLZxG';
         if ($centralLocationId === '') {
             error_log(
                 "[SenderIdAlert::syncCentral] NOLA_ALERT_GHL_LOCATION_ID is not set. "
@@ -1366,7 +1366,7 @@ class NotificationService
         require_once __DIR__ . '/GhlClient.php';
 
         // ── 1. Read required env vars ──────────────────────────────────────
-        $centralLocationId = getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: '';
+        $centralLocationId = getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: 'kXqTpfqXBuKBMjXKLZxG';
         if ($centralLocationId === '') {
             error_log(
                 "[TopUpSuccessAlert::syncCentral] NOLA_ALERT_GHL_LOCATION_ID is not set. "
@@ -1631,7 +1631,7 @@ class NotificationService
         string $message = '',
         ?string $emailOverride = null
     ): void {
-        $centralLocationId = getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: '';
+        $centralLocationId = getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: 'kXqTpfqXBuKBMjXKLZxG';
         if ($centralLocationId === '') {
             error_log("[SupportTicketAlert] NOLA_ALERT_GHL_LOCATION_ID is not set. Skipping GHL delivery.");
             return;
@@ -2105,7 +2105,7 @@ class NotificationService
      */
     public static function notifyForgotPasswordOtp($db, string $email, string $otp): void
     {
-        $centralLocationId = getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: '';
+        $centralLocationId = getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: 'kXqTpfqXBuKBMjXKLZxG';
         if ($centralLocationId === '') {
             error_log("[forgot_password_otp] NOLA_ALERT_GHL_LOCATION_ID not set. Skipping GHL delivery.");
             return;

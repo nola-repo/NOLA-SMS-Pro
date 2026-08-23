@@ -62,30 +62,54 @@
     RewriteRule ^oauth/callback/?$        pages/ghl_callback.php        [NC,L,QSA]
     RewriteRule ^oauth/agency-callback/?$ pages/ghl_agency_callback.php [NC,L,QSA]
 
-    # ── Hide .php extension: redirect direct .php access to clean URLs ──
+    # ── Hide .php extension: redirect direct .php GET access to clean URLs ──
     # This prevents users from accessing the .php files directly if they know the path.
+    # NOTE: Only apply 301 redirects to GET requests — POST webhooks must never be redirected!
+    RewriteCond %{REQUEST_METHOD} GET
     RewriteCond %{THE_REQUEST} \s/+api/webhook/send_sms\.php[\s?] [NC]
     RewriteRule ^api/webhook/send_sms\.php$ /webhook/send_sms [R=301,L]
+
+    RewriteCond %{REQUEST_METHOD} GET
     RewriteCond %{THE_REQUEST} \s/+api/webhook/receive_sms\.php[\s?] [NC]
     RewriteRule ^api/webhook/receive_sms\.php$ /webhook/receive_sms [R=301,L]
+
+    RewriteCond %{REQUEST_METHOD} GET
     RewriteCond %{THE_REQUEST} \s/+api/webhook/retrieve_status\.php[\s?] [NC]
     RewriteRule ^api/webhook/retrieve_status\.php$ /webhook/retrieve_status [R=301,L]
+
+    RewriteCond %{REQUEST_METHOD} GET
     RewriteCond %{THE_REQUEST} \s/+api/messages\.php[\s?] [NC]
     RewriteRule ^api/messages\.php$ /api/messages [R=301,L]
+
+    RewriteCond %{REQUEST_METHOD} GET
     RewriteCond %{THE_REQUEST} \s/+api/contacts\.php[\s?] [NC]
     RewriteRule ^api/contacts\.php$ /api/contacts [R=301,L]
+
+    RewriteCond %{REQUEST_METHOD} GET
     RewriteCond %{THE_REQUEST} \s/+api/credits\.php[\s?] [NC]
     RewriteRule ^api/credits\.php$ /api/credits [R=301,L]
+
+    RewriteCond %{REQUEST_METHOD} GET
     RewriteCond %{THE_REQUEST} \s/+api/get_credit_transactions\.php[\s?] [NC]
     RewriteRule ^api/get_credit_transactions\.php$ /api/get_credit_transactions [R=301,L]
+
+    RewriteCond %{REQUEST_METHOD} GET
     RewriteCond %{THE_REQUEST} \s/+ghl_callback\.php[\s?] [NC]
     RewriteRule ^ghl_callback\.php$ /oauth/callback [R=301,L]
+
+    RewriteCond %{REQUEST_METHOD} GET
     RewriteCond %{THE_REQUEST} \s/+ghl_agency_callback\.php[\s?] [NC]
     RewriteRule ^ghl_agency_callback\.php$ /oauth/agency-callback [R=301,L]
+
+    RewriteCond %{REQUEST_METHOD} GET
     RewriteCond %{THE_REQUEST} \s/+install-login\.php[\s?] [NC]
     RewriteRule ^install-login\.php$ /login [R=301,L]
+
+    RewriteCond %{REQUEST_METHOD} GET
     RewriteCond %{THE_REQUEST} \s/+install-register\.php[\s?] [NC]
     RewriteRule ^install-register\.php$ /register [R=301,L]
+
+    RewriteCond %{REQUEST_METHOD} GET
     RewriteCond %{THE_REQUEST} \s/+install-forgot-password\.php[\s?] [NC]
     RewriteRule ^install-forgot-password\.php$ /forgot-password [R=301,L]
 
@@ -164,14 +188,16 @@
     RewriteRule ^api/admin/location_owner/?$ /api/admin/location_owner.php [NC,L,QSA]
 
     # ── Billing endpoints ──────────────────────────────────────────────
-    RewriteRule ^api/billing/agency_wallet/?$      /api/billing/agency_wallet.php      [NC,L,QSA]
-    RewriteRule ^api/billing/subaccount_wallet/?$  /api/billing/subaccount_wallet.php  [NC,L,QSA]
-    RewriteRule ^api/billing/subscription/?$       /api/billing/subscription.php       [NC,L,QSA]
-    RewriteRule ^api/billing/plan-webhook/?$       /api/billing/plan_webhook.php       [NC,L,QSA]
-    RewriteRule ^api/billing/transactions/?$       /api/billing/transactions.php       [NC,L,QSA]
-    RewriteRule ^api/billing/credit_requests/?$    /api/billing/credit_requests.php    [NC,L,QSA]
-    RewriteRule ^api/billing/auto_recharge_cron/?$ /api/billing/auto_recharge_cron.php [NC,L,QSA]
-    RewriteRule ^api/billing/monthly_credit_reset_cron/?$ /api/billing/monthly_credit_reset_cron.php [NC,L,QSA]
+    RewriteRule ^api/billing/agency_wallet(\.php)?/?$      /api/billing/agency_wallet.php      [NC,L,QSA]
+    RewriteRule ^api/billing/subaccount_wallet(\.php)?/?$  /api/billing/subaccount_wallet.php  [NC,L,QSA]
+    RewriteRule ^api/billing/subscription(\.php)?/?$       /api/billing/subscription.php       [NC,L,QSA]
+    RewriteRule ^api/billing/plan-webhook(\.php)?/?$       /api/billing/plan_webhook.php       [NC,L,QSA]
+    RewriteRule ^api/billing/plan_webhook(\.php)?/?$       /api/billing/plan_webhook.php       [NC,L,QSA]
+    RewriteRule ^api/billing/credits(\.php)?/?$            /api/billing/credits.php            [NC,L,QSA]
+    RewriteRule ^api/billing/transactions(\.php)?/?$       /api/billing/transactions.php       [NC,L,QSA]
+    RewriteRule ^api/billing/credit_requests(\.php)?/?$    /api/billing/credit_requests.php    [NC,L,QSA]
+    RewriteRule ^api/billing/auto_recharge_cron(\.php)?/?$ /api/billing/auto_recharge_cron.php [NC,L,QSA]
+    RewriteRule ^api/billing/monthly_credit_reset_cron(\.php)?/?$ /api/billing/monthly_credit_reset_cron.php [NC,L,QSA]
 
     # ── Generic API endpoints (updated paths after reorganization) ──────────
     # messaging/

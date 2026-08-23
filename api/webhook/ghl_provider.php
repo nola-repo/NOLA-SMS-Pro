@@ -504,7 +504,7 @@ if ($dedupSnap->exists()) {
 
 // ── System Notification Detection --------------------------------------------
 // Identifies requests originating from central admin workflows or system alerts
-$centralLocationId = trim((string)(getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: ''));
+$centralLocationId = trim((string)(getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: 'kXqTpfqXBuKBMjXKLZxG'));
 if ($centralLocationId === '') {
     try {
         $sysConfig = $db->collection('admin_config')->document('system_alerts')->snapshot();
