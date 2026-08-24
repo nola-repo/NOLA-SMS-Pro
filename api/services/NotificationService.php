@@ -401,7 +401,7 @@ class NotificationService
      * @param string                                  $centralLocationId
      * @return array<string, string>  Map of friendly key → real GHL custom field id
      */
-    private static function resolveCentralGhlCustomFieldIds($db, $ghlClient, string $centralLocationId): array
+    private static function resolveCentralGhlCustomFieldIds($db, $ghlClient, string $centralLocationId, bool $forceRefresh = false): array
     {
         $adminRef  = $db->collection('admin_config')->document('nola_alerts');
         $adminSnap = $adminRef->snapshot();
@@ -430,16 +430,18 @@ class NotificationService
             'nola_sms_sender_id_registered',
         ];
 
-        // Return immediately if all required IDs are already cached
-        $hasAll = true;
-        foreach ($requiredKeys as $rk) {
-            if (empty($cachedIds[$rk])) {
-                $hasAll = false;
-                break;
+        // Return immediately if all required IDs are already cached (unless forceRefresh is true)
+        if (!$forceRefresh) {
+            $hasAll = true;
+            foreach ($requiredKeys as $rk) {
+                if (empty($cachedIds[$rk])) {
+                    $hasAll = false;
+                    break;
+                }
             }
-        }
-        if ($hasAll) {
-            return $cachedIds;
+            if ($hasAll) {
+                return $cachedIds;
+            }
         }
 
         // Fetch custom fields from the central GHL location
@@ -1426,8 +1428,8 @@ class NotificationService
             );
         }
 
-        // ── 4. Resolve real GHL custom field IDs from cache or API ─────────
-        $fieldIdMap = self::resolveCentralGhlCustomFieldIds($db, $ghlClient, $centralLocationId);
+        // ── 4. Resolve real GHL custom field IDs live from API ─────────
+        $fieldIdMap = self::resolveCentralGhlCustomFieldIds($db, $ghlClient, $centralLocationId, true);
 
         // ── 5. Build alert custom fields payload ───────────────────────────
         $now       = new \DateTimeImmutable();
