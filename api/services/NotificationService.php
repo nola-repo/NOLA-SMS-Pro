@@ -462,30 +462,30 @@ class NotificationService
                         $normName = trim(strtolower(preg_replace('/[^a-zA-Z0-9]+/', '_', trim($fieldName))), '_');
                         $normKey  = trim(strtolower(preg_replace('/[^a-zA-Z0-9]+/', '_', str_replace('contact.', '', $fieldKey))), '_');
 
-                        foreach ($requiredKeys as $rk) {
-                            if ($normName === $rk || $normKey === $rk) {
-                                $newMapping[$rk] = $fieldId;
-                                continue;
+                        // Precise key & name mapping (prevents 'low_balance_threshold' from overwriting 'nola_sms_balance')
+                        if ($normName === 'nola_sms_balance' || $normKey === 'nola_sms_balance' || $normName === 'sms_balance' || $normName === 'nola_balance') {
+                            $newMapping['nola_sms_balance'] = $fieldId;
+                        } elseif ($normName === 'nola_sms_low_balance_threshold' || $normKey === 'nola_sms_low_balance_threshold' || $normName === 'low_balance_threshold' || $normName === 'balance_threshold') {
+                            $newMapping['nola_sms_low_balance_threshold'] = $fieldId;
+                        } elseif ($normName === 'nola_sms_admin_notes' || $normKey === 'nola_sms_admin_notes' || $normName === 'admin_notes' || $normName === 'transaction_details' || $normName === 'admin_notes_field') {
+                            $newMapping['nola_sms_admin_notes'] = $fieldId;
+                        } elseif ($normName === 'nola_sms_source_location_id' || $normKey === 'nola_sms_source_location_id' || $normName === 'source_location_id' || $normName === 'location_id') {
+                            $newMapping['nola_sms_source_location_id'] = $fieldId;
+                        } elseif ($normName === 'nola_sms_source_location_name' || $normKey === 'nola_sms_source_location_name' || $normName === 'source_location_name' || $normName === 'location_name') {
+                            $newMapping['nola_sms_source_location_name'] = $fieldId;
+                        } elseif ($normName === 'nola_sms_registered_email' || $normKey === 'nola_sms_registered_email' || $normName === 'registered_email' || $normName === 'account_email') {
+                            $newMapping['nola_sms_registered_email'] = $fieldId;
+                        } else {
+                            // Check exact matches across all required keys
+                            foreach ($requiredKeys as $rk) {
+                                if ($normName === $rk || $normKey === $rk) {
+                                    $newMapping[$rk] = $fieldId;
+                                    break;
+                                }
                             }
-                            // Match variations without prefix or alternate naming in GHL
-                            if ($rk === 'nola_sms_source_location_name' && (in_array($normName, ['source_location_name', 'location_name', 'workspace_name', 'workspace'], true) || strpos($normName, 'location_name') !== false)) {
-                                $newMapping[$rk] = $fieldId;
-                            } elseif ($rk === 'nola_sms_source_location_id' && (in_array($normName, ['source_location_id', 'location_id'], true) || strpos($normName, 'location_id') !== false)) {
-                                $newMapping[$rk] = $fieldId;
-                            } elseif ($rk === 'nola_sms_registered_email' && (in_array($normName, ['registered_email', 'account_email'], true) || strpos($normName, 'email') !== false)) {
-                                $newMapping[$rk] = $fieldId;
-                            } elseif ($rk === 'nola_sms_sender_id' && in_array($normName, ['requested_sender_id', 'sender_id', 'requested_sender'], true)) {
-                                $newMapping[$rk] = $fieldId;
-                            } elseif ($rk === 'nola_sms_purpose' && in_array($normName, ['purpose', 'business_purpose'], true)) {
-                                $newMapping[$rk] = $fieldId;
-                            } elseif ($rk === 'nola_sms_sample_message' && in_array($normName, ['sample_message', 'sample_sms'], true)) {
-                                $newMapping[$rk] = $fieldId;
-                            } elseif ($rk === 'nola_sms_admin_notes' && (strpos($normName, 'notes') !== false || strpos($normName, 'transaction') !== false || strpos($normKey, 'notes') !== false)) {
-                                $newMapping[$rk] = $fieldId;
-                            } elseif ($rk === 'nola_sms_balance' && (strpos($normName, 'balance') !== false || strpos($normKey, 'balance') !== false)) {
-                                $newMapping[$rk] = $fieldId;
-                            } elseif ($rk === 'nola_sms_has_documents' && in_array($normName, ['has_documents', 'supporting_documents_attached', 'supporting_documents', 'documents_attached'], true)) {
-                                $newMapping[$rk] = $fieldId;
+                            // Guarded balance fallback (only if balance key contains 'balance' but NOT 'threshold' or 'low')
+                            if (empty($newMapping['nola_sms_balance']) && strpos($normName, 'balance') !== false && strpos($normName, 'threshold') === false && strpos($normName, 'low') === false) {
+                                $newMapping['nola_sms_balance'] = $fieldId;
                             }
                         }
                     }
