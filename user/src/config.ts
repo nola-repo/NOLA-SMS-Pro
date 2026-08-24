@@ -37,21 +37,21 @@ export const API_CONFIG = {
     // Primary API Base
     base: API_BASE,
 
-    // Specific Endpoints
-    sms: `${API_BASE}/api/sms`,
-    credits: `${API_BASE}/api/credits`,
-    contacts: `${API_BASE}/api/contacts`,         // local Firestore contacts (add/edit/delete)
-    ghl_contacts: `${API_BASE}/api/ghl-contacts`,  // GHL live contacts proxy
-    ghl_conversations: `${API_BASE}/api/ghl-conversations`, // GHL conversation creation
-    messages: `${API_BASE}/api/messages`,
-    conversations: `${API_BASE}/api/conversations`,
-    bulk_campaigns: `${API_BASE}/api/bulk-campaigns`,
-    sender_requests: `${API_BASE}/api/sender-requests`,
-    account_sender: `${API_BASE}/api/account-sender`,
-    account: `${API_BASE}/api/account`,
-    templates: `${API_BASE}/api/templates`,
-    tickets: `${API_BASE}/api/tickets`,
-    notificationSettings: `${API_BASE}/api/notification-settings`,
+    // Specific Endpoints (trailing slashes prevent Apache directory redirects to http://:8080)
+    sms: `${API_BASE}/api/sms/`,
+    credits: `${API_BASE}/api/credits/`,
+    contacts: `${API_BASE}/api/contacts/`,         // local Firestore contacts (add/edit/delete)
+    ghl_contacts: `${API_BASE}/api/ghl-contacts/`,  // GHL live contacts proxy
+    ghl_conversations: `${API_BASE}/api/ghl-conversations/`, // GHL conversation creation
+    messages: `${API_BASE}/api/messages/`,
+    conversations: `${API_BASE}/api/conversations/`,
+    bulk_campaigns: `${API_BASE}/api/bulk-campaigns/`,
+    sender_requests: `${API_BASE}/api/sender-requests/`,
+    account_sender: `${API_BASE}/api/account-sender/`,
+    account: `${API_BASE}/api/account/`,
+    templates: `${API_BASE}/api/templates/`,
+    tickets: `${API_BASE}/api/tickets/`,
+    notificationSettings: `${API_BASE}/api/notification-settings/`,
     check_message_status: `${API_BASE}/api/check_message_status.php`,
 };
 
