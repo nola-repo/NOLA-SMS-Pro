@@ -116,6 +116,12 @@ try {
 
         if ($action === 'add') {
             $newBalance = $creditManager->add_credits($accountId, $amount, $reference, $description);
+            try {
+                require_once __DIR__ . '/../services/NotificationService.php';
+                NotificationService::notifyTopUpSuccess($db, $accountId, $amount, $newBalance);
+            } catch (\Throwable $e) {
+                error_log('[credits.php] notifyTopUpSuccess error: ' . $e->getMessage());
+            }
         }
         elseif ($action === 'deduct') {
             $newBalance = $creditManager->deduct_credits($accountId, $amount, $reference, $description);
