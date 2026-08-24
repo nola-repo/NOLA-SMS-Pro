@@ -280,6 +280,13 @@ export const CreditsTab: React.FC = () => {
         }
         if (lastLiveBalanceRef.current === nextBalance) return;
 
+        // Auto close checkout popup modal if balance increases while checkout window is open
+        if (submitted && nextBalance > (lastLiveBalanceRef.current ?? 0)) {
+            resetCheckoutState(true);
+            refreshCreditsView();
+            window.dispatchEvent(new Event("nola-notifications-refresh"));
+        }
+
         lastLiveBalanceRef.current = nextBalance;
         const timer = window.setTimeout(async () => {
             try {
@@ -293,7 +300,7 @@ export const CreditsTab: React.FC = () => {
         }, 250);
 
         return () => window.clearTimeout(timer);
-    }, [creditStatus, locationId, txMonth]);
+    }, [creditStatus, locationId, txMonth, submitted, resetCheckoutState, refreshCreditsView]);
 
     useEffect(() => {
         mountedRef.current = true;
@@ -581,11 +588,17 @@ export const CreditsTab: React.FC = () => {
         popup.location.href = checkoutUrl.toString();
 
         clearCheckoutTimers();
+        let pollCount = 0;
         popupPollRef.current = setInterval(() => {
             try {
                 if (popup.closed) {
                     resetCheckoutState(false);
                     load();
+                    return;
+                }
+                pollCount++;
+                if (pollCount % 2 === 0) {
+                    void refreshCreditStatus();
                 }
             } catch {
                 // Ignore cross-origin DOM exceptions.
