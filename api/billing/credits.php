@@ -69,37 +69,27 @@ try {
         }
 
         $creditManager = new CreditManager();
-        $locId = get_ghl_location_id();
 
-        // Robust check for location_id in the payload (for webhooks/automations)
-        if (!$locId) {
-            $locId = $payload['company_name'] ?? $payload['companyName'] ??
-                $payload['location_id'] ?? $payload['locationId'] ?? $payload['location'] ??
-                $payload['business.name'] ?? $payload['business_name'] ?? null;
+        // Extract location_id from payload / customData first (most reliable for GHL webhooks)
+        $payloadLocId = $payload['location_id'] ?? $payload['locationId'] ?? $payload['location'] ??
+            ($payload['customData']['location_id'] ?? $payload['customData']['locationId'] ?? $payload['customData']['location'] ?? null);
+
+        if (is_array($payloadLocId) || is_object($payloadLocId)) {
+            $payloadLocId = $payloadLocId['id'] ?? $payloadLocId['locationId'] ?? $payloadLocId['location_id'] ?? null;
         }
 
-        // Extra robust check for nested customData (GHL sometimes nests these)
-        if (empty($locId) || is_array($locId)) {
-            $nestedLocId = $payload['customData']['company_name'] ?? $payload['customData']['companyName'] ??
-                $payload['customData']['location_id'] ?? $payload['customData']['locationId'] ??
-                $payload['customData']['location'] ?? $payload['customData']['business.name'] ??
-                $payload['customData']['business_name'] ?? null;
-            if ($nestedLocId && !is_array($nestedLocId)) {
-                $locId = $nestedLocId;
+        $locId = null;
+        if (is_string($payloadLocId) && trim($payloadLocId) !== '' && strpos(trim($payloadLocId), ' ') === false) {
+            $locId = trim($payloadLocId);
+        }
+
+        if (!$locId) {
+            $headerLocId = get_ghl_location_id();
+            if (is_string($headerLocId) && trim($headerLocId) !== '' && strpos(trim($headerLocId), ' ') === false) {
+                $locId = trim($headerLocId);
             }
         }
 
-        // If it's still null or an object (like GHL's standard location object), try to get the ID
-        if (is_array($locId) || is_object($locId)) {
-            $locId = $locId['id'] ?? $locId['locationId'] ?? $locId['location_id'] ?? null;
-        }
-
-        // Final prioritize check: if we have a company_name that is a string, use it
-        if (!empty($payload['company_name']) && is_string($payload['company_name'])) {
-            $locId = $payload['company_name'];
-        }
-
-        // If it's still null, and we see GHL-like headers or payload structure, log it
         if (!$locId && (isset($payload['contact']) || isset($payload['workflow']))) {
             $locId = $payload['locationId'] ?? $payload['contact']['locationId'] ?? null;
         }
