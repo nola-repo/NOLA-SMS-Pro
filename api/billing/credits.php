@@ -108,7 +108,13 @@ try {
             $newBalance = $creditManager->add_credits($accountId, $amount, $reference, $description);
             try {
                 require_once __DIR__ . '/../services/NotificationService.php';
-                NotificationService::notifyTopUpSuccess($db, $accountId, $amount, $newBalance);
+                $webhookEmail = $payload['email'] ?? $payload['contact']['email'] ?? ($payload['customData']['email'] ?? null);
+                if (is_string($webhookEmail) && trim($webhookEmail) !== '') {
+                    $webhookEmail = trim($webhookEmail);
+                } else {
+                    $webhookEmail = null;
+                }
+                NotificationService::notifyTopUpSuccess($db, $accountId, $amount, $newBalance, $webhookEmail);
             } catch (\Throwable $e) {
                 error_log('[credits.php] notifyTopUpSuccess error: ' . $e->getMessage());
             }

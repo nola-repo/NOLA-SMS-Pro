@@ -1562,11 +1562,11 @@ class NotificationService
      * @param int $amount
      * @param int $newBalance
      */
-    public static function notifyTopUpSuccess($db, string $locationId, int $amount, int $newBalance): void
+    public static function notifyTopUpSuccess($db, string $locationId, int $amount, int $newBalance, ?string $overrideEmail = null): void
     {
         // ── 1. Resolve registered account details ────────────────────────
         $details = self::getAccountDetails($db, $locationId);
-        $email   = $details['email'];
+        $email   = (!empty($overrideEmail) && is_string($overrideEmail)) ? trim($overrideEmail) : ($details['email'] ?? null);
         $name    = $details['name'] ?? 'NOLA Owner';
 
         if (!$email) {
