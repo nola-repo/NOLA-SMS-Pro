@@ -235,9 +235,16 @@ export const updateAccountProfile = async (
         }),
     });
 
-    let data: any = null;
+    interface UpdateProfileResponse {
+        status?: string;
+        message?: string;
+        error?: string;
+        data?: Partial<AccountProfile>;
+    }
+
+    let data: UpdateProfileResponse | null = null;
     try {
-        data = await res.json();
+        data = (await res.json()) as UpdateProfileResponse;
     } catch {
         data = null;
     }
