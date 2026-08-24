@@ -69,24 +69,20 @@ try {
         }
 
         $creditManager = new CreditManager();
-        $locId = get_ghl_location_id();
 
-        // Robust check for location_id in the payload (for webhooks/automations)
-        if (!$locId) {
-            $locId = $payload['company_name'] ?? $payload['companyName'] ??
-                $payload['location_id'] ?? $payload['locationId'] ?? $payload['location'] ??
-                $payload['business.name'] ?? $payload['business_name'] ?? null;
+        // Prioritize explicit body location_id (GHL Webhook custom data) over header
+        $bodyLocId = $payload['location_id'] ?? $payload['locationId'] ?? $payload['location'] ??
+            ($payload['customData']['location_id'] ?? $payload['customData']['locationId'] ?? null);
+
+        if (!empty($bodyLocId) && is_string($bodyLocId) && strpos($bodyLocId, '{{') === false) {
+            $locId = trim($bodyLocId);
+        } else {
+            $locId = get_ghl_location_id();
         }
 
-        // Extra robust check for nested customData (GHL sometimes nests these)
-        if (empty($locId) || is_array($locId)) {
-            $nestedLocId = $payload['customData']['company_name'] ?? $payload['customData']['companyName'] ??
-                $payload['customData']['location_id'] ?? $payload['customData']['locationId'] ??
-                $payload['customData']['location'] ?? $payload['customData']['business.name'] ??
-                $payload['customData']['business_name'] ?? null;
-            if ($nestedLocId && !is_array($nestedLocId)) {
-                $locId = $nestedLocId;
-            }
+        if (!$locId) {
+            $locId = $payload['company_name'] ?? $payload['companyName'] ??
+                $payload['business.name'] ?? $payload['business_name'] ?? null;
         }
 
         // If it's still null or an object (like GHL's standard location object), try to get the ID
