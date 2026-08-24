@@ -281,7 +281,14 @@ export const CreditsTab: React.FC = () => {
         if (lastLiveBalanceRef.current === nextBalance) return;
 
         // Auto close checkout popup window if balance increases while checkout modal is open
-        if (submitted && nextBalance > (lastLiveBalanceRef.current ?? 0)) {
+        if (nextBalance > (lastLiveBalanceRef.current ?? 0)) {
+            if (popupRef.current && !popupRef.current.closed) {
+                try {
+                    popupRef.current.close();
+                } catch {
+                    // Ignore cross-origin popup close restrictions
+                }
+            }
             resetCheckoutState(true);
             refreshCreditsView();
             window.dispatchEvent(new Event("nola-notifications-refresh"));
