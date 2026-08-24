@@ -69,40 +69,7 @@ try {
         }
 
         $creditManager = new CreditManager();
-
-        // Extract location_id from payload / customData first (most reliable for GHL webhooks)
-        $payloadLocId = $payload['location_id'] ?? $payload['locationId'] ?? $payload['location'] ??
-            ($payload['customData']['location_id'] ?? $payload['customData']['locationId'] ?? $payload['customData']['location'] ?? null);
-
-        if (is_array($payloadLocId) || is_object($payloadLocId)) {
-            $payloadLocId = $payloadLocId['id'] ?? $payloadLocId['locationId'] ?? $payloadLocId['location_id'] ?? null;
-        }
-
-        $locId = null;
-        if (is_string($payloadLocId) && trim($payloadLocId) !== '' && strpos(trim($payloadLocId), ' ') === false) {
-            $locId = trim($payloadLocId);
-        }
-
-        if (!$locId) {
-            $headerLocId = get_ghl_location_id();
-            if (is_string($headerLocId) && trim($headerLocId) !== '' && strpos(trim($headerLocId), ' ') === false) {
-                $locId = trim($headerLocId);
-            }
-        }
-
-        if (!$locId && (isset($payload['contact']) || isset($payload['workflow']))) {
-            $locId = $payload['locationId'] ?? $payload['contact']['locationId'] ?? null;
-        }
-
-        $accountId = $locId ?: 'default';
-
-        // Ensure accountId is a string if it's not 'default'
-        if ($accountId !== 'default') {
-            if (is_array($accountId)) {
-                $accountId = $accountId[0] ?? 'default';
-            }
-            $accountId = trim((string)$accountId);
-        }
+        $accountId = resolve_target_subaccount_id($payload, $db);
 
         if ($action === 'add') {
             $newBalance = $creditManager->add_credits($accountId, $amount, $reference, $description);
@@ -353,4 +320,101 @@ catch (\Throwable $e) {
         'error' => 'Failed to fetch credit balance',
         'message' => $e->getMessage(),
     ], JSON_PRETTY_PRINT);
+}
+
+/**
+ * Robustly resolve target subaccount location_id for credit top-ups.
+ * Prevents crediting Central Master GHL Location (kXqTpfqXBuKBMjXKLZxG).
+ */
+function resolve_target_subaccount_id(array $payload, $db): string
+{
+    $centralLocationId = getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: 'kXqTpfqXBuKBMjXKLZxG';
+
+    // 1. Check customData explicitly passed in GHL Webhook drawer action
+    $customData = $payload['customData'] ?? [];
+    if (is_array($customData)) {
+        foreach (['location_id', 'source_location_id', 'nola_sms_source_location_id', 'subaccount_id', 'locationId'] as $k) {
+            if (!empty($customData[$k]) && is_string($customData[$k])) {
+                $val = trim($customData[$k]);
+                if ($val !== '' && strpos($val, ' ') === false && $val !== 'Company . Company Name' && $val !== $centralLocationId) {
+                    return $val;
+                }
+            }
+        }
+    }
+
+    // 2. Check root payload location_id / location
+    $payloadLocId = $payload['location_id'] ?? $payload['locationId'] ?? $payload['location'] ?? null;
+    if (is_array($payloadLocId) || is_object($payloadLocId)) {
+        $payloadLocId = $payloadLocId['id'] ?? $payloadLocId['locationId'] ?? $payloadLocId['location_id'] ?? null;
+    }
+    if (is_string($payloadLocId) && trim($payloadLocId) !== '') {
+        $val = trim($payloadLocId);
+        if ($val !== '' && strpos($val, ' ') === false && $val !== 'Company . Company Name' && $val !== $centralLocationId) {
+            return $val;
+        }
+    }
+
+    // 3. Search contact custom fields in payload for nola_sms_source_location_id / source_location_id
+    $contactCustomFields = $payload['contact']['customFields'] ?? $payload['customFields'] ?? $payload['contact']['custom_fields'] ?? [];
+    if (is_array($contactCustomFields)) {
+        foreach ($contactCustomFields as $cf) {
+            $key = strtolower(trim((string)($cf['key'] ?? $cf['name'] ?? $cf['field_key'] ?? '')));
+            $val = trim((string)($cf['value'] ?? $cf['field_value'] ?? ''));
+            if ($val !== '' && strpos($val, ' ') === false && $val !== $centralLocationId && $val !== 'Company . Company Name') {
+                if (strpos($key, 'source_location') !== false || strpos($key, 'subaccount') !== false || $key === 'nola_sms_source_location_id') {
+                    return $val;
+                }
+            }
+        }
+    }
+
+    // 4. Resolve target subaccount by contact's email in Firestore
+    $email = $payload['email'] ?? $payload['contact']['email'] ?? ($payload['customData']['email'] ?? null);
+    if (!empty($email) && is_string($email)) {
+        $cleanEmail = strtolower(trim($email));
+        try {
+            $userDocs = $db->collection('users')->where('email', '==', $cleanEmail)->limit(1)->documents();
+            foreach ($userDocs as $uDoc) {
+                if ($uDoc->exists()) {
+                    $uData = $uDoc->data();
+                    if (!empty($uData['active_location_id'])) {
+                        $loc = trim((string)$uData['active_location_id']);
+                        if ($loc !== '' && $loc !== $centralLocationId) {
+                            return $loc;
+                        }
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log('[resolve_target_subaccount_id] Firestore user query failed: ' . $e->getMessage());
+        }
+
+        try {
+            $tokenDocs = $db->collection('ghl_tokens')->where('email', '==', $cleanEmail)->limit(1)->documents();
+            foreach ($tokenDocs as $tDoc) {
+                if ($tDoc->exists()) {
+                    $loc = $tDoc->id();
+                    if ($loc !== '' && $loc !== $centralLocationId) {
+                        return $loc;
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log('[resolve_target_subaccount_id] Firestore ghl_tokens query failed: ' . $e->getMessage());
+        }
+    }
+
+    // 5. Header fallback
+    $headerLocId = get_ghl_location_id();
+    if (is_string($headerLocId) && trim($headerLocId) !== '' && strpos(trim($headerLocId), ' ') === false && $headerLocId !== 'Company . Company Name') {
+        return trim($headerLocId);
+    }
+
+    // 6. Final fallback
+    if (is_string($payloadLocId) && trim($payloadLocId) !== '' && strpos(trim($payloadLocId), ' ') === false && $payloadLocId !== 'Company . Company Name') {
+        return trim($payloadLocId);
+    }
+
+    return 'default';
 }
