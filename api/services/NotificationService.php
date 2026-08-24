@@ -478,6 +478,10 @@ class NotificationService
                                 $newMapping[$rk] = $fieldId;
                             } elseif ($rk === 'nola_sms_sample_message' && in_array($normName, ['sample_message', 'sample_sms'], true)) {
                                 $newMapping[$rk] = $fieldId;
+                            } elseif ($rk === 'nola_sms_admin_notes' && in_array($normName, ['admin_notes', 'nola_sms_admin_notes', 'transaction_details', 'nola_sms_transaction_details', 'admin_notes_field'], true)) {
+                                $newMapping[$rk] = $fieldId;
+                            } elseif ($rk === 'nola_sms_balance' && in_array($normName, ['balance', 'nola_balance', 'sms_balance', 'nola_sms_balance'], true)) {
+                                $newMapping[$rk] = $fieldId;
                             } elseif ($rk === 'nola_sms_has_documents' && in_array($normName, ['has_documents', 'supporting_documents_attached', 'supporting_documents', 'documents_attached'], true)) {
                                 $newMapping[$rk] = $fieldId;
                             }
