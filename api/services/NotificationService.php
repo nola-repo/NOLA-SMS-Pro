@@ -459,8 +459,8 @@ class NotificationService
                         if (!$fieldId) continue;
 
                         // Normalise name and key, strip GHL "contact." prefix
-                        $normName = strtolower(preg_replace('/[^a-zA-Z0-9]/', '_', trim($fieldName)));
-                        $normKey  = strtolower(preg_replace('/[^a-zA-Z0-9]/', '_', str_replace('contact.', '', $fieldKey)));
+                        $normName = trim(strtolower(preg_replace('/[^a-zA-Z0-9]+/', '_', trim($fieldName))), '_');
+                        $normKey  = trim(strtolower(preg_replace('/[^a-zA-Z0-9]+/', '_', str_replace('contact.', '', $fieldKey))), '_');
 
                         foreach ($requiredKeys as $rk) {
                             if ($normName === $rk || $normKey === $rk) {
@@ -468,11 +468,11 @@ class NotificationService
                                 continue;
                             }
                             // Match variations without prefix or alternate naming in GHL
-                            if ($rk === 'nola_sms_source_location_name' && in_array($normName, ['source_location_name', 'location_name', 'workspace_name', 'workspace'], true)) {
+                            if ($rk === 'nola_sms_source_location_name' && (in_array($normName, ['source_location_name', 'location_name', 'workspace_name', 'workspace'], true) || strpos($normName, 'location_name') !== false)) {
                                 $newMapping[$rk] = $fieldId;
-                            } elseif ($rk === 'nola_sms_source_location_id' && in_array($normName, ['source_location_id', 'location_id'], true)) {
+                            } elseif ($rk === 'nola_sms_source_location_id' && (in_array($normName, ['source_location_id', 'location_id'], true) || strpos($normName, 'location_id') !== false)) {
                                 $newMapping[$rk] = $fieldId;
-                            } elseif ($rk === 'nola_sms_registered_email' && in_array($normName, ['registered_email', 'account_email'], true)) {
+                            } elseif ($rk === 'nola_sms_registered_email' && (in_array($normName, ['registered_email', 'account_email'], true) || strpos($normName, 'email') !== false)) {
                                 $newMapping[$rk] = $fieldId;
                             } elseif ($rk === 'nola_sms_sender_id' && in_array($normName, ['requested_sender_id', 'sender_id', 'requested_sender'], true)) {
                                 $newMapping[$rk] = $fieldId;
@@ -480,9 +480,9 @@ class NotificationService
                                 $newMapping[$rk] = $fieldId;
                             } elseif ($rk === 'nola_sms_sample_message' && in_array($normName, ['sample_message', 'sample_sms'], true)) {
                                 $newMapping[$rk] = $fieldId;
-                            } elseif ($rk === 'nola_sms_admin_notes' && in_array($normName, ['admin_notes', 'nola_sms_admin_notes', 'transaction_details', 'nola_sms_transaction_details', 'admin_notes_field'], true)) {
+                            } elseif ($rk === 'nola_sms_admin_notes' && (strpos($normName, 'notes') !== false || strpos($normName, 'transaction') !== false || strpos($normKey, 'notes') !== false)) {
                                 $newMapping[$rk] = $fieldId;
-                            } elseif ($rk === 'nola_sms_balance' && in_array($normName, ['balance', 'nola_balance', 'sms_balance', 'nola_sms_balance'], true)) {
+                            } elseif ($rk === 'nola_sms_balance' && (strpos($normName, 'balance') !== false || strpos($normKey, 'balance') !== false)) {
                                 $newMapping[$rk] = $fieldId;
                             } elseif ($rk === 'nola_sms_has_documents' && in_array($normName, ['has_documents', 'supporting_documents_attached', 'supporting_documents', 'documents_attached'], true)) {
                                 $newMapping[$rk] = $fieldId;
@@ -1450,11 +1450,15 @@ class NotificationService
         $ghlCustomFields = [];
         foreach ($alertFields as $k => $v) {
             $fieldId = $fieldIdMap[$k] ?? null;
-            if (!$fieldId) {
-                error_log("[TopUpSuccessAlert::syncCentral] Warning: no GHL field ID for key '{$k}' — field will be skipped.");
-                continue;
+            $item = [
+                'key'         => $k,
+                'value'       => (string) $v,
+                'field_value' => (string) $v,
+            ];
+            if ($fieldId) {
+                $item['id'] = $fieldId;
             }
-            $ghlCustomFields[] = ['id' => $fieldId, 'value' => (string) $v];
+            $ghlCustomFields[] = $item;
         }
 
         // ── 6. Build contact name parts ────────────────────────────────────
@@ -1655,17 +1659,20 @@ class NotificationService
                 return null;
             }
 
-            $fieldIdMap = self::resolveCentralGhlCustomFieldIds($db, $ghlClient, $centralLocationId);
+            $fieldIdMap = self::resolveCentralGhlCustomFieldIds($db, $ghlClient, $centralLocationId, true);
             $balanceFieldId = $fieldIdMap['nola_sms_balance'] ?? null;
 
-            if (!$balanceFieldId) {
-                return null;
+            $customFieldItem = [
+                'key'         => 'nola_sms_balance',
+                'value'       => (string)$newBalance,
+                'field_value' => (string)$newBalance,
+            ];
+            if ($balanceFieldId) {
+                $customFieldItem['id'] = $balanceFieldId;
             }
 
             $updatePayload = [
-                'customFields' => [
-                    ['id' => $balanceFieldId, 'value' => (string)$newBalance]
-                ]
+                'customFields' => [$customFieldItem]
             ];
             $ghlClient->request('PUT', "/contacts/{$contactId}", json_encode($updatePayload));
 
