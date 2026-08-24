@@ -1211,6 +1211,14 @@ class CreditManager
                         NolaCache::invalidateAgencyDashboard($agencyId);
                     }
                 }
+
+                // Best-effort sync updated credit balance to central GHL contact
+                try {
+                    $newBal = $this->get_balance($rawLocId);
+                    require_once __DIR__ . '/NotificationService.php';
+                    NotificationService::syncCentralBalanceContact($this->db, $rawLocId, $newBal);
+                } catch (\Throwable $ignored) {
+                }
             }
         } catch (\Throwable $e) {
             error_log("[CreditManager] Cache invalidation failed: " . $e->getMessage());

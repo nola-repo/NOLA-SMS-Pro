@@ -1612,6 +1612,65 @@ class NotificationService
     }
 
     /**
+     * Syncs the latest credit balance for a subaccount location to its contact in central GHL location.
+     */
+    public static function syncCentralBalanceContact($db, string $locationId, int $newBalance): ?string
+    {
+        try {
+            $details = self::getAccountDetails($db, $locationId);
+            $email   = $details['email'] ?? null;
+            if (!$email) {
+                return null;
+            }
+
+            $centralLocationId = getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: 'kXqTpfqXBuKBMjXKLZxG';
+            $centralTokenRegistryId = getenv('NOLA_ALERT_GHL_TOKEN_REGISTRY_ID') ?: $centralLocationId;
+
+            require_once __DIR__ . '/GhlClient.php';
+            $ghlClient = new \GhlClient($db, $centralLocationId, $centralTokenRegistryId);
+
+            $contactId = null;
+            $searchUrl  = '/contacts/?locationId=' . urlencode($centralLocationId) . '&query=' . urlencode($email);
+            $searchResp = $ghlClient->request('GET', $searchUrl);
+            if ($searchResp['status'] === 200) {
+                $searchData = json_decode($searchResp['body'], true);
+                $contacts   = $searchData['contacts'] ?? $searchData['data'] ?? [];
+                if (is_array($contacts)) {
+                    foreach ($contacts as $c) {
+                        if (isset($c['email']) && strtolower(trim((string)$c['email'])) === strtolower(trim($email))) {
+                            $contactId = $c['id'];
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (!$contactId) {
+                return null;
+            }
+
+            $fieldIdMap = self::resolveCentralGhlCustomFieldIds($db, $ghlClient, $centralLocationId);
+            $balanceFieldId = $fieldIdMap['nola_sms_balance'] ?? null;
+
+            if (!$balanceFieldId) {
+                return null;
+            }
+
+            $updatePayload = [
+                'customFields' => [
+                    ['id' => $balanceFieldId, 'value' => (string)$newBalance]
+                ]
+            ];
+            $ghlClient->request('PUT', "/contacts/{$contactId}", json_encode($updatePayload));
+
+            return $contactId;
+        } catch (\Throwable $e) {
+            error_log("[syncCentralBalanceContact] Exception for location {$locationId}: " . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
      * Dispatch a support-ticket submission alert to the central NOLA CRM GHL workflow.
      *
      * The ticket is still stored in Firestore first; this method is intentionally
