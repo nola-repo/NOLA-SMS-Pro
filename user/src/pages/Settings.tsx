@@ -12,10 +12,10 @@ import { CreditsTab } from "./settings/CreditsTab";
 export type { SettingsTab } from "./settings/types";
 
 const TABS: { id: SettingsTab; label: string; icon: React.ReactNode; description: string }[] = [
-    { id: "account", label: "Account", icon: <FiUser />, description: "Profile & organization info" },
+    { id: "credits", label: "Credits", icon: <FiCreditCard />, description: "Balance & billing" },
     { id: "senderIds", label: "Sender IDs", icon: <FiSend />, description: "Manage approved sender IDs" },
     { id: "notifications", label: "Notifications", icon: <FiBell />, description: "Alert & report preferences" },
-    { id: "credits", label: "Credits", icon: <FiCreditCard />, description: "Balance & billing" },
+    { id: "account", label: "Account", icon: <FiUser />, description: "Profile & organization info" },
 ];
 
 const SETTINGS_TAB_ROUTES: Record<SettingsTab, string> = {
