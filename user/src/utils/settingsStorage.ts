@@ -31,6 +31,7 @@ export interface NotificationSettings {
     lowBalanceThreshold: number;
     marketingEmails: boolean;
     ghlWorkflowSyncEnabled: boolean;
+    inboundSmsAlert?: boolean;
     alertEmail?: string;
     ghlAlertContactId?: string;
 }
@@ -71,6 +72,7 @@ const DEFAULT_NOTIFICATIONS: NotificationSettings = {
     lowBalanceThreshold: 50,
     marketingEmails: false,
     ghlWorkflowSyncEnabled: false,
+    inboundSmsAlert: true,
     alertEmail: "",
     ghlAlertContactId: "",
 };

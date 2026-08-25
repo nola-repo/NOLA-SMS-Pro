@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from "react";
 import {
     FiPlus, FiGlobe, FiMapPin, FiBriefcase, FiCheckCircle, FiAlertCircle, FiClock,
-    FiCheck, FiShieldOff
+    FiCheck, FiShieldOff, FiPhoneCall, FiRepeat
 } from "react-icons/fi";
 import { devLog } from "../../utils/devLog";
 import { getAccountSettings, type StoredSenderId } from "../../utils/settingsStorage";
@@ -226,7 +226,49 @@ export const SenderTab: React.FC<{ autoOpenAddModal?: boolean }> = ({ autoOpenAd
                     <p className="text-[11px] font-bold uppercase tracking-wider text-orange-700 dark:text-orange-400">Config Issue</p>
                     <p className="text-[20px] font-black text-[#111111] dark:text-white mt-1">{mismatchCount}</p>
                 </div>
-            </div>
+            {/* 2-Way SMS Virtual Number Status Card */}
+            <Card className="bg-gradient-to-r from-blue-50/50 via-white to-blue-50/30 dark:from-blue-950/20 dark:via-[#1a1b1e] dark:to-blue-900/10">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="flex items-start gap-3.5">
+                        <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0 mt-0.5">
+                            <FiPhoneCall className="w-5 h-5" />
+                        </div>
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <h3 className="text-[14px] font-bold text-[#111111] dark:text-white">Assigned Virtual Number</h3>
+                                {config?.two_way_capable !== false && (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/40">
+                                        <FiRepeat className="w-3 h-3" /> 2-Way Ready
+                                    </span>
+                                )}
+                            </div>
+                            <p className="text-[12px] text-[#6e6e73] dark:text-[#94959b] mt-0.5">
+                                Virtual numbers enable customers to send inbound SMS replies directly to your inbox.
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 self-end sm:self-center">
+                        <div className="text-right">
+                            <p className="text-[13px] font-extrabold text-[#111111] dark:text-white font-mono">
+                                {config?.virtual_number || config?.unisms_virtual_number || "No Virtual Number Assigned"}
+                            </p>
+                            <div className="flex items-center justify-end gap-1.5 mt-0.5">
+                                <span className={`w-2 h-2 rounded-full ${
+                                    (config?.virtual_number_status === 'active' || (!config?.virtual_number_status && (config?.virtual_number || config?.unisms_virtual_number)))
+                                        ? "bg-emerald-500"
+                                        : config?.virtual_number_status === 'pending'
+                                        ? "bg-amber-500 animate-pulse"
+                                        : "bg-gray-400"
+                                }`} />
+                                <span className="text-[11px] font-semibold capitalize text-[#6e6e73] dark:text-[#94959b]">
+                                    {config?.virtual_number_status || ((config?.virtual_number || config?.unisms_virtual_number) ? "active" : "inactive")}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </Card>
 
             <Card>
                 <div className="flex items-center justify-between mb-4">

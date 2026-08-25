@@ -851,6 +851,13 @@ export const AdminAccounts: React.FC = () => {
                                                         <p className="text-[10px] font-mono text-[#9aa0a6] truncate max-w-[200px]">
                                                             {account.location_id || account.active_location_id || '-'}
                                                         </p>
+                                                        {account.location_id && (
+                                                            <div className="flex items-center gap-1 mt-0.5">
+                                                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40">
+                                                                    2-Way GHL Provider Active
+                                                                </span>
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 </td>
                                                 <td className="py-4 pr-4 min-w-[130px]">

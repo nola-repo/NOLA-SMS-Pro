@@ -207,8 +207,9 @@ export const sendSms = async (
   recipientKey?: string,
   contactId?: string,
   tagsToApply?: string[],
-  contactEmail?: string
-
+  contactEmail?: string,
+  replyFromVirtualNumber?: boolean,
+  conversationId?: string
 ): Promise<SendSmsResponse> => {
   const formattedNumber = normalizePHNumber(String(phoneNumber || ""));
   const messageText = String(message || "").trim();
@@ -233,10 +234,14 @@ export const sendSms = async (
     number: formattedNumber,
     message: personalizedMessage,
     ...(senderName ? { sendername: senderName } : {}),
+    ...(replyFromVirtualNumber ? { reply_from_virtual_number: true } : {}),
+    ...(conversationId ? { conversation_id: conversationId } : {}),
     customData: {
       number: formattedNumber,
       message: personalizedMessage,
       ...(senderName ? { sendername: senderName } : {}),
+      ...(replyFromVirtualNumber ? { reply_from_virtual_number: true } : {}),
+      ...(conversationId ? { conversation_id: conversationId } : {}),
       batch_id: batchId,
       name: contactName,
       recipient_key: recipientKey,

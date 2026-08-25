@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { FiBell, FiZap, FiCheck, FiAlertCircle, FiRefreshCw, FiSave } from "react-icons/fi";
+import { FiBell, FiZap, FiCheck, FiAlertCircle, FiRefreshCw, FiSave, FiMessageSquare } from "react-icons/fi";
 import {
     getAccountSettings,
     getNotificationSettings, saveNotificationSettings as saveNotificationSettingsLocal,
@@ -188,6 +188,23 @@ export const NotificationsTab: React.FC = () => {
                             </div>
                         </div>
                         <Toggle checked={lowBalanceEmailEnabled} onChange={toggleLowBalanceEmail} id="toggle-low-balance-email" />
+                    </div>
+
+                    <div className="flex items-center justify-between gap-4 py-4">
+                        <div className="flex items-start gap-3">
+                            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-600 dark:text-emerald-400 flex-shrink-0 mt-0.5">
+                                <FiMessageSquare className="w-4 h-4" />
+                            </div>
+                            <div>
+                                <p className="text-[14px] font-semibold text-[#111111] dark:text-[#ececf1]">Inbound SMS Received Alert</p>
+                                <p className="text-[12px] text-[#9aa0a6]">Receive notifications when customers reply to your Virtual Number.</p>
+                            </div>
+                        </div>
+                        <Toggle
+                            checked={form.inboundSmsAlert !== false}
+                            onChange={(checked) => setForm(prev => ({ ...prev, inboundSmsAlert: checked }))}
+                            id="toggle-inbound-sms-alert"
+                        />
                     </div>
                 </div>
             </Card>

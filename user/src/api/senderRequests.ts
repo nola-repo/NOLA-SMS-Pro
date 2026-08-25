@@ -49,6 +49,10 @@ export interface AccountSenderConfig {
     free_credits_total?: number;
     system_default_sender: string;
     toggle_enabled?: boolean;
+    virtual_number?: string | null;
+    virtual_number_status?: 'pending' | 'active' | 'inactive' | 'failed' | string | null;
+    unisms_virtual_number?: string | null;
+    two_way_capable?: boolean;
 }
 
 const DEFAULT_CONFIG: AccountSenderConfig = {
