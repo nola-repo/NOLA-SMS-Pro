@@ -469,3 +469,5 @@ export const Dashboard = () => {
     </AgencyLayout>
   );
 };
+
+export default Dashboard;

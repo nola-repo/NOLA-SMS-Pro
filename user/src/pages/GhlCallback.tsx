@@ -135,3 +135,5 @@ export const GhlCallback: React.FC = () => {
         </div>
     );
 };
+
+export default GhlCallback;

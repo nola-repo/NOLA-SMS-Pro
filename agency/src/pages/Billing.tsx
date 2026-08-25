@@ -1251,3 +1251,5 @@ export const Billing: React.FC = () => {
     </AgencyLayout>
   );
 };
+
+export default Billing;

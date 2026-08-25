@@ -1,21 +1,30 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { FiUsers, FiSend, FiLogOut, FiHome, FiActivity, FiShield, FiSun, FiMoon, FiMenu, FiX, FiBriefcase, FiServer } from 'react-icons/fi';
 import { NotificationBell } from '../components/ui/NotificationBell';
 import faviconLogo from '../assets/FAV ICON - NOLA SMS PRO.png';
 
+// Static imports — needed immediately for auth flow
 import { AdminLogin } from './components/AdminLogin';
 import { AdminForgotPassword } from './components/AdminForgotPassword';
-import { AdminDashboard } from './components/AdminDashboard';
-import { AdminSenderRequests } from './components/SenderRequests';
-import { AdminAccounts } from './components/AdminAccounts';
-import { AdminTeamManagement } from './components/AdminUsersManagement';
-import { AdminLogs } from './components/SystemSettings';
-import { AdminAgencies } from './components/AdminAgencies';
-import { AdminProfile } from './components/AdminProfile';
-import { LogsExplorer } from './components/LogsExplorer';
 import { ADMIN_AUTH_REQUIRED_EVENT, adminFetch } from '../utils/adminApi';
 import { devLog } from '../utils/devLog';
+
+// Route-level lazy chunks
+const AdminDashboard     = lazy(() => import('./components/AdminDashboard'));
+const AdminSenderRequests = lazy(() => import('./components/SenderRequests'));
+const AdminAccounts      = lazy(() => import('./components/AdminAccounts'));
+const AdminTeamManagement = lazy(() => import('./components/AdminUsersManagement'));
+const AdminLogs          = lazy(() => import('./components/SystemSettings').then(m => ({ default: m.AdminLogs })));
+const AdminAgencies      = lazy(() => import('./components/AdminAgencies'));
+const AdminProfile       = lazy(() => import('./components/AdminProfile'));
+const LogsExplorer       = lazy(() => import('./components/LogsExplorer'));
+
+const RouteSpinner = () => (
+    <div className="flex items-center justify-center h-full min-h-[300px]">
+        <div className="w-10 h-10 rounded-full border-4 border-[#2b83fa]/20 border-t-[#2b83fa] animate-spin" />
+    </div>
+);
 
 const NAV_ITEMS = [
     { path: '/dashboard',  label: 'Dashboard',        icon: <FiHome /> },
@@ -485,29 +494,31 @@ export const AdminLayout: React.FC<{ darkMode: boolean; toggleDarkMode: () => vo
 
             <div className="flex-1 flex flex-col h-full overflow-hidden min-w-0">
                 <main className="flex-1 overflow-y-auto custom-scrollbar bg-[#f3f4f6] dark:bg-[#09090b]">
-                    <Routes>
-                        <Route path="/" element={<Navigate to="/dashboard" replace />} />
-                        <Route
-                            path="/dashboard"
-                            element={(
-                                <AdminDashboard
-                                    onNavigate={(tab) => navigate(`/${tab}`)}
-                                    mobileMenuButton={renderMobileMenuButton(true)}
-                                    topControls={dashboardTopControls}
-                                />
-                            )}
-                        />
-                        <Route path="/requests" element={renderPage(<AdminSenderRequests />, 'requests')} />
-                        <Route path="/activity" element={renderPage(<AdminLogs />, 'activity')} />
-                        <Route path="/accounts" element={renderPage(<AdminAccounts />, 'accounts')} />
-                        <Route path="/logs-explorer" element={renderPage(<LogsExplorer />, 'logs-explorer')} />
-                        <Route path="/health" element={<Navigate to="/logs-explorer" replace />} />
-                        <Route path="/agencies" element={renderPage(<AdminAgencies />, 'agencies')} />
-                        <Route path="/profile" element={renderPage(<AdminProfile />, 'profile')} />
-                        <Route path="/admins" element={renderPage(<AdminTeamManagement />, 'admins')} />
-                        <Route path="/settings" element={<Navigate to="/dashboard" replace />} />
-                        <Route path="*" element={<Navigate to="/dashboard" replace />} />
-                    </Routes>
+                    <Suspense fallback={<RouteSpinner />}>
+                        <Routes>
+                            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                            <Route
+                                path="/dashboard"
+                                element={(
+                                    <AdminDashboard
+                                        onNavigate={(tab) => navigate(`/${tab}`)}
+                                        mobileMenuButton={renderMobileMenuButton(true)}
+                                        topControls={dashboardTopControls}
+                                    />
+                                )}
+                            />
+                            <Route path="/requests" element={renderPage(<AdminSenderRequests />, 'requests')} />
+                            <Route path="/activity" element={renderPage(<AdminLogs />, 'activity')} />
+                            <Route path="/accounts" element={renderPage(<AdminAccounts />, 'accounts')} />
+                            <Route path="/logs-explorer" element={renderPage(<LogsExplorer />, 'logs-explorer')} />
+                            <Route path="/health" element={<Navigate to="/logs-explorer" replace />} />
+                            <Route path="/agencies" element={renderPage(<AdminAgencies />, 'agencies')} />
+                            <Route path="/profile" element={renderPage(<AdminProfile />, 'profile')} />
+                            <Route path="/admins" element={renderPage(<AdminTeamManagement />, 'admins')} />
+                            <Route path="/settings" element={<Navigate to="/dashboard" replace />} />
+                            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+                        </Routes>
+                    </Suspense>
                 </main>
             </div>
 

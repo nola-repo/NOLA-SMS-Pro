@@ -800,3 +800,5 @@ export const Dashboard: React.FC<DashboardProps> = ({ isMobileMenuOpen: external
     </div>
   );
 };
+
+export default Dashboard;

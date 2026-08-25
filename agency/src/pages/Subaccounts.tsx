@@ -1281,3 +1281,5 @@ export const Subaccounts = () => {
     </AgencyLayout>
   );
 };
+
+export default Subaccounts;
