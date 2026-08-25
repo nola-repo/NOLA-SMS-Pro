@@ -98,7 +98,7 @@ const AppLayout: React.FC = () => {
       home: '/',
       compose: '/compose',
       contacts: '/contacts',
-      settings: '/settings/account',
+      settings: '/settings/credits',
       templates: '/templates',
       tickets: '/tickets',
     };
@@ -188,7 +188,7 @@ const AppLayout: React.FC = () => {
                 darkMode={darkMode}
                 toggleDarkMode={toggleDarkMode}
                 initialView="settings"
-                settingsInitialTab="account"
+                settingsInitialTab="credits"
                 topControls={topControls}
               />
             }

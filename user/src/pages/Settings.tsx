@@ -28,7 +28,7 @@ const SETTINGS_TAB_ROUTES: Record<SettingsTab, string> = {
 export const Settings: React.FC<SettingsProps> = ({ initialTab, autoOpenAddModal }) => {
     const navigate = useNavigate();
     const location = useLocation();
-    const activeTab: SettingsTab = initialTab || "account";
+    const activeTab: SettingsTab = initialTab || "credits";
 
     const handleTabSelect = (tab: SettingsTab) => {
         navigate({ pathname: SETTINGS_TAB_ROUTES[tab], search: location.search }, { replace: false });

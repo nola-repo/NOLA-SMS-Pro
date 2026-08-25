@@ -352,7 +352,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ isMobileMenuOpen: external
       home: '/',
       compose: '/compose',
       contacts: '/contacts',
-      settings: settingsInitialTab ? SETTINGS_TAB_ROUTES[settingsInitialTab] : '/settings/account',
+      settings: settingsInitialTab ? SETTINGS_TAB_ROUTES[settingsInitialTab] : '/settings/credits',
       templates: '/templates',
       tickets: '/tickets',
     };
@@ -431,7 +431,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ isMobileMenuOpen: external
         setSettingsTab(tab);
         setCurrentView('settings');
         safeStorage.setItem('nola_active_tab', 'settings');
-        navigate({ pathname: SETTINGS_TAB_ROUTES[tab] || '/settings/account', search: window.location.search }, { replace: false });
+        navigate({ pathname: SETTINGS_TAB_ROUTES[tab] || '/settings/credits', search: window.location.search }, { replace: false });
       }
     };
 
