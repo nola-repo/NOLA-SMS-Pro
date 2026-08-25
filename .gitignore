@@ -29,3 +29,8 @@ NOLA-SMS-Pro-Backend/
 *.diff
 .backend-patch/
 
+
+# Office temp/lock files
+*.xlsx
+*.csv
+~$*
