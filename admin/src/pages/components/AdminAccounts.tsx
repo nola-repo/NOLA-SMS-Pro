@@ -1291,3 +1291,5 @@ export const AdminAccounts: React.FC = () => {
         </>
     );
 };
+
+export default AdminAccounts;

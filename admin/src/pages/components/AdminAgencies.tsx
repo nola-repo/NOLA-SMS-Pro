@@ -838,3 +838,5 @@ export const AdminAgencies: React.FC = () => {
 };
 
 
+
+export default AdminAgencies;

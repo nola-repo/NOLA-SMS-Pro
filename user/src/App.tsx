@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { Dashboard } from "./pages/Dashboard";
-import { GhlCallback } from "./pages/GhlCallback";
-import { ForgotPassword } from "./pages/ForgotPassword";
+
+// Route-level lazy chunks
+const GhlCallback    = lazy(() => import("./pages/GhlCallback"));
+const ForgotPassword = lazy(() => import("./pages/ForgotPassword"));
 
 import { AuthProvider } from "./context/AuthContext";
 import { LocationProvider } from "./context/LocationContext";
@@ -121,6 +123,11 @@ const AppLayout: React.FC = () => {
   return (
     <UserProfileContext.Provider value={userProfile}>
       <div className="relative h-screen overflow-hidden bg-[#ffffff] dark:bg-[#1a1b1e]">
+      <Suspense fallback={
+        <div className="min-h-screen flex items-center justify-center bg-[#f7f8fc] dark:bg-[#09090b]">
+          <div className="w-10 h-10 rounded-full border-4 border-[#2b83fa]/20 border-t-[#2b83fa] animate-spin" />
+        </div>
+      }>
       <Routes>
         <Route path="/login"                  element={<SharedLogin />} />
         <Route path="/forgot-password"        element={<ForgotPassword />} />
@@ -274,6 +281,7 @@ const AppLayout: React.FC = () => {
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </Suspense>
       {ticketsModalOpen && (
         <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="relative flex h-[min(760px,calc(100dvh-2rem))] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-[#e5e5e5] bg-[#f7f7f7] shadow-2xl dark:border-white/10 dark:bg-[#111214]">

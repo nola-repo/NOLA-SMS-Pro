@@ -596,3 +596,5 @@ export const AdminTeamManagement: React.FC = () => {
         </div>
     );
 };
+
+export default AdminTeamManagement;
