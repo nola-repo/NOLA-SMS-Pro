@@ -26,6 +26,9 @@ import { buildContactNameLookup, isPhoneLike, resolveContactNameByPhone } from "
 import { getRetryBadgeInfo } from "../utils/smsStatus";
 
 import { BulkConfirmationModal, BulkSendSummaryModal, MessageDetailsModal, type MessageDetailsSelection, type BulkConfirmationState, type BulkSendSummaryState } from "./composer/ComposerModals";
+import { analyzeRecipients, resolveContactPhone, normalizeRecipient, contactPhoneKey, matchesContactUpdate, type RecipientAnalysis } from "../utils/recipientAnalysis";
+import { useSemaphoreStatusPoller } from "../hooks/useSemaphoreStatusPoller";
+import { ComposerDropdowns } from "./composer/ComposerDropdowns";
 
 interface ComposerProps {
   selectedContacts: Contact[];
@@ -38,17 +41,6 @@ interface ComposerProps {
   onToggleMobileMenu?: () => void;
   darkMode?: boolean;
 }
-
-type RecipientAnalysis = {
-  uniqueRecipients: Contact[];
-  invalidRecipients: Contact[];
-  duplicateCount: number;
-  duplicatePhones: string[];
-  totalCount: number;
-  uniqueCount: number;
-};
-
-
 
 const MessageHistorySkeleton: React.FC = () => {
   const rows = [
@@ -71,74 +63,6 @@ const MessageHistorySkeleton: React.FC = () => {
         </div>
       ))}
     </div>
-  );
-};
-
-type ContactWithPhoneAliases = Contact & {
-  phone_number?: string;
-  phoneNumber?: string;
-  mobileNumber?: string;
-  number?: string;
-};
-
-const resolveContactPhone = (contact: ContactWithPhoneAliases | undefined | null): string => {
-  return (
-    contact?.phone ||
-    contact?.phone_number ||
-    contact?.phoneNumber ||
-    contact?.mobileNumber ||
-    contact?.number ||
-    ""
-  ).trim();
-};
-
-const normalizeRecipient = (contact: Contact): Contact => ({
-  ...contact,
-  phone: resolveContactPhone(contact),
-});
-
-const contactPhoneKey = (phone?: string | null) => (phone || "").replace(/\D/g, "").slice(-10);
-
-const analyzeRecipients = (recipients: Contact[]): RecipientAnalysis => {
-  const uniqueRecipients: Contact[] = [];
-  const invalidRecipients: Contact[] = [];
-  const duplicatePhones = new Set<string>();
-  const seen = new Set<string>();
-
-  recipients.forEach((recipient) => {
-    const normalized = normalizePHNumber(resolveContactPhone(recipient));
-    if (!normalized) {
-      invalidRecipients.push(recipient);
-      return;
-    }
-
-    if (seen.has(normalized)) {
-      duplicatePhones.add(normalized);
-      return;
-    }
-
-    seen.add(normalized);
-    uniqueRecipients.push({ ...recipient, phone: normalized });
-  });
-
-  return {
-    uniqueRecipients,
-    invalidRecipients,
-    duplicateCount: recipients.length - invalidRecipients.length - uniqueRecipients.length,
-    duplicatePhones: Array.from(duplicatePhones),
-    totalCount: recipients.length,
-    uniqueCount: uniqueRecipients.length,
-  };
-};
-
-
-
-const matchesContactUpdate = (target: Contact, contact: Contact, previous?: Contact | null) => {
-  if (target.id === contact.id || (previous && target.id === previous.id)) return true;
-  const targetPhone = contactPhoneKey(resolveContactPhone(target));
-  return !!targetPhone && (
-    targetPhone === contactPhoneKey(resolveContactPhone(contact)) ||
-    targetPhone === contactPhoneKey(resolveContactPhone(previous))
   );
 };
 
@@ -277,6 +201,10 @@ export const Composer: React.FC<ComposerProps> = ({
     refresh,
     conversation,
   } = useConversationMessages(conversationId, recipientKeyFocus);
+
+  const { pollMessageStatus } = useSemaphoreStatusPoller({
+    onRefresh: refresh,
+  });
 
   // Optional per-contact fallback: raw outbound log view by phone number
   const {
@@ -878,28 +806,8 @@ export const Composer: React.FC<ComposerProps> = ({
               }, 2000);
 
               // Real-time status polling: check Semaphore for actual delivery status
-              // within seconds rather than waiting for the 5-min cron.
               if (messageIds.length > 0) {
-                let attempts = 0;
-                const maxAttempts = 30; // ~60s total
-                const pollStatus = async () => {
-                  if (!isMountedRef.current) return;
-                  attempts++;
-                  const statusMap = await checkMessageStatus(messageIds);
-                  if (!isMountedRef.current) return;
-                  const allResolved = messageIds.every(id => {
-                    const s = (statusMap[id] || '').toLowerCase();
-                    return s === 'sent' || s === 'failed' || s === 'success';
-                  });
-
-                  // Refresh messages to show DB-persisted status
-                  if (allResolved || attempts >= maxAttempts) {
-                    if (isMountedRef.current) refresh();
-                  } else {
-                    setSafeTimeout(pollStatus, 2000);
-                  }
-                };
-                setSafeTimeout(pollStatus, 2000);
+                pollMessageStatus(messageIds);
               }
 
               // Navigate to contact view if not already there
@@ -1121,26 +1029,7 @@ export const Composer: React.FC<ComposerProps> = ({
                 // Real-time status polling: check Semaphore for actual delivery status
                 const allMessageIds = results.flatMap(r => r.messageIds || []);
                 if (allMessageIds.length > 0) {
-                  let attempts = 0;
-                  const maxAttempts = 30; // ~60s total
-                  const pollStatus = async () => {
-                    if (!isMountedRef.current) return;
-                    attempts++;
-                    const statusMap = await checkMessageStatus(allMessageIds);
-                    if (!isMountedRef.current) return;
-                    const allResolved = allMessageIds.every(id => {
-                      const s = (statusMap[id] || '').toLowerCase();
-                      return s === 'sent' || s === 'failed' || s === 'success';
-                    });
-
-                    // Refresh messages to show DB-persisted status
-                    if (allResolved || attempts >= maxAttempts) {
-                      if (isMountedRef.current) refresh();
-                    } else {
-                      setSafeTimeout(pollStatus, 2000);
-                    }
-                  };
-                  setSafeTimeout(pollStatus, 2000);
+                  pollMessageStatus(allMessageIds);
                 }
               } else {
                 guardedToast("error", "Failed to send bulk messages");
@@ -2408,121 +2297,17 @@ export const Composer: React.FC<ComposerProps> = ({
               )}
 
               <div className="flex flex-col gap-3 border-t border-[#edf1f6] px-3 pb-1.5 pt-2.5 dark:border-white/[0.08] sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                  {/* Templates Button */}
-                  <div className="relative" ref={templatePickerRef}>
-                    <button
-                      onClick={handleTemplateToggle}
-                      title="Use Template"
-                      className={`px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 text-[12px] font-bold ${isTemplatesOpen ? "bg-[#eaf3ff] text-[#1d6bd4] dark:bg-white/10 dark:text-[#8bbcff]" : "text-[#7a8492] hover:text-[#1d6bd4] hover:bg-[#eef6ff] dark:text-[#8f96a3] dark:hover:text-[#8bbcff] dark:hover:bg-white/[0.06]"}`}
-                    >
-                      <FiFileText className="h-4 w-4" />
-                      <span className="hidden sm:inline">Use Template</span>
-                    </button>
-
-                    {isTemplatesOpen && (
-                      <div className="absolute bottom-full left-0 z-50 mb-2 flex max-h-[44vh] w-[min(18rem,calc(100vw-2rem))] flex-col gap-1 overflow-y-auto rounded-2xl border border-gray-200 bg-white p-2 shadow-xl animate-scale-up custom-scrollbar dark:border-white/10 dark:bg-[#1a1b1e] sm:max-h-72 sm:w-72">
-                        {templatesLoading ? (
-                          <div className="flex items-center justify-center gap-2 px-3 py-5 text-[12px] font-semibold text-gray-500">
-                            <FiLoader className="h-4 w-4 animate-spin" />
-                            Loading templates...
-                          </div>
-                        ) : templateOptions.length === 0 ? (
-                          <div className="px-3 py-5 text-center">
-                            <p className="text-[12px] font-bold text-gray-600 dark:text-gray-300">No templates yet</p>
-                            <p className="mt-1 text-[11px] font-medium leading-relaxed text-gray-500 dark:text-gray-400">Create templates from the Templates page, then insert them here.</p>
-                          </div>
-                        ) : (
-                          templateOptions.map(template => (
-                            <button
-                              key={template.id}
-                              onClick={() => handleTemplateSelect(template)}
-                              className="w-full px-3 py-2.5 text-left rounded-xl transition-colors hover:bg-gray-100 dark:hover:bg-white/5"
-                            >
-                              <span className="block truncate text-[13px] font-bold text-[#111111] dark:text-[#ececf1]">{template.name}</span>
-                              <span className="block truncate text-[11px] text-[#7a8492] dark:text-[#8f96a3]">{template.content}</span>
-                            </button>
-                          ))
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Custom Values Button */}
-                  <div className="relative" ref={customValuesRef}>
-                    <button
-                      onClick={() => setIsCustomValuesOpen(!isCustomValuesOpen)}
-                      title="Custom Values"
-                      className={`px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 text-[12px] font-bold ${isCustomValuesOpen ? "bg-[#eaf3ff] text-[#1d6bd4] dark:bg-white/10 dark:text-[#8bbcff]" : "text-[#7a8492] hover:text-[#1d6bd4] hover:bg-[#eef6ff] dark:text-[#8f96a3] dark:hover:text-[#8bbcff] dark:hover:bg-white/[0.06]"}`}
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-                      </svg>
-                      <span className="hidden sm:inline">Custom Values</span>
-                    </button>
-
-                    {isCustomValuesOpen && (
-                      <div className="absolute bottom-full left-0 mb-2 p-2 bg-white dark:bg-[#1a1b1e] rounded-2xl border border-gray-200 dark:border-white/10 shadow-xl flex flex-col gap-1 z-50 animate-scale-up w-48">
-                        {customValuesList.map(item => (
-                          <button
-                            key={item.value}
-                            onClick={() => handleCustomValueSelect(item.value)}
-                            className="w-full px-3 py-2 text-left text-[13px] font-medium text-[#111111] dark:text-[#ececf1] hover:bg-gray-100 dark:hover:bg-white/5 rounded-xl transition-colors"
-                          >
-                            {item.label}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Tags Button */}
-                  <div className="relative" ref={tagsRef}>
-                    <button
-                      onClick={() => setIsTagsOpen(!isTagsOpen)}
-                      title="Apply Tags to Recipients"
-                      className={`px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 text-[12px] font-bold ${selectedTagsToApply.length > 0 || isTagsOpen ? "bg-[#eaf3ff] text-[#1d6bd4] dark:bg-white/10 dark:text-[#8bbcff]" : "text-[#7a8492] hover:text-[#1d6bd4] hover:bg-[#eef6ff] dark:text-[#8f96a3] dark:hover:text-[#8bbcff] dark:hover:bg-white/[0.06]"}`}
-                    >
-                      <div className="relative">
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
-                        </svg>
-                        {selectedTagsToApply.length > 0 && (
-                          <span className="absolute -top-1.5 -right-1.5 flex h-3 w-3 items-center justify-center rounded-full bg-[#2b83fa] text-[8px] font-bold text-white border border-white dark:border-[#1a1b1e]">
-                            {selectedTagsToApply.length}
-                          </span>
-                        )}
-                      </div>
-                      <span className="hidden sm:inline">Apply Tags</span>
-                    </button>
-                    
-                    {isTagsOpen && (
-                      <div className="absolute bottom-full left-0 mb-2 p-2 bg-white dark:bg-[#1a1b1e] rounded-2xl border border-gray-200 dark:border-white/10 shadow-xl flex flex-col gap-1 z-50 animate-scale-up w-56 max-h-60 overflow-y-auto custom-scrollbar">
-                        {allTags.length === 0 ? (
-                          <div className="px-3 py-4 text-center text-[12px] text-gray-500 font-medium">No tags available in your contacts</div>
-                        ) : (
-                          allTags.map(tag => {
-                            const isSelected = selectedTagsToApply.includes(tag);
-                            return (
-                              <button
-                                key={tag}
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  handleTagToggle(tag);
-                                }}
-                                className={`w-full px-3 py-2 text-left text-[13px] font-medium rounded-xl transition-colors flex items-center justify-between ${isSelected ? 'bg-[#2b83fa]/10 text-[#2b83fa]' : 'text-[#111111] dark:text-[#ececf1] hover:bg-gray-100 dark:hover:bg-white/5'}`}
-                              >
-                                <span className="truncate mr-2">{tag}</span>
-                                <div className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 border ${isSelected ? 'border-[#2b83fa] bg-[#2b83fa]' : 'border-gray-300 dark:border-gray-600'}`}>
-                                  {isSelected && <FiCheck className="h-3 w-3 text-white" />}
-                                </div>
-                              </button>
-                            );
-                          })
-                        )}
-                      </div>
-                    )}
-                  </div>
+                <ComposerDropdowns
+                  templateOptions={templateOptions}
+                  templatesLoading={templatesLoading}
+                  onSelectTemplate={handleTemplateSelect}
+                  onFetchTemplatesIfNeeded={handleTemplateToggle}
+                  customValuesList={customValuesList}
+                  onSelectCustomValue={handleCustomValueSelect}
+                  allTags={allTags}
+                  selectedTagsToApply={selectedTagsToApply}
+                  onToggleTag={handleTagToggle}
+                />
 
                   {isNewMessage && composeMode === "bulk" && message.length > 0 && bulkSelectedContacts.length > 0 && (
                     <div className="ml-2 flex items-center gap-1.5 px-2.5 py-1 bg-[#eef6ff] dark:bg-blue-900/20 rounded-full border border-blue-100 dark:border-blue-800/30">
