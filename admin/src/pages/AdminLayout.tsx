@@ -15,7 +15,7 @@ const AdminDashboard     = lazy(() => import('./components/AdminDashboard'));
 const AdminSenderRequests = lazy(() => import('./components/SenderRequests'));
 const AdminAccounts      = lazy(() => import('./components/AdminAccounts'));
 const AdminTeamManagement = lazy(() => import('./components/AdminUsersManagement'));
-const AdminLogs          = lazy(() => import('./components/SystemSettings'));
+const AdminLogs          = lazy(() => import('./components/SystemSettings').then(m => ({ default: m.AdminLogs })));
 const AdminAgencies      = lazy(() => import('./components/AdminAgencies'));
 const AdminProfile       = lazy(() => import('./components/AdminProfile'));
 const LogsExplorer       = lazy(() => import('./components/LogsExplorer'));
