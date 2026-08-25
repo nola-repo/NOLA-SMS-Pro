@@ -16,7 +16,7 @@ import { useMessages as usePhoneMessages } from "../hooks/useMessages";
 import { useLocationId } from "../context/LocationContext";
 import { SenderSelector } from "./SenderSelector";
 import { CreditBadge } from "./CreditBadge";
-import { FiCheck, FiAlertCircle, FiLoader, FiFileText } from "react-icons/fi";
+import { FiCheck, FiAlertCircle, FiLoader } from "react-icons/fi";
 import { getAccountSettings } from "../utils/settingsStorage";
 import { fetchAccountSenderConfig } from "../api/senderRequests";
 import { buildDirectConversationId, buildGroupConversationId } from "../utils/conversationId";
@@ -26,7 +26,7 @@ import { buildContactNameLookup, isPhoneLike, resolveContactNameByPhone } from "
 import { getRetryBadgeInfo } from "../utils/smsStatus";
 
 import { BulkConfirmationModal, BulkSendSummaryModal, MessageDetailsModal, type MessageDetailsSelection, type BulkConfirmationState, type BulkSendSummaryState } from "./composer/ComposerModals";
-import { analyzeRecipients, resolveContactPhone, normalizeRecipient, contactPhoneKey, matchesContactUpdate, type RecipientAnalysis } from "../utils/recipientAnalysis";
+import { analyzeRecipients, resolveContactPhone, normalizeRecipient, matchesContactUpdate } from "../utils/recipientAnalysis";
 import { useSemaphoreStatusPoller } from "../hooks/useSemaphoreStatusPoller";
 import { ComposerDropdowns } from "./composer/ComposerDropdowns";
 
@@ -255,13 +255,9 @@ export const Composer: React.FC<ComposerProps> = ({
   }, [useRawLogView, conversationMessages, phoneLogMessages]);
 
   const dropdownRef = useRef<HTMLDivElement>(null);
-
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const customValuesRef = useRef<HTMLDivElement>(null);
-  const templatePickerRef = useRef<HTMLDivElement>(null);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
   const sendGuardRef = useRef(false);
-  const tagsRef = useRef<HTMLDivElement>(null);
   const msgAreaRef = useRef<HTMLDivElement>(null);
   const touchStartYMsg = useRef<number>(0);
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
@@ -298,9 +294,6 @@ export const Composer: React.FC<ComposerProps> = ({
   }, []);
 
   // Interactive features state
-  const [isCustomValuesOpen, setIsCustomValuesOpen] = useState(false);
-  const [isTagsOpen, setIsTagsOpen] = useState(false);
-  const [isTemplatesOpen, setIsTemplatesOpen] = useState(false);
   const [templateOptions, setTemplateOptions] = useState<Template[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(false);
   const [selectedTagsToApply, setSelectedTagsToApply] = useState<string[]>([]);
@@ -489,20 +482,10 @@ export const Composer: React.FC<ComposerProps> = ({
     prewarm();
   }, [locationId]);
 
-  // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setIsPickerOpen(false);
-      }
-      if (customValuesRef.current && !customValuesRef.current.contains(event.target as Node)) {
-        setIsCustomValuesOpen(false);
-      }
-      if (templatePickerRef.current && !templatePickerRef.current.contains(event.target as Node)) {
-        setIsTemplatesOpen(false);
-      }
-      if (tagsRef.current && !tagsRef.current.contains(event.target as Node)) {
-        setIsTagsOpen(false);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
@@ -605,16 +588,10 @@ export const Composer: React.FC<ComposerProps> = ({
 
   const handleCustomValueSelect = (val: string) => {
     insertAtCursor(val);
-    setIsCustomValuesOpen(false);
   };
 
   const handleTemplateToggle = async () => {
-    const nextOpen = !isTemplatesOpen;
-    setIsTemplatesOpen(nextOpen);
-    setIsCustomValuesOpen(false);
-    setIsTagsOpen(false);
-
-    if (nextOpen && templateOptions.length === 0 && !templatesLoading) {
+    if (templateOptions.length === 0 && !templatesLoading) {
       setTemplatesLoading(true);
       try {
         setTemplateOptions(await fetchTemplates(locationId || undefined));
@@ -637,7 +614,6 @@ export const Composer: React.FC<ComposerProps> = ({
     }
 
     insertAtCursor(template.content);
-    setIsTemplatesOpen(false);
 
     // Soft warning: template is missing recommended contact placeholders (still inserted)
     if (validation.missingGroups.length > 0) {
@@ -2367,7 +2343,6 @@ export const Composer: React.FC<ComposerProps> = ({
                 </div>
               </div>
             </div>
-          </div>
 
           {/* Send disabled reason note */}
           {showDisabledReason && (

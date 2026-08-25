@@ -226,6 +226,8 @@ export const SenderTab: React.FC<{ autoOpenAddModal?: boolean }> = ({ autoOpenAd
                     <p className="text-[11px] font-bold uppercase tracking-wider text-orange-700 dark:text-orange-400">Config Issue</p>
                     <p className="text-[20px] font-black text-[#111111] dark:text-white mt-1">{mismatchCount}</p>
                 </div>
+            </div>
+
             {/* 2-Way SMS Virtual Number Status Card */}
             <Card className="bg-gradient-to-r from-blue-50/50 via-white to-blue-50/30 dark:from-blue-950/20 dark:via-[#1a1b1e] dark:to-blue-900/10">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
