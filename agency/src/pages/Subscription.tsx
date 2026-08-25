@@ -444,3 +444,5 @@ export const Subscription: React.FC = () => {
     </AgencyLayout>
   );
 };
+
+export default Subscription;

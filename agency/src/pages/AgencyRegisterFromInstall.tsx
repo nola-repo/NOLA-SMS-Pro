@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { FiCheck, FiEye, FiEyeOff, FiMail, FiPhone, FiLock, FiAlertCircle, FiUser, FiArrowRight, FiArrowLeft, FiBriefcase } from 'react-icons/fi';
 import defaultLogo from '../assets/NOLA SMS PRO Logo.png';
 import { SESSION_KEYS } from '../services/agencyAuthHelper';

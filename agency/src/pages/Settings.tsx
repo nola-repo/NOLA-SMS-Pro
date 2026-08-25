@@ -657,3 +657,5 @@ export const Settings = () => {
     </AgencyLayout>
   );
 };
+
+export default Settings;

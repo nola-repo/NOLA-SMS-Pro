@@ -1097,3 +1097,5 @@ export const AdminSenderRequests: React.FC = () => {
     );
 };
 
+
+export default AdminSenderRequests;
