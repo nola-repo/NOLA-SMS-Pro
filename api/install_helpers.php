@@ -2967,7 +2967,11 @@ function install_build_registration_url(
         $payload[$k] = $v;
     }
 
-    return 'https://smspro-api.nolacrm.io/register?install_token=' . urlencode(
+    $httpProtocol = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
+    $httpHost = $_SERVER['HTTP_HOST'] ?? 'smspro-api.nolacrm.io';
+    $apiBase = ($httpHost === '') ? 'https://smspro-api.nolacrm.io' : ($httpProtocol . '://' . $httpHost);
+
+    return $apiBase . '/register?install_token=' . urlencode(
         jwt_sign($payload, $jwtSecret, install_registration_token_ttl_seconds())
     );
 }
@@ -3490,7 +3494,11 @@ function install_decide_location_redirect(
     $crmDomain = $crmBaseUrl ?: install_detect_crm_base_url();
 
     if (!empty($classification['linked'])) {
-        $url = 'https://smspro-api.nolacrm.io/login?welcome_back=1&name=' . urlencode($locationName ?: 'Your Sub-Account')
+        $httpProtocol = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
+        $httpHost = $_SERVER['HTTP_HOST'] ?? 'smspro-api.nolacrm.io';
+        $apiBase = ($httpHost === '') ? 'https://smspro-api.nolacrm.io' : ($httpProtocol . '://' . $httpHost);
+
+        $url = $apiBase . '/login?welcome_back=1&name=' . urlencode($locationName ?: 'Your Sub-Account')
             . '&location_id=' . urlencode($locationId)
             . '&crm_domain=' . urlencode($crmDomain)
             . '&install_status=' . urlencode(INSTALL_STATE_LINKED_ACCOUNT)
