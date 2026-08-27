@@ -3,7 +3,7 @@ steps:
     entrypoint: 'bash'
     args:
       - '-c'
-      - 'sed -i "s/smspro-api.nolacrm.io/sms-api-staging-116662437564.asia-southeast1.run.app/g" user/nginx.conf'
+      - 'sed -i "s/smspro-api.nolacrm.io/sms-api-staging-116662437564.asia-southeast1.run.app/g" user/nginx.conf && sed -i "s/smspro-api.nolacrm.io/sms-api-staging-116662437564.asia-southeast1.run.app/g" user/src/components/SharedLogin.tsx'
   - name: 'gcr.io/cloud-builders/docker'
     args: ['build', '-f', 'user/Dockerfile', '-t', '$_AR_HOSTNAME/$_AR_PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:$COMMIT_SHA', 'user']
   - name: 'gcr.io/cloud-builders/docker'
