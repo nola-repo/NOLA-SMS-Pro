@@ -3,7 +3,7 @@ steps:
     entrypoint: 'bash'
     args:
       - '-c'
-      - 'sed -i "s/smspro-api.nolacrm.io/staging-api.nolacrm.io/g" agency/nginx.conf'
+      - 'sed -i "s/smspro-api.nolacrm.io/sms-api-staging-116662437564.asia-southeast1.run.app/g" agency/nginx.conf'
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'build'
