@@ -16,8 +16,14 @@ require_once dirname(__DIR__) . '/api/jwt_helper.php';
 require_once dirname(__DIR__) . '/api/webhook/firestore_client.php';
 require_once dirname(__DIR__) . '/api/install_helpers.php';
 
-$apiBase  = 'https://smspro-api.nolacrm.io';
+$httpProtocol = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
+$httpHost = $_SERVER['HTTP_HOST'] ?? 'smspro-api.nolacrm.io';
+$apiBase = $httpProtocol . '://' . $httpHost;
+
 $reactApp = 'https://app.nolacrm.io';
+if (str_contains($httpHost, 'staging') || str_contains($httpHost, '116662437564')) {
+    $reactApp = 'https://nolasmspro-frontend-staging-116662437564.asia-southeast1.run.app';
+}
 $marketplace = 'https://marketplace.leadconnectorhq.com/apps/overview/68118e8f9f1bac2ffc84ed23';
 
 // ── Shared page renderer (matches install-register.php / ghl_callback.php) ───
@@ -611,7 +617,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             // Agency account — redirect to agency portal
             if (($result['role'] ?? '') === 'agency') {
-                header('Location: https://agency.nolasmspro.com', true, 302);
+                $agencyUrl = 'https://agency.nolasmspro.com';
+                if (str_contains($httpHost, 'staging') || str_contains($httpHost, '116662437564')) {
+                    $agencyUrl = 'https://nolasmspro-agency-staging-116662437564.asia-southeast1.run.app';
+                }
+                header('Location: ' . $agencyUrl, true, 302);
                 exit;
             }
 
