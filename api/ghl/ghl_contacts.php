@@ -250,6 +250,17 @@ if ($method === 'GET') {
                     ], 604800, 'STALE', 'location', true));
                     exit;
                 }
+
+                error_log("[ghl_contacts] Temporary GHL failure without last-good cache for {$locationId} status={$resp['status']}");
+                http_response_code(200);
+                header('Cache-Control: no-store');
+                echo json_encode([
+                    'contacts' => [],
+                    'temporarily_unavailable' => true,
+                    'warning' => 'GHL contacts are temporarily unavailable.',
+                    'upstream_status' => (int)$resp['status'],
+                ]);
+                exit;
             }
 
             http_response_code($resp['status']);

@@ -290,6 +290,15 @@ try {
     ]);
 } catch (\Throwable $e) {
     error_log('[api/notifications.php] ' . $e->getMessage());
+    if (($method ?? 'GET') === 'GET') {
+        notifications_json(200, [
+            'status' => 'success',
+            'data' => [],
+            'warning' => 'Notifications are temporarily unavailable.',
+            'details' => $e->getMessage(),
+        ]);
+    }
+
     notifications_json(500, [
         'status' => 'error',
         'message' => 'Database error: ' . $e->getMessage(),

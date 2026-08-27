@@ -198,7 +198,7 @@ class GhlSyncService
 
         try {
             $resp = $this->ghlClient->request(
-                'POST',
+                'PUT',
                 '/conversations/messages/' . urlencode($ghlMessageId) . '/status',
                 json_encode([
                     'status'     => $ghlStatus,

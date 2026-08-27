@@ -37,6 +37,36 @@ function nola_mask_secret(?string $secret): ?string
     return $prefix . '...' . $last;
 }
 
+function account_sender_default_config(string $message, string $details): array
+{
+    return [
+        'status' => 'success',
+        'data' => [
+            'sender_id' => null,
+            'verified' => false,
+            'approved_sender_id' => null,
+            'nola_pro_api_key' => null,
+            'nola_pro_api_key_masked' => null,
+            'nola_pro_api_key_configured' => false,
+            'unisms_api_key' => null,
+            'unisms_api_key_masked' => null,
+            'unisms_api_key_configured' => false,
+            'unisms_sender_id' => null,
+            'provider_preference' => 'system',
+            'free_usage_count' => 0,
+            'free_credits_total' => 10,
+            'system_default_sender' => 'NOLASMSPro',
+            'toggle_enabled' => true,
+            'virtual_number' => null,
+            'unisms_virtual_number' => null,
+            'virtual_number_status' => 'inactive',
+            'two_way_capable' => false,
+        ],
+        'warning' => $message,
+        'details' => $details,
+    ];
+}
+
 try {
     if ($method === 'GET') {
         // 3. Database Query — fetch integration doc + admin_settings + ghl_token in parallel
@@ -103,6 +133,10 @@ try {
                 'free_credits_total'          => $data['free_credits_total'] ?? 10,
                 'system_default_sender'       => $systemDefaultSender,
                 'toggle_enabled'              => $toggleEnabled,
+                'virtual_number'              => $data['virtual_number'] ?? ($data['unisms_virtual_number'] ?? null),
+                'unisms_virtual_number'       => $data['unisms_virtual_number'] ?? ($data['virtual_number'] ?? null),
+                'virtual_number_status'       => $data['virtual_number_status'] ?? (!empty($data['virtual_number'] ?? $data['unisms_virtual_number']) ? 'active' : 'inactive'),
+                'two_way_capable'             => !empty($data['virtual_number'] ?? $data['unisms_virtual_number']) || ($data['two_way_capable'] ?? false),
             ]
         ]);
         exit;
@@ -183,6 +217,13 @@ try {
     echo json_encode(['status' => 'error', 'message' => 'Method Not Allowed']);
 
 } catch (\Throwable $e) {
+    if (($method ?? 'GET') === 'GET') {
+        http_response_code(200);
+        header('Cache-Control: no-store');
+        echo json_encode(account_sender_default_config('Account sender configuration is temporarily unavailable.', $e->getMessage()));
+        exit;
+    }
+
     http_response_code(500);
     echo json_encode(['status' => 'error', 'message' => 'Internal Server Error', 'details' => $e->getMessage()]);
 }

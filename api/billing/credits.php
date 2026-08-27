@@ -314,6 +314,18 @@ try {
     echo json_encode(NolaCache::withCacheMeta($responsePayload, 30, $forceFresh ? 'BYPASS' : false, 'location'), JSON_PRETTY_PRINT);
 }
 catch (\Throwable $e) {
+    if (($method ?? 'GET') === 'GET') {
+        http_response_code(200);
+        header('Cache-Control: no-store');
+        echo json_encode([
+            'success' => false,
+            'status' => 'temporarily_unavailable',
+            'error' => 'Failed to fetch credit balance',
+            'message' => $e->getMessage(),
+        ], JSON_PRETTY_PRINT);
+        exit;
+    }
+
     http_response_code(500);
     echo json_encode([
         'success' => false,

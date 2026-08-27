@@ -204,7 +204,7 @@ class CreditManager
 
         $profit = round($charged - $provider_cost, 4);
 
-        $result = $this->db->runTransaction(function ($transaction) use (
+        $result = $this->runTransactionWithRetry(function ($transaction) use (
             $subaccountRef, $transactionRef, $amount, $reference_id, $description,
             $agency_id, $location_id, $provider_cost, $charged, $profit, $provider, $ts, $metadata
         ) {
@@ -311,7 +311,7 @@ class CreditManager
 
         $profit = round($charged - $provider_cost, 4);
 
-        $result = $this->db->runTransaction(function ($transaction) use (
+        $result = $this->runTransactionWithRetry(function ($transaction) use (
             $subaccountRef, $agencyRef, $agencyWalletRef,
             $transactionRefSub, $transactionRefAgency,
             $subaccount_amount, $agency_amount, $reference_id, $description,
@@ -1222,6 +1222,35 @@ class CreditManager
             }
         } catch (\Throwable $e) {
             error_log("[CreditManager] Cache invalidation failed: " . $e->getMessage());
+        }
+    }
+
+    private function runTransactionWithRetry(callable $callback)
+    {
+        $maxAttempts = 5;
+        $attempt = 1;
+        while (true) {
+            try {
+                return $this->db->runTransaction($callback);
+            } catch (\Throwable $e) {
+                $isContention = false;
+                if ($e->getCode() === 10) {
+                    $isContention = true;
+                } elseif (str_contains($e->getMessage(), 'contention') || str_contains($e->getMessage(), 'ABORTED')) {
+                    $isContention = true;
+                }
+                
+                if ($isContention && $attempt < $maxAttempts) {
+                    error_log("[CreditManager] Transaction contention on attempt {$attempt}, retrying in background. Error: " . $e->getMessage());
+                    // Exponential backoff with jitter: sleep between 10ms and (2^attempt * 50)ms
+                    $minDelay = 10000; // 10ms
+                    $maxDelay = (1 << $attempt) * 50000; // e.g. 100ms, 200ms, 400ms, 800ms
+                    usleep(random_int($minDelay, $maxDelay));
+                    $attempt++;
+                    continue;
+                }
+                throw $e;
+            }
         }
     }
 }

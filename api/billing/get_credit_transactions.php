@@ -183,10 +183,14 @@ try {
     $responsePayload['cached'] = false;
     echo json_encode($responsePayload, JSON_PRETTY_PRINT);
 } catch (\Throwable $e) {
-    http_response_code(500);
+    http_response_code(200);
+    header('Cache-Control: no-store');
     echo json_encode([
         'success' => false,
+        'status'  => 'temporarily_unavailable',
         'error'   => 'Failed to fetch credit transactions',
         'message' => $e->getMessage(),
+        'data' => [],
+        'transactions' => [],
     ], JSON_PRETTY_PRINT);
 }

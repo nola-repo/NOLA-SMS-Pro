@@ -280,6 +280,18 @@ try {
     echo json_encode(['status' => 'error', 'message' => 'Method Not Allowed']);
 
 } catch (\Throwable $e) {
+    if (($method ?? 'GET') === 'GET') {
+        http_response_code(200);
+        header('Cache-Control: no-store');
+        echo json_encode([
+            'status' => 'success',
+            'data' => [],
+            'warning' => 'Sender requests are temporarily unavailable.',
+            'details' => $e->getMessage(),
+        ]);
+        exit;
+    }
+
     http_response_code(500);
     echo json_encode(['status' => 'error', 'message' => 'Internal Server Error', 'details' => $e->getMessage()]);
 }
