@@ -2969,7 +2969,7 @@ function install_build_registration_url(
 
     $httpProtocol = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
     $httpHost = $_SERVER['HTTP_HOST'] ?? 'smspro-api.nolacrm.io';
-    $apiBase = ($httpHost === '') ? 'https://smspro-api.nolacrm.io' : ($httpProtocol . '://' . $httpHost);
+    $apiBase = $httpProtocol . '://' . $httpHost;
 
     return $apiBase . '/register?install_token=' . urlencode(
         jwt_sign($payload, $jwtSecret, install_registration_token_ttl_seconds())
@@ -3496,7 +3496,7 @@ function install_decide_location_redirect(
     if (!empty($classification['linked'])) {
         $httpProtocol = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
         $httpHost = $_SERVER['HTTP_HOST'] ?? 'smspro-api.nolacrm.io';
-        $apiBase = ($httpHost === '') ? 'https://smspro-api.nolacrm.io' : ($httpProtocol . '://' . $httpHost);
+        $apiBase = $httpProtocol . '://' . $httpHost;
 
         $url = $apiBase . '/login?welcome_back=1&name=' . urlencode($locationName ?: 'Your Sub-Account')
             . '&location_id=' . urlencode($locationId)
