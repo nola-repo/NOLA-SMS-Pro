@@ -35,7 +35,7 @@ steps:
       - '5'
       - '--concurrency'
       - '30'
-      - '--memory'
+      - '--memory'  
       - '1Gi'
       - '--allow-unauthenticated'
 

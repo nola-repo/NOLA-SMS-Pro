@@ -2,7 +2,8 @@
 
 ## Git Workflow
 - Never push directly to `main`.
-- All development changes must go through `staging` first.
+- **Never push changes (`git push`) automatically.** All changes must remain local until the user explicitly requests or confirms to push.
+- All development changes must go through `staging` first before `main`.
 - Keep commits focused and descriptive — one logical change per commit.
 - Do not overwrite, force-push, or reset other people's work.
 
