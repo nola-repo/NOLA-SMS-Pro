@@ -16,14 +16,8 @@ require_once dirname(__DIR__) . '/api/jwt_helper.php';
 require_once dirname(__DIR__) . '/api/webhook/firestore_client.php';
 require_once dirname(__DIR__) . '/api/install_helpers.php';
 
-$httpProtocol = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
-$httpHost = $_SERVER['HTTP_HOST'] ?? 'smspro-api.nolacrm.io';
-$apiBase = $httpProtocol . '://' . $httpHost;
-
-$reactApp = 'https://app.nolacrm.io';
-if (str_contains($httpHost, 'staging') || str_contains($httpHost, '116662437564')) {
-    $reactApp = 'https://nolasmspro-frontend-staging-116662437564.asia-southeast1.run.app';
-}
+$apiBase = nola_public_base_url();
+$reactApp = getenv('GHL_CRM_BASE_URL') ?: 'https://app.nolacrm.io';
 $marketplace = 'https://marketplace.leadconnectorhq.com/apps/overview/68118e8f9f1bac2ffc84ed23';
 
 // ── Shared page renderer (matches install-register.php / ghl_callback.php) ───
@@ -489,8 +483,8 @@ if ($locationIdRaw !== '') {
                 $locName = (string)($locData['location_name'] ?? $locationName ?? '');
                 $coId = (string)($locData['companyId'] ?? $locData['company_id'] ?? '');
                 $coName = (string)($locData['company_name'] ?? $locData['agency_name'] ?? $companyName ?? '');
-                $jwtSecretLogin = getenv('JWT_SECRET');
-                if ($jwtSecretLogin === false || trim((string)$jwtSecretLogin) === '') {
+                $jwtSecretLogin = nola_jwt_secret();
+                if ($jwtSecretLogin === '') {
                     error_log('[install-login] JWT_SECRET missing; cannot build registration URL.');
                     il_page('Configuration Error', '<div class="error-box">Server configuration error: JWT secret missing.</div>');
                 }
@@ -584,7 +578,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (getenv('PORT') !== false) {
             $port = getenv('PORT') ?: '8080';
             $loginUrl = 'http://127.0.0.1:' . $port . '/api/auth/login';
-            $headers[] = 'Host: ' . ($_SERVER['HTTP_HOST'] ?? 'smspro-api.nolacrm.io');
+            $headers[] = 'Host: ' . nola_request_host();
+            $headers[] = 'X-Forwarded-Proto: https';
+            $headers[] = 'X-Forwarded-Host: ' . nola_request_host();
         }
 
         $ch = curl_init($loginUrl);
@@ -612,8 +608,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($code === 200 && !empty($result['token'])) {
             if ($locationIdRaw !== '') {
                 $db = get_firestore();
-                $jwtSecret = getenv('JWT_SECRET');
-                if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
+                $jwtSecret = nola_jwt_secret();
+                if ($jwtSecret === '') {
                     $formError = 'Server configuration error: JWT secret missing.';
                     goto render_login_form;
                 }
@@ -628,11 +624,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             // Agency account — redirect to agency portal
             if (($result['role'] ?? '') === 'agency') {
-                $agencyUrl = 'https://agency.nolasmspro.com';
-                if (str_contains($httpHost, 'staging') || str_contains($httpHost, '116662437564')) {
-                    $agencyUrl = 'https://nolasmspro-agency-staging-116662437564.asia-southeast1.run.app';
-                }
-                header('Location: ' . $agencyUrl, true, 302);
+                header('Location: ' . nola_agency_app_url(), true, 302);
                 exit;
             }
 
@@ -643,7 +635,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             //  • GHL installation / marketplace / iframe flow (location_id present) → dynamic deep-link
             //    into the user's exact GHL location subaccount custom page.
             //  • Pure standalone login (no location_id) → caller origin ($redirectParamRaw) or NOLA SMS Pro standalone app.
-            $standaloneApp   = 'https://app.nolasmspro.com';
+            $standaloneApp   = nola_frontend_app_url();
             if (!empty($redirectParamRaw) && (str_starts_with($redirectParamRaw, 'https://') || str_starts_with($redirectParamRaw, 'http://'))) {
                 $standaloneApp = $redirectParamRaw;
             }
@@ -784,8 +776,8 @@ if ($isBulkInstall) {
         if (($footerClass['status'] ?? '') !== INSTALL_STATE_INSTALL_PENDING && !empty($footerClass['token_exists']) && empty($footerClass['linked'])) {
             $locSnap = $dbForFooter->collection('ghl_tokens')->document($locationIdRaw)->snapshot();
             $locData = $locSnap->exists() ? $locSnap->data() : [];
-            $jwtSecretFooter = getenv('JWT_SECRET');
-            if ($jwtSecretFooter !== false && trim((string)$jwtSecretFooter) !== '') {
+            $jwtSecretFooter = nola_jwt_secret();
+            if ($jwtSecretFooter !== '') {
                 $registerUrl = install_build_registration_url(
                     (string)$jwtSecretFooter,
                     $locationIdRaw,

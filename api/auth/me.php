@@ -131,8 +131,8 @@ if (!$jwt) {
     auth_json_error(401, 'AUTH_TOKEN_MISSING', 'Missing auth token. Provide Authorization: Bearer <token>.');
 }
 
-$jwtSecret = getenv('JWT_SECRET');
-if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
+$jwtSecret = nola_jwt_secret();
+if ($jwtSecret === '') {
     auth_log_profile_failure('JWT_SECRET_MISSING');
     auth_json_error(500, 'JWT_SECRET_MISSING', 'Server misconfiguration: JWT secret missing.');
 }

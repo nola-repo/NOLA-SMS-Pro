@@ -5,6 +5,33 @@
  * Used by: register.php, login.php, ghl_autologin.php, link_company.php
  */
 
+function nola_jwt_secret(): string
+{
+    $candidates = [
+        getenv('JWT_SECRET'),
+        $_SERVER['JWT_SECRET'] ?? '',
+        $_ENV['JWT_SECRET'] ?? '',
+        getenv('LARAVEL_JWT_SECRET'),
+    ];
+
+    if (function_exists('apache_getenv')) {
+        $candidates[] = apache_getenv('JWT_SECRET', true);
+    }
+
+    $secretFile = '/var/www/html/laravel/.env.jwt_secret';
+    if (is_readable($secretFile)) {
+        $candidates[] = @file_get_contents($secretFile);
+    }
+
+    foreach ($candidates as $candidate) {
+        if (is_string($candidate) && trim($candidate) !== '') {
+            return trim($candidate);
+        }
+    }
+
+    return '';
+}
+
 function jwt_sign(array $payload, string $secret, int $expiresInSeconds = 28800): string
 {
     $header = base64url_encode(json_encode(['alg' => 'HS256', 'typ' => 'JWT']));

@@ -34,7 +34,7 @@ if (!$companyId) {
 }
 error_log('[GHL_AUTOLOGIN] Attempting auto-login for company_id: ' . $companyId);
 
-$jwtSecret = getenv('JWT_SECRET') ?: '';
+$jwtSecret = nola_jwt_secret();
 if ($jwtSecret === '') {
     http_response_code(500);
     echo json_encode(['error' => 'Server misconfiguration: JWT secret missing.']);

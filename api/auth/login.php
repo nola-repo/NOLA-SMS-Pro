@@ -31,8 +31,8 @@ if (!$email || !$password) {
     exit;
 }
 
-$jwtSecret = getenv('JWT_SECRET');
-if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
+$jwtSecret = nola_jwt_secret();
+if ($jwtSecret === '') {
     http_response_code(500);
     echo json_encode(['error' => 'Server misconfiguration: JWT secret missing.']);
     exit;

@@ -9,8 +9,8 @@ require_once dirname(__DIR__) . '/api/webhook/firestore_client.php';
 require_once dirname(__DIR__) . '/api/auth_helpers.php';
 require_once dirname(__DIR__) . '/api/install_helpers.php';
 
-$jwtSecret   = getenv('JWT_SECRET');
-if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
+$jwtSecret   = nola_jwt_secret();
+if ($jwtSecret === '') {
     $host = strtolower((string) ($_SERVER['HTTP_HOST'] ?? ''));
     if (str_contains($host, 'localhost') || str_contains($host, '127.0.0.1')) {
         $jwtSecret = 'dummy_secret_for_local_test';
@@ -20,14 +20,10 @@ if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
         exit('Server configuration error: JWT secret missing.');
     }
 }
-$httpProtocol = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
-$httpHost = $_SERVER['HTTP_HOST'] ?? 'smspro-api.nolacrm.io';
-$apiBase = $httpProtocol . '://' . $httpHost;
+$apiBase = nola_public_base_url();
 
 $reactApp        = getenv('GHL_CRM_BASE_URL') ?: 'https://app.nolacrm.io';
-if (str_contains($httpHost, 'staging') || str_contains($httpHost, '116662437564')) {
-    $reactApp = 'https://nolasmspro-frontend-staging-116662437564.asia-southeast1.run.app';
-}
+$standaloneApp   = nola_frontend_app_url();
 $marketplace     = 'https://marketplace.leadconnectorhq.com/apps/overview/68118e8f9f1bac2ffc84ed23';
 $ghlCustomPageId = getenv('GHL_CUSTOM_PAGE_ID') ?: '69a642aae76974824fd39bb6';
 
@@ -663,7 +659,7 @@ ir_page('Create Your Account', <<<HTML
         const installToken = "{$installToken}";
         const API_BASE = "{$apiBase}";
         const REACT_APP = "{$reactApp}";
-        const STANDALONE_APP = 'https://app.nolasmspro.com';
+        const STANDALONE_APP = "{$standaloneApp}";
         const GHL_MARKETPLACE_LOC_ID = 'ugBqfQsPtGijLjrmLdmA';
         const GHL_CUSTOM_PAGE_ID = "{$ghlCustomPageId}";
         const INSTALL_DIAGNOSTICS = {

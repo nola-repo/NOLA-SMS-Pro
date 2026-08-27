@@ -74,11 +74,14 @@ function agency_trigger_provision_async(string $baseUrl, string $sessionId, stri
 
 $agencyClientId = agency_env_required('GHL_AGENCY_CLIENT_ID');
 $agencyClientSecret = agency_env_required('GHL_AGENCY_CLIENT_SECRET');
-$jwtSecret = agency_env_required('JWT_SECRET');
+$jwtSecret = nola_jwt_secret();
+if ($jwtSecret === '') {
+    agency_render_error('Missing required environment variable: JWT_SECRET');
+}
 $webhookSecret = agency_env_required('WEBHOOK_SECRET');
-$apiBaseUrl = rtrim((string)(getenv('APP_BASE_URL') ?: 'https://smspro-api.nolacrm.io'), '/');
-$agencyAppUrl = rtrim((string)(getenv('AGENCY_APP_URL') ?: 'https://agency.nolasmspro.com'), '/');
-$redirectUri = rtrim((string)(getenv('GHL_AGENCY_REDIRECT_URI') ?: 'https://smspro-api.nolacrm.io/oauth/agency-callback'));
+$apiBaseUrl = nola_public_base_url();
+$agencyAppUrl = nola_agency_app_url();
+$redirectUri = rtrim((string)(getenv('GHL_AGENCY_REDIRECT_URI') ?: (nola_public_base_url() . '/oauth/agency-callback')), '/');
 
 if (!isset($_GET['code'])) {
     agency_render_error('No authorization code received from GHL.');

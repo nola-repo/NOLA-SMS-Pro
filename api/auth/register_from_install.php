@@ -37,8 +37,8 @@ $payloadLocName = $input['location_name'] ?? null;
 $payloadCompName = $input['company_name'] ?? null;
 $ghlUserId = trim((string)($input['ghl_user_id'] ?? $input['ghlUserId'] ?? ''));
 
-$jwtSecret = getenv('JWT_SECRET');
-if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
+$jwtSecret = nola_jwt_secret();
+if ($jwtSecret === '') {
     http_response_code(500);
     echo json_encode(['error' => 'Server misconfiguration: JWT secret missing.']);
     exit;
@@ -868,7 +868,7 @@ function register_from_install_log_timing(string $rid, string $step, float $sinc
 
 function register_from_install_location_conflict(string $locationId): void
 {
-    $loginUrl = 'https://smspro-api.nolacrm.io/login?welcome_back=1'
+    $loginUrl = nola_public_base_url() . '/login?welcome_back=1'
         . '&location_id=' . urlencode($locationId)
         . '&install_status=' . urlencode(INSTALL_STATE_LINKED_ACCOUNT)
         . '&resolution_source=' . urlencode('register_conflict_existing_owner');

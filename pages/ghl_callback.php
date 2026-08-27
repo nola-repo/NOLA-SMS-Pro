@@ -5,7 +5,7 @@ require_once dirname(__DIR__) . '/api/install_helpers.php';
 
 // ─── Global Context ────────────────────────────────────────────────────────────
 $locationIdSafe = '';
-$backendApiUrl = 'https://smspro-api.nolacrm.io';
+$backendApiUrl = nola_public_base_url();
 
 /**
  * Whether greppable install tracing is enabled. Set GHL_INSTALL_TRACE=0 to disable.
@@ -387,7 +387,8 @@ function render_error(string $message, array $details = []): void
         $details_html = "<pre class=\"error-pre\">{$json}</pre>";
     }
 
-    $reinstall_url = 'https://marketplace.leadconnectorhq.com/v2/oauth/chooselocation?response_type=code&redirect_uri=https%3A%2F%2Fsmspro-api.nolacrm.io%2Foauth%2Fcallback&client_id=6999da2b8f278296d95f7274-mmn30t4f&scope=contacts.readonly+contacts.write+conversations.readonly+conversations.write+conversations%2Fmessage.readonly+conversations%2Fmessage.write+locations.readonly+locations%2FcustomFields.readonly+oauth.readonly+oauth.write&version_id=6999da2b8f278296d95f7274';
+    $reinstallRedirect = rawurlencode(nola_ghl_oauth_redirect_uri());
+    $reinstall_url = 'https://marketplace.leadconnectorhq.com/v2/oauth/chooselocation?response_type=code&redirect_uri=' . $reinstallRedirect . '&client_id=6999da2b8f278296d95f7274-mmn30t4f&scope=contacts.readonly+contacts.write+conversations.readonly+conversations.write+conversations%2Fmessage.readonly+conversations%2Fmessage.write+locations.readonly+locations%2FcustomFields.readonly+oauth.readonly+oauth.write&version_id=6999da2b8f278296d95f7274';
     $stateLocationId = install_clean_location_id($locationIdSafe);
     if ($stateLocationId !== null) {
         $reinstall_url .= '&state=' . urlencode(json_encode(['selected_location_id' => $stateLocationId]));
@@ -1037,7 +1038,7 @@ function has_linked_user_for_location($db, string $locationId): bool
 // Agency installs use /oauth/agency-callback → ghl_agency_callback.php
 $clientId     = getenv('GHL_CLIENT_ID');
 $clientSecret = getenv('GHL_CLIENT_SECRET');
-$redirectUri  = 'https://smspro-api.nolacrm.io/oauth/callback'; // HARDCODED
+$redirectUri  = nola_ghl_oauth_redirect_uri();
 
 if (!$clientId || !$clientSecret) {
     error_log('[GHL_CALLBACK] Server configuration error: GHL client credentials are not set.');
@@ -1367,8 +1368,8 @@ if (($data['userType'] ?? '') === 'Company') {
         }
 
         require_once dirname(__DIR__) . '/api/jwt_helper.php';
-        $jwtSecret2 = getenv('JWT_SECRET');
-        if ($jwtSecret2 === false || trim((string)$jwtSecret2) === '') {
+        $jwtSecret2 = nola_jwt_secret();
+        if ($jwtSecret2 === '') {
             error_log('[GHL_CALLBACK] JWT_SECRET missing; cannot generate install token.');
             render_error('Server configuration error: JWT secret missing.');
         }
@@ -1456,8 +1457,8 @@ if (($data['userType'] ?? '') === 'Company') {
 
     if (count($locationsArrayIds) > 1) {
         require_once dirname(__DIR__) . '/api/jwt_helper.php';
-        $jwtSecretSelect = getenv('JWT_SECRET');
-        if ($jwtSecretSelect === false || trim((string)$jwtSecretSelect) === '') {
+        $jwtSecretSelect = nola_jwt_secret();
+        if ($jwtSecretSelect === '') {
             error_log('[GHL_CALLBACK] JWT_SECRET missing; cannot generate ambiguous selection session.');
             render_error('Server configuration error: JWT secret missing.');
         }
@@ -1522,8 +1523,8 @@ if (($data['userType'] ?? '') === 'Company') {
 
     if (empty($locationsArrayIds)) {
         require_once dirname(__DIR__) . '/api/jwt_helper.php';
-        $jwtSecretSelect = getenv('JWT_SECRET');
-        if ($jwtSecretSelect === false || trim((string)$jwtSecretSelect) === '') {
+        $jwtSecretSelect = nola_jwt_secret();
+        if ($jwtSecretSelect === '') {
             error_log('[GHL_CALLBACK] JWT_SECRET missing; cannot generate selection-required recovery session.');
             render_error('Server configuration error: JWT secret missing.');
         }
@@ -1618,8 +1619,8 @@ if (!$locationId) {
     $finalCompanyId = trim((string)($data['companyId'] ?? ''));
     if ($finalCompanyId !== '' && ($data['userType'] ?? '') === 'Company') {
         require_once dirname(__DIR__) . '/api/jwt_helper.php';
-        $jwtSecretSelect = getenv('JWT_SECRET');
-        if ($jwtSecretSelect === false || trim((string)$jwtSecretSelect) === '') {
+        $jwtSecretSelect = nola_jwt_secret();
+        if ($jwtSecretSelect === '') {
             error_log('[GHL_CALLBACK] JWT_SECRET missing; cannot generate final selection session.');
             render_error('Server configuration error: JWT secret missing.');
         }
@@ -1932,8 +1933,8 @@ catch (Exception $e) {
 
 require_once dirname(__DIR__) . '/api/jwt_helper.php';
 
-$jwtSecret = getenv('JWT_SECRET');
-if ($jwtSecret === false || trim((string)$jwtSecret) === '') {
+$jwtSecret = nola_jwt_secret();
+if ($jwtSecret === '') {
     error_log('[GHL_CALLBACK] JWT_SECRET missing; cannot generate install token.');
     render_error('Server configuration error: JWT secret missing.');
 }

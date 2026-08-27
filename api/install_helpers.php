@@ -28,6 +28,9 @@ if (!defined('INSTALL_REGISTRATION_TOKEN_TTL_SECONDS')) {
     define('INSTALL_REGISTRATION_TOKEN_TTL_SECONDS', 3600);
 }
 
+require_once __DIR__ . '/request_context.php';
+require_once __DIR__ . '/jwt_helper.php';
+
 function install_registration_token_ttl_seconds(): int
 {
     $configured = (int)(getenv('INSTALL_REGISTRATION_TOKEN_TTL_SECONDS') ?: INSTALL_REGISTRATION_TOKEN_TTL_SECONDS);
@@ -2967,11 +2970,7 @@ function install_build_registration_url(
         $payload[$k] = $v;
     }
 
-    $httpProtocol = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
-    $httpHost = $_SERVER['HTTP_HOST'] ?? 'smspro-api.nolacrm.io';
-    $apiBase = $httpProtocol . '://' . $httpHost;
-
-    return $apiBase . '/register?install_token=' . urlencode(
+    return nola_public_base_url() . '/register?install_token=' . urlencode(
         jwt_sign($payload, $jwtSecret, install_registration_token_ttl_seconds())
     );
 }
@@ -3494,11 +3493,7 @@ function install_decide_location_redirect(
     $crmDomain = $crmBaseUrl ?: install_detect_crm_base_url();
 
     if (!empty($classification['linked'])) {
-        $httpProtocol = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
-        $httpHost = $_SERVER['HTTP_HOST'] ?? 'smspro-api.nolacrm.io';
-        $apiBase = $httpProtocol . '://' . $httpHost;
-
-        $url = $apiBase . '/login?welcome_back=1&name=' . urlencode($locationName ?: 'Your Sub-Account')
+        $url = nola_public_base_url() . '/login?welcome_back=1&name=' . urlencode($locationName ?: 'Your Sub-Account')
             . '&location_id=' . urlencode($locationId)
             . '&crm_domain=' . urlencode($crmDomain)
             . '&install_status=' . urlencode(INSTALL_STATE_LINKED_ACCOUNT)

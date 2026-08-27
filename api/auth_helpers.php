@@ -237,12 +237,13 @@ function validate_jwt(): array
     }
 
     $token = substr($authHeader, 7); // strip "Bearer "
-    $secret = getenv('JWT_SECRET');
-    if ($secret === false || trim((string)$secret) === '') {
-        // Fallback: JWT_SECRET env var not passed to Apache by Cloud Run.
-        // Read from the well-known Laravel .env that entrypoint writes.
-        $secret = @file_get_contents('/var/www/html/laravel/.env.jwt_secret') ?:
-                  getenv('LARAVEL_JWT_SECRET') ?: '';
+    $secret = nola_jwt_secret();
+    if ($secret === '') {
+        Logger::auth(false, 'jwt', ['reason' => 'jwt-secret-missing']);
+        header('Content-Type: application/json');
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => 'Server misconfiguration: JWT secret missing.']);
+        exit;
     }
 
     $payload = jwt_verify($token, $secret);
@@ -452,8 +453,8 @@ function auth_get_optional_jwt_context($db, bool $strictInvalid = true): ?array
 
     require_once __DIR__ . '/jwt_helper.php';
 
-    $secret = getenv('JWT_SECRET');
-    if ($secret === false || trim((string) $secret) === '') {
+    $secret = nola_jwt_secret();
+    if ($secret === '') {
         // Apache does not automatically inherit Cloud Run env vars.
         // Fall back gracefully — return null (no JWT context) so callers
         // fall through to the WEBHOOK_SECRET path instead of crashing with 500.
@@ -596,8 +597,8 @@ function auth_assert_agency_billing_read_allowed($db, string $agencyId): void
     if ($jwt !== null && $jwt !== '') {
         require_once __DIR__ . '/jwt_helper.php';
 
-        $secret = getenv('JWT_SECRET');
-        if ($secret === false || trim((string)$secret) === '') {
+        $secret = nola_jwt_secret();
+        if ($secret === '') {
             // If JWT_SECRET missing, skip JWT check — fall through to WEBHOOK_SECRET auth below.
             goto skip_jwt_billing_auth;
         }
