@@ -71,8 +71,12 @@ const normalizeCreditStatus = (payload: unknown): CreditStatus => {
 };
 
 const normalizeTransactions = (data: unknown): CreditTransaction[] => {
-    if (Array.isArray(data)) return data as CreditTransaction[];
     const d = data as Record<string, unknown> | null | undefined;
+    if (d && (d.success === false || d.status === 'temporarily_unavailable')) {
+        const msg = (d.message ?? d.error) as string | undefined;
+        throw new Error(msg || "Failed to load credit transactions.");
+    }
+    if (Array.isArray(data)) return data as CreditTransaction[];
     if (Array.isArray(d?.transactions)) return d!.transactions as CreditTransaction[];
     if (Array.isArray(d?.data)) return d!.data as CreditTransaction[];
     return [];

@@ -155,6 +155,11 @@ const normalizeContacts = (data: unknown): Contact[] => {
   // - { data: [...] }
   // - { contacts: [...] }
   // - { data: { contacts: [...] } }
+  // Detect degraded backend responses — throw so fetchCachedJson preserves stale cache
+  if (isRecord(data) && (data.temporarily_unavailable === true || data.status === 'temporarily_unavailable' || data.success === false)) {
+    throw new Error(asString(data.warning) || asString(data.error) || 'Contacts temporarily unavailable');
+  }
+
   let contacts: JsonRecord[] = [];
   const directContacts = getContactArray(data);
   if (directContacts) {
