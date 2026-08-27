@@ -1,4 +1,9 @@
 steps:
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - 'sed -i "s/smspro-api.nolacrm.io/staging-api.nolacrm.io/g" admin/nginx.conf'
   - name: 'gcr.io/cloud-builders/docker'
     args: ['build', '-f', 'admin/Dockerfile', '-t', '$_AR_HOSTNAME/$_AR_PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:$COMMIT_SHA', 'admin']
   - name: 'gcr.io/cloud-builders/docker'
