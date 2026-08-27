@@ -579,11 +579,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $password = $_POST['password'] ?? '';
         $emailVal = htmlspecialchars($email, ENT_QUOTES, 'UTF-8');
 
-        $ch = curl_init($apiBase . '/api/auth/login');
+        $loginUrl = $apiBase . '/api/auth/login';
+        $headers = ['Content-Type: application/json', 'Accept: application/json'];
+        if (getenv('PORT') !== false) {
+            $port = getenv('PORT') ?: '8080';
+            $loginUrl = 'http://127.0.0.1:' . $port . '/api/auth/login';
+            $headers[] = 'Host: ' . ($_SERVER['HTTP_HOST'] ?? 'smspro-api.nolacrm.io');
+        }
+
+        $ch = curl_init($loginUrl);
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_POST           => true,
-            CURLOPT_HTTPHEADER     => ['Content-Type: application/json', 'Accept: application/json'],
+            CURLOPT_HTTPHEADER     => $headers,
             CURLOPT_POSTFIELDS     => json_encode([
                 'email' => $email,
                 'password' => $password,
@@ -593,6 +601,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             CURLOPT_TIMEOUT        => 15,
         ]);
         $resp = curl_exec($ch);
+        if ($resp === false) {
+            error_log('[install-login] curl failed for url ' . ($apiBase . '/api/auth/login') . ': ' . curl_error($ch));
+        }
         $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
 
