@@ -428,6 +428,11 @@ class NotificationService
             'nola_sms_admin_notes',
             'nola_sms_otp_code',
             'nola_sms_sender_id_registered',
+            'nola_sms_ticket_id',
+            'nola_sms_ticket_subject',
+            'nola_sms_ticket_message',
+            'nola_sms_ticket_category',
+            'nola_sms_ticket_priority',
         ];
 
         // Return immediately if all required IDs are already cached (unless forceRefresh is true)
@@ -804,6 +809,100 @@ class NotificationService
                 "[LowBalanceAlert::syncCentral] Tag cycle exception "
                 . "(central={$centralLocationId}, source={$sourceLocationId}): " . $e->getMessage()
             );
+        }
+
+        return $contactId;
+    }
+
+    public static function notifySupportTicketSubmitted(
+        $db,
+        string $sourceLocationId,
+        string $ticketId,
+        string $subject,
+        string $priority,
+        string $message,
+        string $email,
+        string $category = 'Technical'
+    ): ?string {
+        require_once __DIR__ . '/GhlClient.php';
+
+        $centralLocationId = getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: 'kXqTpfqXBuKBMjXKLZxG';
+        $centralTokenRegistryId = getenv('NOLA_ALERT_GHL_TOKEN_REGISTRY_ID') ?: $centralLocationId;
+        $alertTag = 'nola-support-ticket-alert';
+
+        try {
+            $ghlClient = new \GhlClient($db, $centralLocationId, $centralTokenRegistryId);
+        } catch (\Throwable $e) {
+            error_log("[SupportTicketAlert] Failed to initialize GhlClient: " . $e->getMessage());
+            return null;
+        }
+
+        $contactId = null;
+        try {
+            $searchUrl = '/contacts/?locationId=' . urlencode($centralLocationId) . '&query=' . urlencode($email);
+            $searchResp = $ghlClient->request('GET', $searchUrl);
+            if ($searchResp['status'] === 200) {
+                $searchData = json_decode($searchResp['body'], true);
+                $contacts = $searchData['contacts'] ?? $searchData['data'] ?? [];
+                if (is_array($contacts)) {
+                    foreach ($contacts as $c) {
+                        if (strtolower(trim($c['email'] ?? '')) === strtolower(trim($email))) {
+                            $contactId = $c['id'];
+                            break;
+                        }
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log("[SupportTicketAlert] Contact search failed: " . $e->getMessage());
+        }
+
+        $fieldIdMap = self::resolveCentralGhlCustomFieldIds($db, $ghlClient, $centralLocationId, true);
+        $now = new \DateTimeImmutable();
+
+        $alertFields = [
+            'nola_sms_alert_type'          => 'support_ticket',
+            'nola_sms_alert_id'            => 'ticket_' . $ticketId . '_' . $now->format('YmdHis'),
+            'nola_sms_alerted_at'          => $now->format('c'),
+            'nola_sms_registered_email'    => $email,
+            'nola_sms_source_location_id'  => $sourceLocationId,
+            'nola_sms_ticket_id'           => $ticketId,
+            'nola_sms_ticket_subject'      => $subject,
+            'nola_sms_ticket_message'      => $message,
+            'nola_sms_ticket_category'     => $category,
+            'nola_sms_ticket_priority'     => $priority,
+        ];
+
+        $ghlCustomFields = [];
+        foreach ($alertFields as $k => $v) {
+            $fieldId = $fieldIdMap[$k] ?? null;
+            if ($fieldId) {
+                $ghlCustomFields[] = ['id' => $fieldId, 'value' => (string)$v];
+            }
+        }
+
+        $contactPayload = [
+            'locationId'   => $centralLocationId,
+            'email'        => $email,
+            'firstName'    => 'NOLA SMS',
+            'lastName'     => 'Support User',
+            'customFields' => $ghlCustomFields,
+        ];
+
+        if ($contactId) {
+            unset($contactPayload['locationId']);
+            $ghlClient->request('PUT', "/contacts/{$contactId}", json_encode($contactPayload));
+        } else {
+            $createResp = $ghlClient->request('POST', '/contacts/', json_encode($contactPayload));
+            if (in_array($createResp['status'], [200, 201])) {
+                $createData = json_decode($createResp['body'], true);
+                $contactId = $createData['contact']['id'] ?? $createData['id'] ?? null;
+            }
+        }
+
+        if ($contactId) {
+            $ghlClient->request('DELETE', "/contacts/{$contactId}/tags", json_encode(['tags' => [$alertTag]]));
+            $ghlClient->request('POST', "/contacts/{$contactId}/tags", json_encode(['tags' => [$alertTag]]));
         }
 
         return $contactId;

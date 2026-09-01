@@ -983,8 +983,9 @@ error_log("[send_sms] BILLING DECISION for loc={$locId}: " . json_encode([
 
 // -- Credit Deduction & Trial --------------------------------------------------
 if ($bypassBilling) {
-    // Free system notification � no trial counter increment, no wallet deduction.
-    error_log("[send_sms] BILLING BYPASS: System notification. Skipping credit deduction for loc={$locId}.");
+    // Free system notification — no trial counter increment, no wallet deduction.
+    $required_credits = 0;
+    error_log("[send_sms] System notification bypass for location {$locId}. 0 credits deducted.");
 
 } elseif ($usingFreeCredits) {
     // Free Trial (PATH B only) ? increment counter, no paid credit deduction

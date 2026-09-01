@@ -186,6 +186,11 @@ try {
             $priority = 'normal';
         }
 
+        $category = trim((string)($body['category'] ?? 'Technical'));
+        if ($category === '') {
+            $category = 'Technical';
+        }
+
         $now = tickets_now_timestamp();
         $ticketRef = $db->collection('support_tickets')->newDocument();
         $event = [
@@ -204,6 +209,7 @@ try {
             'user_email' => $actor['email'],
             'subject' => $subject,
             'message' => $message,
+            'category' => $category,
             'status' => 'open',
             'priority' => $priority,
             'events' => [$event],
@@ -227,6 +233,7 @@ try {
                     'ticket_id' => $ticketRef->id(),
                     'subject' => $subject,
                     'priority' => $priority,
+                    'category' => $category,
                     'status' => 'open',
                 ],
             ]);
@@ -237,7 +244,8 @@ try {
                 $subject,
                 $priority,
                 $message,
-                $actor['email']
+                $actor['email'],
+                $category
             );
         } catch (\Throwable $notifyError) {
             error_log('[tickets.php] Failed to dispatch support ticket notification: ' . $notifyError->getMessage());
