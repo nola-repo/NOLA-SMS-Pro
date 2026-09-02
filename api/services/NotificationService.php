@@ -828,7 +828,7 @@ class NotificationService
 
         $centralLocationId = getenv('NOLA_ALERT_GHL_LOCATION_ID') ?: 'kXqTpfqXBuKBMjXKLZxG';
         $centralTokenRegistryId = getenv('NOLA_ALERT_GHL_TOKEN_REGISTRY_ID') ?: $centralLocationId;
-        $alertTag = 'nola-support-ticket-alert';
+        $alertTag = getenv('NOLA_ALERT_SUPPORT_TICKET_TAG') ?: 'nola-support-ticket-alert';
 
         try {
             $ghlClient = new \GhlClient($db, $centralLocationId, $centralTokenRegistryId);
