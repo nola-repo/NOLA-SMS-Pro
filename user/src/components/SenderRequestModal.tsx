@@ -1,0 +1,575 @@
+import { devLog } from '../utils/devLog';
+import { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
+import { FiPlus, FiX, FiCheck, FiLoader, FiAlertCircle, FiUpload, FiFile, FiTrash2, FiArrowRight, FiSend, FiCheckCircle, FiChevronLeft } from "react-icons/fi";
+import { submitSenderRequest } from "../api/senderRequests";
+import type { StoredSenderId } from "../utils/settingsStorage";
+
+interface SenderRequestModalProps {
+    isOpen: boolean;
+    onClose: () => void;
+    onSuccess?: (newSender: StoredSenderId) => void;
+    initialStep?: 'intro' | 'form';
+}
+
+interface AttachedFile {
+    name: string;
+    size: number;
+    type: string;
+    dataUrl: string; // base64 data URL
+}
+
+const SENDER_COLORS = [
+    "bg-blue-500", "bg-purple-500", "bg-orange-500",
+    "bg-emerald-500", "bg-rose-500", "bg-amber-500", "bg-indigo-500", "bg-cyan-500",
+];
+
+const DEFAULT_REQUEST_PROVIDER = "unisms";
+
+const MAX_FILE_SIZE_MB = 1;
+const MAX_TOTAL_BYTES = 700 * 1024; // 700 KB max total for Firestore document payload
+const MAX_FILES = 3;
+const ACCEPTED_TYPES = [
+    "image/jpeg", "image/png", "image/webp", "image/gif",
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+];
+const ACCEPTED_EXTENSIONS = ".jpg,.jpeg,.png,.webp,.gif,.pdf,.doc,.docx";
+
+function formatBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function fileIcon(type: string): string {
+    if (type.startsWith("image/")) return "🖼️";
+    if (type === "application/pdf") return "📄";
+    return "📎";
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error("Failed to read file."));
+        reader.readAsDataURL(file);
+    });
+}
+
+export const SenderRequestModal: React.FC<SenderRequestModalProps> = ({ isOpen, onClose, onSuccess, initialStep = 'intro' }) => {
+    const [step, setStep] = useState<'intro' | 'form'>(initialStep);
+    const [newId, setNewId] = useState("");
+    const [newPurpose, setNewPurpose] = useState("");
+    const [newSample, setNewSample] = useState("");
+    const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isSubmitted, setIsSubmitted] = useState(false);
+    const [countdown, setCountdown] = useState(3);
+    const [error, setError] = useState<string | null>(null);
+    const [fileError, setFileError] = useState<string | null>(null);
+    const [isDragging, setIsDragging] = useState(false);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const dropZoneRef = useRef<HTMLDivElement>(null);
+
+    const normalizedSenderName = newId.trim();
+
+    useEffect(() => {
+        let timer: NodeJS.Timeout;
+        if (isSubmitted) {
+            setCountdown(3);
+            timer = setInterval(() => {
+                setCountdown((prev) => Math.max(0, prev - 1));
+            }, 1000);
+        }
+        return () => {
+            if (timer) clearInterval(timer);
+        };
+    }, [isSubmitted]);
+
+    // Reset state when modal closes
+    useEffect(() => {
+        if (!isOpen) {
+            setStep(initialStep);
+            setNewId("");
+            setNewPurpose("");
+            setNewSample("");
+            setAttachedFiles([]);
+            setError(null);
+            setFileError(null);
+            setIsSubmitted(false);
+            setIsDragging(false);
+        }
+    }, [isOpen, initialStep]);
+
+    const processFiles = useCallback(async (rawFiles: FileList | File[]) => {
+        setFileError(null);
+        const fileArray = Array.from(rawFiles);
+        const remaining = MAX_FILES - attachedFiles.length;
+        if (remaining <= 0) {
+            setFileError(`You can only attach up to ${MAX_FILES} files.`);
+            return;
+        }
+        const toProcess = fileArray.slice(0, remaining);
+        const newAttachments: AttachedFile[] = [];
+
+        let currentTotal = attachedFiles.reduce((acc, f) => acc + f.size, 0);
+
+        for (const file of toProcess) {
+            if (!ACCEPTED_TYPES.includes(file.type)) {
+                setFileError(`"${file.name}" is not a supported file type. Use JPG, PNG, PDF, or DOCX.`);
+                continue;
+            }
+            if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
+                setFileError(`"${file.name}" exceeds the ${MAX_FILE_SIZE_MB}MB limit per file.`);
+                continue;
+            }
+            if (currentTotal + file.size > MAX_TOTAL_BYTES) {
+                setFileError(`Total size of attached files cannot exceed 700 KB.`);
+                continue;
+            }
+            // Check for duplicate name
+            const alreadyAttached = attachedFiles.some(f => f.name === file.name && f.size === file.size);
+            if (alreadyAttached) continue;
+
+            try {
+                const dataUrl = await readFileAsDataUrl(file);
+                newAttachments.push({ name: file.name, size: file.size, type: file.type, dataUrl });
+                currentTotal += file.size;
+            } catch {
+                setFileError(`Failed to read "${file.name}". Please try again.`);
+            }
+        }
+
+        if (newAttachments.length > 0) {
+            setAttachedFiles(prev => [...prev, ...newAttachments].slice(0, MAX_FILES));
+        }
+    }, [attachedFiles]);
+
+    const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files && e.target.files.length > 0) {
+            void processFiles(e.target.files);
+        }
+        // Reset so the same file can be re-selected if removed
+        e.target.value = "";
+    };
+
+    const handleDragOver = (e: React.DragEvent) => {
+        e.preventDefault();
+        setIsDragging(true);
+    };
+
+    const handleDragLeave = (e: React.DragEvent) => {
+        if (!dropZoneRef.current?.contains(e.relatedTarget as Node)) {
+            setIsDragging(false);
+        }
+    };
+
+    const handleDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        setIsDragging(false);
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            void processFiles(e.dataTransfer.files);
+        }
+    };
+
+    const removeFile = (index: number) => {
+        setAttachedFiles(prev => prev.filter((_, i) => i !== index));
+        setFileError(null);
+    };
+
+    if (!isOpen) return null;
+
+    const handleAdd = async (e: React.FormEvent) => {
+        e.preventDefault();
+        const trimmedId = normalizedSenderName;
+        if (!trimmedId || isSubmitting) return;
+
+        if (trimmedId.length < 3 || trimmedId.length > 11) {
+            setError("Sender name must be between 3 and 11 characters.");
+            return;
+        }
+
+        if (!/^[a-zA-Z0-9]+$/.test(trimmedId)) {
+            setError("Sender name can only contain letters and numbers.");
+            return;
+        }
+
+        if (!newPurpose.trim()) {
+            setError("Business purpose is required.");
+            return;
+        }
+
+        if (!newSample.trim()) {
+            setError("Sample message is required.");
+            return;
+        }
+
+        setIsSubmitting(true);
+        setError(null);
+
+        try {
+            await submitSenderRequest(
+                trimmedId,
+                newPurpose.trim(),
+                newSample.trim(),
+                DEFAULT_REQUEST_PROVIDER,
+                attachedFiles.length > 0 ? attachedFiles.map(f => ({
+                    name: f.name,
+                    size: f.size,
+                    type: f.type,
+                    dataUrl: f.dataUrl,
+                })) : undefined,
+            );
+
+            const created: StoredSenderId = {
+                id: trimmedId,
+                name: trimmedId,
+                description: newPurpose.trim(),
+                color: SENDER_COLORS[Math.floor(Math.random() * SENDER_COLORS.length)],
+                status: "pending",
+                provider: DEFAULT_REQUEST_PROVIDER,
+            };
+
+            if (onSuccess) onSuccess(created);
+            window.dispatchEvent(new Event("nola-sender-requests-changed"));
+            window.dispatchEvent(new Event("nola-notifications-refresh"));
+            setIsSubmitted(true);
+
+            setTimeout(() => {
+                setNewId("");
+                setNewPurpose("");
+                setNewSample("");
+                setAttachedFiles([]);
+                setIsSubmitted(false);
+                onClose();
+            }, 3000);
+        } catch (err) {
+            devLog.error("[SenderRequestModal] Submit error:", err);
+            setError(err instanceof Error ? err.message : "Failed to submit request. Please try again.");
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    return createPortal(
+        <div className="fixed inset-0 z-[100] grid place-items-center p-4">
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300" onClick={onClose} />
+            <div className="relative w-full max-w-lg bg-white dark:bg-[#18191d] rounded-2xl shadow-2xl animate-in zoom-in-95 duration-200 overflow-hidden flex flex-col max-h-[92vh]">
+
+                {step === 'intro' ? (
+                    /* Step 1: Introductory Welcome Modal with CTA */
+                    <div className="p-6 sm:p-8 flex flex-col items-center text-center animate-in fade-in zoom-in-95 duration-200">
+                        {/* Close button top-right */}
+                        <div className="w-full flex justify-end -mt-2 -mr-2 mb-1">
+                            <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 text-gray-500 transition-colors">
+                                <FiX className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        {/* Icon Badge */}
+                        <div className="relative mb-5 flex items-center justify-center">
+                            <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-[#1d6bd4] to-[#2b83fa] flex items-center justify-center text-white shadow-xl shadow-blue-500/25">
+                                <FiSend className="w-8 h-8 -mr-0.5" />
+                            </div>
+                            <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center border-2 border-white dark:border-[#18191d]">
+                                <FiCheckCircle className="w-3.5 h-3.5" />
+                            </div>
+                        </div>
+
+                        {/* Heading & Subtitle */}
+                        <h3 className="text-[20px] sm:text-[22px] font-black tracking-tight text-[#111111] dark:text-[#ececf1] mb-2">
+                            Register Your Branded Sender ID
+                        </h3>
+                        <p className="text-[13px] leading-relaxed text-[#6e6e73] dark:text-[#9aa0a6] max-w-sm mb-6">
+                            Display your official business or brand name on your customers' phones instead of generic fallback numbers.
+                        </p>
+
+                        {/* Benefits Cards */}
+                        <div className="w-full space-y-2.5 mb-6 text-left">
+                            <div className="flex items-start gap-3 p-3 rounded-xl bg-[#f7f7f7] dark:bg-[#0d0e10] border border-[#e5e5e5] dark:border-white/5">
+                                <span className="text-[20px] flex-shrink-0 select-none">🏷️</span>
+                                <div>
+                                    <h4 className="text-[12.5px] font-bold text-[#111111] dark:text-[#ececf1]">Brand Identity</h4>
+                                    <p className="text-[11.5px] text-[#6e6e73] dark:text-[#9aa0a6]">Instantly recognizable brand name on every message.</p>
+                                </div>
+                            </div>
+
+                            <div className="flex items-start gap-3 p-3 rounded-xl bg-[#f7f7f7] dark:bg-[#0d0e10] border border-[#e5e5e5] dark:border-white/5">
+                                <span className="text-[20px] flex-shrink-0 select-none">📈</span>
+                                <div>
+                                    <h4 className="text-[12.5px] font-bold text-[#111111] dark:text-[#ececf1]">Higher Open & Trust Rates</h4>
+                                    <p className="text-[11.5px] text-[#6e6e73] dark:text-[#9aa0a6]">Customers trust and open verified sender IDs faster.</p>
+                                </div>
+                            </div>
+
+                            <div className="flex items-start gap-3 p-3 rounded-xl bg-[#f7f7f7] dark:bg-[#0d0e10] border border-[#e5e5e5] dark:border-white/5">
+                                <span className="text-[20px] flex-shrink-0 select-none">⚡</span>
+                                <div>
+                                    <h4 className="text-[12.5px] font-bold text-[#111111] dark:text-[#ececf1]">Carrier Approved</h4>
+                                    <p className="text-[11.5px] text-[#6e6e73] dark:text-[#9aa0a6]">Direct compliance registration with network carriers.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Call to Action Button */}
+                        <button
+                            onClick={() => setStep('form')}
+                            className="w-full flex items-center justify-center gap-2.5 py-3.5 px-6 bg-gradient-to-r from-[#2b83fa] to-[#1d6bd4] hover:shadow-[0_8px_25px_rgba(43,131,250,0.4)] text-white rounded-xl font-bold text-[14px] transition-all shadow-md shadow-blue-500/20 active:scale-[0.99] mb-3"
+                        >
+                            <span>Request Sender ID</span>
+                            <FiArrowRight className="w-4 h-4" />
+                        </button>
+
+                        <button
+                            onClick={onClose}
+                            className="text-[12.5px] font-semibold text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                        >
+                            Maybe Later
+                        </button>
+                    </div>
+                ) : (
+                    /* Step 2: Request Form Modal */
+                    <>
+                        {/* Form Header */}
+                        <div className="flex items-start justify-between p-6 pb-4 flex-shrink-0">
+                            <div className="flex items-center gap-2.5">
+                                <button
+                                    onClick={() => setStep('intro')}
+                                    className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 text-gray-500 transition-colors flex items-center justify-center mr-1"
+                                    title="Back to info"
+                                >
+                                    <FiChevronLeft className="w-5 h-5" />
+                                </button>
+                                <div className="w-8 h-8 rounded-lg bg-[#2b83fa]/10 flex items-center justify-center text-[#2b83fa]">
+                                    <FiPlus />
+                                </div>
+                                <div>
+                                    <h3 className="text-[17px] font-bold text-[#111111] dark:text-[#ececf1]">Add a Sender Name</h3>
+                                    <p className="text-[12px] text-[#6e6e73] dark:text-[#9aa0a6] mt-0.5">
+                                        Request a branded SMS sender name for your account.
+                                    </p>
+                                </div>
+                            </div>
+                            <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 text-gray-500 transition-colors flex-shrink-0">
+                                <FiX />
+                            </button>
+                        </div>
+
+                {/* Scrollable body */}
+                <div className="overflow-y-auto flex-1 px-6 pb-6 custom-scrollbar">
+                    {isSubmitted ? (
+                        <div className="py-8 flex flex-col items-center text-center animate-in fade-in zoom-in-95">
+                            <div className="w-16 h-16 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-500 mb-4">
+                                <FiCheck className="w-8 h-8" />
+                            </div>
+                            <h4 className="text-[18px] font-bold text-[#111111] dark:text-[#ececf1] mb-2">Request Submitted</h4>
+                            <p className="text-[14px] text-[#6e6e73] dark:text-[#94959b] max-w-xs leading-relaxed">
+                                Your sender name has been submitted for review.
+                            </p>
+                            <p className="text-[13px] text-gray-500 dark:text-gray-400 mt-6 font-medium bg-gray-50 dark:bg-white/5 py-1.5 px-4 rounded-full">
+                                Auto-closing in {countdown}s...
+                            </p>
+                        </div>
+                    ) : (
+                        <form onSubmit={handleAdd} className="space-y-5">
+                            {error && (
+                                <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/20">
+                                    <FiAlertCircle className="w-4 h-4 mt-0.5 text-red-600 dark:text-red-400 flex-shrink-0" />
+                                    <p className="text-[12px] text-red-600 dark:text-red-400 font-medium">{error}</p>
+                                </div>
+                            )}
+
+                            {/* Sender Name */}
+                            <div>
+                                <label className="block text-[11px] font-black text-[#6e6e73] dark:text-[#9aa0a6] uppercase tracking-wider mb-1">
+                                    Sender Name <span className="text-red-500">*</span>
+                                </label>
+                                <p className="text-[11px] text-[#9aa0a6] mb-2">Use 3-11 letters or numbers only. No spaces or symbols.</p>
+                                <input
+                                    autoFocus
+                                    value={newId}
+                                    onChange={e => {
+                                        setError(null);
+                                        setNewId(e.target.value.replace(/[^a-zA-Z0-9]/g, ''));
+                                    }}
+                                    placeholder="ex. NOLASMS"
+                                    maxLength={11}
+                                    required
+                                    aria-required="true"
+                                    disabled={isSubmitting}
+                                    className="w-full px-4 py-3 rounded-xl text-[14px] font-bold border bg-[#f7f7f7] dark:bg-[#0d0e10] border-[#e0e0e0] dark:border-[#ffffff0a] text-[#111111] dark:text-[#ececf1] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#2b83fa]/25 disabled:opacity-50"
+                                />
+                            </div>
+
+                            {/* Business Purpose */}
+                            <div>
+                                <label className="block text-[11px] font-black text-[#6e6e73] dark:text-[#9aa0a6] uppercase tracking-wider mb-1">
+                                    Business Purpose <span className="text-red-500">*</span>
+                                </label>
+                                <p className="text-[11px] text-[#9aa0a6] mb-2">Briefly describe the use case, such as reminders, promos, or updates.</p>
+                                <textarea
+                                    value={newPurpose}
+                                    onChange={e => {
+                                        setError(null);
+                                        setNewPurpose(e.target.value);
+                                    }}
+                                    placeholder="What will you be using this for?"
+                                    required
+                                    aria-required="true"
+                                    rows={2}
+                                    disabled={isSubmitting}
+                                    className="w-full px-4 py-3 rounded-xl text-[14px] border bg-[#f7f7f7] dark:bg-[#0d0e10] border-[#e0e0e0] dark:border-[#ffffff0a] text-[#111111] dark:text-[#ececf1] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#2b83fa]/25 resize-none disabled:opacity-50"
+                                />
+                            </div>
+
+                            {/* Sample Message */}
+                            <div>
+                                <label className="block text-[11px] font-black text-[#6e6e73] dark:text-[#9aa0a6] uppercase tracking-wider mb-1">
+                                    Sample Message <span className="text-red-500">*</span>
+                                </label>
+                                <p className="text-[11px] text-[#9aa0a6] mb-2">Add one real example your customers may receive.</p>
+                                <textarea
+                                    value={newSample}
+                                    onChange={e => {
+                                        setError(null);
+                                        setNewSample(e.target.value);
+                                    }}
+                                    placeholder="Provide a specific message template example."
+                                    required
+                                    aria-required="true"
+                                    rows={2}
+                                    disabled={isSubmitting}
+                                    className="w-full px-4 py-3 rounded-xl text-[14px] border bg-[#f7f7f7] dark:bg-[#0d0e10] border-[#e0e0e0] dark:border-[#ffffff0a] text-[#111111] dark:text-[#ececf1] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#2b83fa]/25 resize-none disabled:opacity-50"
+                                />
+                            </div>
+
+                            {/* ── Supporting Documents ────────────────────────── */}
+                            <div>
+                                <label className="block text-[11px] font-black text-[#6e6e73] dark:text-[#9aa0a6] uppercase tracking-wider mb-1">
+                                    Supporting Documents
+                                    <span className="ml-1.5 text-[10px] font-semibold text-[#9aa0a6] normal-case tracking-normal">(Optional)</span>
+                                </label>
+                                <p className="text-[11px] text-[#9aa0a6] mb-2">
+                                    Attach up to {MAX_FILES} files (JPG, PNG, PDF, DOCX) — max {MAX_FILE_SIZE_MB}MB each. E.g. business permit, DTI registration, or brand logo.
+                                </p>
+
+                                {/* Attached file list (placed ON TOP of drop zone) */}
+                                {attachedFiles.length > 0 && (
+                                    <ul className="mb-2.5 space-y-2">
+                                        {attachedFiles.map((file, idx) => (
+                                            <li
+                                                key={`${file.name}-${idx}`}
+                                                className="flex items-center gap-2.5 p-3 rounded-xl bg-[#f7f7f7] dark:bg-[#0d0e10] border border-[#e5e5e5] dark:border-white/5 group shadow-sm"
+                                            >
+                                                <span className="text-[18px] flex-shrink-0 select-none">{fileIcon(file.type)}</span>
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="text-[12px] font-semibold text-[#111111] dark:text-[#ececf1] truncate leading-tight">{file.name}</p>
+                                                    <p className="text-[10px] text-[#9aa0a6] mt-0.5">{formatBytes(file.size)}</p>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => removeFile(idx)}
+                                                    disabled={isSubmitting}
+                                                    title="Remove file"
+                                                    className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-30 flex-shrink-0"
+                                                    aria-label={`Remove ${file.name}`}
+                                                >
+                                                    <FiTrash2 className="w-4 h-4" />
+                                                </button>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+
+                                {/* Drop zone (placed BELOW uploaded files when files are present) */}
+                                {attachedFiles.length < MAX_FILES && (
+                                    <div
+                                        ref={dropZoneRef}
+                                        onDragOver={handleDragOver}
+                                        onDragLeave={handleDragLeave}
+                                        onDrop={handleDrop}
+                                        onClick={() => !isSubmitting && fileInputRef.current?.click()}
+                                        role="button"
+                                        tabIndex={0}
+                                        onKeyDown={e => e.key === 'Enter' && !isSubmitting && fileInputRef.current?.click()}
+                                        aria-label="Upload supporting documents"
+                                        className={`
+                                            relative flex flex-col items-center justify-center gap-2 px-4 py-4 rounded-xl border-2 border-dashed transition-all cursor-pointer
+                                            ${isDragging
+                                                ? "border-[#2b83fa] bg-[#2b83fa]/5 scale-[1.01]"
+                                                : "border-[#e0e0e0] dark:border-[#ffffff15] hover:border-[#2b83fa]/60 hover:bg-[#2b83fa]/3 dark:hover:bg-[#2b83fa]/5"
+                                            }
+                                            ${isSubmitting ? "opacity-50 cursor-not-allowed" : ""}
+                                        `}
+                                    >
+                                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors ${isDragging ? "bg-[#2b83fa]/15 text-[#2b83fa]" : "bg-[#f0f0f0] dark:bg-white/5 text-[#9aa0a6]"}`}>
+                                            <FiUpload className="w-4 h-4" />
+                                        </div>
+                                        <div className="text-center">
+                                            <p className="text-[13px] font-semibold text-[#111111] dark:text-[#ececf1]">
+                                                {isDragging ? "Drop files here" : "Click or drag files here"}
+                                            </p>
+                                            <p className="text-[11px] text-[#9aa0a6] mt-0.5">
+                                                {MAX_FILES - attachedFiles.length} slot{MAX_FILES - attachedFiles.length !== 1 ? "s" : ""} remaining
+                                            </p>
+                                        </div>
+                                        <input
+                                            ref={fileInputRef}
+                                            type="file"
+                                            multiple
+                                            accept={ACCEPTED_EXTENSIONS}
+                                            onChange={handleFileInputChange}
+                                            disabled={isSubmitting}
+                                            className="sr-only"
+                                            aria-hidden="true"
+                                            id="sender-doc-upload"
+                                        />
+                                    </div>
+                                )}
+
+                                {/* File error */}
+                                {fileError && (
+                                    <div className="flex items-start gap-2 mt-2 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-800/20">
+                                        <FiAlertCircle className="w-3.5 h-3.5 mt-0.5 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+                                        <p className="text-[11px] text-amber-700 dark:text-amber-400 font-medium">{fileError}</p>
+                                    </div>
+                                )}
+
+                                {/* Slot indicator when full */}
+                                {attachedFiles.length >= MAX_FILES && (
+                                    <div className="mt-2 flex items-center gap-1.5 text-[11px] text-[#9aa0a6]">
+                                        <FiFile className="w-3.5 h-3.5" />
+                                        <span>Maximum {MAX_FILES} files attached. Remove one to add another.</span>
+                                    </div>
+                                )}
+                            </div>
+                            {/* ──────────────────────────────────────────────── */}
+
+                            <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/20">
+                                <p className="text-[11px] text-amber-700 dark:text-amber-400 leading-normal text-center font-medium">
+                                    <strong>Note:</strong> You will receive an email when this request is received and when it is approved or needs changes. This usually takes 2-5 business days.
+                                </p>
+                            </div>
+
+                            <button type="submit" disabled={isSubmitting} className="w-full flex items-center justify-center gap-2 py-3.5 bg-gradient-to-r from-[#2b83fa] to-[#1d6bd4] hover:shadow-[0_8px_25px_rgba(43,131,250,0.4)] text-white rounded-xl font-bold text-[13px] transition-all shadow-md shadow-blue-500/20 disabled:opacity-70">
+                                {isSubmitting ? (
+                                    <>
+                                        <FiLoader className="w-4 h-4 animate-spin" />
+                                        Submitting...
+                                    </>
+                                ) : (
+                                    "Submit Request"
+                                )}
+                            </button>
+                        </form>
+                    )}
+                </div>
+            </>
+        )}
+    </div>
+</div>,
+        document.body
+    );
+};

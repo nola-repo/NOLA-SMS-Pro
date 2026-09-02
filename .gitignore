@@ -1,48 +1,61 @@
-# Ignore logs and runtime files (SMS)
+# Logs
 logs/
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
-# Keep the api/logs/ directory itself (for daily rotating log files)
-# but ignore the actual log files inside it
+# Keep api/logs/ directory structure
 !api/logs/
 api/logs/*.log
 api/webhook/sms_log.txt
 api/webhook/last_payload.json
 
-# Ignore debug/scratch log dumps and test scripts
+# Scratch & runtime dumps
 raw_logs.txt
 raw_logs_utf8.txt
 scratch/
 api/cache/data/
 
-# SSL cert bundle (local curl use only, never commit)
-cacert.pem
-
-# Ignore VSCode config
-.vscode/
-
-# Ignore sensitive files
+# Environment & local configs
 .env
+*.local
 config.local.php
 api/webhook/nola-sms-pro-*.json
+cacert.pem
 
-# Frontend Dependencies and Builds
+# Dependencies & Build artifacts
+node_modules/
 **/node_modules/
+dist/
+dist-ssr/
 **/dist/
 **/.nuxt/
 **/.output/
-**/npm-debug.log*
-**/yarn-debug.log*
-**/yarn-error.log*
-
-# Local clone for patching upstream frontend (not part of this repo)
-_nola-sms-pro-frontend/
-
-# Backups and Temporary Files
 vendor/
 frontend_old/
 temp_*/
 tmp/
 outputs/
+*_build_log.txt
+*.diff
+.backend-patch/
+
+# Editor & OS files
+.vscode/*
+!.vscode/extensions.json
+.idea
 .DS_Store
 Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Office lock files
+*.xlsx
+*.csv
+~\$*

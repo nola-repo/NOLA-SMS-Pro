@@ -1,8 +1,6 @@
-# Google Cloud Build: build, push and deploy the STAGING SMS API image to Cloud Run
-# Triggered on pushes to the 'staging' branch
-
+# Google Cloud Build: Multi-service staging deployment (PHP Backend + React Frontend)
 steps:
-  # Build the container image for staging
+  # 1. Build and deploy PHP Backend (sms-api-staging)
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'build'
@@ -10,13 +8,11 @@ steps:
       - 'gcr.io/$PROJECT_ID/sms-api-staging:latest'
       - '.'
 
-  # Push to Container Registry
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
       - 'gcr.io/$PROJECT_ID/sms-api-staging:latest'
 
-  # Deploy to Cloud Run Staging Service
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -35,12 +31,37 @@ steps:
       - '5'
       - '--concurrency'
       - '30'
-      - '--memory'  
+      - '--memory'
       - '1Gi'
       - '--allow-unauthenticated'
 
+  # 2. Build and deploy React Frontend (nolasmspro-frontend-staging)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - 'sed -i "s/smspro-api.nolacrm.io/sms-api-staging-116662437564.asia-southeast1.run.app/g" user/nginx.conf && sed -i "s/smspro-api.nolacrm.io/sms-api-staging-116662437564.asia-southeast1.run.app/g" user/src/components/SharedLogin.tsx'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-f', 'user/Dockerfile', '-t', '$_AR_HOSTNAME/$_AR_PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:$COMMIT_SHA', 'user']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '$_AR_HOSTNAME/$_AR_PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:$COMMIT_SHA']
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args: ['run', 'deploy', '$_SERVICE_NAME', '--image', '$_AR_HOSTNAME/$_AR_PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:$COMMIT_SHA', '--region', '$_DEPLOY_REGION', '--platform', 'managed', '--allow-unauthenticated']
+
 images:
   - 'gcr.io/$PROJECT_ID/sms-api-staging:latest'
+  - '$_AR_HOSTNAME/$_AR_PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:$COMMIT_SHA'
+
+substitutions:
+  _SERVICE_NAME: nolasmspro-frontend-staging
+  _DEPLOY_REGION: asia-southeast1
+  _AR_HOSTNAME: asia-southeast1-docker.pkg.dev
+  _AR_REPOSITORY: cloud-run-source-deploy
+  _AR_PROJECT_ID: nola-sms-pro
 
 options:
   logging: CLOUD_LOGGING_ONLY
