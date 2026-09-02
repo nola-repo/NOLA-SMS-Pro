@@ -1878,6 +1878,7 @@ try {
         'oauth_pending_started_at' => new \Google\Cloud\Core\Timestamp($now),
         'raw' => $data,
         'updated_at' => new \Google\Cloud\Core\Timestamp($now),
+        'crm_domain'  => $detectedCrmBaseUrl,
     ];
 
     if ($companyNameDirect !== '') {

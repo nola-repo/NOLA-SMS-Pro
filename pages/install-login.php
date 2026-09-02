@@ -640,7 +640,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $standaloneApp = $redirectParamRaw;
             }
             $crmDomainRaw    = trim((string)($_GET['crm_domain'] ?? ''));
-            $ghlCrm          = $crmDomainRaw !== '' ? $crmDomainRaw : install_detect_crm_base_url($_SERVER['HTTP_REFERER'] ?? null);
+            // Phase 1 CRM fix: if crm_domain is not in the URL, look it up from Firestore
+            // (stored at install time). This fixes re-logins where HTTP_REFERER is absent.
+            if ($crmDomainRaw === '' && $locationIdRaw !== '' && isset($db)) {
+                try {
+                    $_crmSnap = $db->collection('ghl_tokens')->document($locationIdRaw)->snapshot();
+                    if ($_crmSnap->exists()) {
+                        $_storedCrm = trim((string)($_crmSnap->data()['crm_domain'] ?? ''));
+                        if ($_storedCrm !== '') { $crmDomainRaw = $_storedCrm; }
+                    }
+                } catch (\Throwable $_crmEx) {
+                    error_log('[install-login] crm_domain Firestore lookup failed: ' . $_crmEx->getMessage());
+                }
+            }
+            $ghlCrm = $crmDomainRaw !== '' ? $crmDomainRaw : install_detect_crm_base_url($_SERVER['HTTP_REFERER'] ?? null);
             $ghlCustomPageId = getenv('GHL_CUSTOM_PAGE_ID') ?: '69a642aae76974824fd39bb6';
 
             if ($locationIdRaw !== '') {

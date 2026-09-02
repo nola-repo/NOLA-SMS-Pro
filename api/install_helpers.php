@@ -2935,7 +2935,15 @@ function install_detect_crm_base_url(?string $referer = null, ?string $state = n
         }
     }
 
-    // 4. Default fallback: configured GHL CRM base URL or primary CRM
+    // 4. Infer from the GHL OAuth client ID configured in this environment.
+    //    If GHL_CLIENT_ID itself is a LeadConnector public marketplace app (starts with
+    //    '6999da2b'), users are on app.gohighlevel.com; otherwise they are on nolacrm.io.
+    $ghlClientId = (string)(getenv('GHL_CLIENT_ID') ?: '');
+    if ($ghlClientId !== '' && str_starts_with($ghlClientId, '6999da2b')) {
+        return getenv('GHL_CRM_BASE_URL') ?: 'https://app.gohighlevel.com';
+    }
+
+    // 5. Default fallback: configured GHL CRM base URL or primary CRM.
     return getenv('GHL_CRM_BASE_URL') ?: 'https://app.nolacrm.io';
 }
 
