@@ -1,23 +1,24 @@
-name: 📨 Send Frontend Handoff Email (Manual)
+name: Send Frontend Handoff Email (Manual)
 
 on:
   workflow_dispatch:
     inputs:
       subject_title:
-        description: "Handoff title (e.g. '401 Fix + 2-Way SMS Plan')"
+        description: "Handoff title"
         required: true
-        default: "401 Fix + 2-Way SMS Plan + Reorganization Update"
+        default: "Staging Repository Unification & GHL Marketplace Auth Bridge"
       summary_points:
         description: "Brief bullet points of what changed (one per line)"
         required: true
         default: |
-          401 on /api/auth/me — frontend race condition fix required
-          2-Way SMS (UniSMS) — frontend phases F1-F7 ready to build
-          Backend file reorganization — no frontend action needed
+          Repository Unification: PHP Backend and React Frontends (user, admin, agency) merged on staging branch.
+          GHL Marketplace Auth Bridge: Marketplace installs now route to install-register.php and install-login.php with auth-handoff.html session writing.
+          Phase 1 CRM Domain Fix: LeadConnector installs (client_id 6999da2b) route to app.gohighlevel.com; crm_domain stored in Firestore for headerless re-logins.
+          Multi-Service Cloud Build: cloudbuild.staging.yaml updated to deploy both sms-api-staging and nolasmspro-frontend-staging automatically.
       note:
         description: "Optional extra note for the frontend team"
         required: false
-        default: ""
+        default: "Please preserve root backend directories (api, pages, laravel, Dockerfile) when updating frontend React apps in user/, admin/, or agency/."
 
 jobs:
   send-handoff:
@@ -44,7 +45,7 @@ jobs:
           secure: false
           username: ${{ secrets.NOTIFY_MAIL_USER }}
           password: ${{ secrets.NOTIFY_MAIL_PASS }}
-          subject: "[NOLA SMS Pro] 📋 Frontend Handoff — ${{ github.event.inputs.subject_title }}"
+          subject: "[NOLA SMS Pro] Frontend Handoff - ${{ github.event.inputs.subject_title }}"
           to: ${{ secrets.FRONTEND_EMAIL }}
           from: "NOLA CRM Backend <${{ secrets.NOTIFY_MAIL_USER }}>"
           html_body: |
@@ -71,37 +72,37 @@ jobs:
             <body>
             <div class="wrapper">
               <div class="header">
-                <h1>📋 NOLA SMS Pro — Frontend Handoff</h1>
-                <p>The backend team has raised items that require your attention.</p>
+                <h1>NOLA SMS Pro - Frontend Handoff</h1>
+                <p>The backend team has updated the staging environment with key integration items.</p>
               </div>
               <div class="body">
 
-                <h2>📌 What This Handoff Covers</h2>
+                <h2>What This Handoff Covers</h2>
                 <ul>
                   ${{ steps.bullets.outputs.html }}
                 </ul>
 
-                <h2>📄 Full Details</h2>
+                <h2>Full Details</h2>
                 <p>
-                  The complete handoff document with all technical details, acceptance criteria,
-                  file references, and step-by-step instructions is available in the shared repo:
+                  The complete handoff document with technical details, acceptance criteria,
+                  file references, and guidelines is available in the shared repo:
                 </p>
                 <p>
-                  <strong>File:</strong> <code>docs/FRONTEND_HANDOFF.md</code>
+                  <strong>File:</strong> <code>docs/FRONTEND_HANDOFF_STAGING_UNIFICATION.md</code>
                 </p>
-                <a class="cta" href="https://github.com/nola-repo/NOLA-SMS-Pro/blob/staging/docs/FRONTEND_HANDOFF.md">
-                  📖 View Full Handoff Document →
+                <a class="cta" href="https://github.com/nola-repo/NOLA-SMS-Pro/blob/staging/docs/FRONTEND_HANDOFF_STAGING_UNIFICATION.md">
+                  View Full Handoff Document
                 </a>
 
-                ${{ github.event.inputs.note != '' && format('<div class="note-box"><strong>📝 Additional Note from Backend Team:</strong><br/>{0}</div>', github.event.inputs.note) || '' }}
+                ${{ github.event.inputs.note != '' && format('<div class="note-box"><strong>Additional Note from Backend Team:</strong><br/>{0}</div>', github.event.inputs.note) || '' }}
 
                 <p style="margin-top:24px; font-size:13px; color:#718096;">
                   Please review the handoff document and coordinate with the backend team
-                  if you have questions. This is an automated notification — do not reply to this email.
+                  if you have questions. This is an automated notification.
                 </p>
               </div>
               <div class="footer">
-                NOLA SMS Pro · Backend Team · <a href="https://github.com/nola-repo/NOLA-SMS-Pro">nola-repo/NOLA-SMS-Pro</a>
+                NOLA SMS Pro Backend Team | <a href="https://github.com/nola-repo/NOLA-SMS-Pro">nola-repo/NOLA-SMS-Pro</a>
               </div>
             </div>
             </body>
