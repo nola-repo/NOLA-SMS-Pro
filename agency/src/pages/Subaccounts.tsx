@@ -388,6 +388,7 @@ export const Subaccounts = () => {
   const [actionMenuSubId, setActionMenuSubId] = useState<string | null>(null);
   const [actionMenuPos, setActionMenuPos] = useState({ top: 0, right: 0 });
   const actionMenuRef = React.useRef<HTMLDivElement>(null);
+  const abortControllerRef = React.useRef<AbortController | null>(null);
 
   // ── Initial load (PHP) ───────────────────────────────────────────────────────
   // The PHP API aggregates richer data (location name, rate limit, credits, etc.)
@@ -395,16 +396,23 @@ export const Subaccounts = () => {
   // agencyId to seed the table. Real-time toggle state is handled by the listener below.
   useEffect(() => {
     if (!agencyId) { setLoading(false); return; }
+
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     setLoading(true);
 
     Promise.all([
-      getSubaccounts(agencyId),
+      getSubaccounts(agencyId, { signal: controller.signal }),
       agencyFetch(`${API_BASE}/api/billing/subscription.php?agency_id=${encodeURIComponent(agencyId)}`, {
         credentials: 'include',
+        signal: controller.signal,
       }).then(r => r.ok ? r.json() : null).catch(() => null)
     ])
       .then(([subData, subStateData]) => {
-        const loadedSubaccounts = subData.subaccounts || [];
+        if (controller.signal.aborted) return;
+        const loadedSubaccounts = subData?.subaccounts || [];
         setSubaccounts(loadedSubaccounts);
         setError(null);
         setSubState(normalizeSubscriptionState(subStateData, {
@@ -412,15 +420,24 @@ export const Subaccounts = () => {
         }));
       })
       .catch(e => {
+        if (e.name === 'AbortError' || controller.signal.aborted) return;
         setError(e.message);
         showToast(`Failed to load subaccounts: ${e.message}`, 'error');
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
 
     // Install status: background, non-blocking
     checkInstallStatus(agencyId)
-      .then(installs => setInstalledLocations(new Set(installs)))
+      .then(installs => {
+        if (!controller.signal.aborted) setInstalledLocations(new Set(installs));
+      })
       .catch(() => { });
+
+    return () => {
+      controller.abort();
+    };
   }, [agencyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Real-time Firestore listener (live counters + toggle) ─────────────────

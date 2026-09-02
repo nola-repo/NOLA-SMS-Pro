@@ -7,6 +7,7 @@ import { FiSearch, FiX, FiMail, FiCheck, FiUser, FiPlus, FiTrash2, FiMoreVertica
 import { useLocationId } from "../context/LocationContext";
 import { safeStorage } from "../utils/safeStorage";
 import { GHL_RECONNECT_REQUIRED_STORAGE_KEY } from "../config";
+import { publishAppEvent } from "../utils/appEvents";
 
 // Normalize any PH phone to 09XXXXXXXXX (aligned with send_sms.php clean_numbers)
 const normalizePHPhone = (input: string): string => {
@@ -145,6 +146,7 @@ export const ContactsTab: React.FC<ContactsTabProps> = ({
 
   const touchStartY = useRef<number>(0);
   const listRef = useRef<HTMLDivElement>(null);
+  const fetchAbortControllerRef = useRef<AbortController | null>(null);
 
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   useEffect(() => {
@@ -186,7 +188,7 @@ export const ContactsTab: React.FC<ContactsTabProps> = ({
 
   const navigateToSettings = () => {
     safeStorage.setItem(GHL_RECONNECT_REQUIRED_STORAGE_KEY, 'true');
-    window.dispatchEvent(new CustomEvent('navigate-to-settings', { detail: { tab: 'account', reconnect: true } }));
+    publishAppEvent('navigate-to-settings', { tab: 'account', reconnect: true });
   };
 
   const setReconnectError = (message?: string) => {
@@ -207,6 +209,10 @@ export const ContactsTab: React.FC<ContactsTabProps> = ({
 
   useEffect(() => {
     let cancelled = false;
+    fetchAbortControllerRef.current?.abort();
+    const controller = new AbortController();
+    fetchAbortControllerRef.current = controller;
+
     setLoading(true);
     setGhlContactsError(null);
 
@@ -216,11 +222,12 @@ export const ContactsTab: React.FC<ContactsTabProps> = ({
       setContactsRefreshing(true);
     }
 
-    fetchContactsMeta(locationId || undefined, { forceRefresh: Boolean(cached) })
+    fetchContactsMeta(locationId || undefined, { forceRefresh: Boolean(cached), signal: controller.signal })
       .then((result) => {
-        if (!cancelled) applyContactsFetch(result);
+        if (!cancelled && !controller.signal.aborted) applyContactsFetch(result);
       })
       .catch((err) => {
+        if (err?.name === 'AbortError' || controller.signal.aborted) return;
         devLog.error(err);
         if (!cancelled) {
           setContacts([]);
@@ -228,7 +235,7 @@ export const ContactsTab: React.FC<ContactsTabProps> = ({
         }
       })
       .finally(() => {
-        if (!cancelled) {
+        if (!cancelled && !controller.signal.aborted) {
           setLoading(false);
           setContactsRefreshing(false);
         }
@@ -236,6 +243,7 @@ export const ContactsTab: React.FC<ContactsTabProps> = ({
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [applyContactsFetch, locationId]);
 
@@ -249,17 +257,24 @@ export const ContactsTab: React.FC<ContactsTabProps> = ({
   }, [autoOpenAddModal, onAutoOpenAddModalHandled]);
 
   const refreshContacts = async () => {
+    fetchAbortControllerRef.current?.abort();
+    const controller = new AbortController();
+    fetchAbortControllerRef.current = controller;
+
     setIsPullRefreshing(true);
     setContactsRefreshing(true);
     try {
-      const result = await fetchContactsMeta(locationId || undefined, { forceRefresh: true });
-      applyContactsFetch(result);
-    } catch (e) {
+      const result = await fetchContactsMeta(locationId || undefined, { forceRefresh: true, signal: controller.signal });
+      if (!controller.signal.aborted) applyContactsFetch(result);
+    } catch (e: any) {
+      if (e?.name === 'AbortError' || controller.signal.aborted) return;
       devLog.error(e);
       setGhlContactsError({ kind: 'generic', message: 'Contacts could not be refreshed. Your previous list will remain visible when available.' });
     } finally {
-      setIsPullRefreshing(false);
-      setContactsRefreshing(false);
+      if (!controller.signal.aborted) {
+        setIsPullRefreshing(false);
+        setContactsRefreshing(false);
+      }
     }
   };
 
@@ -451,9 +466,7 @@ export const ContactsTab: React.FC<ContactsTabProps> = ({
       setSelectedContacts((prev) => prev.map((c) =>
         c.id === contact.id ? { ...c, ...contact } : c
       ));
-      window.dispatchEvent(new CustomEvent('nola-contact-updated', {
-        detail: { contact, previous, locationId },
-      }));
+      publishAppEvent('nola-contact-updated', { contact, previous, locationId });
     };
 
     applyContact(nextContact, originalContact);

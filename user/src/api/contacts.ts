@@ -218,7 +218,10 @@ export const getCachedContactsMeta = (explicitLocationId?: string): FetchContact
   return cached ? { ok: true, contacts: cached.data, cacheMeta: cached.meta } : null;
 };
 
-export const fetchContactsMeta = async (explicitLocationId?: string, options: { forceRefresh?: boolean } = {}): Promise<FetchContactsResult> => {
+export const fetchContactsMeta = async (
+  explicitLocationId?: string,
+  options: { forceRefresh?: boolean; signal?: AbortSignal } = {}
+): Promise<FetchContactsResult> => {
   try {
     const contactContext = getContactContext(explicitLocationId);
 
@@ -241,20 +244,26 @@ export const fetchContactsMeta = async (explicitLocationId?: string, options: { 
       const entry = await fetchCachedJson<Contact[]>({
         key: cacheKey,
         url,
-        init: { headers: contactContext.headers },
+        init: { headers: contactContext.headers, signal: options.signal },
         ttlMs: CONTACTS_CACHE_TTL_MS,
         forceRefresh: options.forceRefresh,
         parse: normalizeContacts,
       });
       return { ok: true, contacts: entry.data, cacheMeta: entry.meta };
-    } catch (requestError) {
+    } catch (requestError: any) {
+      if (requestError?.name === 'AbortError' || options.signal?.aborted) {
+        throw requestError;
+      }
       if (cached) {
         return { ok: true, contacts: cached.data, cacheMeta: { ...cached.meta, stale: true, status: 'failed' } };
       }
       const message = requestError instanceof Error ? requestError.message : 'Failed to load contacts';
       return { ok: false, contacts: [], kind: 'other', message, status: 0 };
     }
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.name === 'AbortError' || options.signal?.aborted) {
+      throw error;
+    }
     devLog.error('Failed to fetch contacts:', error);
     return {
       ok: false,

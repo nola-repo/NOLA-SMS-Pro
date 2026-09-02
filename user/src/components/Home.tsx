@@ -23,6 +23,7 @@ import { safeStorage } from "../utils/safeStorage";
 import { buildContactNameLookup, isPhoneLike, resolveContactNameByPhone, toProperCase } from "../utils/contactDisplay";
 import type { ViewTab } from "./Sidebar";
 import { SenderIdReminderBanner } from "./ui/SenderIdReminderBanner";
+import { publishAppEvent } from "../utils/appEvents";
 
 interface HomeProps {
     onTabChange: (tab: ViewTab) => void;
@@ -596,7 +597,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange, onCreateContact, onSele
                             )}
                         </div>
                         <div
-                            onClick={() => window.dispatchEvent(new CustomEvent('navigate-to-settings', { detail: { tab: 'account' } }))}
+                            onClick={() => publishAppEvent('navigate-to-settings', { tab: 'account' })}
                             className="w-10 h-10 rounded-full flex items-center justify-center shadow-lg shadow-black/10 border-2 border-white/20 flex-shrink-0 text-white font-bold text-[14px] overflow-hidden cursor-pointer hover:scale-105 active:scale-95 transition-all"
                             style={{ backgroundColor: getProfileColor(profileDisplayName) }}
                             title={profileDisplayName || "Profile"}
@@ -627,7 +628,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange, onCreateContact, onSele
                                     ) : (
                                         <>
                                             <button
-                                                onClick={() => window.dispatchEvent(new CustomEvent('navigate-to-settings', { detail: { tab: 'credits' } }))}
+                                                onClick={() => publishAppEvent('navigate-to-settings', { tab: 'credits' })}
                                                 className="group/action absolute right-4 top-4 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-blue-700 text-white shadow-[0_10px_24px_rgba(29,78,216,0.32)] ring-1 ring-white/45 hover:bg-blue-800 hover:shadow-[0_14px_30px_rgba(29,78,216,0.42)] hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-blue-300 dark:bg-blue-500 dark:text-white dark:ring-white/30 dark:shadow-black/25 dark:hover:bg-blue-400 dark:focus-visible:ring-offset-blue-900 transition-all"
                                                 aria-label="Open credits"
                                                 title="Open credits"
@@ -732,7 +733,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange, onCreateContact, onSele
 
                 {/* Sender ID Reminder Banner */}
                 <SenderIdReminderBanner
-                    onNavigateToSettings={() => window.dispatchEvent(new CustomEvent('navigate-to-settings', { detail: { tab: 'senderIds' } }))}
+                    onNavigateToSettings={() => publishAppEvent('navigate-to-settings', { tab: 'senderIds' })}
                 />
 
                 {/* Second Row: Grouped Stats (Sent Today, Credits Used, Latest Activity) */}
@@ -760,7 +761,7 @@ export const Home: React.FC<HomeProps> = ({ onTabChange, onCreateContact, onSele
                                     badge: creditTrendTotal > 0 ? `${creditTrendTotal.toLocaleString()} in 14 days` : 'No recent log',
                                     chartUnit: 'credits',
                                     chartCaption: creditTrendTotal > 0 ? 'Recent usage from credit logs' : 'Monthly total shown above',
-                                    onClick: () => window.dispatchEvent(new CustomEvent('navigate-to-settings', { detail: { tab: 'credits' } })),
+                                    onClick: () => publishAppEvent('navigate-to-settings', { tab: 'credits' }),
                                 },
                                 {
                                     label: 'Latest Activity',

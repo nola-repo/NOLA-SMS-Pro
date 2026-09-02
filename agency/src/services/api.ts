@@ -25,6 +25,7 @@ type SubaccountsCacheEntry = {
 type GetSubaccountsOptions = {
   force?: boolean;
   allowStale?: boolean;
+  signal?: AbortSignal;
 };
 
 const subaccountsCache = new Map<string, SubaccountsCacheEntry>();
@@ -109,7 +110,9 @@ export const getSubaccounts = async (agencyId, options: GetSubaccountsOptions = 
   const fetchFresh = async () => {
     const res = await agencyFetch(`${BASE}/get_subaccounts.php?agency_id=${encodeURIComponent(key)}`, {
       method: 'GET',
+      signal: options.signal,
     });
+
     const json = normalizeSubaccountsResponse(await handleResponse(res));
     setSubaccountsCache(key, json);
     return json;
