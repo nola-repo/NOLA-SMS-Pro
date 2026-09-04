@@ -40,7 +40,7 @@ try {
     error_log("[admin_health.php] Database connection test failed: " . $e->getMessage());
 }
 
-// 2. Load BOTH providers' status and balance (leveraging SemaphoreBalanceFetcher with caching / LKG)
+// 2. Load provider status from the precomputed summary/config only.
 $activeProviderName = 'system';
 $providerDetails = [];
 
@@ -50,7 +50,7 @@ try {
     $activeProviderName = $gateway->getProviderName();
 
     $fetcher = new SemaphoreBalanceFetcher();
-    $summary = $fetcher->getDashboardSummary($db);
+    $summary = $fetcher->getLightweightDashboardSummary($db, false);
 
     $semSummary = $summary['semaphore'] ?? [];
     $uniSummary = $summary['unisms'] ?? [];
@@ -70,6 +70,7 @@ try {
                 'warning'     => $semCredits < 1000 && $semCredits >= 300 && ($semSummary['status'] ?? '') === 'active',
                 'critical'    => $semCredits < 300 && ($semSummary['status'] ?? '') === 'active',
                 'error'       => null,
+                'fetched_via'  => $semSummary['fetched_via'] ?? 'config_only',
             ],
             'unisms' => [
                 'name'        => 'UniSMS',
@@ -82,6 +83,7 @@ try {
                 'warning'     => $uniCredits < 200 && $uniCredits >= 50 && ($uniSummary['status'] ?? '') === 'active',
                 'critical'    => $uniCredits < 50 && ($uniSummary['status'] ?? '') === 'active',
                 'error'       => null,
+                'fetched_via'  => $uniSummary['fetched_via'] ?? 'config_only',
             ],
         ],
     ];

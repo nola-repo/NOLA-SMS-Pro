@@ -13,6 +13,8 @@ class NolaCache
     private static ?Redis $redis = null;
     private static ?string $fileCacheDir = null;
     private static bool $initialized = false;
+    private static bool $redisDisabled = false;
+    private static array $memoryCache = [];
 
     private static function init(): void
     {
@@ -20,22 +22,29 @@ class NolaCache
             return;
         }
 
-        // 1. Attempt to initialize Redis if extension exists
-        if (class_exists('Redis')) {
-            $host = getenv('REDIS_HOST') ?: '127.0.0.1';
+        // 1. Attempt to initialize Redis if extension exists and is explicitly reachable.
+        if (class_exists('Redis') && !self::$redisDisabled) {
+            $configuredHost = trim((string)(getenv('REDIS_HOST') ?: ''));
+            if ($configuredHost === '' && getenv('K_SERVICE')) {
+                self::$redisDisabled = true;
+            }
+
+            $host = $configuredHost !== '' ? $configuredHost : '127.0.0.1';
             $port = (int)(getenv('REDIS_PORT') ?: 6379);
             $password = getenv('REDIS_PASSWORD') ?: null;
 
             try {
                 $redis = new Redis();
-                // Set short timeout to avoid blocking if Redis is down
-                if ($redis->connect($host, $port, 1.0)) {
+                if (!self::$redisDisabled && $redis->connect($host, $port, 0.1)) {
                     if ($password) {
                         $redis->auth($password);
                     }
                     self::$redis = $redis;
+                } else {
+                    self::$redisDisabled = true;
                 }
             } catch (\Throwable $e) {
+                self::$redisDisabled = true;
                 error_log("[NolaCache] Redis connection failed, falling back to file cache: " . $e->getMessage());
             }
         }
@@ -63,6 +72,8 @@ class NolaCache
                 $val = self::$redis->get($safeKey);
                 return $val !== false ? json_decode($val, true) : null;
             } catch (\Throwable $e) {
+                self::$redis = null;
+                self::$redisDisabled = true;
                 error_log("[NolaCache] Redis GET error: " . $e->getMessage());
             }
         }
@@ -70,7 +81,7 @@ class NolaCache
         // File cache fallback (disabled in production Cloud Run environments to prevent desync)
         $appEnv = getenv('APP_ENV') ?: 'production';
         if ($appEnv === 'production' && getenv('K_SERVICE')) {
-            return null;
+            return self::getMemory($safeKey);
         }
 
         $file = self::$fileCacheDir . '/' . md5($safeKey) . '.cache';
@@ -176,6 +187,8 @@ class NolaCache
             try {
                 return self::$redis->set($safeKey, $encoded, $ttl);
             } catch (\Throwable $e) {
+                self::$redis = null;
+                self::$redisDisabled = true;
                 error_log("[NolaCache] Redis SET error: " . $e->getMessage());
             }
         }
@@ -183,7 +196,8 @@ class NolaCache
         // File cache fallback (disabled in production Cloud Run environments)
         $appEnv = getenv('APP_ENV') ?: 'production';
         if ($appEnv === 'production' && getenv('K_SERVICE')) {
-            return false;
+            self::setMemory($safeKey, $value, $ttl);
+            return true;
         }
 
         $file = self::$fileCacheDir . '/' . md5($safeKey) . '.cache';
@@ -203,12 +217,15 @@ class NolaCache
         self::init();
 
         $safeKey = preg_replace('/[^a-zA-Z0-9_\-]/', '_', $key);
+        unset(self::$memoryCache[$safeKey]);
 
         if (self::$redis) {
             try {
                 self::$redis->del($safeKey);
                 return true;
             } catch (\Throwable $e) {
+                self::$redis = null;
+                self::$redisDisabled = true;
                 error_log("[NolaCache] Redis DEL error: " . $e->getMessage());
             }
         }
@@ -277,6 +294,10 @@ class NolaCache
         self::delete('admin_settings');
         self::delete('admin_provider_balances');
         self::delete('admin_activity_logs_all');
+        foreach ([25, 50, 100] as $limit) {
+            self::delete('admin_activity_logs_compact_' . $limit);
+            self::delete('admin_sender_requests_list_' . $limit);
+        }
     }
 
     /**
@@ -319,11 +340,46 @@ class NolaCache
         }
 
         return [
-            'driver'          => self::$redis ? 'redis' : 'file_fallback',
+            'driver'          => self::$redis ? 'redis' : (self::fileFallbackDisabled() ? 'memory_fallback' : 'file_fallback'),
             'redis_connected' => $redisConnected,
             'ping_ms'         => $pingMs,
             'redis_host'      => getenv('REDIS_HOST') ?: 'not_set',
             'is_cloud_run'    => !empty(getenv('K_SERVICE')),
+            'redis_disabled'  => self::$redisDisabled,
+        ];
+    }
+
+    private static function fileFallbackDisabled(): bool
+    {
+        $appEnv = getenv('APP_ENV') ?: 'production';
+        return $appEnv === 'production' && !empty(getenv('K_SERVICE'));
+    }
+
+    private static function getMemory(string $safeKey): mixed
+    {
+        if (!isset(self::$memoryCache[$safeKey])) {
+            return null;
+        }
+
+        $data = self::$memoryCache[$safeKey];
+        if (!is_array($data) || !isset($data['expire'])) {
+            unset(self::$memoryCache[$safeKey]);
+            return null;
+        }
+
+        if (time() > $data['expire']) {
+            unset(self::$memoryCache[$safeKey]);
+            return null;
+        }
+
+        return $data['value'] ?? null;
+    }
+
+    private static function setMemory(string $safeKey, mixed $value, int $ttl): void
+    {
+        self::$memoryCache[$safeKey] = [
+            'expire' => time() + max(0, $ttl),
+            'value' => $value,
         ];
     }
 }

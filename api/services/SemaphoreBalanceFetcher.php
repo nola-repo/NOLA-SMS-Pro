@@ -330,6 +330,162 @@ class SemaphoreBalanceFetcher
         }
     }
 
+    private function defaultProviderSummary(string $providerKey, string $name): array
+    {
+        return [
+            'name'               => $name,
+            'status'             => 'inactive',
+            'credits'            => 0,
+            'total_credits'      => 0,
+            'total_accounts'     => 0,
+            'connected_accounts' => 0,
+            'fetched_via'        => 'none',
+        ];
+    }
+
+    private function normalizeSummaryEntry(array $entry, string $providerKey, string $name): array
+    {
+        $credits = (int)($entry['total_credits'] ?? $entry['credits'] ?? 0);
+        $totalAccounts = (int)($entry['total_accounts'] ?? $entry['accounts_total'] ?? 0);
+        $connectedAccounts = (int)($entry['connected_accounts'] ?? $entry['accounts_connected'] ?? 0);
+
+        if ($totalAccounts === 0 && !empty($entry['configured'])) {
+            $totalAccounts = 1;
+        }
+        if ($connectedAccounts === 0 && ($entry['status'] ?? '') === 'active') {
+            $connectedAccounts = max(1, $totalAccounts);
+        }
+
+        return [
+            'name'               => (string)($entry['name'] ?? $name),
+            'status'             => (string)($entry['status'] ?? ($connectedAccounts > 0 ? 'active' : 'inactive')),
+            'credits'            => $credits,
+            'total_credits'      => $credits,
+            'total_accounts'     => $totalAccounts,
+            'connected_accounts' => $connectedAccounts,
+            'fetched_via'        => (string)($entry['fetched_via'] ?? 'firestore_summary'),
+        ];
+    }
+
+    private function normalizeStoredSummary(array $data): ?array
+    {
+        $raw = isset($data['summary']) && is_array($data['summary']) ? $data['summary'] : $data;
+        if (!isset($raw['semaphore']) && !isset($raw['unisms'])) {
+            return null;
+        }
+
+        return [
+            'semaphore' => $this->normalizeSummaryEntry(
+                is_array($raw['semaphore'] ?? null) ? $raw['semaphore'] : [],
+                'semaphore',
+                'Semaphore'
+            ),
+            'unisms' => $this->normalizeSummaryEntry(
+                is_array($raw['unisms'] ?? null) ? $raw['unisms'] : [],
+                'unisms',
+                'UniSMS'
+            ),
+        ];
+    }
+
+    /**
+     * Lightweight provider summary from admin config only. This avoids any
+     * external provider calls and is suitable for health endpoints.
+     */
+    public function getConfiguredProviderSummary(): array
+    {
+        $summary = [
+            'semaphore' => $this->defaultProviderSummary('semaphore', 'Semaphore'),
+            'unisms'    => $this->defaultProviderSummary('unisms', 'UniSMS'),
+        ];
+
+        $semConfigured = trim((string)($this->config['SEMAPHORE_API_KEY'] ?? '')) !== '';
+        $uniConfigured = trim((string)($this->config['UNISMS_API_KEY'] ?? '')) !== '';
+
+        if ($semConfigured) {
+            $summary['semaphore']['status'] = 'active';
+            $summary['semaphore']['total_accounts'] = 1;
+            $summary['semaphore']['connected_accounts'] = 1;
+            $summary['semaphore']['fetched_via'] = 'config_only';
+        }
+        if ($uniConfigured) {
+            $summary['unisms']['status'] = 'active';
+            $summary['unisms']['total_accounts'] = 1;
+            $summary['unisms']['connected_accounts'] = 1;
+            $summary['unisms']['fetched_via'] = 'config_only';
+        }
+
+        return $summary;
+    }
+
+    /**
+     * Fetch only the platform-level gateway balances. This deliberately excludes
+     * custom subaccount keys so request-time dashboards cannot stampede providers.
+     */
+    public function getSystemProviderSummary(): array
+    {
+        $summary = [
+            'semaphore' => $this->defaultProviderSummary('semaphore', 'Semaphore'),
+            'unisms'    => $this->defaultProviderSummary('unisms', 'UniSMS'),
+        ];
+
+        $sysSemKey = trim((string)($this->config['SEMAPHORE_API_KEY'] ?? ''));
+        if ($sysSemKey !== '') {
+            $bal = $this->fetchBalance('semaphore', $sysSemKey);
+            $summary['semaphore'] = [
+                'name'               => 'Semaphore',
+                'status'             => $bal['status'] === 'active' ? 'active' : 'inactive',
+                'credits'            => max(0, (int)($bal['credits'] ?? 0)),
+                'total_credits'      => max(0, (int)($bal['credits'] ?? 0)),
+                'total_accounts'     => 1,
+                'connected_accounts' => $bal['status'] === 'active' ? 1 : 0,
+                'fetched_via'        => $bal['fetched_via'] ?? 'none',
+            ];
+        }
+
+        $sysUniKey = trim((string)($this->config['UNISMS_API_KEY'] ?? ''));
+        if ($sysUniKey !== '') {
+            $bal = $this->fetchBalance('unisms', $sysUniKey);
+            $summary['unisms'] = [
+                'name'               => 'UniSMS',
+                'status'             => $bal['status'] === 'active' ? 'active' : 'inactive',
+                'credits'            => max(0, (int)($bal['credits'] ?? 0)),
+                'total_credits'      => max(0, (int)($bal['credits'] ?? 0)),
+                'total_accounts'     => 1,
+                'connected_accounts' => $bal['status'] === 'active' ? 1 : 0,
+                'fetched_via'        => $bal['fetched_via'] ?? 'none',
+            ];
+        }
+
+        return $summary;
+    }
+
+    public function getStoredDashboardSummary($db): ?array
+    {
+        try {
+            $snap = $db->collection('admin_config')->document('provider_balance_summary')->snapshot();
+            if (!$snap->exists()) {
+                return null;
+            }
+            return $this->normalizeStoredSummary($snap->data());
+        } catch (\Throwable $e) {
+            error_log('[SemaphoreBalanceFetcher] Stored provider summary read failed: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    public function getLightweightDashboardSummary($db, bool $allowLiveFallback = true): array
+    {
+        $stored = $this->getStoredDashboardSummary($db);
+        if ($stored !== null) {
+            return $stored;
+        }
+
+        return $allowLiveFallback
+            ? $this->getSystemProviderSummary()
+            : $this->getConfiguredProviderSummary();
+    }
+
     /**
      * Gather dashboard summary across all connected accounts.
      */

@@ -234,13 +234,118 @@ function nola_admin_activity_summary(array $logs): array
     return $summary;
 }
 
+function nola_admin_request_limit(int $default = 50, int $max = 100): int
+{
+    $raw = isset($_GET['limit']) ? (int)$_GET['limit'] : $default;
+    return max(1, min($max, $raw > 0 ? $raw : $default));
+}
+
+function nola_admin_cursor_timestamp(?string $cursor): ?int
+{
+    $cursor = trim((string)($cursor ?? ''));
+    if ($cursor === '') {
+        return null;
+    }
+
+    $decoded = base64_decode(strtr($cursor, '-_', '+/'), true);
+    if ($decoded !== false) {
+        $data = json_decode($decoded, true);
+        if (is_array($data) && !empty($data['timestamp'])) {
+            $time = strtotime((string)$data['timestamp']);
+            return $time !== false ? $time : null;
+        }
+    }
+
+    $time = strtotime($cursor);
+    return $time !== false ? $time : null;
+}
+
+function nola_admin_next_cursor(array $logs, int $limit): ?string
+{
+    if (count($logs) < $limit) {
+        return null;
+    }
+
+    $last = $logs[count($logs) - 1];
+    if (empty($last['timestamp'])) {
+        return null;
+    }
+
+    return rtrim(strtr(base64_encode(json_encode([
+        'timestamp' => $last['timestamp'],
+        'id' => $last['id'] ?? null,
+    ])), '+/', '-_'), '=');
+}
+
+function nola_admin_compact_activity_log(array $data, string $docId, string $defaultType, ?string $timestamp): array
+{
+    $meta = nola_admin_activity_meta($data);
+    $errorSummary = nola_admin_first_error_text($data);
+    if ($errorSummary !== null) {
+        $errorSummary = substr(preg_replace('/\s+/', ' ', trim($errorSummary)), 0, 300);
+    }
+
+    $recipient = $data['recipient'] ?? $data['number'] ?? $data['to'] ?? null;
+    if ($recipient === null && isset($data['numbers']) && is_array($data['numbers']) && isset($data['numbers'][0])) {
+        $recipient = $data['numbers'][0];
+    }
+
+    $type = (string)($data['type'] ?? $defaultType);
+    $status = $data['status'] ?? $data['delivery_status'] ?? $data['provider_status'] ?? null;
+    $sender = $data['sender_id'] ?? $data['sender_name'] ?? $data['sendername'] ?? $data['requested_id'] ?? null;
+
+    $summaryParts = array_filter([
+        $type,
+        $status !== null ? (string)$status : null,
+        $sender !== null ? 'sender=' . (string)$sender : null,
+        $recipient !== null ? 'to=' . (string)$recipient : null,
+        $errorSummary !== null ? 'error=' . $errorSummary : null,
+    ], static fn($value) => $value !== null && $value !== '');
+
+    $row = [
+        'id' => $docId,
+        'type' => $type,
+        'timestamp' => $timestamp,
+        'date_created' => $timestamp,
+        'created_at' => $timestamp,
+        'status' => $status,
+        'delivery_status' => $data['delivery_status'] ?? null,
+        'sender_id' => $data['sender_id'] ?? $sender,
+        'sender_name' => $data['sender_name'] ?? $sender,
+        'sendername' => $data['sendername'] ?? $sender,
+        'requested_id' => $data['requested_id'] ?? null,
+        'recipient' => $recipient,
+        'number' => $data['number'] ?? $recipient,
+        'location_id' => $data['location_id'] ?? $data['locationId'] ?? null,
+        'account_id' => $data['account_id'] ?? null,
+        'company_id' => $data['company_id'] ?? $data['companyId'] ?? null,
+        'provider' => $data['provider'] ?? $data['source'] ?? null,
+        'provider_status' => $data['provider_status'] ?? null,
+        'provider_message_id' => $data['provider_message_id'] ?? null,
+        'provider_reference_id' => $data['provider_reference_id'] ?? null,
+        'message_reference_id' => $data['message_reference_id'] ?? null,
+        'transaction_reference_id' => $data['transaction_reference_id'] ?? null,
+        'request_reference_id' => $data['request_reference_id'] ?? $data['reference_id'] ?? null,
+        'reference_id' => $data['reference_id'] ?? null,
+        'amount' => $data['amount'] ?? null,
+        'balance_after' => $data['balance_after'] ?? null,
+        'message' => isset($data['message']) ? substr((string)$data['message'], 0, 240) : null,
+        'error' => $errorSummary,
+        'error_message' => $errorSummary,
+        'provider_error' => $errorSummary,
+        'summary' => implode(' | ', $summaryParts),
+    ];
+
+    return array_filter(array_merge($row, $meta), static fn($value) => $value !== null);
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'logs') {
     $requestedMonth = trim((string)($_GET['month'] ?? ''));
+    $limit = nola_admin_request_limit();
+    $startAfterTs = nola_admin_cursor_timestamp($_GET['start_after'] ?? null);
 
-    // Cache the full unfiltered log set for 60 seconds to dramatically speed up
-    // the first-load and subsequent 15-second poll cycles in the Activity page.
-    $logsCacheKey = 'admin_activity_logs_all';
-    $cachedLogs = NolaCache::get($logsCacheKey);
+    $logsCacheKey = 'admin_activity_logs_compact_' . $limit;
+    $cachedLogs = $startAfterTs === null ? NolaCache::get($logsCacheKey) : null;
 
     if ($cachedLogs !== null) {
         $unifiedLogs = $cachedLogs;
@@ -248,7 +353,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
         $unifiedLogs = [];
         $seenDocIds = [];
 
-        // Helper: collect docs from a query into $unifiedLogs
+        // Helper: collect compact rows from a query into $unifiedLogs
         $collectDocs = function($query, string $defaultType) use (&$unifiedLogs, &$seenDocIds) {
             try {
                 $docs = $query->documents();
@@ -258,13 +363,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
                         if (isset($seenDocIds[$docId])) continue;
                         $data = $doc->data();
                         $ts = nola_extract_log_timestamp($data);
-                        $data = array_merge(nola_admin_activity_meta($data), $data);
                         $seenDocIds[$docId] = true;
-                        $unifiedLogs[] = array_merge($data, [
-                            'id'        => $docId,
-                            'type'      => $data['type'] ?? $defaultType,
-                            'timestamp' => $ts
-                        ]);
+                        $unifiedLogs[] = nola_admin_compact_activity_log($data, $docId, $defaultType, $ts);
                     }
                 }
             } catch (\Throwable $e) {
@@ -272,17 +372,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
             }
         };
 
-        // 1. messages — newest 250 DESC
-        $collectDocs($db->collection('messages')->orderBy('date_created', 'DESC')->limit(250), 'message');
+        // 1. messages
+        $collectDocs($db->collection('messages')->orderBy('date_created', 'DESC')->limit($limit), 'message');
 
-        // 2. sms_logs — newest 250 DESC
-        $collectDocs($db->collection('sms_logs')->orderBy('date_created', 'DESC')->limit(250), 'message');
+        // 2. sms_logs
+        $collectDocs($db->collection('sms_logs')->orderBy('date_created', 'DESC')->limit($limit), 'message');
 
-        // 3. sender_id_requests — newest 150 DESC
-        $collectDocs($db->collection('sender_id_requests')->orderBy('created_at', 'DESC')->limit(150), 'sender_request');
+        // 3. sender_id_requests
+        $collectDocs($db->collection('sender_id_requests')->orderBy('created_at', 'DESC')->limit($limit), 'sender_request');
 
-        // 4. credit_transactions — newest 250 DESC
-        $collectDocs($db->collection('credit_transactions')->orderBy('created_at', 'DESC')->limit(250), 'credit_purchase');
+        // 4. credit_transactions
+        $collectDocs($db->collection('credit_transactions')->orderBy('created_at', 'DESC')->limit($limit), 'credit_purchase');
 
         // Sort combined array by timestamp descending
         usort($unifiedLogs, function($a, $b) {
@@ -291,11 +391,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
             return $timeB - $timeA;
         });
 
-        // Cache for 5 minutes (300 seconds) — automatically flushed by invalidateAdminDashboard() on updates
-        NolaCache::set($logsCacheKey, $unifiedLogs, 300);
+        if ($startAfterTs === null) {
+            NolaCache::set($logsCacheKey, $unifiedLogs, 60);
+        }
     }
 
-    // Filter by month if requested (client-side filtering, cache is always all-months)
+    if ($startAfterTs !== null) {
+        $unifiedLogs = array_values(array_filter($unifiedLogs, function($log) use ($startAfterTs) {
+            $rawDate = $log['timestamp'] ?? '';
+            $time = $rawDate !== '' ? strtotime($rawDate) : false;
+            return $time !== false && $time < $startAfterTs;
+        }));
+    }
+
     $filteredLogs = $unifiedLogs;
     if ($requestedMonth !== '' && strtolower($requestedMonth) !== 'all') {
         $filteredLogs = array_values(array_filter($unifiedLogs, function($log) use ($requestedMonth) {
@@ -304,27 +412,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
         }));
     }
 
+    $pageLogs = array_slice($filteredLogs, 0, $limit);
+
     $responsePayload = [
         'status' => 'success',
-        'data' => $filteredLogs,
-        'summary' => nola_admin_activity_summary($filteredLogs),
-        'total_messages' => count($filteredLogs)
+        'data' => $pageLogs,
+        'summary' => nola_admin_activity_summary($pageLogs),
+        'total_messages' => count($pageLogs),
+        'pagination' => [
+            'limit' => $limit,
+            'next_cursor' => nola_admin_next_cursor($pageLogs, $limit),
+            'has_more' => count($filteredLogs) > $limit,
+        ],
     ];
     echo json_encode($responsePayload);
     exit;
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && (!isset($_GET['action']) || $_GET['action'] === 'sender_requests')) {
-    $cacheKey = "admin_sender_requests_list";
+    $limit = nola_admin_request_limit(100, 100);
+    $cacheKey = "admin_sender_requests_list_{$limit}";
     $cachedData = NolaCache::get($cacheKey);
     if ($cachedData !== null) {
         echo json_encode($cachedData);
         exit;
     }
 
-    // In production, we'd probably filter by "pending" first, but let's fetch all
     $requests = $db->collection('sender_id_requests')
         ->orderBy('created_at', 'DESC')
+        ->limit($limit)
         ->documents();
 
     $results = [];
@@ -339,7 +455,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && (!isset($_GET['action']) || $_GET['a
         $results[] = $data;
     }
 
-    $responsePayload = ['status' => 'success', 'data' => $results];
+    $responsePayload = [
+        'status' => 'success',
+        'data' => $results,
+        'pagination' => [
+            'limit' => $limit,
+            'returned' => count($results),
+        ],
+    ];
     NolaCache::set($cacheKey, $responsePayload, 300); // 5 minutes cache
     echo json_encode($responsePayload);
     exit;

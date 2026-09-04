@@ -51,6 +51,8 @@ if (!$bypassCache) {
         echo json_encode($cached);
         exit;
     }
+} elseif (!empty($_GET['clear_cache'])) {
+    NolaCache::delete($cacheKey);
 }
 
 // ── Resolve active provider name ────────────────────────────────────────────
@@ -64,7 +66,9 @@ try {
 
 $db      = get_firestore();
 $fetcher = new SemaphoreBalanceFetcher();
-$summary = $fetcher->getDashboardSummary($db);
+$summary = $bypassCache
+    ? $fetcher->getSystemProviderSummary()
+    : $fetcher->getLightweightDashboardSummary($db, true);
 
 $semIsActive = in_array($activeProviderName, ['semaphore', 'auto_failover'], true);
 $uniIsActive = $activeProviderName === 'unisms';

@@ -23,6 +23,7 @@ require_once __DIR__ . '/../services/FirestoreId.php';
 require_once __DIR__ . '/../services/PhoneNormalizer.php';
 require_once __DIR__ . '/../services/ProviderResultService.php';
 require_once __DIR__ . '/../services/TextNormalizer.php';
+require_once __DIR__ . '/../services/providers/UniSmsProvider.php';
 
 
 $SEMAPHORE_API_KEY = $config['SEMAPHORE_API_KEY'];
@@ -238,6 +239,53 @@ function gateway_failure_message(array $gatewayErrors, string $provider): string
 function public_gateway_failure_status(?int $providerHttpStatus): int
 {
     return ProviderResultService::publicFailureStatus($providerHttpStatus);
+}
+
+function nola_has_link_policy_config(array $config): bool
+{
+    foreach (['allow_links', 'links_prohibited', 'prohibit_links', 'urls_prohibited'] as $field) {
+        if (array_key_exists($field, $config)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function nola_sender_links_allowed(array $intData, string $sender): bool
+{
+    $candidates = [$intData];
+    $senderLower = strtolower(trim($sender));
+
+    foreach (['sender_link_policy', 'sender_policies', 'senders', 'sender_ids'] as $field) {
+        if (!isset($intData[$field]) || !is_array($intData[$field])) {
+            continue;
+        }
+
+        $policyMap = $intData[$field];
+        if ($senderLower !== '') {
+            foreach ($policyMap as $key => $value) {
+                if (is_array($value) && strtolower(trim((string)$key)) === $senderLower) {
+                    $candidates[] = $value;
+                    continue;
+                }
+
+                if (is_array($value)) {
+                    $candidateSender = strtolower(trim((string)($value['sender_id'] ?? $value['sender_name'] ?? $value['requested_id'] ?? '')));
+                    if ($candidateSender !== '' && $candidateSender === $senderLower) {
+                        $candidates[] = $value;
+                    }
+                }
+            }
+        }
+    }
+
+    foreach ($candidates as $candidate) {
+        if (is_array($candidate) && nola_has_link_policy_config($candidate)) {
+            return UniSmsProvider::linksAllowedByConfig($candidate);
+        }
+    }
+
+    return true;
 }
 
 /* |-------------------------------------------------------------------------- | CREDIT CALCULATION |-------------------------------------------------------------------------- */
@@ -819,6 +867,33 @@ if ($providerValidation = ProviderResultService::providerMessageValidation($prov
     echo json_encode([
         'status' => 'error',
     ] + $providerValidation);
+    exit;
+}
+
+if (SenderResolver::normalizeProvider($providerPreference) === 'unisms'
+    && UniSmsProvider::containsLink($message)
+    && !nola_sender_links_allowed($intData, $sender)
+) {
+    $validationMessage = 'The selected Sender ID does not permit links or URLs.';
+    $blockedMessageId = record_workflow_sms_block($db, (string)$locId, $validNumbers, $message, 'unisms_links_prohibited', [
+        'provider' => 'unisms',
+        'sender' => $sender,
+        'idempotency_key' => $idempotencyKey ?? null,
+    ]);
+    Logger::error('UniSMS link policy blocked before provider dispatch', [
+        'location_id' => $locId,
+        'sender' => $sender,
+        'provider' => 'unisms',
+    ]);
+    Logger::response(422, ['status' => 'error', 'message' => $validationMessage]);
+    $markIdempotencyFailed('unisms_links_prohibited', $validationMessage, 422);
+    http_response_code(422);
+    echo json_encode([
+        'status' => 'error',
+        'error' => 'unisms_links_prohibited',
+        'message' => $validationMessage,
+        'message_id' => $blockedMessageId ?? null,
+    ]);
     exit;
 }
 

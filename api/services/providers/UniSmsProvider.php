@@ -46,6 +46,27 @@ class UniSmsProvider implements SmsProviderInterface
         return $resolved;
     }
 
+    public static function containsLink(string $text): bool
+    {
+        return (bool)preg_match('/\b(?:https?:\/\/|www\.)\S+\b/i', $text)
+            || (bool)preg_match('/\b[a-zA-Z0-9-]+\.(?:com|org|net|io|me|ph|co|app|link|xyz)\b/i', $text);
+    }
+
+    public static function linksAllowedByConfig(array $config): bool
+    {
+        if (array_key_exists('allow_links', $config)) {
+            return filter_var($config['allow_links'], FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE) !== false;
+        }
+
+        foreach (['links_prohibited', 'prohibit_links', 'urls_prohibited'] as $field) {
+            if (array_key_exists($field, $config)) {
+                return filter_var($config[$field], FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE) !== true;
+            }
+        }
+
+        return true;
+    }
+
     private function formatNumber(string $number): string
     {
         $digits = preg_replace('/\D/', '', $number);
