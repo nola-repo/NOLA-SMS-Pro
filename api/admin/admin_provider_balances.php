@@ -67,8 +67,19 @@ try {
 $db      = get_firestore();
 $fetcher = new SemaphoreBalanceFetcher();
 $summary = $bypassCache
-    ? $fetcher->getSystemProviderSummary()
+    ? $fetcher->getDashboardSummary($db)
     : $fetcher->getLightweightDashboardSummary($db, true);
+
+if ($bypassCache) {
+    try {
+        $db->collection('admin_config')->document('provider_balance_summary')->set([
+            'summary' => $summary,
+            'updated_at' => (new \DateTimeImmutable())->format(\DateTimeInterface::ATOM)
+        ], ['merge' => true]);
+    } catch (\Throwable $e) {
+        error_log('[admin_provider_balances] Failed to save provider summary: ' . $e->getMessage());
+    }
+}
 
 $semIsActive = in_array($activeProviderName, ['semaphore', 'auto_failover'], true);
 $uniIsActive = $activeProviderName === 'unisms';

@@ -39,7 +39,7 @@ const providerLabel = (provider: string) => {
 };
 
 const detectProviderFromApiKey = (value: string): 'semaphore' | 'unisms' | null => {
-    const normalized = value.trim().toLowerCase();
+    const normalized = String(value || '').trim().toLowerCase();
     if (!normalized) return null;
     if (/unisms|unismsapi|unis?ms[_\s-]?(api|key|token)/i.test(normalized)) return 'unisms';
     if (/semaphore|api\.semaphore\.co|semaphore[_\s-]?(api|key|token)/i.test(normalized)) return 'semaphore';
@@ -482,11 +482,11 @@ export const AdminSenderRequests: React.FC = () => {
                                             >
                                                 <div className="flex items-center gap-3.5 flex-1 min-w-0 w-full">
                                                     <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#2b83fa] to-[#1d6bd4] shadow-sm flex items-center justify-center text-[12px] font-black text-white flex-shrink-0 tracking-tighter">
-                                                        {req.requested_id.substring(0, 2).toUpperCase()}
+                                                        {String(req.requested_id || '').substring(0, 2).toUpperCase()}
                                                     </div>
                                                     <div className="flex flex-col min-w-0">
                                                         <div className="flex items-center gap-2 mb-1 flex-wrap">
-                                                            <span className="font-black text-[15px] text-[#2b83fa] dark:text-[#4da3ff] leading-none">{req.requested_id}</span>
+                                                            <span className="font-black text-[15px] text-[#2b83fa] dark:text-[#4da3ff] leading-none">{req.requested_id || 'Unknown'}</span>
                                                             {shouldShowProviderBadge(req) && <ProviderBadge provider={normalizeProvider(req)} />}
                                                         </div>
                                                         <div className="flex items-center gap-2">
@@ -645,7 +645,7 @@ export const AdminSenderRequests: React.FC = () => {
                                                 <FiSend className="w-5 h-5 text-blue-500" />
                                             </div>
                                             <div>
-                                                <h3 className="text-[16px] font-bold text-[#111111] dark:text-white leading-none">{req.requested_id}</h3>
+                                                <h3 className="text-[16px] font-bold text-[#111111] dark:text-white leading-none">{req.requested_id || 'Unknown'}</h3>
                                                 <p className="text-[12px] font-bold text-[#6e6e73] dark:text-[#9aa0a6] mt-1 uppercase tracking-wide">
                                                     {associatedAccount?.location_name || req.location_name || 'Unknown Account'}
                                                 </p>
@@ -662,8 +662,9 @@ export const AdminSenderRequests: React.FC = () => {
                                                 <div className="flex items-start justify-between gap-3">
                                                     <div className="min-w-0">
                                                         <p className="text-[10px] font-bold text-[#9aa0a6] uppercase tracking-widest mb-1">Requested Sender</p>
-                                                        <p className="font-black text-[20px] text-[#2b83fa] dark:text-[#4da3ff] truncate">{req.requested_id}</p>
+                                                        <p className="font-black text-[20px] text-[#2b83fa] dark:text-[#4da3ff] truncate">{req.requested_id || 'Unknown'}</p>
                                                     </div>
+                                                    <span className="px-2.5 py-1 bg-blue-50 dark:bg-blue-900/10 text-blue-600 dark:text-blue-400 text-[11px] font-bold rounded-lg border border-blue-100 dark:border-blue-800/30 font-mono">{String(req.requested_id || '').length} chars</span>
                                                     <div className="flex flex-wrap items-center justify-end gap-2">
                                                         <StatusBadge status={req.status} />
                                                         {shouldShowProviderBadge(req) && <ProviderBadge provider={normalizeProvider(req)} />}
