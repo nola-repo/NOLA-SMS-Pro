@@ -35,6 +35,7 @@ class SenderResolver
     ): array {
         $systemSender = $config['SENDER_IDS'][0] ?? 'NOLASMSPro';
         $systemSemaphoreKey = trim((string)($config['SEMAPHORE_API_KEY'] ?? ''));
+        $globalSemaphoreKey = trim((string)($config['SEMAPHORE_GLOBAL_API_KEY'] ?? ''));
         $providerPreference = (string)($intData['provider_preference'] ?? 'system');
         $approvedProvider = self::normalizeProvider($providerPreference);
         $approvedSender = trim((string)($intData['approved_sender_id'] ?? ''));
@@ -61,7 +62,12 @@ class SenderResolver
                 $apiKeySource = !empty($intData['nola_pro_api_key'])
                     ? 'integration.nola_pro_api_key'
                     : 'integration.semaphore_api_key';
-                $usingCustomKey = true;
+                
+                if ($globalSemaphoreKey !== '' && $semaphoreCustomKey === $globalSemaphoreKey) {
+                    $usingCustomKey = false;
+                } else {
+                    $usingCustomKey = true;
+                }
             } else {
                 $activeApiKey = $systemSemaphoreKey;
                 $apiKeySource = 'config.SEMAPHORE_API_KEY';
@@ -78,7 +84,12 @@ class SenderResolver
                 $apiKeySource = !empty($intData['nola_pro_api_key'])
                     ? 'integration.nola_pro_api_key'
                     : 'integration.semaphore_api_key';
-                $usingCustomKey = true;
+                
+                if ($globalSemaphoreKey !== '' && $semaphoreCustomKey === $globalSemaphoreKey) {
+                    $usingCustomKey = false;
+                } else {
+                    $usingCustomKey = true;
+                }
             } else {
                 $selectedProvider = 'semaphore';
                 $activeApiKey = $systemSemaphoreKey;

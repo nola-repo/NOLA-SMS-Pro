@@ -3,6 +3,7 @@
 return [
 
     'SEMAPHORE_API_KEY' => getenv('SEMAPHORE_API_KEY') ?: '',
+    'SEMAPHORE_GLOBAL_API_KEY' => getenv('SEMAPHORE_GLOBAL_API_KEY') ?: '',
     'SEMAPHORE_URL' => getenv('SEMAPHORE_URL') ?: 'https://api.semaphore.co/api/v4/messages',
 
     'UNISMS_API_KEY' => getenv('UNISMS_API_KEY') ?: '',
