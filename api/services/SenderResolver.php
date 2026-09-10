@@ -231,10 +231,18 @@ class SenderResolver
                     $key = $data['nola_pro_api_key'] ?? ($data['semaphore_api_key'] ?? null);
                     if (!empty($key)) {
                         // If the stored key is the global or system pool key, return the live global key
-                        // (avoids returning a stale copy from Firestore if the key was rotated)
-                        if ($key === $globalKey || $key === $systemSemaphoreKey) {
+                        // (avoids returning a stale copy from Firestore if the key was rotated).
+                        // EXCEPT: if the stored key matches the OLD system key (not the global key),
+                        // this is a legacy account (e.g. J&K Rental) — route via SEMAPHORE_API_KEY
+                        // so the status check hits the same account the message was sent from.
+                        if ($key === $globalKey && $globalKey !== $systemSemaphoreKey) {
                             return ['api_key' => $globalKey, 'source' => 'config.SEMAPHORE_GLOBAL_API_KEY'];
                         }
+                        if ($key === $systemSemaphoreKey && $key !== $globalKey) {
+                            // Legacy account: stored key is the old system key — use it directly
+                            return ['api_key' => $systemSemaphoreKey, 'source' => 'config.SEMAPHORE_API_KEY'];
+                        }
+                        // Genuine per-account custom key
                         return ['api_key' => $key, 'source' => !empty($data['nola_pro_api_key']) ? 'integration.nola_pro_api_key' : 'integration.semaphore_api_key'];
                     }
                 }

@@ -10,8 +10,8 @@ class SemaphoreProvider implements SmsProviderInterface
     private $apiUrl;
 
     // Retry configuration (shared by all methods)
-    private const MAX_ATTEMPTS  = 3;
-    private const BASE_DELAY_MS = 500;  // 500 ms after attempt 1
+    private const MAX_ATTEMPTS  = 4;    // Semaphore HTTP 500s are transient server overloads — 4 attempts gives more recovery chance
+    private const BASE_DELAY_MS = 800;  // 800ms base → attempt delays ~800ms, ~1600ms, ~3000ms(capped)
     private const MAX_DELAY_MS  = 3000; // cap at 3 s
 
     /**
@@ -96,7 +96,7 @@ class SemaphoreProvider implements SmsProviderInterface
                 $now = microtime(true);
                 $elapsedMs = ($now - $lastMicroTime) * 1000;
                 
-                $minIntervalMs = 150;
+                $minIntervalMs = 400; // Match Firestore distributed lock interval (prevents 429s)
                 if ($elapsedMs < $minIntervalMs && $lastMicroTime > 0) {
                     $sleepUs = (int)(($minIntervalMs - $elapsedMs) * 1000);
                     if ($sleepUs > 0 && $sleepUs < 500000) {

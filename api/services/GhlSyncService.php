@@ -197,13 +197,24 @@ class GhlSyncService
         }
 
         try {
+            $body = [
+                'status'     => $ghlStatus,
+                'locationId' => $this->locationId,
+            ];
+
+            // GHL Conversations API requires 'error' to be a structured object (not a string)
+            // when status is 'failed' — omitting it or sending a plain string returns 422.
+            if ($ghlStatus === 'failed') {
+                $body['error'] = [
+                    'code'    => 'delivery_failed',
+                    'message' => 'SMS delivery failed',
+                ];
+            }
+
             $resp = $this->ghlClient->request(
                 'PUT',
                 '/conversations/messages/' . urlencode($ghlMessageId) . '/status',
-                json_encode([
-                    'status'     => $ghlStatus,
-                    'locationId' => $this->locationId,
-                ]),
+                json_encode($body),
                 '2021-04-15'
             );
 

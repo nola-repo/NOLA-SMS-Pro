@@ -739,37 +739,8 @@ if ($message !== '') {
     unset($cleaned);
 }
 
-if (false && $userKey !== '' && $userKey !== $sysKey) {
-    // ── PATH A: External API key ─────────────────────────────────────────────
-    $usingOwnApiKey = true;
-    $activeApiKey   = $customApiKey;
-    // Use their approved sender freely — they own their Semaphore account
-    $sender = (!empty($unismsSenderId) && in_array($providerPreference, ['unisms', 'unisms_custom'], true))
-        ? $unismsSenderId
-        : (!empty($approvedSenderId) ? $approvedSenderId : ($SENDER_IDS[0] ?? 'NOLASMSPro'));
-
-} elseif (false) {
-    // ── PATH B: Master billing gateway ───────────────────────────────────────
-    // If Admin has approved a custom sender for this subaccount, TRUST IT.
-    // Otherwise, check our master whitelist.
-    
-    if (!empty($approvedSenderId) && in_array($approvedSenderId, $MASTER_APPROVED_SENDERS, true)) {
-        // Safe only when the sender is available on the master provider account.
-        $sender = $approvedSenderId;
-    } elseif (!empty($desiredSender) && in_array($desiredSender, $MASTER_APPROVED_SENDERS)) {
-        // Check manually requested sender against whitelist
-        $sender = $desiredSender;
-    } else {
-        // Fallback to system default
-        $sender = $SENDER_IDS[0] ?? 'NOLASMSPro';
-        if (!empty($approvedSenderId) && !in_array($approvedSenderId, $MASTER_APPROVED_SENDERS, true)) {
-            error_log("[ghl_provider] approved_sender_id '{$approvedSenderId}' is not in master sender whitelist. Falling back to '{$sender}'.");
-        }
-        if (!empty($desiredSender) && $desiredSender !== $sender) {
-            error_log("[ghl_provider] Requested sender '{$desiredSender}' not approved and no subaccount sender exists. Falling back to '{$sender}'.");
-        }
-    }
-}
+// PATH A/B sender/key resolution is now handled exclusively by SenderResolver::resolve() above.
+// $sender, $activeApiKey, $usingOwnApiKey are all already set by $senderResolution.
 
 // ── Charging Logic ───────────────────────────────────────────────────────────
 // Trial credits apply before paid wallet deduction, regardless of provider path.
@@ -1051,7 +1022,11 @@ $gateway_error = 'Unknown gateway error';
 usleep(random_int(50000, 150000));
 
 try {
-    $res = $gateway->send([$normalizedPhone], $message, $sender, $usingOwnApiKey ? $activeApiKey : null, $providerPreference);
+    // Always pass the fully resolved $activeApiKey (set by SenderResolver).
+    // For own-key accounts it's their private key; for shared-pool accounts it's
+    // SEMAPHORE_GLOBAL_API_KEY; for legacy system-key accounts it's SEMAPHORE_API_KEY.
+    // Passing null here would cause SemaphoreProvider to fall back to the wrong default key.
+    $res = $gateway->send([$normalizedPhone], $message, $sender, $activeApiKey, $providerPreference);
     $chosenProvider = $res['provider'];
     $gatewayResults = $res['results'];
 
@@ -1112,7 +1087,9 @@ try {
                 'phone'              => $normalizedPhone,
                 'message'            => $message,
                 'sender_id'          => $sender,
-                'api_key'            => $usingOwnApiKey ? ($activeApiKey ?? null) : null,
+                // Always store the resolved key (global/system/custom) so the retry worker
+                // uses the same key path that was originally selected by SenderResolver.
+                'api_key'            => $activeApiKey ?? null,
                 'provider_pref'      => $providerPreference,
                 'provider'           => $chosenProvider,
                 'account_id'         => $account_id,
