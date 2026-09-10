@@ -61,3 +61,7 @@ Thumbs.db
 *.xlsx
 *.csv
 ~\$*
+# Frontend repos — tracked separately in nola-sms-pro-frontend
+/admin/
+/user/
+/agency/
