@@ -42,11 +42,51 @@ class SemaphoreProvider implements SmsProviderInterface
     /**
      * Acquire a lightweight atomic file lock per API key to space out
      * outbound Semaphore API requests by ~150ms during rapid concurrent bursts.
+     * Uses Firestore as a distributed lock across Cloud Run instances, falling back to local file lock.
      *
-     * @return mixed File pointer handle or null
+     * @return mixed File pointer handle, string 'firestore_locked', or null
      */
     private function acquirePacingLock(string $apiKey)
     {
+        // 1. Try Firestore distributed lock first
+        try {
+            require_once __DIR__ . '/../../webhook/firestore_client.php';
+            $db = get_firestore();
+            if ($db) {
+                $hash = md5($apiKey);
+                $docRef = $db->collection('system_locks')->document('semaphore_pacing_' . $hash);
+                
+                $db->runTransaction(function ($transaction) use ($docRef) {
+                    $snapshot = $transaction->snapshot($docRef);
+                    $nowMs = microtime(true) * 1000;
+                    $lastTimeMs = 0;
+                    
+                    if ($snapshot->exists()) {
+                        $lastTimeMs = (float)($snapshot->data()['last_microtime'] ?? 0);
+                    }
+                    
+                    $elapsedMs = $nowMs - $lastTimeMs;
+                    $minIntervalMs = 150;
+                    
+                    if ($elapsedMs < $minIntervalMs && $lastTimeMs > 0) {
+                        $sleepUs = (int)(($minIntervalMs - $elapsedMs) * 1000);
+                        // Cap sleep to 1 second to avoid stalling Cloud Run instances indefinitely
+                        if ($sleepUs > 0 && $sleepUs < 1000000) {
+                            usleep($sleepUs);
+                            $nowMs = microtime(true) * 1000; // Update time after sleeping
+                        }
+                    }
+                    
+                    $transaction->set($docRef, ['last_microtime' => $nowMs]);
+                });
+                
+                return 'firestore_locked';
+            }
+        } catch (\Throwable $e) {
+            error_log('[SemaphoreProvider] Firestore pacing lock failed, falling back to local file lock. Error: ' . $e->getMessage());
+        }
+
+        // 2. Fallback to Local File Lock
         try {
             $hash = md5($apiKey);
             $lockPath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'nola_semaphore_pacing_' . $hash . '.lock';
@@ -78,6 +118,9 @@ class SemaphoreProvider implements SmsProviderInterface
 
     private function releasePacingLock($fp): void
     {
+        if ($fp === 'firestore_locked') {
+            return;
+        }
         if ($fp) {
             try {
                 @flock($fp, LOCK_UN);
