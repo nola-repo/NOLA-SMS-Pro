@@ -35,6 +35,8 @@ dist-ssr/
 **/.nuxt/
 **/.output/
 vendor/
+# Nested clone of nola-sms-pro-frontend — never commit into this backend repo
+/frontend/
 frontend_old/
 temp_*/
 tmp/

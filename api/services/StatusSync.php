@@ -18,9 +18,10 @@ class StatusSync
      * 
      * @param \Google\Cloud\Firestore\FirestoreClient $db Firestore client instance
      * @param string $systemApiKey Semaphore API key
+     * @param string|null $globalApiKey Semaphore Global API key (shared pool key for migrated subaccounts)
      * @return int Number of messages successfully updated
      */
-    public static function runSync($db, $systemApiKey)
+    public static function runSync($db, $systemApiKey, ?string $globalApiKey = null)
     {
         $updatedCount = 0;
 
@@ -94,13 +95,13 @@ class StatusSync
                 if ($locId && !$isSystem) {
                     $cacheKey = $locId . ':' . $providerName;
                     if (!isset($apiKeyCache[$cacheKey])) {
-                        $resolved = \SenderResolver::resolveStatusApiKey($db, (string)$locId, (string)$providerName, $systemApiKey, $isSystem);
+                        $resolved = \SenderResolver::resolveStatusApiKey($db, (string)$locId, (string)$providerName, $systemApiKey, $isSystem, $globalApiKey);
                         $apiKeyCache[$cacheKey] = $resolved;
                     }
                     $activeApiKey = $apiKeyCache[$cacheKey]['api_key'];
                     $apiKeySource = $apiKeyCache[$cacheKey]['source'];
                 } else {
-                    $resolved = \SenderResolver::resolveStatusApiKey($db, (string)$locId, (string)$providerName, $systemApiKey, $isSystem);
+                    $resolved = \SenderResolver::resolveStatusApiKey($db, (string)$locId, (string)$providerName, $systemApiKey, $isSystem, $globalApiKey);
                     $activeApiKey = $resolved['api_key'];
                     $apiKeySource = $resolved['source'];
                 }
@@ -250,7 +251,7 @@ class StatusSync
         if ($locId) {
             $cacheKey = $locId . ':' . $providerName;
             if (!isset($apiKeyCache[$cacheKey])) {
-                $apiKeyCache[$cacheKey] = \SenderResolver::resolveStatusApiKey($db, (string)$locId, (string)$providerName, $systemApiKey, $isSystem);
+                $apiKeyCache[$cacheKey] = \SenderResolver::resolveStatusApiKey($db, (string)$locId, (string)$providerName, $systemApiKey, $isSystem, $globalApiKey ?? null);
             }
             $activeApiKey = $apiKeyCache[$cacheKey]['api_key'];
             $apiKeySource = $apiKeyCache[$cacheKey]['source'];

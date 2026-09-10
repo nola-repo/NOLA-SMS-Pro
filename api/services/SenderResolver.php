@@ -35,7 +35,13 @@ class SenderResolver
     ): array {
         $systemSender = $config['SENDER_IDS'][0] ?? 'NOLASMSPro';
         $systemSemaphoreKey = trim((string)($config['SEMAPHORE_API_KEY'] ?? ''));
+        // SEMAPHORE_GLOBAL_API_KEY is the shared key written to all migrated subaccounts.
+        // If the env var is not set in Cloud Run, fall back to the system key so comparisons
+        // below still work correctly and don't misclassify migrated accounts as custom-key users.
         $globalSemaphoreKey = trim((string)($config['SEMAPHORE_GLOBAL_API_KEY'] ?? ''));
+        if ($globalSemaphoreKey === '') {
+            $globalSemaphoreKey = $systemSemaphoreKey;
+        }
         $providerPreference = (string)($intData['provider_preference'] ?? 'system');
         $approvedProvider = self::normalizeProvider($providerPreference);
         $approvedSender = trim((string)($intData['approved_sender_id'] ?? ''));
@@ -57,20 +63,25 @@ class SenderResolver
                 $apiKeySource = 'admin_config.unisms_api_key';
             }
         } elseif ($selectedProvider === 'semaphore') {
-            if ($semaphoreCustomKey !== '' && $semaphoreCustomKey !== $systemSemaphoreKey) {
+            // A stored key that matches the global OR system key is not a unique custom key —
+            // it was written by migrate_api_keys.php and should be treated as the shared pool key.
+            $isGlobalOrSystemKey = (
+                $semaphoreCustomKey === $globalSemaphoreKey ||
+                $semaphoreCustomKey === $systemSemaphoreKey
+            );
+            if ($semaphoreCustomKey !== '' && !$isGlobalOrSystemKey) {
                 $activeApiKey = $semaphoreCustomKey;
                 $apiKeySource = !empty($intData['nola_pro_api_key'])
                     ? 'integration.nola_pro_api_key'
                     : 'integration.semaphore_api_key';
-                
-                if ($globalSemaphoreKey !== '' && $semaphoreCustomKey === $globalSemaphoreKey) {
-                    $usingCustomKey = false;
-                } else {
-                    $usingCustomKey = true;
-                }
+                $usingCustomKey = true;
             } else {
-                $activeApiKey = $systemSemaphoreKey;
-                $apiKeySource = 'config.SEMAPHORE_API_KEY';
+                // Use global key if available (preferred), otherwise fall back to system key
+                $activeApiKey = $globalSemaphoreKey ?: $systemSemaphoreKey;
+                $apiKeySource = $globalSemaphoreKey && $globalSemaphoreKey !== $systemSemaphoreKey
+                    ? 'config.SEMAPHORE_GLOBAL_API_KEY'
+                    : 'config.SEMAPHORE_API_KEY';
+                $usingCustomKey = false;
             }
         } else {
             if ($unismsCustomKey !== '' && self::isCustomProviderPreference($providerPreference)) {
@@ -78,22 +89,22 @@ class SenderResolver
                 $activeApiKey = $unismsCustomKey;
                 $apiKeySource = 'integration.unisms_api_key';
                 $usingCustomKey = true;
-            } elseif ($semaphoreCustomKey !== '' && $semaphoreCustomKey !== $systemSemaphoreKey) {
+            } elseif ($semaphoreCustomKey !== '' && $semaphoreCustomKey !== $globalSemaphoreKey && $semaphoreCustomKey !== $systemSemaphoreKey) {
+                // Stored key is a genuine per-account custom key (not the shared global/system key)
                 $selectedProvider = 'semaphore';
                 $activeApiKey = $semaphoreCustomKey;
                 $apiKeySource = !empty($intData['nola_pro_api_key'])
                     ? 'integration.nola_pro_api_key'
                     : 'integration.semaphore_api_key';
-                
-                if ($globalSemaphoreKey !== '' && $semaphoreCustomKey === $globalSemaphoreKey) {
-                    $usingCustomKey = false;
-                } else {
-                    $usingCustomKey = true;
-                }
+                $usingCustomKey = true;
             } else {
+                // No custom key, or stored key is the global/system pool key
                 $selectedProvider = 'semaphore';
-                $activeApiKey = $systemSemaphoreKey;
-                $apiKeySource = 'config.SEMAPHORE_API_KEY';
+                $activeApiKey = $globalSemaphoreKey ?: $systemSemaphoreKey;
+                $apiKeySource = $globalSemaphoreKey && $globalSemaphoreKey !== $systemSemaphoreKey
+                    ? 'config.SEMAPHORE_GLOBAL_API_KEY'
+                    : 'config.SEMAPHORE_API_KEY';
+                $usingCustomKey = false;
             }
         }
 
@@ -179,12 +190,15 @@ class SenderResolver
         ];
     }
 
-    public static function resolveStatusApiKey($db, string $locationId, string $providerName, ?string $systemSemaphoreKey, bool $isSystem = false): array
+    public static function resolveStatusApiKey($db, string $locationId, string $providerName, ?string $systemSemaphoreKey, bool $isSystem = false, ?string $globalSemaphoreKey = null): array
     {
         $providerName = self::normalizeProvider($providerName);
+        // Fallback: if global key not provided, use system key as the reference
+        $globalKey = ($globalSemaphoreKey && $globalSemaphoreKey !== '') ? $globalSemaphoreKey : $systemSemaphoreKey;
+
         if ($isSystem) {
             return [
-                'api_key' => $providerName === 'semaphore' ? $systemSemaphoreKey : null,
+                'api_key' => $providerName === 'semaphore' ? $globalKey : null,
                 'source' => $providerName === 'semaphore' ? 'config.SEMAPHORE_API_KEY' : 'admin_config.unisms_api_key',
             ];
         }
@@ -199,6 +213,11 @@ class SenderResolver
                 if ($providerName === 'semaphore') {
                     $key = $data['nola_pro_api_key'] ?? ($data['semaphore_api_key'] ?? null);
                     if (!empty($key)) {
+                        // If the stored key is the global or system pool key, return the live global key
+                        // (avoids returning a stale copy from Firestore if the key was rotated)
+                        if ($key === $globalKey || $key === $systemSemaphoreKey) {
+                            return ['api_key' => $globalKey, 'source' => 'config.SEMAPHORE_GLOBAL_API_KEY'];
+                        }
                         return ['api_key' => $key, 'source' => !empty($data['nola_pro_api_key']) ? 'integration.nola_pro_api_key' : 'integration.semaphore_api_key'];
                     }
                 }
@@ -212,9 +231,159 @@ class SenderResolver
         }
 
         return [
-            'api_key' => $providerName === 'semaphore' ? $systemSemaphoreKey : null,
+            'api_key' => $providerName === 'semaphore' ? $globalKey : null,
             'source' => $providerName === 'semaphore' ? 'config.SEMAPHORE_API_KEY' : 'admin_config.unisms_api_key',
         ];
+    }
+
+    public static function extractInboundDestinationSender(array $data): string
+    {
+        $candidates = [
+            $data['recipient'] ?? null,
+            $data['receiver'] ?? null,
+            $data['destination'] ?? null,
+            $data['sendername'] ?? null,
+            $data['sender_name'] ?? null,
+            $data['sender_id'] ?? null,
+            $data['to'] ?? null,
+        ];
+
+        foreach ($candidates as $candidate) {
+            $value = trim((string)$candidate);
+            if ($value === '' || self::looksLikePhoneNumber($value)) {
+                continue;
+            }
+            return $value;
+        }
+
+        return '';
+    }
+
+    /**
+     * @return string|null Canonical HighLevel location id (without ghl_ prefix)
+     */
+    public static function resolveLocationByApprovedSender($db, string $senderName): ?string
+    {
+        $needle = strtolower(trim($senderName));
+        if ($needle === '') {
+            return null;
+        }
+
+        $cacheKey = 'inbound_sender_loc_' . md5($needle);
+        try {
+            require_once __DIR__ . '/../cache_helper.php';
+            $cached = NolaCache::get($cacheKey);
+            if (is_string($cached) && $cached !== '') {
+                return $cached;
+            }
+        } catch (\Throwable $e) {
+            // Cache is optional.
+        }
+
+        $matches = [];
+
+        try {
+            foreach ($db->collection('integrations')->documents() as $doc) {
+                if (!$doc->exists()) {
+                    continue;
+                }
+                $data = $doc->data() ?: [];
+                $approved = strtolower(trim((string)($data['approved_sender_id'] ?? '')));
+                $unisms = strtolower(trim((string)($data['unisms_sender_id'] ?? '')));
+                if ($approved !== $needle && $unisms !== $needle) {
+                    continue;
+                }
+                $loc = self::locationIdFromIntegrationDoc($doc->id(), $data);
+                if ($loc !== '') {
+                    $matches[$loc] = true;
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log('[SenderResolver][inbound_sender] integrations scan failed: ' . $e->getMessage());
+        }
+
+        if (count($matches) !== 1) {
+            try {
+                foreach ($db->collection('sender_id_requests')->documents() as $doc) {
+                    if (!$doc->exists()) {
+                        continue;
+                    }
+                    $data = $doc->data() ?: [];
+                    if (strtolower((string)($data['status'] ?? '')) !== 'approved') {
+                        continue;
+                    }
+                    $stored = strtolower(trim((string)(
+                        $data['requested_id'] ?? $data['sender_id'] ?? $data['sender_name'] ?? ''
+                    )));
+                    if ($stored !== $needle) {
+                        continue;
+                    }
+                    $loc = trim((string)($data['location_id'] ?? ''));
+                    if ($loc !== '') {
+                        $matches[$loc] = true;
+                    }
+                }
+            } catch (\Throwable $e) {
+                error_log('[SenderResolver][inbound_sender] sender_id_requests scan failed: ' . $e->getMessage());
+            }
+        }
+
+        $locationIds = array_keys($matches);
+        if (count($locationIds) !== 1) {
+            if (count($locationIds) > 1) {
+                error_log('[SenderResolver][inbound_sender] ambiguous sender=' . $senderName . ' locations=' . implode(',', $locationIds));
+            }
+            return null;
+        }
+
+        $locationId = $locationIds[0];
+        try {
+            require_once __DIR__ . '/../cache_helper.php';
+            NolaCache::set($cacheKey, $locationId, 300);
+        } catch (\Throwable $e) {
+            // Cache is optional.
+        }
+
+        return $locationId;
+    }
+
+    /**
+     * @return list<string>
+     */
+    public static function inboundPhoneLookupKeys(string $rawPhone): array
+    {
+        require_once __DIR__ . '/PhoneNormalizer.php';
+        $keys = [];
+        $raw = trim($rawPhone);
+        if ($raw !== '') {
+            $keys[$raw] = true;
+        }
+        $normalized = PhoneNormalizer::philippineMobile($raw);
+        if ($normalized) {
+            $keys[$normalized] = true;
+            $keys[ltrim($normalized, '0')] = true;
+            $keys['63' . ltrim($normalized, '0')] = true;
+            $keys['+63' . ltrim($normalized, '0')] = true;
+        }
+        return array_keys($keys);
+    }
+
+    public static function looksLikePhoneNumber(string $value): bool
+    {
+        $digits = preg_replace('/\D/', '', $value);
+        return $digits !== '' && strlen($digits) >= 10 && strlen($digits) <= 15 && !preg_match('/[a-zA-Z]/', $value);
+    }
+
+    private static function locationIdFromIntegrationDoc(string $docId, array $data): string
+    {
+        $fromField = trim((string)($data['location_id'] ?? ''));
+        if ($fromField !== '') {
+            return $fromField;
+        }
+        if (str_starts_with($docId, 'ghl_')) {
+            return substr($docId, 4);
+        }
+        return $docId;
     }
 
     private static function loadMasterSenders($db): array

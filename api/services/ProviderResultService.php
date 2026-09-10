@@ -70,10 +70,16 @@ class ProviderResultService
 
     public static function summarizeGatewayException(\Throwable $e): array
     {
-        $providerHttpStatus = self::extractHttpStatus([], $e->getMessage());
+        $message = $e->getMessage();
+        $providerHttpStatus = self::extractHttpStatus([], $message);
+        if (self::isInvalidSenderError($message)) {
+            $providerHttpStatus = ($providerHttpStatus !== null && $providerHttpStatus >= 400 && $providerHttpStatus < 500)
+                ? $providerHttpStatus
+                : 422;
+        }
 
         return [
-            'errors' => [$e->getMessage()],
+            'errors' => [$message],
             'failed_count' => 1,
             'provider_http_status' => $providerHttpStatus,
             'http_status' => self::publicFailureStatus($providerHttpStatus),
@@ -144,7 +150,30 @@ class ProviderResultService
             return 504;
         }
 
+        if ($providerHttpStatus !== null && $providerHttpStatus >= 400 && $providerHttpStatus < 500) {
+            if (in_array($providerHttpStatus, [401, 403, 404, 422], true)) {
+                return $providerHttpStatus;
+            }
+            return 422;
+        }
+
         return 502;
+    }
+
+    public static function isInvalidSenderError(string $error): bool
+    {
+        $lower = strtolower($error);
+        if (str_contains($lower, 'invalid sender') || str_contains($lower, 'unknown sender')) {
+            return true;
+        }
+        if (str_contains($lower, 'sender name') || str_contains($lower, 'sender id') || str_contains($lower, 'sendername')) {
+            return str_contains($lower, 'invalid')
+                || str_contains($lower, 'not registered')
+                || str_contains($lower, 'not found')
+                || str_contains($lower, 'not allowed')
+                || str_contains($lower, 'unregistered');
+        }
+        return false;
     }
 
     public static function isFailedStatus($status): bool

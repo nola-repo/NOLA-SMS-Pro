@@ -44,6 +44,17 @@ function nola_admin_mask_secret(?string $secret): ?string
     return substr($secret, 0, 3) . '...' . substr($secret, -4);
 }
 
+function nola_request_sender_name(array $data): string
+{
+    return trim((string)(
+        $data['requested_id']
+        ?? $data['sender_id']
+        ?? $data['sender_name']
+        ?? $data['sendername']
+        ?? ''
+    ));
+}
+
 function nola_normalize_sms_provider($value): string
 {
     $provider = strtolower(trim((string)($value ?? 'system')));
@@ -102,7 +113,7 @@ function nola_sender_has_other_approved_request($db, string $senderId, ?string $
             continue;
         }
         $data = $request->data() ?: [];
-        $storedLower = strtolower(trim((string)($data['requested_id_lower'] ?? ($data['requested_id'] ?? ''))));
+        $storedLower = strtolower(trim((string)($data['requested_id_lower'] ?? nola_request_sender_name($data))));
         if ($storedLower !== $senderLower) {
             continue;
         }
@@ -450,6 +461,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && (!isset($_GET['action']) || $_GET['a
             $data[$dateField] = nola_admin_format_timestamp($data[$dateField] ?? null);
         }
         $data['id'] = $request->id();
+        $data['requested_id'] = nola_request_sender_name($data);
+        $data['sender_id'] = $data['sender_id'] ?? $data['requested_id'];
         $data['reference_id'] = $data['reference_id'] ?? $data['request_reference_id'] ?? $request->id();
         $data['request_reference_id'] = $data['request_reference_id'] ?? $data['reference_id'] ?? $request->id();
         $results[] = $data;
@@ -674,6 +687,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $reqData = $reqSnapshot->data();
     $locId = $reqData['location_id'];
+    $reqData['requested_id'] = nola_request_sender_name($reqData);
+    if ($status === 'approved' && $reqData['requested_id'] === '') {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'Request is missing a sender ID and cannot be approved.']);
+        exit;
+    }
     $providerForApproval = nola_provider_from_payload_or_key($payload, $reqData, $apiKey);
 
     if ($status === 'approved' && !empty($apiKey)) {

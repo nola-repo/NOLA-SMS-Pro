@@ -104,5 +104,44 @@ function nola_ghl_oauth_redirect_uri(): string
         return rtrim($configured, '/');
     }
 
+    $service = strtolower((string)(getenv('K_SERVICE') ?: getenv('CLOUD_RUN_SERVICE') ?: ''));
+    if ($service === 'sms-api') {
+        return 'https://smspro-api.nolacrm.io/oauth/callback';
+    }
+
     return nola_public_base_url() . '/oauth/callback';
+}
+
+/**
+ * Staging shares production Firestore. When STAGING_ALLOWED_LOCATION_IDS is set,
+ * refuse ghl_tokens writes for any other location/company id.
+ * Production and unset env fail open so live installs are not blocked.
+ *
+ * @return string|null Block reason, or null if the write is allowed.
+ */
+function nola_staging_token_write_blocked(string $locationOrCompanyId): ?string
+{
+    if (!nola_is_staging()) {
+        return null;
+    }
+
+    $raw = trim((string)(getenv('STAGING_ALLOWED_LOCATION_IDS') ?: ''));
+    if ($raw === '') {
+        return null;
+    }
+
+    $id = trim($locationOrCompanyId);
+    if ($id === '') {
+        return 'Staging write blocked: missing location id.';
+    }
+
+    $allowed = array_values(array_filter(array_map('trim', explode(',', $raw))));
+    foreach ($allowed as $ok) {
+        if ($ok !== '' && strcasecmp($ok, $id) === 0) {
+            return null;
+        }
+    }
+
+    error_log('[STAGING_WRITE_GUARD] blocked id=' . $id);
+    return 'Staging cannot overwrite production HighLevel tokens for this location. Use an allowlisted test location.';
 }

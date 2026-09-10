@@ -24,6 +24,7 @@ try {
     require __DIR__ . '/../services/StatusSync.php';
 
     $apiKey = $config['SEMAPHORE_API_KEY'];
+    $globalApiKey = $config['SEMAPHORE_GLOBAL_API_KEY'] ?? '';
     $db = get_firestore();
 
     // --- Maintenance Mode Check ---
@@ -37,7 +38,7 @@ try {
     // ------------------------------
 
     // 3. Keep the script stateless and delegate logic to the service class
-    $updatedCount = \Nola\Services\StatusSync::runSync($db, $apiKey);
+    $updatedCount = \Nola\Services\StatusSync::runSync($db, $apiKey, $globalApiKey ?: null);
 
     // 4. Output success message so Cloud Scheduler records a successful HTTP response
     $responseMessage = "Status update complete. Updated $updatedCount messages.";

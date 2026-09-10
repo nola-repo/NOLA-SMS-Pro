@@ -323,10 +323,11 @@ class SemaphoreProvider implements SmsProviderInterface
         $httpCode = $result['httpCode'];
         $decoded  = json_decode($result['response'], true);
 
-        if ($httpCode === 408) {
+        if ($httpCode === 408 || ($httpCode >= 500 && $httpCode < 600)) {
+            $msg = $decoded['message'] ?? $decoded['error'] ?? 'Semaphore HTTP ' . $httpCode;
             throw new SemaphoreTimeoutException(
-                'Semaphore send timed out (HTTP 408)',
-                'HTTP 408',
+                'Semaphore server error/timeout (' . $msg . ')',
+                $msg,
                 $senderId,
                 $numbers[0] ?? ''
             );
