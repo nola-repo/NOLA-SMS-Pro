@@ -70,13 +70,22 @@ class SenderResolver
                 $semaphoreCustomKey === $systemSemaphoreKey
             );
             if ($semaphoreCustomKey !== '' && !$isGlobalOrSystemKey) {
+                // PATH A: genuinely unique per-account key
                 $activeApiKey = $semaphoreCustomKey;
                 $apiKeySource = !empty($intData['nola_pro_api_key'])
                     ? 'integration.nola_pro_api_key'
                     : 'integration.semaphore_api_key';
                 $usingCustomKey = true;
+            } elseif ($semaphoreCustomKey !== '' && $semaphoreCustomKey === $systemSemaphoreKey && $semaphoreCustomKey !== $globalSemaphoreKey) {
+                // LEGACY PATH: account was set up before SEMAPHORE_GLOBAL_API_KEY existed and
+                // stores the old system key directly (e.g. J&K Rental, NOLASMSPro accounts).
+                // Route via the original SEMAPHORE_API_KEY so their registered sender names
+                // (which are on that account) continue to work.
+                $activeApiKey = $systemSemaphoreKey;
+                $apiKeySource = 'config.SEMAPHORE_API_KEY';
+                $usingCustomKey = false;
             } else {
-                // Use global key if available (preferred), otherwise fall back to system key
+                // Default: no custom key stored, or key matches the global pool — use global pool
                 $activeApiKey = $globalSemaphoreKey ?: $systemSemaphoreKey;
                 $apiKeySource = $globalSemaphoreKey && $globalSemaphoreKey !== $systemSemaphoreKey
                     ? 'config.SEMAPHORE_GLOBAL_API_KEY'
@@ -97,8 +106,16 @@ class SenderResolver
                     ? 'integration.nola_pro_api_key'
                     : 'integration.semaphore_api_key';
                 $usingCustomKey = true;
+            } elseif ($semaphoreCustomKey !== '' && $semaphoreCustomKey === $systemSemaphoreKey && $semaphoreCustomKey !== $globalSemaphoreKey) {
+                // LEGACY PATH: stored key is the old system key — preserve routing via SEMAPHORE_API_KEY.
+                // These accounts (e.g. J&K Rental) have sender names registered on the old account,
+                // NOT on the new global pool. Do not promote them to the global pool key.
+                $selectedProvider = 'semaphore';
+                $activeApiKey = $systemSemaphoreKey;
+                $apiKeySource = 'config.SEMAPHORE_API_KEY';
+                $usingCustomKey = false;
             } else {
-                // No custom key, or stored key is the global/system pool key
+                // No custom key stored — default to global pool
                 $selectedProvider = 'semaphore';
                 $activeApiKey = $globalSemaphoreKey ?: $systemSemaphoreKey;
                 $apiKeySource = $globalSemaphoreKey && $globalSemaphoreKey !== $systemSemaphoreKey

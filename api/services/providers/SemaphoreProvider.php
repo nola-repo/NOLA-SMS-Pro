@@ -66,7 +66,7 @@ class SemaphoreProvider implements SmsProviderInterface
                     }
                     
                     $elapsedMs = $nowMs - $lastTimeMs;
-                    $minIntervalMs = 150;
+                    $minIntervalMs = 400; // Increased from 150ms: prevents 429s under concurrent multi-account sends
                     
                     if ($elapsedMs < $minIntervalMs && $lastTimeMs > 0) {
                         $sleepUs = (int)(($minIntervalMs - $elapsedMs) * 1000);
