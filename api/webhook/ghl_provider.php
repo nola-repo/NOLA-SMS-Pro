@@ -1062,6 +1062,11 @@ try {
 
     $retryQueued = false;
     $retryDocId = 'retry_' . substr(hash('sha256', $localProviderMessageId), 0, 24);
+    // Secondary content-hash dedup key: catches manual user retries from GHL conversation tab.
+    // When a user manually retries, GHL sends a NEW messageId → $localProviderMessageId changes →
+    // a different $retryDocId → duplicate queue entry. The content hash (phone+message+location)
+    // detects these and prevents new records when an active retry is already pending.
+    $contentDedupId = 'retry_content_' . substr(hash('sha256', $locationId . '|' . $normalizedPhone . '|' . md5($message)), 0, 20);
     $retryNow = new \DateTime();
     $retryTs  = new \Google\Cloud\Core\Timestamp($retryNow);
     $nextRetry = (new \DateTime())->modify('+5 minutes');
@@ -1072,14 +1077,50 @@ try {
     try {
         $retryRef = $db->collection('sms_retry_queue')->document($retryDocId);
         $retrySnap = $retryRef->snapshot();
-        if ($retrySnap->exists()) {
+
+        // Check content-hash dedup: if same phone+message+location is already actively retrying,
+        // skip creating a new queue entry and a new Failed log (prevents 13x retry storm on user retry).
+        $contentDedupRef = $db->collection('sms_retry_queue')->document($contentDedupId);
+        $contentDedupSnap = $contentDedupRef->snapshot();
+        $activeContentDedup = false;
+        if ($contentDedupSnap->exists()) {
+            $cdStatus = strtolower(trim((string)($contentDedupSnap->data()['status'] ?? '')));
+            $cdCreated = $contentDedupSnap->data()['created_at'] ?? null;
+            $cdCreatedTs = is_object($cdCreated) && method_exists($cdCreated, 'get') ? $cdCreated->get()->getTimestamp() : 0;
+            // Only treat as active if the content-dedup doc is < 30 minutes old AND still pending/processing
+            if (in_array($cdStatus, ['pending_retry', 'processing'], true) && (time() - $cdCreatedTs) < 1800) {
+                $activeContentDedup = true;
+                error_log('[ghl_provider][RETRY_CONTENT_DEDUP_SKIP] ' . json_encode([
+                    'req_id'           => $providerReqId,
+                    'locationId'       => $locationId,
+                    'normalizedPhone'  => $normalizedPhone,
+                    'messageId'        => $messageId,
+                    'content_dedup_id' => $contentDedupId,
+                    'existing_status'  => $cdStatus,
+                    'age_seconds'      => time() - $cdCreatedTs,
+                    'reason'           => 'Same phone+message already pending retry — skipping duplicate record',
+                ]));
+            }
+        }
+
+        if ($activeContentDedup) {
+            // A retry is already queued for this exact message content.
+            // Refresh next_retry_at so it gets picked up again soon.
+            $contentDedupRef->set([
+                'last_error'    => $e->curlError ?: $e->getMessage(),
+                'updated_at'    => $retryTs,
+                'next_retry_at' => $nextRetryTs,
+            ], ['merge' => true]);
+            $retryQueued = true; // Treat as successfully queued (suppress Failed log)
+        } elseif ($retrySnap->exists()) {
             $retryRef->set([
                 'last_error'    => $e->curlError ?: $e->getMessage(),
                 'updated_at'    => $retryTs,
                 'next_retry_at' => $nextRetryTs,
             ], ['merge' => true]);
+            $retryQueued = true;
         } else {
-            $retryRef->set([
+            $retryPayload = [
                 'retry_doc_id'       => $retryDocId,
                 'message_id'         => $localProviderMessageId,
                 'ghl_message_id'     => $messageId,
@@ -1106,12 +1147,19 @@ try {
                 'created_at'         => $retryTs,
                 'updated_at'         => $retryTs,
                 'next_retry_at'      => $nextRetryTs,
-            ]);
+            ];
+            $retryRef->set($retryPayload);
+            // Mirror under content-hash key for cross-messageId dedup on manual user retries
+            $contentDedupRef->set(array_merge($retryPayload, [
+                'retry_doc_id' => $contentDedupId,
+                'primary_retry_doc_id' => $retryDocId,
+            ]));
+            $retryQueued = true;
         }
-        $retryQueued = true;
     } catch (\Throwable $retryWriteEx) {
         error_log('[ghl_provider][RETRY_QUEUE_WRITE_FAILED] ' . $retryWriteEx->getMessage());
     }
+
 
     // Set message status to Pending (awaiting retry) — not Failed
     if ($retryQueued) {

@@ -214,8 +214,12 @@ class SenderResolver
         $globalKey = ($globalSemaphoreKey && $globalSemaphoreKey !== '') ? $globalSemaphoreKey : $systemSemaphoreKey;
 
         if ($isSystem) {
+            // System notifications are SENT via SEMAPHORE_API_KEY (the system/legacy key).
+            // Status must be checked on the same account — use $systemSemaphoreKey, NOT $globalKey.
+            // Previously this returned $globalKey which is SEMAPHORE_GLOBAL_API_KEY — a different
+            // Semaphore account — so the message was never found there → "not found after retries" → Failed.
             return [
-                'api_key' => $providerName === 'semaphore' ? $globalKey : null,
+                'api_key' => $providerName === 'semaphore' ? $systemSemaphoreKey : null,
                 'source' => $providerName === 'semaphore' ? 'config.SEMAPHORE_API_KEY' : 'admin_config.unisms_api_key',
             ];
         }

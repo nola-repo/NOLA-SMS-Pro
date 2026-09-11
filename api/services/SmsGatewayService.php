@@ -195,6 +195,31 @@ class SmsGatewayService
         }
 
         if ($providerName !== 'auto_failover') {
+            // ── Circuit Breaker for direct provider sends ─────────────────────
+            // Previously the circuit breaker was only checked in auto_failover mode.
+            // Migrated subaccounts (SEMAPHORE_GLOBAL_API_KEY) use direct 'semaphore' mode,
+            // so a Semaphore outage would cause every webhook to do 4 full cURL retries
+            // before failing — hammering an already-degraded provider and multiplying errors.
+            // If the circuit breaker is OPEN, short-circuit immediately so the caller
+            // queues the message for retry without touching the provider at all.
+            if ($providerName === 'semaphore' && $this->isCircuitBreakerOpen('semaphore')) {
+                $senderCompatible = $this->isSenderCompatibleWithUniSms($senderId);
+                error_log(json_encode([
+                    'event'           => 'circuit_breaker_short_circuit',
+                    'provider'        => 'semaphore',
+                    'sender_id'       => $senderId,
+                    'compatible_unisms' => $senderCompatible,
+                    'circuit_status'  => 'OPEN',
+                    'action'          => 'queued_for_retry_without_provider_call',
+                ]));
+                throw new SmsProviderTimeoutException(
+                    'Semaphore circuit breaker OPEN — message queued for retry without hitting provider.',
+                    'circuit_breaker_open',
+                    $senderId,
+                    $numbers[0] ?? ''
+                );
+            }
+
             $prov = $this->getProviderInstance($providerName);
             try {
                 $results = $prov->sendBulk($numbers, $message, $senderId, $customApiKey);
