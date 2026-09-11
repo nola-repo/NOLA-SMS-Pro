@@ -33,7 +33,11 @@ class SmsGatewayService
         $systemConfig = require __DIR__ . '/../webhook/config.php';
         $resolvedConfig = [
             'SEMAPHORE_API_KEY' => $systemConfig['SEMAPHORE_API_KEY'] ?? '',
+            'SEMAPHORE_GLOBAL_API_KEY' => $systemConfig['SEMAPHORE_GLOBAL_API_KEY'] ?? '',
             'SEMAPHORE_URL' => $systemConfig['SEMAPHORE_URL'] ?? 'https://api.semaphore.co/api/v4/messages',
+            'SEMAPHORE_MIN_INTERVAL_MS' => (int)($systemConfig['SEMAPHORE_MIN_INTERVAL_MS'] ?? (getenv('SEMAPHORE_MIN_INTERVAL_MS') ?: 400)),
+            'SEMAPHORE_GLOBAL_MIN_INTERVAL_MS' => (int)($systemConfig['SEMAPHORE_GLOBAL_MIN_INTERVAL_MS'] ?? (getenv('SEMAPHORE_GLOBAL_MIN_INTERVAL_MS') ?: 1200)),
+            'SEMAPHORE_MAX_PACING_WAIT_MS' => (int)($systemConfig['SEMAPHORE_MAX_PACING_WAIT_MS'] ?? (getenv('SEMAPHORE_MAX_PACING_WAIT_MS') ?: 10000)),
             'UNISMS_API_KEY' => $systemConfig['UNISMS_API_KEY'] ?? '',
             'UNISMS_SENDER_ID' => $systemConfig['UNISMS_SENDER_ID'] ?? '',
             'UNISMS_ENDPOINT' => $systemConfig['UNISMS_ENDPOINT'] ?? 'https://unismsapi.com/api',
@@ -212,7 +216,7 @@ class SmsGatewayService
                     'circuit_status'  => 'OPEN',
                     'action'          => 'queued_for_retry_without_provider_call',
                 ]));
-                throw new SmsProviderTimeoutException(
+                throw new SemaphoreTimeoutException(
                     'Semaphore circuit breaker OPEN — message queued for retry without hitting provider.',
                     'circuit_breaker_open',
                     $senderId,

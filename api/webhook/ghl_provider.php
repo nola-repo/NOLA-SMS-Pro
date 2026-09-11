@@ -1084,11 +1084,27 @@ try {
         $contentDedupSnap = $contentDedupRef->snapshot();
         $activeContentDedup = false;
         if ($contentDedupSnap->exists()) {
-            $cdStatus = strtolower(trim((string)($contentDedupSnap->data()['status'] ?? '')));
-            $cdCreated = $contentDedupSnap->data()['created_at'] ?? null;
+            $contentDedupData = $contentDedupSnap->data();
+            $cdStatus = strtolower(trim((string)($contentDedupData['status'] ?? '')));
+            $cdCreated = $contentDedupData['created_at'] ?? null;
             $cdCreatedTs = is_object($cdCreated) && method_exists($cdCreated, 'get') ? $cdCreated->get()->getTimestamp() : 0;
-            // Only treat as active if the content-dedup doc is < 30 minutes old AND still pending/processing
-            if (in_array($cdStatus, ['pending_retry', 'processing'], true) && (time() - $cdCreatedTs) < 1800) {
+            $primaryRetryDocId = trim((string)($contentDedupData['primary_retry_doc_id'] ?? ''));
+            $primaryStatus = null;
+            if ($primaryRetryDocId !== '') {
+                try {
+                    $primaryRetrySnap = $db->collection('sms_retry_queue')->document($primaryRetryDocId)->snapshot();
+                    if ($primaryRetrySnap->exists()) {
+                        $primaryStatus = strtolower(trim((string)($primaryRetrySnap->data()['status'] ?? '')));
+                    }
+                } catch (\Throwable $primaryRetryEx) {
+                    error_log('[ghl_provider][RETRY_CONTENT_DEDUP_PRIMARY_LOOKUP_FAIL] ' . $primaryRetryEx->getMessage());
+                }
+            }
+
+            // Only treat as active if the marker is fresh and the real retry job is not terminal.
+            $markerActive = in_array($cdStatus, ['pending_retry', 'processing', 'dedup_marker'], true);
+            $primaryActive = $primaryStatus === null || in_array($primaryStatus, ['pending_retry', 'processing'], true);
+            if ($markerActive && $primaryActive && (time() - $cdCreatedTs) < 1800) {
                 $activeContentDedup = true;
                 error_log('[ghl_provider][RETRY_CONTENT_DEDUP_SKIP] ' . json_encode([
                     'req_id'           => $providerReqId,
@@ -1097,6 +1113,7 @@ try {
                     'messageId'        => $messageId,
                     'content_dedup_id' => $contentDedupId,
                     'existing_status'  => $cdStatus,
+                    'primary_status'   => $primaryStatus,
                     'age_seconds'      => time() - $cdCreatedTs,
                     'reason'           => 'Same phone+message already pending retry — skipping duplicate record',
                 ]));
@@ -1108,6 +1125,7 @@ try {
             // Refresh next_retry_at so it gets picked up again soon.
             $contentDedupRef->set([
                 'last_error'    => $e->curlError ?: $e->getMessage(),
+                'marker_status' => 'active',
                 'updated_at'    => $retryTs,
                 'next_retry_at' => $nextRetryTs,
             ], ['merge' => true]);
@@ -1116,6 +1134,19 @@ try {
             $retryRef->set([
                 'last_error'    => $e->curlError ?: $e->getMessage(),
                 'updated_at'    => $retryTs,
+                'next_retry_at' => $nextRetryTs,
+            ], ['merge' => true]);
+            $contentDedupRef->set([
+                'retry_doc_id' => $contentDedupId,
+                'primary_retry_doc_id' => $retryDocId,
+                'location_id' => $locationId,
+                'phone' => $normalizedPhone,
+                'message_hash' => md5($message),
+                'status' => 'dedup_marker',
+                'marker_status' => 'active',
+                'last_error' => $e->curlError ?: $e->getMessage(),
+                'created_at' => $retryTs,
+                'updated_at' => $retryTs,
                 'next_retry_at' => $nextRetryTs,
             ], ['merge' => true]);
             $retryQueued = true;
@@ -1133,6 +1164,7 @@ try {
                 'api_key'            => $activeApiKey ?? null,
                 'provider_pref'      => $providerPreference,
                 'provider'           => $chosenProvider,
+                'content_dedup_id'   => $contentDedupId,
                 'account_id'         => $account_id,
                 'billing_reference_id' => $billingReferenceId,
                 'billing_charged'    => $billingCharged,
@@ -1149,11 +1181,20 @@ try {
                 'next_retry_at'      => $nextRetryTs,
             ];
             $retryRef->set($retryPayload);
-            // Mirror under content-hash key for cross-messageId dedup on manual user retries
-            $contentDedupRef->set(array_merge($retryPayload, [
+            // Marker for cross-messageId dedup on manual user retries. It is not a send job.
+            $contentDedupRef->set([
                 'retry_doc_id' => $contentDedupId,
                 'primary_retry_doc_id' => $retryDocId,
-            ]));
+                'location_id' => $locationId,
+                'phone' => $normalizedPhone,
+                'message_hash' => md5($message),
+                'status' => 'dedup_marker',
+                'marker_status' => 'active',
+                'last_error' => $e->curlError ?: $e->getMessage(),
+                'created_at' => $retryTs,
+                'updated_at' => $retryTs,
+                'next_retry_at' => $nextRetryTs,
+            ]);
             $retryQueued = true;
         }
     } catch (\Throwable $retryWriteEx) {

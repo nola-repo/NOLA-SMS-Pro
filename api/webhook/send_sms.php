@@ -1230,7 +1230,7 @@ try {
         $validNumbers,
         $message,
         $sender,
-        $usingCustomSender ? $activeApiKey : null,
+        $activeApiKey ?: null,
         $providerPreference
     );
     $chosenProvider = $gatewayResults['provider'];

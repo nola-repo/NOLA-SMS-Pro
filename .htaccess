@@ -49,6 +49,7 @@
     RewriteRule ^api/v2/ghl-conversations/?$ /api/ghl/ghl-conversations.php [NC,L,QSA]
     RewriteRule ^api/v2/admin_health/?$ /api/admin/admin_health.php [NC,L,QSA]
     RewriteRule ^api/admin/provider-balances/?$ /api/admin/admin_provider_balances.php [NC,L,QSA]
+    RewriteRule ^api/admin/provider-balance-refresh-cron/?$ /api/admin/provider_balance_refresh_cron.php [NC,L,QSA]
     RewriteRule ^api/v2/auth/ghl_autologin/?$ /api/auth/ghl_autologin.php [NC,L,QSA]
     RewriteRule ^api/v2/location/bootstrap/?$ /api/location/bootstrap.php [NC,L,QSA]
 
@@ -174,6 +175,7 @@
     RewriteRule ^api/admin_sender_requests(\.php)?/?$   /api/admin/admin_sender_requests.php   [NC,L,QSA]
     RewriteRule ^api/admin_settings(\.php)?/?$          /api/admin/admin_settings.php          [NC,L,QSA]
     RewriteRule ^api/admin_users(\.php)?/?$             /api/admin/admin_users.php             [NC,L,QSA]
+    RewriteRule ^api/admin/provider_balance_refresh_cron(\.php)?/?$ /api/admin/provider_balance_refresh_cron.php [NC,L,QSA]
 
     RewriteRule ^api/agency/ghl_autologin/?$ /api/agency/ghl_autologin.php [NC,L,QSA]
     # Legacy user-app path: location-level autologin.

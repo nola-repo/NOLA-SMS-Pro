@@ -8,6 +8,7 @@ class SemaphoreProvider implements SmsProviderInterface
 {
     private $defaultApiKey;
     private $apiUrl;
+    private array $config = [];
 
     // Retry configuration (shared by all methods)
     private const MAX_ATTEMPTS  = 4;    // Semaphore HTTP 500s are transient server overloads — 4 attempts gives more recovery chance
@@ -30,6 +31,7 @@ class SemaphoreProvider implements SmsProviderInterface
 
     public function __construct(array $config = [])
     {
+        $this->config = $config;
         $this->defaultApiKey = $config['SEMAPHORE_API_KEY'] ?? '';
         $this->apiUrl        = $config['SEMAPHORE_URL'] ?? 'https://api.semaphore.co/api/v4/messages';
     }
@@ -39,15 +41,41 @@ class SemaphoreProvider implements SmsProviderInterface
         return !empty($apiKey) ? $apiKey : $this->defaultApiKey;
     }
 
+    private function configuredInt(string $name, int $default, int $min, int $max): int
+    {
+        $raw = $this->config[$name] ?? getenv($name);
+        $value = is_numeric($raw) ? (int)$raw : $default;
+        return max($min, min($max, $value));
+    }
+
+    private function pacingIntervalMs(string $apiKey): int
+    {
+        $globalKey = trim((string)($this->config['SEMAPHORE_GLOBAL_API_KEY'] ?? getenv('SEMAPHORE_GLOBAL_API_KEY') ?: ''));
+        $isSharedGlobalKey = $globalKey !== '' && hash_equals($globalKey, $apiKey);
+
+        return $isSharedGlobalKey
+            ? $this->configuredInt('SEMAPHORE_GLOBAL_MIN_INTERVAL_MS', 1200, 0, 10000)
+            : $this->configuredInt('SEMAPHORE_MIN_INTERVAL_MS', 400, 0, 10000);
+    }
+
+    private function maxPacingWaitMs(): int
+    {
+        return $this->configuredInt('SEMAPHORE_MAX_PACING_WAIT_MS', 10000, 0, 30000);
+    }
+
     /**
-     * Acquire a lightweight atomic file lock per API key to space out
-     * outbound Semaphore API requests by ~150ms during rapid concurrent bursts.
-     * Uses Firestore as a distributed lock across Cloud Run instances, falling back to local file lock.
+     * Reserve a per-API-key send slot. Firestore serializes Cloud Run instances;
+     * local file locking is only a development/fallback path.
      *
      * @return mixed File pointer handle, string 'firestore_locked', or null
      */
     private function acquirePacingLock(string $apiKey)
     {
+        $minIntervalMs = $this->pacingIntervalMs($apiKey);
+        if ($minIntervalMs <= 0) {
+            return null;
+        }
+
         // 1. Try Firestore distributed lock first
         try {
             require_once __DIR__ . '/../../webhook/firestore_client.php';
@@ -55,31 +83,41 @@ class SemaphoreProvider implements SmsProviderInterface
             if ($db) {
                 $hash = md5($apiKey);
                 $docRef = $db->collection('system_locks')->document('semaphore_pacing_' . $hash);
-                
-                $db->runTransaction(function ($transaction) use ($docRef) {
+
+                $waitMs = 0;
+                $reservedAtMs = 0.0;
+                $db->runTransaction(function ($transaction) use ($docRef, $minIntervalMs, &$waitMs, &$reservedAtMs) {
                     $snapshot = $transaction->snapshot($docRef);
                     $nowMs = microtime(true) * 1000;
                     $lastTimeMs = 0;
-                    
+
                     if ($snapshot->exists()) {
                         $lastTimeMs = (float)($snapshot->data()['last_microtime'] ?? 0);
                     }
-                    
-                    $elapsedMs = $nowMs - $lastTimeMs;
-                    $minIntervalMs = 400; // Increased from 150ms: prevents 429s under concurrent multi-account sends
-                    
-                    if ($elapsedMs < $minIntervalMs && $lastTimeMs > 0) {
-                        $sleepUs = (int)(($minIntervalMs - $elapsedMs) * 1000);
-                        // Cap sleep to 1 second to avoid stalling Cloud Run instances indefinitely
-                        if ($sleepUs > 0 && $sleepUs < 1000000) {
-                            usleep($sleepUs);
-                            $nowMs = microtime(true) * 1000; // Update time after sleeping
-                        }
-                    }
-                    
-                    $transaction->set($docRef, ['last_microtime' => $nowMs]);
+
+                    $reservedAtMs = max($nowMs, $lastTimeMs + $minIntervalMs);
+                    $waitMs = max(0, (int)ceil($reservedAtMs - $nowMs));
+
+                    $transaction->set($docRef, [
+                        'last_microtime' => $reservedAtMs,
+                        'min_interval_ms' => $minIntervalMs,
+                        'updated_at' => (new \DateTimeImmutable())->format(\DateTimeInterface::ATOM),
+                    ]);
                 });
-                
+
+                $maxWaitMs = $this->maxPacingWaitMs();
+                if ($waitMs > $maxWaitMs) {
+                    error_log('[SemaphoreProvider] Pacing wait capped ' . json_encode([
+                        'key_hash' => $hash,
+                        'requested_wait_ms' => $waitMs,
+                        'max_wait_ms' => $maxWaitMs,
+                    ]));
+                    $waitMs = $maxWaitMs;
+                }
+                if ($waitMs > 0) {
+                    usleep($waitMs * 1000);
+                }
+
                 return 'firestore_locked';
             }
         } catch (\Throwable $e) {
@@ -95,11 +133,12 @@ class SemaphoreProvider implements SmsProviderInterface
                 $lastMicroTime = (float)@stream_get_contents($fp);
                 $now = microtime(true);
                 $elapsedMs = ($now - $lastMicroTime) * 1000;
-                
-                $minIntervalMs = 400; // Match Firestore distributed lock interval (prevents 429s)
+
                 if ($elapsedMs < $minIntervalMs && $lastMicroTime > 0) {
                     $sleepUs = (int)(($minIntervalMs - $elapsedMs) * 1000);
-                    if ($sleepUs > 0 && $sleepUs < 500000) {
+                    $maxSleepUs = $this->maxPacingWaitMs() * 1000;
+                    if ($sleepUs > 0) {
+                        $sleepUs = min($sleepUs, $maxSleepUs);
                         usleep($sleepUs);
                     }
                 }
@@ -366,7 +405,7 @@ class SemaphoreProvider implements SmsProviderInterface
         $httpCode = $result['httpCode'];
         $decoded  = json_decode($result['response'], true);
 
-        if ($httpCode === 408 || ($httpCode >= 500 && $httpCode < 600)) {
+        if ($httpCode === 408 || $httpCode === 429 || ($httpCode >= 500 && $httpCode < 600)) {
             $msg = $decoded['message'] ?? $decoded['error'] ?? 'Semaphore HTTP ' . $httpCode;
             throw new SemaphoreTimeoutException(
                 'Semaphore server error/timeout (' . $msg . ')',

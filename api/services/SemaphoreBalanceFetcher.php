@@ -27,6 +27,7 @@ class SemaphoreBalanceFetcher
         $systemConfig = require __DIR__ . '/../webhook/config.php';
         $resolved = [
             'SEMAPHORE_API_KEY' => $systemConfig['SEMAPHORE_API_KEY'] ?? '',
+            'SEMAPHORE_GLOBAL_API_KEY' => $systemConfig['SEMAPHORE_GLOBAL_API_KEY'] ?? '',
             'SEMAPHORE_URL'     => $systemConfig['SEMAPHORE_URL'] ?? 'https://api.semaphore.co/api/v4/messages',
             'UNISMS_API_KEY'    => $systemConfig['UNISMS_API_KEY'] ?? '',
             'UNISMS_SENDER_ID'  => $systemConfig['UNISMS_SENDER_ID'] ?? '',
@@ -61,6 +62,32 @@ class SemaphoreBalanceFetcher
         }
 
         return $resolved;
+    }
+
+    private function defaultSemaphoreKey(): string
+    {
+        $globalKey = trim((string)($this->config['SEMAPHORE_GLOBAL_API_KEY'] ?? ''));
+        if ($globalKey !== '') {
+            return $globalKey;
+        }
+
+        return trim((string)($this->config['SEMAPHORE_API_KEY'] ?? ''));
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function platformSemaphoreKeys(): array
+    {
+        $keys = [];
+        foreach (['SEMAPHORE_GLOBAL_API_KEY', 'SEMAPHORE_API_KEY'] as $name) {
+            $key = trim((string)($this->config[$name] ?? ''));
+            if ($key !== '') {
+                $keys[] = $key;
+            }
+        }
+
+        return array_values(array_unique($keys));
     }
 
     /**
@@ -106,12 +133,22 @@ class SemaphoreBalanceFetcher
 
         // Default to Semaphore
         $customKey = trim((string)($intData['nola_pro_api_key'] ?? ($intData['semaphore_api_key'] ?? '')));
-        $apiKey = $customKey !== '' ? $customKey : trim((string)($this->config['SEMAPHORE_API_KEY'] ?? ''));
+        $systemKey = trim((string)($this->config['SEMAPHORE_API_KEY'] ?? ''));
+        $globalKey = trim((string)($this->config['SEMAPHORE_GLOBAL_API_KEY'] ?? ''));
+        $isSharedKey = $customKey !== '' && (
+            ($globalKey !== '' && hash_equals($globalKey, $customKey)) ||
+            ($systemKey !== '' && hash_equals($systemKey, $customKey))
+        );
+        $apiKey = ($customKey !== '' && !$isSharedKey) ? $customKey : $this->defaultSemaphoreKey();
+        if ($isSharedKey) {
+            $apiKey = $customKey;
+        }
+
         return [
             'provider'       => 'semaphore',
             'provider_label' => 'Semaphore',
             'api_key'        => $apiKey,
-            'is_custom_key'  => $customKey !== '',
+            'is_custom_key'  => $customKey !== '' && !$isSharedKey,
         ];
     }
 
@@ -279,6 +316,74 @@ class SemaphoreBalanceFetcher
     }
 
     /**
+     * Return balance data without touching the provider API. This is used by
+     * request-time admin lists so a page load cannot consume Semaphore rate
+     * capacity needed for message sends.
+     *
+     * @return array{status:string, credits:int, error:?string, fetched_via:string}
+     */
+    public function fetchCachedBalance(string $provider, ?string $apiKey, ?array $fallbackData = null): array
+    {
+        $providerKey = self::normalizeProvider($provider);
+        $cleanApiKey = trim((string)($apiKey ?? ''));
+
+        if ($cleanApiKey === '') {
+            return [
+                'status'      => 'inactive',
+                'credits'     => 0,
+                'error'       => 'Missing API key',
+                'fetched_via' => 'none',
+            ];
+        }
+
+        $cacheId = 'cached:' . $providerKey . ':' . md5($cleanApiKey);
+        if (isset($this->balanceCache[$cacheId])) {
+            return $this->balanceCache[$cacheId];
+        }
+
+        $redisCacheKey = "prov_bal_{$providerKey}_" . md5($cleanApiKey);
+        $redisResult = NolaCache::get($redisCacheKey);
+        if ($redisResult !== null) {
+            $result = array_merge($redisResult, ['fetched_via' => $redisResult['fetched_via'] ?? 'redis_cache']);
+            $this->balanceCache[$cacheId] = $result;
+            return $result;
+        }
+
+        $lkg = $this->readLastKnownGood($providerKey, $cleanApiKey);
+        if ($lkg !== null) {
+            $result = [
+                'status'      => 'active',
+                'credits'     => $lkg['credits'],
+                'error'       => null,
+                'fetched_via' => 'firestore_lkg',
+            ];
+            NolaCache::set($redisCacheKey, $result, 300);
+            $this->balanceCache[$cacheId] = $result;
+            return $result;
+        }
+
+        if (!empty($fallbackData['provider_credit_balance'])) {
+            $result = [
+                'status'      => 'active',
+                'credits'     => (int)$fallbackData['provider_credit_balance'],
+                'error'       => null,
+                'fetched_via' => 'subaccount_firestore_field',
+            ];
+            $this->balanceCache[$cacheId] = $result;
+            return $result;
+        }
+
+        $result = [
+            'status'      => 'unknown',
+            'credits'     => 0,
+            'error'       => null,
+            'fetched_via' => 'not_refreshed',
+        ];
+        $this->balanceCache[$cacheId] = $result;
+        return $result;
+    }
+
+    /**
      * Persist a confirmed live balance as the last-known-good value in Firestore.
      * Stored under admin_config/provider_balance_lkg as a map keyed by
      * "{provider}_{keyHash}" so multiple API keys can coexist.
@@ -399,7 +504,7 @@ class SemaphoreBalanceFetcher
             'unisms'    => $this->defaultProviderSummary('unisms', 'UniSMS'),
         ];
 
-        $semConfigured = trim((string)($this->config['SEMAPHORE_API_KEY'] ?? '')) !== '';
+        $semConfigured = $this->platformSemaphoreKeys() !== [];
         $uniConfigured = trim((string)($this->config['UNISMS_API_KEY'] ?? '')) !== '';
 
         if ($semConfigured) {
@@ -429,17 +534,34 @@ class SemaphoreBalanceFetcher
             'unisms'    => $this->defaultProviderSummary('unisms', 'UniSMS'),
         ];
 
-        $sysSemKey = trim((string)($this->config['SEMAPHORE_API_KEY'] ?? ''));
-        if ($sysSemKey !== '') {
-            $bal = $this->fetchBalance('semaphore', $sysSemKey);
+        $semKeys = $this->platformSemaphoreKeys();
+        if ($semKeys !== []) {
+            $credits = 0;
+            $connected = 0;
+            $fetchSources = [];
+            foreach ($semKeys as $index => $semKey) {
+                if ($index > 0) {
+                    usleep(300000);
+                }
+                $bal = $this->fetchBalance('semaphore', $semKey);
+                if (($bal['status'] ?? '') === 'active') {
+                    $credits += max(0, (int)($bal['credits'] ?? 0));
+                    $connected++;
+                    $fetchSources[] = $bal['fetched_via'] ?? 'none';
+                }
+            }
+            $fetchedVia = in_array('live_api', $fetchSources, true)
+                ? 'live_api'
+                : ($fetchSources[0] ?? 'none');
+
             $summary['semaphore'] = [
                 'name'               => 'Semaphore',
-                'status'             => $bal['status'] === 'active' ? 'active' : 'inactive',
-                'credits'            => max(0, (int)($bal['credits'] ?? 0)),
-                'total_credits'      => max(0, (int)($bal['credits'] ?? 0)),
-                'total_accounts'     => 1,
-                'connected_accounts' => $bal['status'] === 'active' ? 1 : 0,
-                'fetched_via'        => $bal['fetched_via'] ?? 'none',
+                'status'             => $connected > 0 ? 'active' : 'inactive',
+                'credits'            => $credits,
+                'total_credits'      => $credits,
+                'total_accounts'     => count($semKeys),
+                'connected_accounts' => $connected,
+                'fetched_via'        => $fetchedVia,
             ];
         }
 
@@ -495,10 +617,7 @@ class SemaphoreBalanceFetcher
         $uniKeys = [];
 
         // 1. Add system default keys
-        $sysSemKey = trim((string)($this->config['SEMAPHORE_API_KEY'] ?? ''));
-        if ($sysSemKey !== '') {
-            $semKeys[] = $sysSemKey;
-        }
+        $semKeys = array_merge($semKeys, $this->platformSemaphoreKeys());
 
         $sysUniKey = trim((string)($this->config['UNISMS_API_KEY'] ?? ''));
         if ($sysUniKey !== '') {
@@ -597,16 +716,19 @@ class SemaphoreBalanceFetcher
     /**
      * Enrich user subaccount record with live provider balance and display fields.
      */
-    public function enrichSubaccount(array $userRecord, ?array $intData): array
+    public function enrichSubaccount(array $userRecord, ?array $intData, bool $allowLiveFetch = false): array
     {
         $resolved = $this->resolveProviderAndKey($intData);
-        $balanceInfo = $this->fetchBalance($resolved['provider'], $resolved['api_key'], $intData);
+        $balanceInfo = $allowLiveFetch
+            ? $this->fetchBalance($resolved['provider'], $resolved['api_key'], $intData)
+            : $this->fetchCachedBalance($resolved['provider'], $resolved['api_key'], $intData);
 
         $userRecord['sms_provider']            = $resolved['provider_label'];
         $userRecord['provider']                = $resolved['provider'];
         $userRecord['provider_credit_balance'] = (int)($balanceInfo['credits'] ?? 0);
         $userRecord['provider_balance']        = (int)($balanceInfo['credits'] ?? 0);
         $userRecord['provider_status']         = $balanceInfo['status'] ?? 'inactive';
+        $userRecord['provider_balance_fetched_via'] = $balanceInfo['fetched_via'] ?? 'none';
         // Indicates whether the balance was fetched from the account's own custom API key
         // or the platform-wide system default key. Used by the frontend to label
         // "Custom Key" vs "System Key" in the All Subaccounts table.

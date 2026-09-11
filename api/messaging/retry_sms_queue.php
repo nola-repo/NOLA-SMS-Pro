@@ -48,6 +48,7 @@ define('RETRY_BATCH_LIMIT', 20);
 define('RETRY_INTERVAL_MIN', 5);
 define('RETRY_MAX_ATTEMPTS', 3);
 define('RETRY_LEASE_SECONDS', 240);
+define('RETRY_MAX_BACKOFF_MIN', 45);
 
 function retry_ts($value): ?int
 {
@@ -84,6 +85,136 @@ function retry_message_event($db, array $data, array $overrides): void
     ], $overrides));
 }
 
+function retry_is_content_marker($docRef, array $data): bool
+{
+    $id = method_exists($docRef, 'id') ? (string)$docRef->id() : '';
+    return str_starts_with($id, 'retry_content_') || !empty($data['primary_retry_doc_id']);
+}
+
+function retry_backoff_minutes(int $nextAttempt): int
+{
+    $schedule = [1 => 5, 2 => 15, 3 => 45];
+    return min(RETRY_MAX_BACKOFF_MIN, $schedule[$nextAttempt] ?? RETRY_MAX_BACKOFF_MIN);
+}
+
+function retry_next_retry_timestamp(int $nextAttempt): \Google\Cloud\Core\Timestamp
+{
+    $minutes = retry_backoff_minutes($nextAttempt);
+    $jitterSeconds = $nextAttempt > 1 ? random_int(0, 180) : random_int(0, 60);
+    $nextRetry = (new \DateTimeImmutable())
+        ->modify('+' . $minutes . ' minutes')
+        ->modify('+' . $jitterSeconds . ' seconds');
+
+    return new \Google\Cloud\Core\Timestamp($nextRetry);
+}
+
+function retry_extract_http_code(array $row, ?string $error = null): ?int
+{
+    foreach (['provider_http_status', 'http_status', 'httpCode', 'code'] as $field) {
+        if (isset($row[$field]) && is_numeric($row[$field])) {
+            return (int)$row[$field];
+        }
+    }
+
+    $text = (string)($error ?? ($row['error'] ?? ''));
+    if (preg_match('/HTTP\s+(\d{3})/i', $text, $m)) {
+        return (int)$m[1];
+    }
+
+    return null;
+}
+
+function retry_is_transient_provider_failure(?string $provider, ?string $error, array $row = []): bool
+{
+    $provider = strtolower(trim((string)($provider ?? '')));
+    $errorText = strtolower(trim((string)($error ?? ($row['error'] ?? ''))));
+    $httpCode = retry_extract_http_code($row, $error);
+
+    if (in_array($httpCode, [408, 429, 500, 502, 503, 504], true)) {
+        return true;
+    }
+    if ($httpCode !== null && $httpCode >= 500 && $httpCode < 600) {
+        return true;
+    }
+
+    foreach ([
+        'timed out',
+        'timeout',
+        'rate limited',
+        'too many requests',
+        'temporarily unavailable',
+        'server error',
+        'circuit breaker',
+        'connection reset',
+        'connection aborted',
+    ] as $needle) {
+        if ($errorText !== '' && str_contains($errorText, $needle)) {
+            return true;
+        }
+    }
+
+    return $provider === 'semaphore' && str_contains($errorText, 'http 5');
+}
+
+function reschedule_retry_doc($db, $docRef, array $data, int $newAttempts, int $maxAttempts, string $reason, ?string $provider = null): string
+{
+    if ($newAttempts >= $maxAttempts) {
+        finalize_retry_exhausted($db, $docRef, $data, $newAttempts, $reason);
+        return 'exhausted';
+    }
+
+    $nowTs = new \Google\Cloud\Core\Timestamp(new \DateTime());
+    $nextRetryTs = retry_next_retry_timestamp($newAttempts);
+    update_queue_doc($docRef, [
+        'status' => 'pending_retry',
+        'attempts' => $newAttempts,
+        'next_retry_at' => $nextRetryTs,
+        'last_error' => $reason,
+        'worker_id' => null,
+        'lease_expires_at' => null,
+        'updated_at' => $nowTs,
+    ]);
+
+    try {
+        retry_message_event($db, $data, [
+            'origin' => 'ghl_provider_retry_queued',
+            'status' => 'Pending',
+            'provider' => $provider ?: ($data['provider'] ?? null),
+            'provider_error' => $reason,
+            'retry_doc_id' => $docRef->id(),
+            'retry_status' => 'pending_retry',
+            'retry_count' => $newAttempts,
+            'retry_max_attempts' => $maxAttempts,
+            'next_retry_at' => $nextRetryTs,
+            'last_retry_at' => $nowTs,
+            'suppress_provider_reference' => true,
+        ]);
+    } catch (\Throwable $updateEx) {
+        error_log('[retry_sms_queue][RETRY_MSG_UPDATE_FAIL] ' . $updateEx->getMessage());
+    }
+
+    return 'retried';
+}
+
+function update_retry_content_marker($db, array $data, string $status): void
+{
+    $markerId = trim((string)($data['content_dedup_id'] ?? ''));
+    if ($markerId === '') {
+        return;
+    }
+
+    try {
+        $db->collection('sms_retry_queue')->document($markerId)->set([
+            'status' => $status,
+            'marker_status' => $status,
+            'primary_retry_doc_id' => $data['retry_doc_id'] ?? null,
+            'updated_at' => new \Google\Cloud\Core\Timestamp(new \DateTime()),
+        ], ['merge' => true]);
+    } catch (\Throwable $e) {
+        error_log('[retry_sms_queue][CONTENT_MARKER_UPDATE_FAIL] ' . $e->getMessage());
+    }
+}
+
 function claim_retry_doc($db, $docRef, string $workerId): ?array
 {
     $now = time();
@@ -97,6 +228,15 @@ function claim_retry_doc($db, $docRef, string $workerId): ?array
         }
 
         $data = $snap->data();
+        if (retry_is_content_marker($docRef, $data)) {
+            $transaction->update($docRef, [
+                ['path' => 'status', 'value' => 'dedup_marker'],
+                ['path' => 'marker_status', 'value' => 'active'],
+                ['path' => 'updated_at', 'value' => $nowTs],
+            ]);
+            return null;
+        }
+
         $status = strtolower(trim((string)($data['status'] ?? '')));
         $nextRetryAt = retry_ts($data['next_retry_at'] ?? null) ?? 0;
         $leaseExpiresAt = retry_ts($data['lease_expires_at'] ?? null) ?? 0;
@@ -182,6 +322,9 @@ function process_retry_doc($db, $docRef, array $data, string $workerId): string
 
         if (empty($firstRes['message_id']) || $isHardFail) {
             $reason = $firstRes['error'] ?? ('Provider returned failure status: ' . ($firstRes['status'] ?? 'unknown'));
+            if (retry_is_transient_provider_failure($res['provider'] ?? $providerPref, $reason, $firstRes)) {
+                return reschedule_retry_doc($db, $docRef, $data, $newAttempts, $maxAttempts, $reason, $res['provider'] ?? $providerPref);
+            }
             finalize_retry_exhausted($db, $docRef, $data, $newAttempts, $reason);
             return 'exhausted';
         }
@@ -213,6 +356,8 @@ function process_retry_doc($db, $docRef, array $data, string $workerId): string
             'retry_max_attempts' => $maxAttempts,
         ]);
 
+        update_retry_content_marker($db, $data, 'completed');
+
         if ($ghlMessageId && $locationId) {
             try {
                 $ghlSync = new \Nola\Services\GhlSyncService($db, $locationId);
@@ -224,44 +369,11 @@ function process_retry_doc($db, $docRef, array $data, string $workerId): string
 
         return 'succeeded';
     } catch (SmsProviderTimeoutException $e) {
-        if ($newAttempts >= $maxAttempts) {
-            finalize_retry_exhausted($db, $docRef, $data, $newAttempts, $e->getMessage());
-            return 'exhausted';
-        }
-
-        $nowTs = new \Google\Cloud\Core\Timestamp(new \DateTime());
-        $nextRetry = (new \DateTime())->modify('+' . RETRY_INTERVAL_MIN . ' minutes');
-        $nextRetryTs = new \Google\Cloud\Core\Timestamp($nextRetry);
-        update_queue_doc($docRef, [
-            'status' => 'pending_retry',
-            'attempts' => $newAttempts,
-            'next_retry_at' => $nextRetryTs,
-            'last_error' => $e->getMessage(),
-            'worker_id' => null,
-            'lease_expires_at' => null,
-            'updated_at' => $nowTs,
-        ]);
-
-        try {
-            retry_message_event($db, $data, [
-                'origin' => 'ghl_provider_retry_queued',
-                'status' => 'Pending',
-                'provider' => $e->provider ?: ($data['provider'] ?? null),
-                'provider_error' => $e->getMessage(),
-                'retry_doc_id' => $docRef->id(),
-                'retry_status' => 'pending_retry',
-                'retry_count' => $newAttempts,
-                'retry_max_attempts' => $maxAttempts,
-                'next_retry_at' => $nextRetryTs,
-                'last_retry_at' => $nowTs,
-                'suppress_provider_reference' => true,
-            ]);
-        } catch (\Throwable $updateEx) {
-            error_log('[retry_sms_queue][RETRY_MSG_UPDATE_FAIL] ' . $updateEx->getMessage());
-        }
-
-        return 'retried';
+        return reschedule_retry_doc($db, $docRef, $data, $newAttempts, $maxAttempts, $e->getMessage(), $e->provider ?: ($data['provider'] ?? null));
     } catch (\Throwable $e) {
+        if (retry_is_transient_provider_failure($providerPref ?? ($data['provider'] ?? null), $e->getMessage())) {
+            return reschedule_retry_doc($db, $docRef, $data, $newAttempts, $maxAttempts, $e->getMessage(), $providerPref ?? ($data['provider'] ?? null));
+        }
         finalize_retry_exhausted($db, $docRef, $data, $newAttempts, $e->getMessage());
         return 'exhausted';
     }
@@ -279,6 +391,8 @@ function finalize_retry_exhausted($db, $docRef, array $data, int $finalAttempts,
         'lease_expires_at' => null,
         'updated_at' => $nowTs,
     ]);
+
+    update_retry_content_marker($db, $data, 'exhausted');
 
     try {
         retry_message_event($db, $data, [

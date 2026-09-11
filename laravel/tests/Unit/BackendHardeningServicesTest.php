@@ -11,6 +11,7 @@ require_once __DIR__ . '/../../../api/services/GhlTokenProvider.php';
 require_once __DIR__ . '/../../../api/services/ApiValueFormatter.php';
 require_once __DIR__ . '/../../../api/services/LocationUserResolver.php';
 require_once __DIR__ . '/../../../api/services/LocationBootstrapService.php';
+require_once __DIR__ . '/../../../api/services/SemaphoreBalanceFetcher.php';
 require_once __DIR__ . '/../../../api/logger.php';
 
 class BackendHardeningServicesTest extends TestCase
@@ -87,6 +88,45 @@ class BackendHardeningServicesTest extends TestCase
         );
 
         $this->assertTrue($accepted);
+    }
+
+    public function test_semaphore_balance_resolution_treats_shared_keys_as_system_pool(): void
+    {
+        $fetcher = new \SemaphoreBalanceFetcher([
+            'SEMAPHORE_API_KEY' => 'system-key',
+            'SEMAPHORE_GLOBAL_API_KEY' => 'global-key',
+            'SEMAPHORE_URL' => 'https://example.test/messages',
+            'UNISMS_API_KEY' => '',
+            'UNISMS_SENDER_ID' => '',
+            'UNISMS_ENDPOINT' => 'https://example.test/unisms',
+            'active_provider' => 'semaphore',
+        ]);
+
+        $migrated = $fetcher->resolveProviderAndKey([
+            'provider_preference' => 'semaphore_custom',
+            'nola_pro_api_key' => 'global-key',
+        ]);
+        $this->assertSame('semaphore', $migrated['provider']);
+        $this->assertSame('global-key', $migrated['api_key']);
+        $this->assertFalse($migrated['is_custom_key']);
+
+        $legacy = $fetcher->resolveProviderAndKey([
+            'provider_preference' => 'semaphore_custom',
+            'nola_pro_api_key' => 'system-key',
+        ]);
+        $this->assertSame('system-key', $legacy['api_key']);
+        $this->assertFalse($legacy['is_custom_key']);
+
+        $empty = $fetcher->resolveProviderAndKey(['provider_preference' => 'system']);
+        $this->assertSame('global-key', $empty['api_key']);
+        $this->assertFalse($empty['is_custom_key']);
+
+        $custom = $fetcher->resolveProviderAndKey([
+            'provider_preference' => 'semaphore_custom',
+            'nola_pro_api_key' => 'customer-key',
+        ]);
+        $this->assertSame('customer-key', $custom['api_key']);
+        $this->assertTrue($custom['is_custom_key']);
     }
 
     public function test_ghl_oauth_refresh_401_requires_reconnect(): void

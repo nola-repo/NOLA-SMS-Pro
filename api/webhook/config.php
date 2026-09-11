@@ -5,6 +5,9 @@ return [
     'SEMAPHORE_API_KEY' => getenv('SEMAPHORE_API_KEY') ?: '',
     'SEMAPHORE_GLOBAL_API_KEY' => getenv('SEMAPHORE_GLOBAL_API_KEY') ?: '',
     'SEMAPHORE_URL' => getenv('SEMAPHORE_URL') ?: 'https://api.semaphore.co/api/v4/messages',
+    'SEMAPHORE_MIN_INTERVAL_MS' => getenv('SEMAPHORE_MIN_INTERVAL_MS') ?: 400,
+    'SEMAPHORE_GLOBAL_MIN_INTERVAL_MS' => getenv('SEMAPHORE_GLOBAL_MIN_INTERVAL_MS') ?: 1200,
+    'SEMAPHORE_MAX_PACING_WAIT_MS' => getenv('SEMAPHORE_MAX_PACING_WAIT_MS') ?: 10000,
 
     'UNISMS_API_KEY' => getenv('UNISMS_API_KEY') ?: '',
     'UNISMS_SENDER_ID' => getenv('UNISMS_SENDER_ID') ?: '',

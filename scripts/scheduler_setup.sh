@@ -1,9 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-# Cloud Scheduler: SMS Retry Queue Worker
-# Creates or updates a Cloud Scheduler job that hits /api/retry_sms_queue.php
-# every 5 minutes.
+# Cloud Scheduler: backend maintenance workers.
+# Creates or updates:
+#   - SMS retry worker every 5 minutes
+#   - Provider balance refresh every 15 minutes
 #
 # Prerequisites:
 #   1. gcloud authenticated: gcloud auth login
@@ -19,7 +20,8 @@ set -euo pipefail
 PROJECT_ID=$(gcloud config get-value project)
 REGION="asia-southeast1"
 SERVICE_NAME="sms-api"
-JOB_NAME="sms-retry-queue-worker"
+RETRY_JOB_NAME="sms-retry-queue-worker"
+BALANCE_JOB_NAME="provider-balance-refresh"
 
 if [ -z "${PROJECT_ID}" ]; then
     echo "No active gcloud project. Run: gcloud config set project nola-sms-pro" >&2
@@ -36,25 +38,36 @@ SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
     --project="$PROJECT_ID" \
     --format="value(status.url)")
 
-TARGET_URL="${SERVICE_URL}/api/retry_sms_queue.php"
+RETRY_TARGET_URL="${SERVICE_URL}/api/retry_sms_queue.php"
+BALANCE_TARGET_URL="${SERVICE_URL}/api/admin/provider-balance-refresh-cron"
 
-if gcloud scheduler jobs describe "$JOB_NAME" --location="$REGION" --project="$PROJECT_ID" >/dev/null 2>&1; then
-    ACTION="update"
-else
-    ACTION="create"
-fi
+upsert_http_job() {
+    local job_name="$1"
+    local schedule="$2"
+    local target_url="$3"
+    local description="$4"
 
-gcloud scheduler jobs "$ACTION" http "$JOB_NAME" \
-    --location="$REGION" \
-    --project="$PROJECT_ID" \
-    --schedule="*/5 * * * *" \
-    --uri="$TARGET_URL" \
-    --http-method="POST" \
-    --headers="X-Cron-Secret=${CRON_SECRET},Content-Type=application/json" \
-    --message-body="{}" \
-    --time-zone="Asia/Manila" \
-    --attempt-deadline="60s" \
-    --description="SMS Retry Queue Worker - re-sends timed-out messages every 5 minutes"
+    if gcloud scheduler jobs describe "$job_name" --location="$REGION" --project="$PROJECT_ID" >/dev/null 2>&1; then
+        action="update"
+    else
+        action="create"
+    fi
 
-echo "Cloud Scheduler ${ACTION}d: ${JOB_NAME}"
-echo "Target: ${TARGET_URL}"
+    gcloud scheduler jobs "$action" http "$job_name" \
+        --location="$REGION" \
+        --project="$PROJECT_ID" \
+        --schedule="$schedule" \
+        --uri="$target_url" \
+        --http-method="POST" \
+        --headers="X-Cron-Secret=${CRON_SECRET},Content-Type=application/json" \
+        --message-body="{}" \
+        --time-zone="Asia/Manila" \
+        --attempt-deadline="60s" \
+        --description="$description"
+
+    echo "Cloud Scheduler ${action}d: ${job_name}"
+    echo "Target: ${target_url}"
+}
+
+upsert_http_job "$RETRY_JOB_NAME" "*/5 * * * *" "$RETRY_TARGET_URL" "SMS Retry Queue Worker - re-sends timed-out messages"
+upsert_http_job "$BALANCE_JOB_NAME" "*/15 * * * *" "$BALANCE_TARGET_URL" "Provider balance refresh - updates admin dashboard summary outside page loads"
