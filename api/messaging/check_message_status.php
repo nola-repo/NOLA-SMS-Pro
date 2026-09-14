@@ -41,6 +41,7 @@ $config = require __DIR__ . '/../webhook/config.php';
 $db = get_firestore();
 
 $systemApiKey = $config['SEMAPHORE_API_KEY'];
+$globalApiKey = $config['SEMAPHORE_GLOBAL_API_KEY'] ?? null;
 
 $mapStatus = function ($s) {
     if (!$s) return 'Sending';
@@ -90,7 +91,7 @@ foreach ($messageIds as $messageId) {
     // 2. Resolve provider and check status
     $providerInstance = $gateway->getProviderInstance($providerName);
     $resolvedKey = $locId
-        ? SenderResolver::resolveStatusApiKey($db, (string)$locId, (string)$providerName, $systemApiKey, $isSystem)
+        ? SenderResolver::resolveStatusApiKey($db, (string)$locId, (string)$providerName, $systemApiKey, $isSystem, $globalApiKey, $data)
         : ['api_key' => $providerName === 'semaphore' ? $systemApiKey : null, 'source' => $providerName === 'semaphore' ? 'config.SEMAPHORE_API_KEY' : 'admin_config.unisms_api_key'];
     $activeApiKey = $resolvedKey['api_key'];
     $apiKeySource = $resolvedKey['source'];

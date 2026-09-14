@@ -1,0 +1,90 @@
+# NOLA SMS Pro - Local Development Stack
+# Run all services locally with: docker compose --env-file .env.local up -d --build
+# Stop all services with:        docker compose down
+#
+# Service URLs:
+#   Backend API    → http://localhost:8080
+#   Admin Frontend → http://localhost:8081
+#   User Frontend  → http://localhost:8082
+#   Agency Frontend→ http://localhost:8083
+#
+# Safety: .env.local overrides all VITE_ vars so frontends point to localhost,
+#         not to the live production API (smspro-api.nolacrm.io).
+
+services:
+
+  # ─────────────────────────────────────────────
+  # Backend API  (PHP 8.2 + Apache)
+  # Uses .env (backend secrets only — never hits production externally)
+  # ─────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nola-api
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────
+  # Admin Frontend  (React + Nginx)
+  # Uses .env.local — points to local API, NOT production
+  # ─────────────────────────────────────────────
+  admin:
+    build:
+      context: ./admin
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE: ${VITE_API_BASE:-http://localhost:8080}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8080}
+        VITE_GHL_CLIENT_ID: ${VITE_GHL_CLIENT_ID:-LOCAL_DEV_ONLY}
+        VITE_ADMIN_USE_DIRECT_API: ${VITE_ADMIN_USE_DIRECT_API:-false}
+    container_name: nola-admin
+    ports:
+      - "8081:8080"
+    restart: unless-stopped
+    depends_on:
+      - api
+
+  # ─────────────────────────────────────────────
+  # User Frontend  (React + Nginx)
+  # Uses .env.local — points to local API, NOT production
+  # ─────────────────────────────────────────────
+  user:
+    build:
+      context: ./user
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE: ${VITE_API_BASE:-http://localhost:8080}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8080}
+        VITE_API_SEND_SMS: ${VITE_API_SEND_SMS:-http://localhost:8080/webhook/send_sms}
+        VITE_API_SMS_CONTAINER: ${VITE_API_SMS_CONTAINER:-http://localhost:8080}
+        VITE_GHL_CLIENT_ID: ${VITE_GHL_CLIENT_ID:-LOCAL_DEV_ONLY}
+    container_name: nola-user
+    ports:
+      - "8082:8080"
+    restart: unless-stopped
+    depends_on:
+      - api
+
+  # ─────────────────────────────────────────────
+  # Agency Frontend  (React + Nginx)
+  # Uses .env.local — points to local API, NOT production
+  # ─────────────────────────────────────────────
+  agency:
+    build:
+      context: ./agency
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE: ${VITE_API_BASE:-http://localhost:8080}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8080}
+        VITE_GHL_CLIENT_ID: ${VITE_GHL_CLIENT_ID:-LOCAL_DEV_ONLY}
+        VITE_AGENCY_ID: ${VITE_AGENCY_ID:-}
+    container_name: nola-agency
+    ports:
+      - "8083:8080"
+    restart: unless-stopped
+    depends_on:
+      - api

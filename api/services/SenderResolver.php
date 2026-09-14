@@ -207,11 +207,26 @@ class SenderResolver
         ];
     }
 
-    public static function resolveStatusApiKey($db, string $locationId, string $providerName, ?string $systemSemaphoreKey, bool $isSystem = false, ?string $globalSemaphoreKey = null): array
+    public static function resolveStatusApiKey($db, string $locationId, string $providerName, ?string $systemSemaphoreKey, bool $isSystem = false, ?string $globalSemaphoreKey = null, ?array $messageData = null): array
     {
         $providerName = self::normalizeProvider($providerName);
         // Fallback: if global key not provided, use system key as the reference
         $globalKey = ($globalSemaphoreKey && $globalSemaphoreKey !== '') ? $globalSemaphoreKey : $systemSemaphoreKey;
+
+        if ($providerName === 'semaphore' && is_array($messageData)) {
+            $apiKeySource = trim((string)($messageData['api_key_source'] ?? ''));
+            if ($apiKeySource === 'config.SEMAPHORE_API_KEY') {
+                return ['api_key' => $systemSemaphoreKey, 'source' => 'config.SEMAPHORE_API_KEY'];
+            }
+            if ($apiKeySource === 'config.SEMAPHORE_GLOBAL_API_KEY') {
+                return ['api_key' => $globalKey, 'source' => 'config.SEMAPHORE_GLOBAL_API_KEY'];
+            }
+
+            $senderSource = trim((string)($messageData['sender_source'] ?? ''));
+            if (in_array($senderSource, ['system_notification_override', 'explicit_system_sender'], true)) {
+                return ['api_key' => $systemSemaphoreKey, 'source' => 'config.SEMAPHORE_API_KEY'];
+            }
+        }
 
         if ($isSystem) {
             // System notifications are SENT via SEMAPHORE_API_KEY (the system/legacy key).
@@ -261,7 +276,9 @@ class SenderResolver
 
         return [
             'api_key' => $providerName === 'semaphore' ? $globalKey : null,
-            'source' => $providerName === 'semaphore' ? 'config.SEMAPHORE_API_KEY' : 'admin_config.unisms_api_key',
+            'source' => $providerName === 'semaphore'
+                ? (($globalKey && $globalKey !== $systemSemaphoreKey) ? 'config.SEMAPHORE_GLOBAL_API_KEY' : 'config.SEMAPHORE_API_KEY')
+                : 'admin_config.unisms_api_key',
         ];
     }
 

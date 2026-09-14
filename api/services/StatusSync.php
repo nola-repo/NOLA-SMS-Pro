@@ -93,15 +93,15 @@ class StatusSync
                 $activeApiKey = $systemApiKey;
                 $isSystem = !empty($data['is_system']);
                 if ($locId && !$isSystem) {
-                    $cacheKey = $locId . ':' . $providerName;
+                    $cacheKey = self::statusApiKeyCacheKey((string)$locId, (string)$providerName, $data, $isSystem);
                     if (!isset($apiKeyCache[$cacheKey])) {
-                        $resolved = \SenderResolver::resolveStatusApiKey($db, (string)$locId, (string)$providerName, $systemApiKey, $isSystem, $globalApiKey);
+                        $resolved = \SenderResolver::resolveStatusApiKey($db, (string)$locId, (string)$providerName, $systemApiKey, $isSystem, $globalApiKey, $data);
                         $apiKeyCache[$cacheKey] = $resolved;
                     }
                     $activeApiKey = $apiKeyCache[$cacheKey]['api_key'];
                     $apiKeySource = $apiKeyCache[$cacheKey]['source'];
                 } else {
-                    $resolved = \SenderResolver::resolveStatusApiKey($db, (string)$locId, (string)$providerName, $systemApiKey, $isSystem, $globalApiKey);
+                    $resolved = \SenderResolver::resolveStatusApiKey($db, (string)$locId, (string)$providerName, $systemApiKey, $isSystem, $globalApiKey, $data);
                     $activeApiKey = $resolved['api_key'];
                     $apiKeySource = $resolved['source'];
                 }
@@ -193,7 +193,7 @@ class StatusSync
     private static $inlineCheckCount = 0;
     private static $maxInlineChecks = 3;
 
-    public static function checkAndSyncSingleMessage($db, &$data, $messageId, $systemApiKey, &$apiKeyCache)
+    public static function checkAndSyncSingleMessage($db, &$data, $messageId, $systemApiKey, &$apiKeyCache, ?string $globalApiKey = null)
     {
         // 1. Only process outbound messages that are in a non-final state
         $status = $data['status'] ?? '';
@@ -249,9 +249,9 @@ class StatusSync
         $isSystem = !empty($data['is_system']);
         require_once __DIR__ . '/SenderResolver.php';
         if ($locId) {
-            $cacheKey = $locId . ':' . $providerName;
+            $cacheKey = self::statusApiKeyCacheKey((string)$locId, (string)$providerName, $data, $isSystem);
             if (!isset($apiKeyCache[$cacheKey])) {
-                $apiKeyCache[$cacheKey] = \SenderResolver::resolveStatusApiKey($db, (string)$locId, (string)$providerName, $systemApiKey, $isSystem, $globalApiKey ?? null);
+                $apiKeyCache[$cacheKey] = \SenderResolver::resolveStatusApiKey($db, (string)$locId, (string)$providerName, $systemApiKey, $isSystem, $globalApiKey, $data);
             }
             $activeApiKey = $apiKeyCache[$cacheKey]['api_key'];
             $apiKeySource = $apiKeyCache[$cacheKey]['source'];
@@ -322,6 +322,17 @@ class StatusSync
     private static function providerMessageId(array $data, string $messageId): string
     {
         return (string)($data['provider_message_id'] ?? ($data['provider_reference_id'] ?? $messageId));
+    }
+
+    private static function statusApiKeyCacheKey(string $locationId, string $providerName, array $data, bool $isSystem): string
+    {
+        return implode(':', [
+            $locationId,
+            $providerName,
+            $isSystem ? 'system' : 'user',
+            trim((string)($data['api_key_source'] ?? '')),
+            trim((string)($data['sender_source'] ?? '')),
+        ]);
     }
 
     private static function isRetryWorkerOwned(array $data): bool

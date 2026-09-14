@@ -21,8 +21,10 @@ header('Content-Type: application/json');
 
 $config = require __DIR__ . '/config.php';
 require __DIR__ . '/firestore_client.php';
+require_once __DIR__ . '/../services/SenderResolver.php';
 
 $systemApiKey = $config['SEMAPHORE_API_KEY'];
+$globalApiKey = $config['SEMAPHORE_GLOBAL_API_KEY'] ?? null;
 $db = get_firestore();
 
 $dryRun = ($_GET['dry_run'] ?? '0') === '1';
@@ -74,33 +76,41 @@ try {
 
         $results['checked']++;
 
-        // Resolve API key (same logic as StatusSync)
+        // Resolve API key and provider ID using the same send-route metadata as StatusSync.
+        $providerName = $data['provider'] ?? 'semaphore';
+        $providerMessageId = (string)($data['provider_message_id'] ?? ($data['provider_reference_id'] ?? $messageId));
+        $isSystem = !empty($data['is_system']);
         $activeApiKey = $systemApiKey;
+        $resolvedStatusKeySource = 'config.SEMAPHORE_API_KEY';
         if ($locId) {
-            if (!isset($apiKeyCache[$locId])) {
-                try {
-                    $intDoc = 'ghl_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', (string)$locId);
-                    $snap = $db->collection('integrations')->document($intDoc)->snapshot();
-                    if ($snap->exists()) {
-                        $idat = $snap->data();
-                        $apiKeyCache[$locId] = $idat['nola_pro_api_key'] ?? ($idat['semaphore_api_key'] ?? $systemApiKey);
-                    } else {
-                        $apiKeyCache[$locId] = $systemApiKey;
-                    }
-                } catch (\Exception $e) {
-                    $apiKeyCache[$locId] = $systemApiKey;
-                }
+            $cacheKey = implode(':', [
+                (string)$locId,
+                (string)$providerName,
+                $isSystem ? 'system' : 'user',
+                trim((string)($data['api_key_source'] ?? '')),
+                trim((string)($data['sender_source'] ?? '')),
+            ]);
+            if (!isset($apiKeyCache[$cacheKey])) {
+                $apiKeyCache[$cacheKey] = SenderResolver::resolveStatusApiKey(
+                    $db,
+                    (string)$locId,
+                    (string)$providerName,
+                    $systemApiKey,
+                    $isSystem,
+                    $globalApiKey,
+                    $data
+                );
             }
-            $activeApiKey = $apiKeyCache[$locId];
+            $activeApiKey = $apiKeyCache[$cacheKey]['api_key'];
+            $resolvedStatusKeySource = $apiKeyCache[$cacheKey]['source'];
         }
 
         // Re-check via Gateway
-        $providerName = $data['provider'] ?? 'semaphore';
         $providerInstance = $gateway->getProviderInstance($providerName);
 
         $rawStatus = 'error';
         try {
-            $statusRes = $providerInstance->checkStatus($messageId, $activeApiKey);
+            $statusRes = $providerInstance->checkStatus($providerMessageId, $activeApiKey);
             $rawStatus = $statusRes['status'] ?? 'error';
         } catch (\Throwable $e) {
             error_log("[fix_failed_statuses] Gateway checkStatus failed: " . $e->getMessage());
@@ -108,11 +118,13 @@ try {
 
         $entry = [
             'message_id' => $messageId,
+            'provider_message_id' => $providerMessageId,
             'location_id' => $locId,
             'recipient' => $recipient,
             'old_error_reason' => $errorReason,
             'provider_status' => $rawStatus,
-            'provider' => $providerName
+            'provider' => $providerName,
+            'api_key_source' => $resolvedStatusKeySource,
         ];
 
         if ($rawStatus !== 'error' && $rawStatus !== 'not_found') {

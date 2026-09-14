@@ -19,6 +19,7 @@ NolaPerformance::start('api/messages');
 $db = get_firestore();
 $config = require __DIR__ . '/../webhook/config.php';
 $apiKey = $config['SEMAPHORE_API_KEY'] ?? '';
+$globalApiKey = $config['SEMAPHORE_GLOBAL_API_KEY'] ?? null;
 $apiKeyCache = [];
 
 // Status syncing is now handled by Cloud Scheduler (every 5 min)
@@ -166,7 +167,7 @@ try {
             if (!$doc->exists())
                 continue;
             $d = $doc->data();
-            \Nola\Services\StatusSync::checkAndSyncSingleMessage($db, $d, $doc->id(), $apiKey, $apiKeyCache);
+            \Nola\Services\StatusSync::checkAndSyncSingleMessage($db, $d, $doc->id(), $apiKey, $apiKeyCache, $globalApiKey);
             $out['data'][] = [
                 'id' => $doc->id(),
                 'message_id' => $d['message_id'] ?? null,
@@ -228,7 +229,7 @@ try {
             if (!$doc->exists())
                 continue;
             $d = $doc->data();
-            \Nola\Services\StatusSync::checkAndSyncSingleMessage($db, $d, $doc->id(), $apiKey, $apiKeyCache);
+            \Nola\Services\StatusSync::checkAndSyncSingleMessage($db, $d, $doc->id(), $apiKey, $apiKeyCache, $globalApiKey);
             $out['data'][] = [
                 'id' => $doc->id(),
                 'message_id' => $d['message_id'] ?? null,
@@ -270,7 +271,7 @@ try {
                 continue;
             }
 
-            \Nola\Services\StatusSync::checkAndSyncSingleMessage($db, $d, $doc->id(), $apiKey, $apiKeyCache);
+            \Nola\Services\StatusSync::checkAndSyncSingleMessage($db, $d, $doc->id(), $apiKey, $apiKeyCache, $globalApiKey);
 
             $msgDirection = strtolower(trim((string)($d['direction'] ?? 'outbound')));
             $rawStatus = $d['status'] ?? null;
@@ -373,7 +374,7 @@ try {
             if (!$doc->exists())
                 continue;
             $d = $doc->data();
-            \Nola\Services\StatusSync::checkAndSyncSingleMessage($db, $d, $doc->id(), $apiKey, $apiKeyCache);
+            \Nola\Services\StatusSync::checkAndSyncSingleMessage($db, $d, $doc->id(), $apiKey, $apiKeyCache, $globalApiKey);
             $src = $d['source'] ?? '';
             $type = $d['type'] ?? null;
             if (!$type || $type === 'SMS') {
