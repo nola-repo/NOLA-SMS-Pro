@@ -30,13 +30,19 @@ steps:
       - '--platform'
       - 'managed'
       - '--min-instances'
-      - '1'
+      - '0'
       - '--max-instances'
-      - '20'
+      - '5'
       - '--concurrency'
       - '30'
       - '--memory'
-      - '2Gi'
+      - '1Gi'
+      # Redis is optional cache only. Removing these env vars lets the app use
+      # in-process fallback cache and allows Memorystore/VPC cleanup.
+      - '--remove-env-vars'
+      - 'REDIS_HOST,REDIS_PORT,REDIS_PASSWORD'
+      # Do not route public provider/API traffic through Serverless VPC Access.
+      - '--clear-vpc-connector'
 
 images:
   - 'gcr.io/$PROJECT_ID/sms-api:latest'
