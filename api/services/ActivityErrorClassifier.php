@@ -70,7 +70,7 @@ class ActivityErrorClassifier
         }
 
         if (str_contains($lower, 'exception') || str_contains($lower, 'fatal') || str_contains($lower, 'uncaught')) {
-            return self::payload('failed', 'platform_exception', 'error', true, false, 'Backend platform error. Engineering review required.');
+            return self::payload('provider_error', 'provider_exception', 'warning', false, true, 'Provider platform error. They are experiencing issues.');
         }
 
         return self::payload('provider_error', 'other', 'warning', false, false, 'SMS provider rejected the request.');
