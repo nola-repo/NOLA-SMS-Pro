@@ -51,9 +51,9 @@ interface SmsProviderInterface
 }
 
 /**
- * Base exception for transient provider timeouts (Semaphore, UniSMS, etc.).
- * Signals to upstream callers (webhooks, workers) that the failure is network/gateway
- * latency and is eligible for automatic retry queueing.
+ * Base exception for transient provider failures (timeouts, throttling, etc.).
+ * Signals to upstream callers (webhooks, workers) that the failure is eligible
+ * for automatic retry queueing.
  */
 class SmsProviderTimeoutException extends \RuntimeException
 {
@@ -61,19 +61,22 @@ class SmsProviderTimeoutException extends \RuntimeException
     public string $curlError;
     public string $senderId;
     public string $recipient;
+    public ?int $retryAfterSeconds;
 
     public function __construct(
         string $message,
         string $provider   = 'unknown',
         string $curlError  = '',
         string $senderId   = '',
-        string $recipient  = ''
+        string $recipient  = '',
+        ?int $retryAfterSeconds = null
     ) {
         parent::__construct($message);
         $this->provider   = $provider;
         $this->curlError  = $curlError;
         $this->senderId   = $senderId;
         $this->recipient  = $recipient;
+        $this->retryAfterSeconds = $retryAfterSeconds;
     }
 }
 
@@ -83,9 +86,23 @@ class SemaphoreTimeoutException extends SmsProviderTimeoutException
         string $message,
         string $curlError  = '',
         string $senderId   = '',
-        string $recipient  = ''
+        string $recipient  = '',
+        ?int $retryAfterSeconds = null
     ) {
-        parent::__construct($message, 'semaphore', $curlError, $senderId, $recipient);
+        parent::__construct($message, 'semaphore', $curlError, $senderId, $recipient, $retryAfterSeconds);
+    }
+}
+
+class SemaphoreRateLimitException extends SmsProviderTimeoutException
+{
+    public function __construct(
+        string $message,
+        string $curlError = '',
+        string $senderId = '',
+        string $recipient = '',
+        ?int $retryAfterSeconds = null
+    ) {
+        parent::__construct($message, 'semaphore', $curlError, $senderId, $recipient, $retryAfterSeconds);
     }
 }
 

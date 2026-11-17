@@ -48,14 +48,35 @@ class SemaphoreProvider implements SmsProviderInterface
         return max($min, min($max, $value));
     }
 
+    private function retryAfterSeconds(array $responseHeaders): ?int
+    {
+        $value = trim((string)($responseHeaders['retry-after'] ?? ''));
+        if ($value === '') {
+            return null;
+        }
+
+        if (ctype_digit($value)) {
+            return min(86400, (int)$value);
+        }
+
+        $retryAt = strtotime($value);
+        if ($retryAt === false) {
+            return null;
+        }
+
+        return min(86400, max(0, $retryAt - time()));
+    }
+
     private function pacingIntervalMs(string $apiKey): int
     {
+        // Semaphore documents /messages at 120 requests per minute. Keep a
+        // minimum 600 ms between requests per key to leave burst headroom.
         $globalKey = trim((string)($this->config['SEMAPHORE_GLOBAL_API_KEY'] ?? getenv('SEMAPHORE_GLOBAL_API_KEY') ?: ''));
         $isSharedGlobalKey = $globalKey !== '' && hash_equals($globalKey, $apiKey);
 
         return $isSharedGlobalKey
-            ? $this->configuredInt('SEMAPHORE_GLOBAL_MIN_INTERVAL_MS', 1200, 0, 10000)
-            : $this->configuredInt('SEMAPHORE_MIN_INTERVAL_MS', 400, 0, 10000);
+            ? $this->configuredInt('SEMAPHORE_GLOBAL_MIN_INTERVAL_MS', 1200, 600, 10000)
+            : $this->configuredInt('SEMAPHORE_MIN_INTERVAL_MS', 600, 600, 10000);
     }
 
     private function maxPacingWaitMs(): int
@@ -196,7 +217,7 @@ class SemaphoreProvider implements SmsProviderInterface
      * @param  int    $connectTimeout  cURL connect timeout in seconds
      * @param  int    $totalTimeout    cURL total timeout in seconds
      * @param  int    $maxAttempts    cURL max retry attempts
-     * @return array{response:string|false, httpCode:int, curlError:string}
+     * @return array{response:string|false, httpCode:int, curlError:string, curlErrNo:int, retryAfterSeconds:?int}
      */
     private function curlWithRetry(
         string $url,
@@ -206,12 +227,13 @@ class SemaphoreProvider implements SmsProviderInterface
         int    $connectTimeout = 10,
         int    $totalTimeout   = 12,
         int    $maxAttempts    = 3,
-        bool   $sleepOnRateLimit = true
+        string $operation = 'api_request'
     ): array {
         $lastResponse  = false;
         $lastHttpCode  = 0;
         $lastCurlError = '';
         $lastErrNo     = 0;
+        $lastRetryAfterSeconds = null;
 
         for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
             $startTime = microtime(true);
@@ -270,6 +292,7 @@ class SemaphoreProvider implements SmsProviderInterface
             curl_close($ch);
 
             $latencyMs = round((microtime(true) - $startTime) * 1000, 1);
+            $lastRetryAfterSeconds = $this->retryAfterSeconds($responseHeaders);
 
             // Success
             if ($lastResponse !== false && $lastHttpCode >= 200 && $lastHttpCode < 300) {
@@ -277,6 +300,7 @@ class SemaphoreProvider implements SmsProviderInterface
                     error_log(json_encode([
                         'event'          => 'sms_retry_attempt',
                         'provider'       => 'semaphore',
+                        'operation'      => $operation,
                         'attempt_number' => $attempt,
                         'max_attempts'   => $maxAttempts,
                         'latency_ms'     => $latencyMs,
@@ -293,12 +317,30 @@ class SemaphoreProvider implements SmsProviderInterface
             $isRateLimit       = ($lastHttpCode === 429);
             $isTransient       = $isConnectionError || $isServerError || $isHttpTimeout || $isRateLimit;
 
+            // A 429 is an explicit instruction to slow down. Do not amplify it
+            // with sub-second inline retries; callers can defer or surface it.
+            if ($isRateLimit) {
+                error_log(json_encode([
+                    'event'                => 'sms_rate_limit_deferred',
+                    'provider'             => 'semaphore',
+                    'operation'            => $operation,
+                    'attempt_number'       => $attempt,
+                    'max_attempts'         => $maxAttempts,
+                    'latency_ms'           => $latencyMs,
+                    'http_code'            => $lastHttpCode,
+                    'retry_after_seconds'  => $lastRetryAfterSeconds,
+                    'outcome'              => 'deferred_to_caller',
+                ]));
+                break;
+            }
+
             // Fail-Fast check: Hard socket errors (DNS fail, connection refused <1s) should stop early
             $isHardSocketError = $isConnectionError && $latencyMs < 1000 && in_array($lastErrNo, [6, 7, 35], true);
             if ($isHardSocketError && $attempt >= 2) {
                 error_log(json_encode([
                     'event'          => 'sms_retry_attempt',
                     'provider'       => 'semaphore',
+                    'operation'      => $operation,
                     'attempt_number' => $attempt,
                     'max_attempts'   => $maxAttempts,
                     'latency_ms'     => $latencyMs,
@@ -339,6 +381,7 @@ class SemaphoreProvider implements SmsProviderInterface
             'httpCode'   => $lastHttpCode,
             'curlError'  => $lastCurlError,
             'curlErrNo'  => $lastErrNo,
+            'retryAfterSeconds' => $lastRetryAfterSeconds,
         ];
     }
 
@@ -358,7 +401,7 @@ class SemaphoreProvider implements SmsProviderInterface
             'sendername' => $senderId,
         ];
 
-        // Micro-pacing lock: spaces rapid concurrent bursts by ~150ms to prevent socket throttling
+        // Distributed per-key pacing keeps concurrent Cloud Run instances under the provider limit.
         $lockFp = $this->acquirePacingLock($resolvedKey);
 
         try {
@@ -370,7 +413,8 @@ class SemaphoreProvider implements SmsProviderInterface
                 ["Content-Type: application/x-www-form-urlencoded"],
                 5,
                 7,
-                3
+                3,
+                'message_send'
             );
         } finally {
             $this->releasePacingLock($lockFp);
@@ -405,13 +449,25 @@ class SemaphoreProvider implements SmsProviderInterface
         $httpCode = $result['httpCode'];
         $decoded  = json_decode($result['response'], true);
 
-        if ($httpCode === 408 || $httpCode === 429 || ($httpCode >= 500 && $httpCode < 600)) {
+        if ($httpCode === 429) {
+            $msg = $decoded['message'] ?? $decoded['error'] ?? 'rate limited';
+            throw new SemaphoreRateLimitException(
+                'Semaphore rate limited (HTTP 429: ' . $msg . ')',
+                'HTTP 429',
+                $senderId,
+                $numbers[0] ?? '',
+                $result['retryAfterSeconds'] ?? null
+            );
+        }
+
+        if ($httpCode === 408 || ($httpCode >= 500 && $httpCode < 600)) {
             $msg = $decoded['message'] ?? $decoded['error'] ?? 'Semaphore HTTP ' . $httpCode;
             throw new SemaphoreTimeoutException(
                 'Semaphore server error/timeout (' . $msg . ')',
                 $msg,
                 $senderId,
-                $numbers[0] ?? ''
+                $numbers[0] ?? '',
+                $result['retryAfterSeconds'] ?? null
             );
         }
 
@@ -459,7 +515,7 @@ class SemaphoreProvider implements SmsProviderInterface
         $resolvedKey = $this->getApiKey($apiKey);
         $url = "https://api.semaphore.co/api/v4/messages/" . urlencode($messageId) . "?apikey=" . urlencode($resolvedKey);
 
-        $result   = $this->curlWithRetry($url, 'GET', null, [], 8, 10);
+        $result   = $this->curlWithRetry($url, 'GET', null, [], 8, 10, 3, 'message_status');
         $httpCode = $result['httpCode'];
         $response = $result['response'];
 
@@ -525,7 +581,7 @@ class SemaphoreProvider implements SmsProviderInterface
         // Rationale: p99 Semaphore API latency is ~4.2 s (connectivity_incidents
         // data). The previous 2 s / 4 s / 1-attempt budget meant cold-start
         // requests reliably timed out and were silently returned as 0 credits.
-        $result   = $this->curlWithRetry($url, 'GET', null, [], 5, 10, 2, false);
+        $result   = $this->curlWithRetry($url, 'GET', null, [], 5, 10, 2, 'account_balance');
         $httpCode = $result['httpCode'];
         $response = $result['response'];
 
@@ -536,6 +592,7 @@ class SemaphoreProvider implements SmsProviderInterface
                 'credits'         => 0,
                 'error'           => 'HTTP 429 Rate Limited',
                 'timeout_failure' => false,
+                'retry_after_seconds' => $result['retryAfterSeconds'] ?? null,
             ];
         }
 

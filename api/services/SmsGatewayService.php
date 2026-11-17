@@ -35,7 +35,7 @@ class SmsGatewayService
             'SEMAPHORE_API_KEY' => $systemConfig['SEMAPHORE_API_KEY'] ?? '',
             'SEMAPHORE_GLOBAL_API_KEY' => $systemConfig['SEMAPHORE_GLOBAL_API_KEY'] ?? '',
             'SEMAPHORE_URL' => $systemConfig['SEMAPHORE_URL'] ?? 'https://api.semaphore.co/api/v4/messages',
-            'SEMAPHORE_MIN_INTERVAL_MS' => (int)($systemConfig['SEMAPHORE_MIN_INTERVAL_MS'] ?? (getenv('SEMAPHORE_MIN_INTERVAL_MS') ?: 400)),
+            'SEMAPHORE_MIN_INTERVAL_MS' => (int)($systemConfig['SEMAPHORE_MIN_INTERVAL_MS'] ?? (getenv('SEMAPHORE_MIN_INTERVAL_MS') ?: 600)),
             'SEMAPHORE_GLOBAL_MIN_INTERVAL_MS' => (int)($systemConfig['SEMAPHORE_GLOBAL_MIN_INTERVAL_MS'] ?? (getenv('SEMAPHORE_GLOBAL_MIN_INTERVAL_MS') ?: 1200)),
             'SEMAPHORE_MAX_PACING_WAIT_MS' => (int)($systemConfig['SEMAPHORE_MAX_PACING_WAIT_MS'] ?? (getenv('SEMAPHORE_MAX_PACING_WAIT_MS') ?: 10000)),
             'UNISMS_API_KEY' => $systemConfig['UNISMS_API_KEY'] ?? '',
@@ -274,13 +274,14 @@ class SmsGatewayService
         } catch (\Throwable $e) {
             $this->recordProviderMetric('semaphore', true);
             $errMessage = $e->getMessage();
-            $isNetworkError = (
+            $isTransientProviderError = (
                 strpos(strtolower($errMessage), 'timeout') !== false ||
                 strpos(strtolower($errMessage), 'http 5') !== false ||
+                strpos(strtolower($errMessage), 'http 429') !== false ||
                 strpos(strtolower($errMessage), 'curl error') !== false
             );
 
-            if ($isNetworkError) {
+            if ($isTransientProviderError) {
                 // Sender-ID Guard Check: If sender is NOT compatible with UniSMS, do NOT swap sender ID!
                 if (!$senderCompatible) {
                     error_log(json_encode([

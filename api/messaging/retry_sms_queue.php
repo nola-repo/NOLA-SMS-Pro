@@ -78,6 +78,10 @@ function retry_message_event($db, array $data, array $overrides): void
         'direction' => 'outbound',
         'sender_id' => (string)($data['sender_id'] ?? ''),
         'sender_name' => (string)($data['sender_id'] ?? ''),
+        'is_system' => !empty($data['is_system_notification']),
+        'sender_source' => $data['sender_source'] ?? null,
+        'api_key_source' => $data['api_key_source'] ?? null,
+        'using_custom_key' => !empty($data['using_custom_key']),
         'ghl_message_id' => $data['ghl_message_id'] ?? null,
         'source' => 'ghl_provider',
         'updated_at' => $nowTs,
@@ -97,13 +101,22 @@ function retry_backoff_minutes(int $nextAttempt): int
     return min(RETRY_MAX_BACKOFF_MIN, $schedule[$nextAttempt] ?? RETRY_MAX_BACKOFF_MIN);
 }
 
-function retry_next_retry_timestamp(int $nextAttempt): \Google\Cloud\Core\Timestamp
+function retry_next_retry_timestamp(int $nextAttempt, ?int $minimumDelaySeconds = null): \Google\Cloud\Core\Timestamp
 {
     $minutes = retry_backoff_minutes($nextAttempt);
     $jitterSeconds = $nextAttempt > 1 ? random_int(0, 180) : random_int(0, 60);
-    $nextRetry = (new \DateTimeImmutable())
+    $now = new \DateTimeImmutable();
+    $nextRetry = $now
         ->modify('+' . $minutes . ' minutes')
         ->modify('+' . $jitterSeconds . ' seconds');
+
+    if ($minimumDelaySeconds !== null) {
+        $minimumDelaySeconds = max(0, min(86400, $minimumDelaySeconds));
+        $providerRetryAt = $now->modify('+' . $minimumDelaySeconds . ' seconds');
+        if ($providerRetryAt > $nextRetry) {
+            $nextRetry = $providerRetryAt;
+        }
+    }
 
     return new \Google\Cloud\Core\Timestamp($nextRetry);
 }
@@ -156,7 +169,7 @@ function retry_is_transient_provider_failure(?string $provider, ?string $error, 
     return $provider === 'semaphore' && str_contains($errorText, 'http 5');
 }
 
-function reschedule_retry_doc($db, $docRef, array $data, int $newAttempts, int $maxAttempts, string $reason, ?string $provider = null): string
+function reschedule_retry_doc($db, $docRef, array $data, int $newAttempts, int $maxAttempts, string $reason, ?string $provider = null, ?int $minimumDelaySeconds = null): string
 {
     if ($newAttempts >= $maxAttempts) {
         finalize_retry_exhausted($db, $docRef, $data, $newAttempts, $reason);
@@ -164,7 +177,7 @@ function reschedule_retry_doc($db, $docRef, array $data, int $newAttempts, int $
     }
 
     $nowTs = new \Google\Cloud\Core\Timestamp(new \DateTime());
-    $nextRetryTs = retry_next_retry_timestamp($newAttempts);
+    $nextRetryTs = retry_next_retry_timestamp($newAttempts, $minimumDelaySeconds);
     update_queue_doc($docRef, [
         'status' => 'pending_retry',
         'attempts' => $newAttempts,
@@ -369,7 +382,7 @@ function process_retry_doc($db, $docRef, array $data, string $workerId): string
 
         return 'succeeded';
     } catch (SmsProviderTimeoutException $e) {
-        return reschedule_retry_doc($db, $docRef, $data, $newAttempts, $maxAttempts, $e->getMessage(), $e->provider ?: ($data['provider'] ?? null));
+        return reschedule_retry_doc($db, $docRef, $data, $newAttempts, $maxAttempts, $e->getMessage(), $e->provider ?: ($data['provider'] ?? null), $e->retryAfterSeconds);
     } catch (\Throwable $e) {
         if (retry_is_transient_provider_failure($providerPref ?? ($data['provider'] ?? null), $e->getMessage())) {
             return reschedule_retry_doc($db, $docRef, $data, $newAttempts, $maxAttempts, $e->getMessage(), $providerPref ?? ($data['provider'] ?? null));

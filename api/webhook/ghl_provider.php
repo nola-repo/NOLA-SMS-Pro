@@ -1045,7 +1045,7 @@ try {
         $smsStatus = $gatewaySummary['http_status'];
     }
 } catch (SmsProviderTimeoutException $e) {
-    // ── Retryable Timeout — queue for background retry ──────────────────────
+    // ── Retryable provider failure — queue for background retry ─────────────
     // GHL already got HTTP 200. Do NOT refund credits yet.
     // Mark message as Pending and write to sms_retry_queue so the retry worker
     // picks it up in the next 5-minute window.
@@ -1062,6 +1062,9 @@ try {
         'sender'     => $sender,
         'provider'   => $chosenProvider,
         'curl_error' => $e->curlError,
+        'retry_after_seconds' => $e->retryAfterSeconds,
+        'is_system_notification' => $isSystemNotification,
+        'sender_source' => $senderResolution['sender_source'] ?? null,
     ]));
 
     $retryQueued = false;
@@ -1073,7 +1076,8 @@ try {
     $contentDedupId = 'retry_content_' . substr(hash('sha256', $locationId . '|' . $normalizedPhone . '|' . md5($message)), 0, 20);
     $retryNow = new \DateTime();
     $retryTs  = new \Google\Cloud\Core\Timestamp($retryNow);
-    $nextRetry = (new \DateTime())->modify('+5 minutes');
+    $retryDelaySeconds = max(300, min(86400, (int)($e->retryAfterSeconds ?? 0)));
+    $nextRetry = (new \DateTime())->modify('+' . $retryDelaySeconds . ' seconds');
     $nextRetryTs = new \Google\Cloud\Core\Timestamp($nextRetry);
 
     // Write retry doc to Firestore. The deterministic doc ID prevents duplicate
@@ -1132,6 +1136,7 @@ try {
                 'marker_status' => 'active',
                 'updated_at'    => $retryTs,
                 'next_retry_at' => $nextRetryTs,
+                'provider_retry_after_seconds' => $e->retryAfterSeconds,
             ], ['merge' => true]);
             $retryQueued = true; // Treat as successfully queued (suppress Failed log)
         } elseif ($retrySnap->exists()) {
@@ -1139,6 +1144,11 @@ try {
                 'last_error'    => $e->curlError ?: $e->getMessage(),
                 'updated_at'    => $retryTs,
                 'next_retry_at' => $nextRetryTs,
+                'provider_retry_after_seconds' => $e->retryAfterSeconds,
+                'is_system_notification' => $isSystemNotification,
+                'sender_source' => $senderResolution['sender_source'] ?? null,
+                'api_key_source' => $apiKeySource,
+                'using_custom_key' => $usingOwnApiKey,
             ], ['merge' => true]);
             $contentDedupRef->set([
                 'retry_doc_id' => $contentDedupId,
@@ -1168,6 +1178,10 @@ try {
                 'api_key'            => $activeApiKey ?? null,
                 'provider_pref'      => $providerPreference,
                 'provider'           => $chosenProvider,
+                'is_system_notification' => $isSystemNotification,
+                'sender_source'      => $senderResolution['sender_source'] ?? null,
+                'api_key_source'     => $apiKeySource,
+                'using_custom_key'   => $usingOwnApiKey,
                 'content_dedup_id'   => $contentDedupId,
                 'account_id'         => $account_id,
                 'billing_reference_id' => $billingReferenceId,
@@ -1180,6 +1194,7 @@ try {
                 'attempts'           => 0,
                 'max_attempts'       => 3,
                 'last_error'         => $e->curlError ?: $e->getMessage(),
+                'provider_retry_after_seconds' => $e->retryAfterSeconds,
                 'created_at'         => $retryTs,
                 'updated_at'         => $retryTs,
                 'next_retry_at'      => $nextRetryTs,
@@ -1230,6 +1245,7 @@ try {
                 'source'          => 'ghl_provider',
                 'provider'        => $chosenProvider,
                 'provider_preference' => $providerPreference,
+                'is_system'       => $isSystemNotification,
                 'api_key_source'   => $apiKeySource,
                 'sender_source'    => $senderResolution['sender_source'] ?? null,
                 'using_custom_key' => $usingOwnApiKey,
