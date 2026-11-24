@@ -296,6 +296,7 @@ class NolaCache
         self::delete('admin_activity_logs_all');
         foreach ([25, 50, 100] as $limit) {
             self::delete('admin_activity_logs_compact_' . $limit);
+            self::delete('admin_activity_logs_cursor_v1_' . $limit);
             self::delete('admin_sender_requests_list_' . $limit);
         }
     }

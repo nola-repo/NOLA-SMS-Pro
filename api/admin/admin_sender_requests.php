@@ -251,44 +251,200 @@ function nola_admin_request_limit(int $default = 50, int $max = 100): int
     return max(1, min($max, $raw > 0 ? $raw : $default));
 }
 
-function nola_admin_cursor_timestamp(?string $cursor): ?int
+function nola_admin_encode_activity_cursor_value($value): ?array
+{
+    if ($value instanceof \Google\Cloud\Core\Timestamp) {
+        return [
+            'type' => 'timestamp',
+            'value' => $value->formatAsString(),
+            'nanoseconds' => $value->nanoSeconds(),
+        ];
+    }
+    if ($value instanceof \DateTimeInterface) {
+        return [
+            'type' => 'timestamp',
+            'value' => $value->format('Y-m-d\TH:i:s.uP'),
+            'nanoseconds' => (int)$value->format('u') * 1000,
+        ];
+    }
+    if (is_string($value)) {
+        return ['type' => 'string', 'value' => $value];
+    }
+    if (is_int($value)) {
+        return ['type' => 'integer', 'value' => $value];
+    }
+    if (is_float($value) && is_finite($value)) {
+        return ['type' => 'double', 'value' => $value];
+    }
+    if (is_bool($value)) {
+        return ['type' => 'boolean', 'value' => $value];
+    }
+    if ($value === null) {
+        return ['type' => 'null', 'value' => null];
+    }
+
+    return null;
+}
+
+function nola_admin_decode_activity_cursor_value(array $encoded)
+{
+    $type = $encoded['type'] ?? null;
+    if (!array_key_exists('value', $encoded)) {
+        throw new \InvalidArgumentException('Activity cursor value is missing.');
+    }
+
+    switch ($type) {
+        case 'timestamp':
+            $date = new \DateTimeImmutable((string)$encoded['value']);
+            $nanoseconds = isset($encoded['nanoseconds'])
+                ? max(0, min(999999999, (int)$encoded['nanoseconds']))
+                : (int)$date->format('u') * 1000;
+            return new \Google\Cloud\Core\Timestamp($date, $nanoseconds);
+        case 'string':
+            return (string)$encoded['value'];
+        case 'integer':
+            return (int)$encoded['value'];
+        case 'double':
+            $value = (float)$encoded['value'];
+            if (!is_finite($value)) {
+                throw new \InvalidArgumentException('Activity cursor number is invalid.');
+            }
+            return $value;
+        case 'boolean':
+            return (bool)$encoded['value'];
+        case 'null':
+            return null;
+        default:
+            throw new \InvalidArgumentException('Activity cursor type is invalid.');
+    }
+}
+
+function nola_admin_decode_activity_cursor(?string $cursor): ?array
 {
     $cursor = trim((string)($cursor ?? ''));
     if ($cursor === '') {
-        return null;
+        return ['sources' => []];
     }
 
-    $decoded = base64_decode(strtr($cursor, '-_', '+/'), true);
-    if ($decoded !== false) {
-        $data = json_decode($decoded, true);
-        if (is_array($data) && !empty($data['timestamp'])) {
-            $time = strtotime((string)$data['timestamp']);
-            return $time !== false ? $time : null;
+    $base64 = strtr($cursor, '-_', '+/');
+    $base64 .= str_repeat('=', (4 - strlen($base64) % 4) % 4);
+    $decoded = base64_decode($base64, true);
+    $payload = $decoded !== false ? json_decode($decoded, true) : null;
+    $allowedSources = ['messages', 'sms_logs', 'sender_id_requests', 'credit_transactions'];
+
+    if (is_array($payload) && ($payload['version'] ?? null) === 1 && is_array($payload['sources'] ?? null)) {
+        $positions = [];
+        foreach ($allowedSources as $source) {
+            $position = $payload['sources'][$source] ?? null;
+            if ($position === null) {
+                continue;
+            }
+            if (!is_array($position)
+                || !isset($position['id'])
+                || !is_string($position['id'])
+                || $position['id'] === ''
+                || str_contains($position['id'], '/')
+                || !is_array($position['value'] ?? null)) {
+                return null;
+            }
+            try {
+                nola_admin_decode_activity_cursor_value($position['value']);
+            } catch (\Throwable $e) {
+                return null;
+            }
+            $positions[$source] = [
+                'id' => $position['id'],
+                'value' => $position['value'],
+            ];
+        }
+        return ['sources' => $positions];
+    }
+
+    // Accept cursors issued by the previous timestamp-only implementation.
+    if (is_array($payload) && !empty($payload['timestamp'])) {
+        $legacyTime = strtotime((string)$payload['timestamp']);
+        return $legacyTime !== false ? ['sources' => [], 'legacy_timestamp' => $legacyTime] : null;
+    }
+
+    $legacyTime = strtotime($cursor);
+    return $legacyTime !== false ? ['sources' => [], 'legacy_timestamp' => $legacyTime] : null;
+}
+
+function nola_admin_next_cursor(array $sourcePositions): ?string
+{
+    if ($sourcePositions === []) {
+        return null;
+    }
+    $encoded = json_encode(['version' => 1, 'sources' => $sourcePositions], JSON_UNESCAPED_SLASHES);
+    if (!is_string($encoded)) {
+        return null;
+    }
+    return rtrim(strtr(base64_encode($encoded), '+/', '-_'), '=');
+}
+
+function nola_admin_activity_sort_key($value): array
+{
+    if ($value instanceof \Google\Cloud\Core\Timestamp) {
+        return [
+            'seconds' => (int)$value->get()->format('U'),
+            'nanoseconds' => $value->nanoSeconds(),
+        ];
+    }
+    if ($value instanceof \DateTimeInterface) {
+        return [
+            'seconds' => (int)$value->format('U'),
+            'nanoseconds' => (int)$value->format('u') * 1000,
+        ];
+    }
+    if (is_int($value) || is_float($value)) {
+        $timestamp = (float)$value;
+        if (abs($timestamp) >= 100000000000) {
+            $timestamp /= 1000;
+        }
+        $seconds = (int)floor($timestamp);
+        $nanoseconds = (int)round(($timestamp - $seconds) * 1000000000);
+        if ($nanoseconds >= 1000000000) {
+            $seconds++;
+            $nanoseconds = 0;
+        }
+        return ['seconds' => $seconds, 'nanoseconds' => $nanoseconds];
+    }
+    if (is_string($value) && trim($value) !== '') {
+        try {
+            $date = new \DateTimeImmutable($value);
+            return [
+                'seconds' => (int)$date->format('U'),
+                'nanoseconds' => (int)$date->format('u') * 1000,
+            ];
+        } catch (\Throwable $e) {
+            $seconds = strtotime($value);
+            if ($seconds !== false) {
+                return ['seconds' => $seconds, 'nanoseconds' => 0];
+            }
         }
     }
 
-    $time = strtotime($cursor);
-    return $time !== false ? $time : null;
+    return ['seconds' => 0, 'nanoseconds' => 0];
 }
 
-function nola_admin_next_cursor(array $logs, int $limit): ?string
+function nola_admin_compare_activity_entries(array $left, array $right): int
 {
-    if (count($logs) < $limit) {
-        return null;
+    $leftSort = $left['sort_key'];
+    $rightSort = $right['sort_key'];
+    if ($leftSort['seconds'] !== $rightSort['seconds']) {
+        return $rightSort['seconds'] <=> $leftSort['seconds'];
     }
-
-    $last = $logs[count($logs) - 1];
-    if (empty($last['timestamp'])) {
-        return null;
+    if ($leftSort['nanoseconds'] !== $rightSort['nanoseconds']) {
+        return $rightSort['nanoseconds'] <=> $leftSort['nanoseconds'];
     }
-
-    return rtrim(strtr(base64_encode(json_encode([
-        'timestamp' => $last['timestamp'],
-        'id' => $last['id'] ?? null,
-    ])), '+/', '-_'), '=');
+    $sourceOrder = strcmp($left['source'], $right['source']);
+    if ($sourceOrder !== 0) {
+        return $sourceOrder;
+    }
+    return strcmp($right['id'], $left['id']);
 }
 
-function nola_admin_compact_activity_log(array $data, string $docId, string $defaultType, ?string $timestamp): array
+function nola_admin_compact_activity_log(array $data, string $docId, string $defaultType, ?string $timestamp, string $sourceCollection): array
 {
     $meta = nola_admin_activity_meta($data);
     $errorSummary = nola_admin_first_error_text($data);
@@ -315,6 +471,8 @@ function nola_admin_compact_activity_log(array $data, string $docId, string $def
 
     $row = [
         'id' => $docId,
+        'activity_key' => $sourceCollection . ':' . $docId,
+        'source_collection' => $sourceCollection,
         'type' => $type,
         'timestamp' => $timestamp,
         'date_created' => $timestamp,
@@ -353,89 +511,165 @@ function nola_admin_compact_activity_log(array $data, string $docId, string $def
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'logs') {
     $requestedMonth = trim((string)($_GET['month'] ?? ''));
     $limit = nola_admin_request_limit();
-    $startAfterTs = nola_admin_cursor_timestamp($_GET['start_after'] ?? null);
+    $cursorText = trim((string)($_GET['start_after'] ?? ''));
+    $cursorState = nola_admin_decode_activity_cursor($cursorText);
+    if ($cursorState === null) {
+        http_response_code(400);
+        echo json_encode([
+            'status' => 'error',
+            'message' => 'The activity page cursor is invalid. Refresh Platform Activity and try again.',
+        ]);
+        exit;
+    }
 
-    $logsCacheKey = 'admin_activity_logs_compact_' . $limit;
-    $cachedLogs = $startAfterTs === null ? NolaCache::get($logsCacheKey) : null;
+    $logsCacheKey = 'admin_activity_logs_cursor_v1_' . $limit;
+    $canUseCache = $cursorText === '' && ($requestedMonth === '' || strtolower($requestedMonth) === 'all');
+    $cachedPayload = $canUseCache ? NolaCache::get($logsCacheKey) : null;
+    if ($cachedPayload !== null) {
+        echo json_encode($cachedPayload);
+        exit;
+    }
 
-    if ($cachedLogs !== null) {
-        $unifiedLogs = $cachedLogs;
-    } else {
-        $unifiedLogs = [];
-        $seenDocIds = [];
+    $activitySources = [
+        'messages' => ['field' => 'date_created', 'type' => 'message'],
+        'sms_logs' => ['field' => 'date_created', 'type' => 'message'],
+        'sender_id_requests' => ['field' => 'created_at', 'type' => 'sender_request'],
+        'credit_transactions' => ['field' => 'created_at', 'type' => 'credit_purchase'],
+    ];
+    $candidateEntries = [];
+    $unavailableSources = [];
+    $sourceHasMore = false;
 
-        // Helper: collect compact rows from a query into $unifiedLogs
-        $collectDocs = function($query, string $defaultType) use (&$unifiedLogs, &$seenDocIds) {
+    foreach ($activitySources as $source => $config) {
+        $collection = $db->collection($source);
+        $query = $collection
+            ->orderBy($config['field'], 'DESC')
+            ->orderBy(\Google\Cloud\Firestore\FieldPath::documentId(), 'DESC');
+
+        $position = $cursorState['sources'][$source] ?? null;
+        if ($position !== null) {
             try {
-                $docs = $query->documents();
-                foreach ($docs as $doc) {
-                    if ($doc->exists()) {
-                        $docId = $doc->id();
-                        if (isset($seenDocIds[$docId])) continue;
-                        $data = $doc->data();
-                        $ts = nola_extract_log_timestamp($data);
-                        $seenDocIds[$docId] = true;
-                        $unifiedLogs[] = nola_admin_compact_activity_log($data, $docId, $defaultType, $ts);
-                    }
-                }
+                $fieldValue = nola_admin_decode_activity_cursor_value($position['value']);
+                $query = $query->startAfter([
+                    $fieldValue,
+                    $collection->document($position['id']),
+                ]);
             } catch (\Throwable $e) {
-                error_log('[admin_logs] Query error: ' . $e->getMessage());
+                http_response_code(400);
+                echo json_encode([
+                    'status' => 'error',
+                    'message' => 'The activity page cursor is invalid. Refresh Platform Activity and try again.',
+                ]);
+                exit;
             }
-        };
+        }
 
-        // 1. messages
-        $collectDocs($db->collection('messages')->orderBy('date_created', 'DESC')->limit($limit), 'message');
+        try {
+            $sourceCount = 0;
+            $documents = $query->limit($limit + 1)->documents();
+            foreach ($documents as $doc) {
+                if (!$doc->exists()) {
+                    continue;
+                }
+                $sourceCount++;
+                $docId = $doc->id();
+                $data = $doc->data() ?: [];
+                $cursorValue = $data[$config['field']] ?? null;
+                $sortKey = nola_admin_activity_sort_key($cursorValue);
 
-        // 2. sms_logs
-        $collectDocs($db->collection('sms_logs')->orderBy('date_created', 'DESC')->limit($limit), 'message');
+                if (isset($cursorState['legacy_timestamp'])
+                    && $sortKey['seconds'] >= $cursorState['legacy_timestamp']) {
+                    continue;
+                }
 
-        // 3. sender_id_requests
-        $collectDocs($db->collection('sender_id_requests')->orderBy('created_at', 'DESC')->limit($limit), 'sender_request');
-
-        // 4. credit_transactions
-        $collectDocs($db->collection('credit_transactions')->orderBy('created_at', 'DESC')->limit($limit), 'credit_purchase');
-
-        // Sort combined array by timestamp descending
-        usort($unifiedLogs, function($a, $b) {
-            $timeA = isset($a['timestamp']) ? strtotime($a['timestamp']) : 0;
-            $timeB = isset($b['timestamp']) ? strtotime($b['timestamp']) : 0;
-            return $timeB - $timeA;
-        });
-
-        if ($startAfterTs === null) {
-            NolaCache::set($logsCacheKey, $unifiedLogs, 60);
+                $timestamp = nola_extract_log_timestamp($data);
+                $candidateEntries[] = [
+                    'id' => $docId,
+                    'source' => $source,
+                    'source_index' => $sourceCount,
+                    'cursor_value' => $cursorValue,
+                    'sort_key' => $sortKey,
+                    'log' => nola_admin_compact_activity_log(
+                        $data,
+                        $docId,
+                        $config['type'],
+                        $timestamp,
+                        $source
+                    ),
+                ];
+            }
+            if ($sourceCount > $limit) {
+                $sourceHasMore = true;
+            }
+        } catch (\Throwable $e) {
+            $unavailableSources[] = $source;
+            error_log('[admin_logs] Query failed for ' . $source . ': ' . $e->getMessage());
         }
     }
 
-    if ($startAfterTs !== null) {
-        $unifiedLogs = array_values(array_filter($unifiedLogs, function($log) use ($startAfterTs) {
-            $rawDate = $log['timestamp'] ?? '';
-            $time = $rawDate !== '' ? strtotime($rawDate) : false;
-            return $time !== false && $time < $startAfterTs;
-        }));
+    usort($candidateEntries, 'nola_admin_compare_activity_entries');
+
+    $filteredEntries = [];
+    $seenDocIds = [];
+    foreach ($candidateEntries as $entry) {
+        // Preserve the previous de-duplication rule for mirrored message rows.
+        if (isset($seenDocIds[$entry['id']])) {
+            continue;
+        }
+        $seenDocIds[$entry['id']] = true;
+
+        if ($requestedMonth !== '' && strtolower($requestedMonth) !== 'all') {
+            $timestamp = (string)($entry['log']['timestamp'] ?? '');
+            if (!str_starts_with($timestamp, $requestedMonth)) {
+                continue;
+            }
+        }
+        $filteredEntries[] = $entry;
     }
 
-    $filteredLogs = $unifiedLogs;
-    if ($requestedMonth !== '' && strtolower($requestedMonth) !== 'all') {
-        $filteredLogs = array_values(array_filter($unifiedLogs, function($log) use ($requestedMonth) {
-            $rawDate = $log['timestamp'] ?? '';
-            return str_starts_with($rawDate, $requestedMonth);
-        }));
+    $pageEntries = array_slice($filteredEntries, 0, $limit);
+    $pageLogs = array_map(static fn($entry) => $entry['log'], $pageEntries);
+    $hasMore = $unavailableSources === []
+        && (count($filteredEntries) > $limit || $sourceHasMore);
+
+    $sourcePositions = $cursorState['sources'] ?? [];
+    $boundary = $pageEntries !== [] ? $pageEntries[count($pageEntries) - 1] : null;
+    foreach ($candidateEntries as $entry) {
+        $isConsumed = $boundary !== null
+            ? nola_admin_compare_activity_entries($entry, $boundary) <= 0
+            : ($requestedMonth !== ''
+                && strtolower($requestedMonth) !== 'all'
+                && $entry['source_index'] <= $limit);
+        if (!$isConsumed) {
+            continue;
+        }
+        $encodedValue = nola_admin_encode_activity_cursor_value($entry['cursor_value']);
+        if ($encodedValue !== null) {
+            $sourcePositions[$entry['source']] = [
+                'id' => $entry['id'],
+                'value' => $encodedValue,
+            ];
+        }
     }
 
-    $pageLogs = array_slice($filteredLogs, 0, $limit);
-
+    $partial = $unavailableSources !== [];
     $responsePayload = [
         'status' => 'success',
         'data' => $pageLogs,
         'summary' => nola_admin_activity_summary($pageLogs),
         'total_messages' => count($pageLogs),
+        'partial' => $partial,
+        'unavailable_sources' => $unavailableSources,
         'pagination' => [
             'limit' => $limit,
-            'next_cursor' => nola_admin_next_cursor($pageLogs, $limit),
-            'has_more' => count($filteredLogs) > $limit,
+            'next_cursor' => $hasMore ? nola_admin_next_cursor($sourcePositions) : null,
+            'has_more' => $hasMore,
         ],
     ];
+
+    if ($canUseCache && !$partial) {
+        NolaCache::set($logsCacheKey, $responsePayload, 60);
+    }
     echo json_encode($responsePayload);
     exit;
 }
