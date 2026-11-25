@@ -2,6 +2,15 @@
 
 require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
+$activityRequestId = trim((string)($_SERVER['HTTP_X_REQUEST_ID'] ?? ''));
+if (!preg_match('/\A[A-Za-z0-9._:-]{1,80}\z/', $activityRequestId)) {
+    $activityRequestId = bin2hex(random_bytes(16));
+}
+header('X-Request-ID: ' . $activityRequestId);
+if (($_GET['action'] ?? '') === 'logs') {
+    header('Cache-Control: private, no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
+}
 
 require __DIR__ . '/../webhook/firestore_client.php';
 require __DIR__ . '/../auth_helpers.php';
@@ -526,6 +535,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
     $canUseCache = $cursorText === '' && ($requestedMonth === '' || strtolower($requestedMonth) === 'all');
     $cachedPayload = $canUseCache ? NolaCache::get($logsCacheKey) : null;
     if ($cachedPayload !== null) {
+        $cachedPayload['request_id'] = $activityRequestId;
         echo json_encode($cachedPayload);
         exit;
     }
@@ -603,20 +613,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
             }
         } catch (\Throwable $e) {
             $unavailableSources[] = $source;
-            error_log('[admin_logs] Query failed for ' . $source . ': ' . $e->getMessage());
+            error_log('[admin_logs] Query failed: ' . json_encode([
+                'request_id' => $activityRequestId,
+                'source' => $source,
+                'exception' => $e->getMessage(),
+            ], JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE));
         }
     }
 
     usort($candidateEntries, 'nola_admin_compare_activity_entries');
 
     $filteredEntries = [];
-    $seenDocIds = [];
+    $seenActivityKeys = [];
     foreach ($candidateEntries as $entry) {
-        // Preserve the previous de-duplication rule for mirrored message rows.
-        if (isset($seenDocIds[$entry['id']])) {
+        // Messages mirrored into sms_logs represent one event; unrelated
+        // collections may legitimately reuse the same Firestore document ID.
+        $dedupeGroup = in_array($entry['source'], ['messages', 'sms_logs'], true)
+            ? 'message'
+            : $entry['source'];
+        $dedupeKey = $dedupeGroup . ':' . $entry['id'];
+        if (isset($seenActivityKeys[$dedupeKey])) {
             continue;
         }
-        $seenDocIds[$entry['id']] = true;
+        $seenActivityKeys[$dedupeKey] = true;
 
         if ($requestedMonth !== '' && strtolower($requestedMonth) !== 'all') {
             $timestamp = (string)($entry['log']['timestamp'] ?? '');
@@ -660,6 +679,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
         'total_messages' => count($pageLogs),
         'partial' => $partial,
         'unavailable_sources' => $unavailableSources,
+        'request_id' => $activityRequestId,
         'pagination' => [
             'limit' => $limit,
             'next_cursor' => $hasMore ? nola_admin_next_cursor($sourcePositions) : null,
