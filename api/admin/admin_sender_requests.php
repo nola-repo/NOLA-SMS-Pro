@@ -14,6 +14,7 @@ if (($_GET['action'] ?? '') === 'logs') {
 
 require __DIR__ . '/../webhook/firestore_client.php';
 require __DIR__ . '/../auth_helpers.php';
+require_once __DIR__ . '/admin_auth_helper.php';
 require_once __DIR__ . '/../services/CreditManager.php';
 require_once __DIR__ . '/../services/ActivityErrorClassifier.php';
 require_once __DIR__ . '/../cache_helper.php';
@@ -27,6 +28,10 @@ NolaPerformance::start('/api/admin_sender_requests.php', [
 NolaPerformance::begin('auth');
 validate_api_request();
 NolaPerformance::end('auth');
+
+NolaPerformance::begin('admin_auth');
+$adminClaims = require_secure_admin_auth(['super_admin', 'support', 'viewer']);
+NolaPerformance::end('admin_auth');
 
 $db = get_firestore();
 
