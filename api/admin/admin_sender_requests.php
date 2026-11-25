@@ -1,5 +1,10 @@
 <?php
 
+// This endpoint always returns JSON. Keep PHP diagnostics in the server log so
+// a warning can never be prepended to and invalidate an API response.
+ini_set('display_errors', '0');
+ini_set('log_errors', '1');
+
 require_once __DIR__ . '/../cors.php';
 header('Content-Type: application/json');
 $activityRequestId = trim((string)($_SERVER['HTTP_X_REQUEST_ID'] ?? ''));
@@ -47,6 +52,38 @@ function nola_admin_format_timestamp($value): ?string
         return $value;
     }
     return null;
+}
+
+function nola_admin_activity_value_text($value): string
+{
+    if ($value === null) {
+        return '';
+    }
+    if ($value instanceof \DateTimeInterface) {
+        return $value->format('c');
+    }
+    if (is_scalar($value)) {
+        return trim((string)$value);
+    }
+    if (is_object($value) && method_exists($value, '__toString')) {
+        try {
+            return trim((string)$value);
+        } catch (\Throwable $e) {
+            // Fall through to JSON encoding for unusual Firestore values.
+        }
+    }
+
+    $encoded = json_encode(
+        $value,
+        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR
+    );
+    return is_string($encoded) ? trim($encoded) : '';
+}
+
+function nola_admin_activity_optional_text($value): ?string
+{
+    $text = nola_admin_activity_value_text($value);
+    return $text !== '' ? $text : null;
 }
 
 function nola_admin_mask_secret(?string $secret): ?string
@@ -181,17 +218,41 @@ function nola_extract_log_timestamp(array $data): ?string
 
 function nola_admin_first_error_text(array $data): ?string
 {
+    $messageText = nola_admin_activity_value_text($data['message'] ?? null);
+    $normalize = static fn(string $value): string => preg_replace('/\s+/u', ' ', trim($value)) ?? trim($value);
+    $normalizedMessage = $normalize($messageText);
+    $status = strtolower(nola_admin_activity_value_text(
+        $data['status'] ?? $data['delivery_status'] ?? $data['provider_status'] ?? null
+    ));
+    $isSuccessful = in_array($status, ['sent', 'success', 'successful', 'delivered', 'completed', 'paid', 'approved', 'ok'], true);
+
     foreach (['provider_error', 'error_reason', 'failed_reason', 'failure_reason', 'error_message', 'error', 'reason', 'status_message'] as $field) {
-        if (isset($data[$field]) && trim((string)$data[$field]) !== '') {
-            return (string)$data[$field];
+        if (isset($data[$field])) {
+            $candidate = nola_admin_activity_value_text($data[$field]);
+            if ($candidate === '') {
+                continue;
+            }
+            // Some legacy SMS records copied the message body into every error
+            // field. Preserve real provider errors while removing that false error.
+            if ($isSuccessful && $normalizedMessage !== '' && $normalize($candidate) === $normalizedMessage) {
+                continue;
+            }
+            return $candidate;
         }
     }
 
     $providerResponse = $data['provider_response'] ?? null;
     if (is_array($providerResponse)) {
         foreach (['error', 'message', 'description', 'status'] as $field) {
-            if (isset($providerResponse[$field]) && trim((string)$providerResponse[$field]) !== '') {
-                return (string)$providerResponse[$field];
+            if (isset($providerResponse[$field])) {
+                $candidate = nola_admin_activity_value_text($providerResponse[$field]);
+                if ($candidate === '') {
+                    continue;
+                }
+                if ($isSuccessful && $normalizedMessage !== '' && $normalize($candidate) === $normalizedMessage) {
+                    continue;
+                }
+                return $candidate;
             }
         }
     }
@@ -214,7 +275,7 @@ function nola_admin_activity_meta(array $data): array
 
     return ActivityErrorClassifier::fromStatus(
         $data['status'] ?? ($data['delivery_status'] ?? null),
-        isset($data['provider']) ? (string)$data['provider'] : null,
+        nola_admin_activity_optional_text($data['provider'] ?? null),
         nola_admin_first_error_text($data),
         $data['provider_response'] ?? null
     );
@@ -466,20 +527,21 @@ function nola_admin_compact_activity_log(array $data, string $docId, string $def
         $errorSummary = substr(preg_replace('/\s+/', ' ', trim($errorSummary)), 0, 300);
     }
 
-    $recipient = $data['recipient'] ?? $data['number'] ?? $data['to'] ?? null;
+    $recipientValue = $data['recipient'] ?? $data['number'] ?? $data['to'] ?? null;
+    $recipient = nola_admin_activity_optional_text($recipientValue);
     if ($recipient === null && isset($data['numbers']) && is_array($data['numbers']) && isset($data['numbers'][0])) {
-        $recipient = $data['numbers'][0];
+        $recipient = nola_admin_activity_optional_text($data['numbers'][0]);
     }
 
-    $type = (string)($data['type'] ?? $defaultType);
-    $status = $data['status'] ?? $data['delivery_status'] ?? $data['provider_status'] ?? null;
-    $sender = $data['sender_id'] ?? $data['sender_name'] ?? $data['sendername'] ?? $data['requested_id'] ?? null;
+    $type = nola_admin_activity_value_text($data['type'] ?? $defaultType);
+    $status = nola_admin_activity_optional_text($data['status'] ?? $data['delivery_status'] ?? $data['provider_status'] ?? null);
+    $sender = nola_admin_activity_optional_text($data['sender_id'] ?? $data['sender_name'] ?? $data['sendername'] ?? $data['requested_id'] ?? null);
 
     $summaryParts = array_filter([
         $type,
-        $status !== null ? (string)$status : null,
-        $sender !== null ? 'sender=' . (string)$sender : null,
-        $recipient !== null ? 'to=' . (string)$recipient : null,
+        $status !== null ? $status : null,
+        $sender !== null ? 'sender=' . $sender : null,
+        $recipient !== null ? 'to=' . $recipient : null,
         $errorSummary !== null ? 'error=' . $errorSummary : null,
     ], static fn($value) => $value !== null && $value !== '');
 
@@ -492,27 +554,27 @@ function nola_admin_compact_activity_log(array $data, string $docId, string $def
         'date_created' => $timestamp,
         'created_at' => $timestamp,
         'status' => $status,
-        'delivery_status' => $data['delivery_status'] ?? null,
-        'sender_id' => $data['sender_id'] ?? $sender,
-        'sender_name' => $data['sender_name'] ?? $sender,
-        'sendername' => $data['sendername'] ?? $sender,
-        'requested_id' => $data['requested_id'] ?? null,
+        'delivery_status' => nola_admin_activity_optional_text($data['delivery_status'] ?? null),
+        'sender_id' => nola_admin_activity_optional_text($data['sender_id'] ?? $sender),
+        'sender_name' => nola_admin_activity_optional_text($data['sender_name'] ?? $sender),
+        'sendername' => nola_admin_activity_optional_text($data['sendername'] ?? $sender),
+        'requested_id' => nola_admin_activity_optional_text($data['requested_id'] ?? null),
         'recipient' => $recipient,
-        'number' => $data['number'] ?? $recipient,
-        'location_id' => $data['location_id'] ?? $data['locationId'] ?? null,
-        'account_id' => $data['account_id'] ?? null,
-        'company_id' => $data['company_id'] ?? $data['companyId'] ?? null,
-        'provider' => $data['provider'] ?? $data['source'] ?? null,
-        'provider_status' => $data['provider_status'] ?? null,
-        'provider_message_id' => $data['provider_message_id'] ?? null,
-        'provider_reference_id' => $data['provider_reference_id'] ?? null,
-        'message_reference_id' => $data['message_reference_id'] ?? null,
-        'transaction_reference_id' => $data['transaction_reference_id'] ?? null,
-        'request_reference_id' => $data['request_reference_id'] ?? $data['reference_id'] ?? null,
-        'reference_id' => $data['reference_id'] ?? null,
+        'number' => nola_admin_activity_optional_text($data['number'] ?? $recipient),
+        'location_id' => nola_admin_activity_optional_text($data['location_id'] ?? $data['locationId'] ?? null),
+        'account_id' => nola_admin_activity_optional_text($data['account_id'] ?? null),
+        'company_id' => nola_admin_activity_optional_text($data['company_id'] ?? $data['companyId'] ?? null),
+        'provider' => nola_admin_activity_optional_text($data['provider'] ?? $data['source'] ?? null),
+        'provider_status' => nola_admin_activity_optional_text($data['provider_status'] ?? null),
+        'provider_message_id' => nola_admin_activity_optional_text($data['provider_message_id'] ?? null),
+        'provider_reference_id' => nola_admin_activity_optional_text($data['provider_reference_id'] ?? null),
+        'message_reference_id' => nola_admin_activity_optional_text($data['message_reference_id'] ?? null),
+        'transaction_reference_id' => nola_admin_activity_optional_text($data['transaction_reference_id'] ?? null),
+        'request_reference_id' => nola_admin_activity_optional_text($data['request_reference_id'] ?? $data['reference_id'] ?? null),
+        'reference_id' => nola_admin_activity_optional_text($data['reference_id'] ?? null),
         'amount' => $data['amount'] ?? null,
         'balance_after' => $data['balance_after'] ?? null,
-        'message' => isset($data['message']) ? substr((string)$data['message'], 0, 240) : null,
+        'message' => isset($data['message']) ? substr(nola_admin_activity_value_text($data['message']), 0, 240) : null,
         'error' => $errorSummary,
         'error_message' => $errorSummary,
         'provider_error' => $errorSummary,
